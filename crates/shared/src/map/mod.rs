@@ -88,6 +88,19 @@ pub struct Ornament {
     pub scale: Vec3,
 }
 
+/// A light for the client to place: an oil lamp (flames drawn and flickering) or an unseen fill
+/// standing in for daylight bounced into a dark interior.
+#[derive(Clone, Debug, Reflect)]
+pub struct Lamp {
+    pub pos: Vec3,
+    /// Linear RGB.
+    pub color: Vec3,
+    pub lumens: f32,
+    pub range: f32,
+    /// Flames on a ring round `pos`: (radius, count). None for a fill light.
+    pub flames: Option<(f32, u32)>,
+}
+
 #[derive(Resource, Clone, Debug, Default)]
 pub struct MapLayout {
     pub name: String,
@@ -101,5 +114,6 @@ pub struct MapLayout {
     pub pois: Vec<Poi>,
     pub props: Vec<Prop>,
     pub ornaments: Vec<Ornament>,
+    pub lamps: Vec<Lamp>,
     pub terrain: terrain::Terrain,
 }

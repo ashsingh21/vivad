@@ -8,7 +8,7 @@ use rand::{RngExt, SeedableRng};
 
 use super::build::{Builder, Frame, Opening, FLOOR_H, JHAROKHA, WALL_T};
 use super::terrain::{self, Pad, TerrainSpec};
-use super::{ChestKind, MapLayout, Mat, Poi, Prop};
+use super::{ChestKind, Lamp, MapLayout, Mat, Poi, Prop};
 
 const FORT_C: Vec2 = Vec2::new(125.0, -135.0);
 /// The fort's hill summit height.
@@ -83,6 +83,7 @@ pub const STUPA: &str = "models/props/stupa.glb";
 pub const AJANTA: &str = "models/props/ajanta.glb";
 pub const MANDAPA_RUIN: &str = "models/props/mandapa_ruin.glb";
 pub const STEPWELL: &str = "models/props/stepwell.glb";
+pub const SAMAI: &str = "models/props/samai.glb";
 
 /// Run `build` and hide everything it made: colliders whose art comes from a model placed separately.
 fn hidden(b: &mut Builder, build: impl FnOnce(&mut Builder)) {
@@ -824,6 +825,22 @@ fn caves_and_stupa(b: &mut Builder, rng: &mut SmallRng) {
             slope(b, pf, Vec2::new(0.0, 0.9), Vec2::new(spur_run, cliff_h + 0.9), 1.0, 1.2);
         }
     });
+    // Lighting: brass lamps at each shrine and daylight bounced in from the mouth.
+    for (i, &hz) in halls.iter().enumerate() {
+        let hf = Frame::new(Vec3::new(face_x, 0.0, hz), 0.0);
+        // Flanking the Buddha (vihara) or in front of the rock-cut stupa (chaitya).
+        let x = if i % 2 == 0 { -hall_d + 7.0 } else { -hall_d + 2.0 };
+        for s in [-1.0, 1.0] {
+            samai(b, hf, Vec3::new(x, 0.0, s * 2.2));
+        }
+        b.map.lamps.push(Lamp {
+            pos: hf.p(Vec3::new(-7.0, 4.8, 0.0)),
+            color: Vec3::new(1.0, 0.86, 0.68),
+            lumens: 500_000.0,
+            range: 20.0,
+            flames: None,
+        });
+    }
     // Chests and loot in the halls and on the cliff top.
     for (i, &hz) in halls.iter().enumerate() {
         let hf = Frame::new(Vec3::new(face_x, 0.0, hz), 0.0);
@@ -891,6 +908,19 @@ fn caves_and_stupa(b: &mut Builder, rng: &mut SmallRng) {
     });
     b.chest(sc, Vec3::new(12.5, 0.0, 6.0), 0.0, ChestKind::Peti);
     b.chest(sc, Vec3::new(-12.5, 0.0, -6.0), PI, ChestKind::Peti);
+}
+
+/// Brass standing lamp (vernacular.py `samai`): five lit wicks, one light, a thin collider.
+fn samai(b: &mut Builder, f: Frame, local: Vec3) {
+    hidden(b, |b| b.cyl(f, local, 0.12, 1.0, Mat::Gold));
+    b.ornament(f, local, 0.0, SAMAI, Vec3::ONE);
+    b.map.lamps.push(Lamp {
+        pos: f.p(local + Vec3::Y * 0.885),
+        color: Vec3::new(1.0, 0.55, 0.2),
+        lumens: 110_000.0,
+        range: 12.0,
+        flames: Some((0.155, 5)),
+    });
 }
 
 // ------------------------------------------------------------------ villages, nature

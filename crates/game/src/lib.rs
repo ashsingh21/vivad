@@ -4,6 +4,7 @@ pub mod camera;
 pub mod characters;
 pub mod hud;
 pub mod input;
+pub mod lamps;
 pub mod studio_env;
 pub mod visuals;
 

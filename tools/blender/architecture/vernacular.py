@@ -56,6 +56,7 @@ def mats():
         "cloth_indigo": T.tex_material("cloth_indigo", "cloth_indigo"),
         "terracotta": T.flat_material("terracotta", (0.34, 0.10, 0.045), 0.0, 0.85),
         "brass": T.flat_material("brass", (0.80, 0.50, 0.17), 1.0, 0.35),
+        "wick": T.flat_material("wick", (0.05, 0.04, 0.03), 0.0, 0.9),
         "bamboo": T.flat_material("bamboo", (0.33, 0.22, 0.09), 0.0, 0.6),
         "wicker": T.flat_material("wicker", (0.24, 0.13, 0.05), 0.0, 0.9),
         "haldi": T.flat_material("haldi", (0.80, 0.40, 0.01), 0.0, 0.95),
@@ -389,6 +390,35 @@ def stall(name, cloth_mat, goods, seed):
     return finish(name, kit)
 
 
+# ------------------------------------------------------------------ samai (standing oil lamp)
+
+SAMAI_WICKS = 5
+SAMAI_WICK_R = 0.155   # wick tips: radius and height (india.rs places the flames there)
+SAMAI_WICK_Z = 0.86
+
+
+def samai(name):
+    """Brass standing lamp, 0.95 m: stepped foot, turned stem with knops, a five-spouted oil dish
+    and a bud finial. The game adds the flames at the wick tips."""
+    kit = T.Kit()
+    prof = [(0.0, 0.0), (0.19, 0.0), (0.19, 0.025), (0.165, 0.04), (0.15, 0.075), (0.10, 0.10),
+            (0.06, 0.13), (0.035, 0.17), (0.028, 0.25), (0.05, 0.27), (0.05, 0.29), (0.026, 0.31),
+            (0.022, 0.50), (0.045, 0.52), (0.045, 0.545), (0.022, 0.565), (0.02, 0.76), (0.04, 0.775),
+            (0.12, 0.80), (0.15, 0.835), (0.152, 0.85), (0.13, 0.85), (0.03, 0.83), (0.02, 0.84),
+            (0.018, 0.90), (0.035, 0.92), (0.03, 0.96), (0.012, 0.99), (0.0, 1.0)]
+    kit.add(T.lathe("samai", prof, 24, (0.0, 0.0), mat="brass"))
+    # Spouts: little pinched lips round the dish, one per wick, each with a cotton wick.
+    for k in range(SAMAI_WICKS):
+        a = 2 * math.pi * k / SAMAI_WICKS
+        d = Vector((math.cos(a), math.sin(a), 0.0))
+        base = d * 0.13 + Vector((0, 0, 0.835))
+        tip = d * (SAMAI_WICK_R + 0.01) + Vector((0, 0, 0.85))
+        kit.add(cylinder_between(f"spout{k}", base, tip, 0.022, "brass", seg=8))
+        w0 = d * SAMAI_WICK_R + Vector((0, 0, 0.845))
+        kit.add(cylinder_between(f"wick{k}", w0, w0 + Vector((0, 0, SAMAI_WICK_Z - 0.845)), 0.006, "wick", seg=5))
+    return finish(name, kit)
+
+
 # ------------------------------------------------------------------ finishing
 
 def finish(name, kit):
@@ -414,6 +444,7 @@ def main():
         "stall_spice": lambda: stall("stall_spice", "cloth_saffron", "spice", 1),
         "stall_brass": lambda: stall("stall_brass", "cloth_red", "brass", 2),
         "stall_cloth": lambda: stall("stall_cloth", "cloth_indigo", "cloth", 3),
+        "samai": lambda: samai("samai"),
     }
     for key, make in pieces.items():
         if only and key not in only:

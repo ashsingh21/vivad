@@ -1,6 +1,7 @@
 //! Automated capture for play-testing without a human at the keyboard.
 //!
 //! VIVAD_TOUR=<dir>      fly the camera to each landmark, screenshot, exit.
+//!   VIVAD_TOUR_ONLY=a,b only the views whose names contain one of these.
 //! VIVAD_SHOTS=<dir>     with VIVAD_AUTOPILOT=1: screenshot the match at set times, then exit.
 
 use bevy::prelude::*;
@@ -52,8 +53,8 @@ impl Plugin for AutoshotPlugin {
                     ("16_hampi_temple", v(-95.0, 7.0, -112.0), v(-110.0, 5.0, -123.0)),
                     ("17_stupa", v(-128.0, 7.0, 32.0), v(-158.0, 6.0, 8.0)),
                     ("18_cave_facade", v(-168.0, 7.0, 10.0), v(-192.0, 8.0, 16.0)),
-                    ("19_vihara_inside", v(-194.0, 2.2, -19.0), v(-212.0, 2.4, -16.0)),
-                    ("20_chaitya_inside", v(-194.5, 2.4, 20.0), v(-208.0, 3.2, 16.0)),
+                    ("19_vihara_inside", v(-193.0, 2.0, -16.0), v(-212.0, 1.8, -16.0)),
+                    ("20_chaitya_inside", v(-193.0, 2.0, 16.0), v(-210.0, 2.6, 16.0)),
                     ("21_ajanta_wide", v(-120.0, 30.0, 90.0), v(-200.0, 10.0, 20.0)),
                     ("22_hampi_mandapa", v(-118.0, 5.0, -112.0), v(-140.0, 2.5, -130.0)),
                     ("23_village_close", v(-28.0, 3.5, 172.0), v(-40.0, 1.5, 195.0)),
@@ -61,8 +62,12 @@ impl Plugin for AutoshotPlugin {
                 ],
                 index: 0,
                 frames: 0,
-            })
-            .add_systems(PostUpdate, run_tour.after(crate::camera::CameraSystems).before(TransformSystems::Propagate));
+            });
+            if let Ok(only) = std::env::var("VIVAD_TOUR_ONLY") {
+                let keys: Vec<String> = only.split(',').map(str::to_owned).collect();
+                app.world_mut().resource_mut::<Tour>().shots.retain(|s| keys.iter().any(|k| s.0.contains(k.as_str())));
+            }
+            app.add_systems(PostUpdate, run_tour.after(crate::camera::CameraSystems).before(TransformSystems::Propagate));
         }
         if let Ok(dir) = std::env::var("VIVAD_SHOTS") {
             app.insert_resource(MatchShots { dir, times: vec![6.0, 20.0, 34.0, 50.0, 80.0, 120.0, 170.0, 230.0], next: 0, taken_at: -1.0 })

@@ -471,7 +471,8 @@ def hall(kit, hz):
             x = -HALL_D + k * HALL_D / 5
             kit.add(T.box("cbeam", (x - 0.2, yc - a, HALL_H - 0.3), (x + 0.2, yc + a, HALL_H), "trim"))
         # Shrine in the back wall: a frame and a large seated Buddha.
-        M = Matrix.Translation((-HALL_D, yc, 0.0)) @ Matrix.Rotation(-math.pi / 2, 4, "Z")
+        # Piece space faces -Y; turn it to face +X, out of the back wall into the hall.
+        M = Matrix.Translation((-HALL_D, yc, 0.0)) @ Matrix.Rotation(math.pi / 2, 4, "Z")
         for sx in (-1, 1):
             kit.add(transform(T.box("spil", (sx * 1.9 - 0.3, -0.45, 0.0), (sx * 1.9 + 0.3, 0.0, 4.2), "trim"), M))
         kit.add(transform(T.box("slintel", (-2.3, -0.5, 4.2), (2.3, 0.0, 4.8), "trim"), M))
