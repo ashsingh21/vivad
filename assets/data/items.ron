@@ -1,0 +1,70 @@
+// Weapons, astras and consumables. Times in seconds, distances in metres, speeds in m/s.
+// Damage is the Common value; higher rarities scale it (see Rarity::damage_scale).
+(
+    default_melee: "khanda",
+    items: {
+        "khanda": (
+            name: "Khanda",
+            lore: "The broad sword of the Rajput and Maratha warrior.",
+            kind: Melee(damage: 30.0, interval: 0.65, reach: 2.3, hit_delay: 0.18),
+            drops: [],
+        ),
+        "gandiva": (
+            name: "Gandiva",
+            lore: "Arjuna's bow, gifted by Agni. Swift and true.",
+            kind: Bow(damage: 24.0, interval: 0.30, speed: 95.0, gravity: 4.0, pellets: 1, spread_deg: 0.6,
+                      magazine: 20, reload: 1.9, charge: 0.0, headshot: 1.75),
+            drops: [(Common, 10.0), (Rare, 7.0), (Epic, 4.0), (Legendary, 1.5)],
+        ),
+        "sharanga": (
+            name: "Sharanga",
+            lore: "Vishnu's bow. Looses a fan of arrows at once.",
+            kind: Bow(damage: 13.0, interval: 0.85, speed: 70.0, gravity: 9.0, pellets: 7, spread_deg: 7.0,
+                      magazine: 5, reload: 2.4, charge: 0.0, headshot: 1.5),
+            drops: [(Common, 8.0), (Rare, 6.0), (Epic, 3.0), (Legendary, 1.0)],
+        ),
+        "pinaka": (
+            name: "Pinaka",
+            lore: "Shiva's great bow. Draw it fully and nothing withstands it.",
+            kind: Bow(damage: 95.0, interval: 1.2, speed: 170.0, gravity: 2.0, pellets: 1, spread_deg: 0.0,
+                      magazine: 1, reload: 2.2, charge: 0.9, headshot: 2.0),
+            drops: [(Rare, 3.0), (Epic, 2.5), (Legendary, 1.2)],
+        ),
+        "agneyastra": (
+            name: "Agneyastra",
+            lore: "The astra of Agni. Where it lands, the earth burns.",
+            kind: Astra(effect: Fire(radius: 4.5, dps: 14.0, duration: 5.0), speed: 26.0, count: 2),
+            drops: [(Rare, 5.0), (Epic, 2.0)],
+        ),
+        "vayavyastra": (
+            name: "Vayavyastra",
+            lore: "The astra of Vayu. A gale that hurls warriors into the sky.",
+            kind: Astra(effect: Wind(radius: 5.0, impulse: 22.0), speed: 24.0, count: 2),
+            drops: [(Rare, 3.0), (Epic, 1.5)],
+        ),
+        "sanjeevani": (
+            name: "Sanjeevani",
+            lore: "The herb Hanuman carried with the whole mountain. Heals wounds.",
+            kind: Consumable(heal: 25.0, heal_cap: 75.0, shield: 0.0, use_time: 2.5, stack: 6),
+            drops: [(Common, 12.0)],
+        ),
+        "soma": (
+            name: "Soma",
+            lore: "The drink of the gods. A small ward against harm.",
+            kind: Consumable(heal: 0.0, heal_cap: 0.0, shield: 25.0, use_time: 2.0, stack: 6),
+            drops: [(Common, 10.0), (Rare, 4.0)],
+        ),
+        "amrita": (
+            name: "Amrita Kalash",
+            lore: "Nectar of immortality from the churning of the ocean.",
+            kind: Consumable(heal: 0.0, heal_cap: 0.0, shield: 50.0, use_time: 4.5, stack: 3),
+            drops: [(Epic, 4.0), (Legendary, 1.0)],
+        ),
+        "arrows": (
+            name: "Tarkash",
+            lore: "A quiver of arrows.",
+            kind: Arrows(amount: 30),
+            drops: [(Common, 14.0)],
+        ),
+    },
+)

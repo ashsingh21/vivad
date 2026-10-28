@@ -1,0 +1,393 @@
+//! HUD: health/shield, hotbar, crosshair + hit markers, prompts, kill feed, minimap,
+//! Pralaya timer, match result screens and the performance overlay.
+
+use bevy::diagnostic::{DiagnosticsStore, EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin};
+use bevy::prelude::*;
+use shared::items::{ItemDb, ItemKind};
+use shared::map::{ChestKind, MapLayout};
+use shared::sim::flow::{Match, MatchState};
+use shared::sim::loot::{Chest, INTERACT_RANGE, Pickup};
+use shared::sim::zone::Zone;
+use shared::sim::{Action, Eliminated, FeedMsg, Health, HitMsg, INVENTORY_SLOTS, Inventory, Kinematic, LocalPlayer, MoveMode, Warrior};
+
+use crate::input::{CYCLE, ShowPerf};
+
+pub struct HudPlugin;
+
+impl Plugin for HudPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins((FrameTimeDiagnosticsPlugin::default(), EntityCountDiagnosticsPlugin::default()))
+            .init_resource::<Feed>()
+            .add_systems(Startup, build_hud)
+            .add_systems(Update, (vitals, hotbar, prompts, feed, hit_marker, top_right, minimap, overlay, perf));
+    }
+}
+
+const MINIMAP: f32 = 190.0;
+
+#[derive(Component)] struct HpBar;
+#[derive(Component)] struct ShieldBar;
+#[derive(Component)] struct HpText;
+#[derive(Component)] struct SlotBox(usize);
+#[derive(Component)] struct SlotText(usize);
+#[derive(Component)] struct AmmoText;
+#[derive(Component)] struct Prompt;
+#[derive(Component)] struct FeedText;
+#[derive(Component)] struct Crosshair;
+#[derive(Component)] struct TopRight;
+#[derive(Component)] struct MapZone;
+#[derive(Component)] struct MapSafe;
+#[derive(Component)] struct MapMe;
+#[derive(Component)] struct Overlay;
+#[derive(Component)] struct OverlayText;
+#[derive(Component)] struct PerfText;
+#[derive(Component)] struct ProgressBar;
+#[derive(Component)] struct ProgressFill;
+
+#[derive(Resource, Default)]
+struct Feed {
+    lines: Vec<(String, f32)>,
+    hit_flash: f32,
+    headshot: bool,
+}
+
+fn text(s: &str, size: f32, color: Color) -> (Text, TextFont, TextColor) {
+    (Text::new(s), TextFont { font_size: FontSize::Px(size), ..default() }, TextColor(color))
+}
+
+fn build_hud(mut commands: Commands) {
+    let panel = Color::srgba(0.05, 0.04, 0.03, 0.55);
+    // Vitals, bottom-left.
+    commands
+        .spawn(Node { position_type: PositionType::Absolute, left: px(24.0), bottom: px(24.0), width: px(320.0),
+                      flex_direction: FlexDirection::Column, row_gap: px(6.0), ..default() })
+        .with_children(|p| {
+            p.spawn((HpText, text("100 | 0", 18.0, Color::WHITE)));
+            for (marker_shield, color) in [(true, Color::srgb(0.30, 0.65, 1.0)), (false, Color::srgb(0.35, 0.85, 0.35))] {
+                p.spawn((Node { width: percent(100.0), height: px(14.0), ..default() }, BackgroundColor(panel)))
+                    .with_children(|b| {
+                        let mut e = b.spawn((Node { width: percent(0.0), height: percent(100.0), ..default() }, BackgroundColor(color)));
+                        if marker_shield { e.insert(ShieldBar); } else { e.insert(HpBar); }
+                    });
+            }
+        });
+    // Hotbar, bottom-right.
+    commands
+        .spawn(Node { position_type: PositionType::Absolute, right: px(24.0), bottom: px(24.0),
+                      flex_direction: FlexDirection::Column, align_items: AlignItems::FlexEnd, row_gap: px(6.0), ..default() })
+        .with_children(|p| {
+            p.spawn((AmmoText, text("", 18.0, Color::WHITE)));
+            p.spawn(Node { column_gap: px(6.0), ..default() }).with_children(|row| {
+                for i in 0..=INVENTORY_SLOTS {
+                    row.spawn((SlotBox(i),
+                               Node { width: px(86.0), height: px(64.0), border: UiRect::all(px(2.0)), padding: UiRect::all(px(4.0)),
+                                      flex_direction: FlexDirection::Column, justify_content: JustifyContent::SpaceBetween, ..default() },
+                               BackgroundColor(panel), BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.2))))
+                        .with_children(|s| {
+                            s.spawn(text(&format!("{}", i + 1), 11.0, Color::srgba(1.0, 1.0, 1.0, 0.5)));
+                            s.spawn((SlotText(i), text("", 12.0, Color::WHITE)));
+                        });
+                }
+            });
+        });
+    // Crosshair.
+    commands
+        .spawn(Node { position_type: PositionType::Absolute, width: percent(100.0), height: percent(100.0),
+                      justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() })
+        .with_children(|p| {
+            p.spawn((Crosshair, text("+", 26.0, Color::srgba(1.0, 1.0, 1.0, 0.85))));
+        });
+    // Prompt + use/reload progress, lower centre.
+    commands
+        .spawn(Node { position_type: PositionType::Absolute, width: percent(100.0), bottom: px(150.0),
+                      flex_direction: FlexDirection::Column, align_items: AlignItems::Center, row_gap: px(6.0), ..default() })
+        .with_children(|p| {
+            p.spawn((Prompt, text("", 20.0, Color::srgb(1.0, 0.92, 0.7))));
+            p.spawn((ProgressBar, Node { width: px(220.0), height: px(8.0), ..default() }, BackgroundColor(panel), Visibility::Hidden))
+                .with_children(|b| {
+                    b.spawn((ProgressFill, Node { width: percent(0.0), height: percent(100.0), ..default() }, BackgroundColor(Color::srgb(1.0, 0.8, 0.3))));
+                });
+        });
+    // Kill feed, top-left.
+    commands.spawn((FeedText, text("", 15.0, Color::WHITE),
+                    Node { position_type: PositionType::Absolute, left: px(24.0), top: px(20.0), max_width: px(520.0), ..default() }));
+    // Minimap + match info, top-right.
+    commands
+        .spawn(Node { position_type: PositionType::Absolute, right: px(24.0), top: px(20.0),
+                      flex_direction: FlexDirection::Column, align_items: AlignItems::FlexEnd, row_gap: px(8.0), ..default() })
+        .with_children(|p| {
+            p.spawn((Node { width: px(MINIMAP), height: px(MINIMAP), border: UiRect::all(px(2.0)), overflow: Overflow::clip(), ..default() },
+                     BackgroundColor(Color::srgba(0.32, 0.38, 0.22, 0.8)), BorderColor::all(Color::srgba(0.0, 0.0, 0.0, 0.6))))
+                .with_children(|m| {
+                    m.spawn((MapZone, Node { position_type: PositionType::Absolute, border: UiRect::all(px(2.0)), border_radius: BorderRadius::MAX, ..default() },
+                             BorderColor::all(Color::srgb(1.0, 0.4, 0.15))));
+                    m.spawn((MapSafe, Node { position_type: PositionType::Absolute, border: UiRect::all(px(1.5)), border_radius: BorderRadius::MAX, ..default() },
+                             BorderColor::all(Color::WHITE)));
+                    m.spawn((MapMe, Node { position_type: PositionType::Absolute, width: px(8.0), height: px(8.0), border_radius: BorderRadius::MAX, ..default() },
+                             BackgroundColor(Color::srgb(1.0, 0.6, 0.1))));
+                });
+            p.spawn((TopRight, text("", 16.0, Color::WHITE), TextLayout::justify(Justify::Right)));
+        });
+    // End-of-match / eliminated overlay.
+    commands
+        .spawn((Overlay, Node { position_type: PositionType::Absolute, width: percent(100.0), height: percent(100.0),
+                                justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)), Visibility::Hidden))
+        .with_children(|p| {
+            p.spawn((OverlayText, text("", 40.0, Color::srgb(1.0, 0.85, 0.5)), TextLayout::justify(Justify::Center)));
+        });
+    // Performance overlay (F3).
+    commands.spawn((PerfText, text("", 14.0, Color::srgb(0.6, 1.0, 0.6)),
+                    Node { position_type: PositionType::Absolute, left: px(24.0), bottom: px(110.0), ..default() }, Visibility::Hidden));
+}
+
+fn vitals(
+    q: Query<&Health, With<LocalPlayer>>,
+    mut hp: Query<&mut Node, (With<HpBar>, Without<ShieldBar>)>,
+    mut sh: Query<&mut Node, (With<ShieldBar>, Without<HpBar>)>,
+    mut t: Query<&mut Text, With<HpText>>,
+) {
+    let Ok(h) = q.single() else { return };
+    for mut n in &mut hp { n.width = percent(100.0 * h.hp / h.max_hp); }
+    for mut n in &mut sh { n.width = percent(100.0 * h.shield / h.max_shield); }
+    for mut s in &mut t { **s = format!("Prana {:.0}   Kavacha {:.0}", h.hp.ceil(), h.shield.ceil()); }
+}
+
+fn hotbar(
+    q: Query<(&Inventory, &Action), With<LocalPlayer>>,
+    db: Res<ItemDb>,
+    mut boxes: Query<(&SlotBox, &mut BorderColor, &mut BackgroundColor)>,
+    mut texts: Query<(&SlotText, &mut Text), Without<AmmoText>>,
+    mut ammo: Query<&mut Text, With<AmmoText>>,
+) {
+    let Ok((inv, act)) = q.single() else { return };
+    CYCLE.with(|c| c.set(inv.selected as u8));
+    let stack_of = |i: usize| if i == 0 { Some(&inv.melee) } else { inv.slots[i - 1].as_ref() };
+    for (SlotBox(i), mut border, mut bg) in &mut boxes {
+        let s = stack_of(*i);
+        let c = s.map(|s| s.rarity.color()).unwrap_or(Color::srgba(1.0, 1.0, 1.0, 0.15));
+        *border = BorderColor::all(if *i == inv.selected { Color::WHITE } else { c });
+        bg.0 = s.map(|s| s.rarity.color().with_alpha(if *i == inv.selected { 0.45 } else { 0.22 }))
+            .unwrap_or(Color::srgba(0.05, 0.04, 0.03, 0.55));
+    }
+    for (SlotText(i), mut t) in &mut texts {
+        **t = match stack_of(*i) {
+            Some(s) => {
+                let d = db.get(&s.id);
+                match d.kind {
+                    ItemKind::Melee { .. } => d.name.clone(),
+                    _ => format!("{}\n{}", d.name, s.count),
+                }
+            }
+            None => String::new(),
+        };
+    }
+    for mut t in &mut ammo {
+        let cur = inv.current();
+        **t = match cur.map(|s| (s, &db.get(&s.id).kind)) {
+            Some((s, ItemKind::Bow { magazine, .. })) => {
+                let state = if act.reload_left > 0.0 { "  reloading" } else if act.charge > 0.0 { "  drawing" } else { "" };
+                format!("{} / {}   Tarkash {}{}", s.count, magazine, inv.arrows, state)
+            }
+            _ => format!("Tarkash {}", inv.arrows),
+        };
+    }
+}
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn prompts(
+    q: Query<(&Transform, &Kinematic, &Inventory, &Action, Has<Eliminated>), With<LocalPlayer>>,
+    chests: Query<(&Transform, &Chest)>,
+    pickups: Query<(&Transform, &Pickup)>,
+    db: Res<ItemDb>,
+    m: Res<Match>,
+    mut prompt: Query<&mut Text, With<Prompt>>,
+    mut bar: Query<&mut Visibility, With<ProgressBar>>,
+    mut fill: Query<&mut Node, With<ProgressFill>>,
+) {
+    let Ok((tf, kin, inv, act, dead)) = q.single() else { return };
+    let me = tf.translation;
+    let mut s = String::new();
+    let mut progress: Option<f32> = None;
+    if dead {
+    } else if kin.mode == MoveMode::Vimana {
+        let over = me.x.abs() < 240.0 && me.z.abs() < 240.0;
+        s = if over && m.state == MatchState::Flight {
+            "[Space] Leap from the Pushpaka Vimana".into()
+        } else {
+            "The Pushpaka Vimana approaches Bharat...".into()
+        };
+    } else if kin.mode == MoveMode::Freefall {
+        s = "[Space] Spread the Garuda wings".into();
+    } else if let Some((_, c)) = chests.iter().filter(|(t, c)| !c.opened && t.translation.distance(me) < INTERACT_RANGE).next() {
+        s = match c.kind {
+            ChestKind::Peti => "[E] Open the Peti".into(),
+            ChestKind::Kalash => "[E] Open the golden Kalash".into(),
+        };
+    } else if let Some((_, p)) = pickups
+        .iter()
+        .filter(|(t, _)| t.translation.distance(me) < INTERACT_RANGE)
+        .min_by(|a, b| a.0.translation.distance(me).total_cmp(&b.0.translation.distance(me)))
+    {
+        s = format!("[E] Take {} ({:?})", db.get(&p.stack.id).name, p.stack.rarity);
+    }
+    if let Some((slot, left)) = act.using {
+        if let Some(st) = inv.slots[slot - 1].as_ref() {
+            if let ItemKind::Consumable { use_time, .. } = db.get(&st.id).kind {
+                s = format!("Using {}...", db.get(&st.id).name);
+                progress = Some(1.0 - left / use_time);
+            }
+        }
+    }
+    if act.reload_left > 0.0 {
+        if let Some(ItemKind::Bow { reload, .. }) = inv.current().map(|s| &db.get(&s.id).kind) {
+            progress = Some(1.0 - act.reload_left / reload);
+        }
+    }
+    if act.charge > 0.0 {
+        if let Some(ItemKind::Bow { charge, .. }) = inv.current().map(|s| &db.get(&s.id).kind) {
+            progress = Some(act.charge / charge);
+        }
+    }
+    for mut t in &mut prompt { **t = s.clone(); }
+    for mut v in &mut bar { *v = if progress.is_some() { Visibility::Inherited } else { Visibility::Hidden }; }
+    for mut n in &mut fill { n.width = percent(100.0 * progress.unwrap_or(0.0)); }
+}
+
+fn feed(
+    mut msgs: MessageReader<FeedMsg>,
+    mut f: ResMut<Feed>,
+    time: Res<Time>,
+    mut q: Query<&mut Text, With<FeedText>>,
+) {
+    let now = time.elapsed_secs();
+    for m in msgs.read() {
+        f.lines.push((m.0.clone(), now));
+    }
+    f.lines.retain(|(_, t)| now - t < 8.0);
+    let n = f.lines.len();
+    if n > 6 {
+        f.lines.drain(0..n - 6);
+    }
+    for mut t in &mut q {
+        **t = f.lines.iter().map(|l| l.0.as_str()).collect::<Vec<_>>().join("\n");
+    }
+}
+
+fn hit_marker(
+    mut hits: MessageReader<HitMsg>,
+    local: Query<Entity, With<LocalPlayer>>,
+    mut f: ResMut<Feed>,
+    time: Res<Time>,
+    mut q: Query<(&mut TextColor, &mut Text), With<Crosshair>>,
+) {
+    let Ok(me) = local.single() else { return };
+    for h in hits.read() {
+        if h.attacker == me && h.target != me {
+            f.hit_flash = 0.18;
+            f.headshot = h.headshot;
+        }
+    }
+    f.hit_flash = (f.hit_flash - time.delta_secs()).max(0.0);
+    for (mut c, mut t) in &mut q {
+        if f.hit_flash > 0.0 {
+            c.0 = if f.headshot { Color::srgb(1.0, 0.85, 0.2) } else { Color::WHITE };
+            **t = "X".into();
+        } else {
+            c.0 = Color::srgba(1.0, 1.0, 1.0, 0.85);
+            **t = "+".into();
+        }
+    }
+}
+
+fn top_right(
+    m: Res<Match>,
+    zone: Res<Zone>,
+    local: Query<(&Transform, &Warrior), With<LocalPlayer>>,
+    layout: Res<MapLayout>,
+    mut q: Query<&mut Text, With<TopRight>>,
+) {
+    let Ok((tf, w)) = local.single() else { return };
+    let (t, shrinking) = zone.countdown();
+    let zone_line = if m.state != MatchState::InProgress {
+        "Pralaya gathers...".to_string()
+    } else if shrinking {
+        format!("Pralaya closing  {:>2}:{:02}", t as u32 / 60, t as u32 % 60)
+    } else {
+        format!("Pralaya closes in  {:>2}:{:02}", t as u32 / 60, t as u32 % 60)
+    };
+    let me = tf.translation.xz();
+    let to_safe = (me.distance(zone.target_center) - zone.target_radius).max(0.0);
+    let here = layout.pois.iter().find(|p| p.center.xz().distance(me) < p.radius).map(|p| p.name.as_str()).unwrap_or("Bharat");
+    let safe = if to_safe > 1.0 { format!("Safe ground {to_safe:.0} m away") } else { "Inside safe ground".into() };
+    for mut s in &mut q {
+        **s = format!("{here}\nAlive {}   Kills {}\n{zone_line}\n{safe}", m.alive, w.kills);
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn minimap(
+    zone: Res<Zone>,
+    layout: Res<MapLayout>,
+    local: Query<&Transform, With<LocalPlayer>>,
+    mut parts: ParamSet<(
+        Query<&mut Node, With<MapZone>>,
+        Query<&mut Node, With<MapSafe>>,
+        Query<&mut Node, With<MapMe>>,
+    )>,
+) {
+    let scale = MINIMAP / (layout.half_extent * 2.0);
+    let to_map = |p: Vec2| (p + Vec2::splat(layout.half_extent)) * scale;
+    let circle = |n: &mut Node, c: Vec2, r: f32| {
+        let c = to_map(c);
+        let r = r * scale;
+        n.left = px(c.x - r);
+        n.top = px(c.y - r);
+        n.width = px(r * 2.0);
+        n.height = px(r * 2.0);
+    };
+    for mut n in &mut parts.p0() { circle(&mut n, zone.center, zone.radius); }
+    for mut n in &mut parts.p1() { circle(&mut n, zone.target_center, zone.target_radius); }
+    if let Ok(t) = local.single() {
+        let p = to_map(t.translation.xz());
+        for mut n in &mut parts.p2() {
+            n.left = px(p.x - 4.0);
+            n.top = px(p.y - 4.0);
+        }
+    }
+}
+
+fn overlay(
+    m: Res<Match>,
+    local: Query<(Entity, Option<&Eliminated>, &Warrior), With<LocalPlayer>>,
+    names: Query<&Warrior>,
+    mut o: Query<&mut Visibility, With<Overlay>>,
+    mut t: Query<&mut Text, With<OverlayText>>,
+) {
+    let Ok((me, elim, w)) = local.single() else { return };
+    let msg = if m.state == MatchState::Ended && m.winner == Some(me) {
+        Some(format!("VIJAYI!\n#1 of {}   Kills {}\n\nPress R to fight again", m.total, w.kills))
+    } else if let Some(e) = elim {
+        let by = e.by.and_then(|b| names.get(b).ok()).map(|k| format!(" by {}", k.name)).unwrap_or_default();
+        Some(format!("Eliminated{by}\n#{} of {}   Kills {}\n\nPress R to fight again", e.placement, m.total, w.kills))
+    } else {
+        None
+    };
+    for mut v in &mut o { *v = if msg.is_some() { Visibility::Inherited } else { Visibility::Hidden }; }
+    if let Some(s) = msg {
+        for mut tt in &mut t { **tt = s.clone(); }
+    }
+}
+
+fn perf(show: Res<ShowPerf>, diag: Res<DiagnosticsStore>, mut q: Query<(&mut Text, &mut Visibility), With<PerfText>>) {
+    for (mut t, mut v) in &mut q {
+        *v = if show.0 { Visibility::Inherited } else { Visibility::Hidden };
+        if !show.0 {
+            continue;
+        }
+        let fps = diag.get(&FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()).unwrap_or(0.0);
+        let ms = diag.get(&FrameTimeDiagnosticsPlugin::FRAME_TIME).and_then(|d| d.smoothed()).unwrap_or(0.0);
+        let ents = diag.get(&EntityCountDiagnosticsPlugin::ENTITY_COUNT).and_then(|d| d.value()).unwrap_or(0.0);
+        **t = format!("{fps:.0} fps   {ms:.2} ms   {ents:.0} entities");
+    }
+}

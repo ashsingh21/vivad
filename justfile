@@ -20,5 +20,19 @@ preview name tag="latest" samples="64":
 view name:
     cargo run -p game --bin asset_check -- models/weapons/{{name}}.glb previews/{{name}}/bevy_{{name}}.png
 
-run:
-    cargo run -p game
+
+# Play the graybox (release build; first build takes a few minutes).
+play:
+    cargo run --release -p game
+
+# Headless matches to sanity-check the loop and bots: just sim 5
+sim matches="3" bots="15":
+    cargo run --release -p shared --bin sim_check -- {{matches}} {{bots}}
+
+# Fly the camera over every landmark and screenshot it.
+tour:
+    mkdir -p previews/graybox && VIVAD_TOUR=previews/graybox cargo run --release -p game
+
+# Let a bot play as you and screenshot the match.
+autoplay:
+    mkdir -p previews/graybox/match && VIVAD_AUTOPILOT=1 VIVAD_SHOTS=previews/graybox/match cargo run --release -p game

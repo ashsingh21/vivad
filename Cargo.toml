@@ -10,6 +10,10 @@ rust-version = "1.97.1"
 [workspace.dependencies]
 # Pinned exactly; Bevy breaks APIs between minor releases.
 bevy = "=0.20.0"
+avian3d = "=0.8.0"
+ron = "0.12"
+serde = { version = "1", features = ["derive"] }
+rand = "0.10"
 shared = { path = "crates/shared" }
 
 # Fast iterative builds: optimise dependencies even in dev.
