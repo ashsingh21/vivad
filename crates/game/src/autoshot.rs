@@ -48,6 +48,8 @@ impl Plugin for AutoshotPlugin {
                     ("12_house_interior", v(0.0, 0.0, 0.0), v(0.0, 0.0, 0.0)),
                     ("13_kashi_temple", v(150.0, 9.0, 40.0), v(125.0, 8.0, 15.0)),
                     ("14_chowk_temple", v(-9.0, 4.0, 22.0), v(0.0, 7.0, -2.0)),
+                    ("15_hampi_gopuram", v(-120.0, 6.0, -120.0), v(-131.0, 10.0, -161.0)),
+                    ("16_hampi_temple", v(-95.0, 7.0, -112.0), v(-110.0, 5.0, -123.0)),
                 ],
                 index: 0,
                 frames: 0,

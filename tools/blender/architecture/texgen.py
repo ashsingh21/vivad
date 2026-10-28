@@ -174,7 +174,7 @@ def write_set(out_dir, name, col, nrm, ao, rough):
 
 # ------------------------------------------------------------------ building materials (tiling, 2 m)
 
-def plaster(out_dir, size=1024, seed=11):
+def plaster(out_dir, size=1024, seed=11, name="plaster", tint=(1.0, 0.985, 0.96), grime=0.08):
     """Lime plaster, near-white so it can be tinted (white / ochre / Jodhpur blue) by the material.
     Trowel waves, hairline cracks, damp staining toward the bottom of each tile."""
     rng = np.random.default_rng(seed)
@@ -185,9 +185,9 @@ def plaster(out_dir, size=1024, seed=11):
     y = np.mgrid[0:size, 0:size][0].astype(np.float32) / size
     stain = periodic_noise(size, size, rng, 3, 2) * 0.5
     hgt = 0.6 * trowel + 0.08 * speck - 0.5 * crack
-    col = np.dstack([0.93 - 0.06 * trowel - 0.25 * crack - 0.08 * stain] * 3)
-    col *= np.array([1.0, 0.985, 0.96], dtype=np.float32)
-    write_set(out_dir, "plaster", np.clip(col, 0, 1), normal_from_height(hgt, 2.0), 1 - 0.4 * crack, 0.9 - 0.05 * trowel)
+    col = np.dstack([0.93 - 0.06 * trowel - 0.25 * crack - grime * stain * 4] * 3)
+    col *= np.array(tint, dtype=np.float32)
+    write_set(out_dir, name, np.clip(col, 0, 1), normal_from_height(hgt, 2.0), 1 - 0.4 * crack, 0.9 - 0.05 * trowel)
 
 
 def brick(out_dir, size=1024, seed=12):

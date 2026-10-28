@@ -68,6 +68,20 @@ pub const TREE_BANYAN: &str = "models/props/tree_banyan.glb";
 pub const BUSH_LANTANA: &str = "models/props/bush_lantana.glb";
 pub const BUSH_BOUGAINVILLEA: &str = "models/props/bush_bougainvillea.glb";
 pub const TEMPLE_NAGARA: &str = "models/props/temple_nagara.glb";
+pub const TEMPLE_DRAVIDA: &str = "models/props/temple_dravida.glb";
+pub const GOPURAM: &str = "models/props/gopuram.glb";
+pub const STONE_CHARIOT: &str = "models/props/stone_chariot.glb";
+pub const ROCKS: [&str; 3] = ["models/props/rock_a.glb", "models/props/rock_b.glb", "models/props/rock_c.glb"];
+
+/// Run `build`, hide everything it made (gameplay colliders only), and show `model` instead.
+fn art_over(b: &mut Builder, model: &'static str, f: Frame, scale: f32, build: impl FnOnce(&mut Builder)) {
+    let first = b.map.blocks.len();
+    build(b);
+    for blk in &mut b.map.blocks[first..] {
+        blk.visible = false;
+    }
+    b.map.props.push(Prop { model, pos: f.origin, yaw: f.yaw, scale, trunk: None });
+}
 
 fn prop(b: &mut Builder, model: &'static str, pos: Vec3, yaw: f32, scale: f32) {
     let trunk = match model {
@@ -387,12 +401,12 @@ fn corbels(b: &mut Builder, f: Frame, a: Vec2, c: Vec2, y: f32, thick: f32, mat:
 /// Nagara-style temple: plinth, pillared mandapa, sanctum with a shikhara tower.
 /// The blocks below are the gameplay colliders; the visible art is the `TEMPLE_NAGARA` model.
 fn temple(b: &mut Builder, rng: &mut SmallRng, f: Frame, scale: f32) {
-    let first = b.map.blocks.len();
-    temple_blocks(b, rng, f, scale);
-    for blk in &mut b.map.blocks[first..] {
-        blk.visible = false;
-    }
-    b.map.props.push(Prop { model: TEMPLE_NAGARA, pos: f.origin, yaw: f.yaw, scale, trunk: None });
+    art_over(b, TEMPLE_NAGARA, f, scale, |b| temple_blocks(b, rng, f, scale));
+}
+
+/// The same footprint in the Vijayanagara (Dravidian) style, for Hampi.
+fn temple_dravida(b: &mut Builder, rng: &mut SmallRng, f: Frame, scale: f32) {
+    art_over(b, TEMPLE_DRAVIDA, f, scale, |b| temple_blocks(b, rng, f, scale));
 }
 
 fn temple_blocks(b: &mut Builder, rng: &mut SmallRng, f: Frame, scale: f32) {
@@ -485,16 +499,25 @@ fn hampi(b: &mut Builder, rng: &mut SmallRng) {
     let c = Vec3::new(-140.0, 0.0, -130.0);
     let f = Frame::new(c, 0.25);
     // Granite boulder piles.
-    for _ in 0..34 {
+    let rock = |b: &mut Builder, rng: &mut SmallRng, p: Vec3, r: f32| {
+        b.push(f.p(p), f.rot(), super::Shape::Sphere(r * 0.92), Mat::Granite, true, false);
+        let model = ROCKS[rng.random_range(0..ROCKS.len())];
+        b.ornament(f, p, rng.random_range(0.0..std::f32::consts::TAU), model, Vec3::splat(r));
+    };
+    for _ in 0..40 {
         let r = rng.random_range(1.6..6.5);
         let p = Vec3::new(rng.random_range(-55.0..55.0), r * 0.35, rng.random_range(-50.0..50.0));
-        if p.xz().length() < 18.0 {
+        // Keep the mandapa, chariot, gopuram passage and temple clear.
+        let keep_clear = [(Vec2::ZERO, 18.0), (Vec2::new(0.0, 22.0), 9.0), (Vec2::new(0.0, -32.0), 14.0), (Vec2::new(30.0, 10.0), 16.0)];
+        if keep_clear.iter().any(|(c, rad)| p.xz().distance(*c) < rad + r * 0.6) {
             continue;
         }
-        b.sphere(f, p, r, Mat::Granite, true);
-        if r > 4.0 && rng.random_bool(0.5) {
-            let r2 = r * 0.55;
-            b.sphere(f, p + Vec3::new(r * 0.3, r * 0.75 + r2 * 0.4, 0.0), r2, Mat::Granite, true);
+        rock(b, rng, p, r);
+        // Hampi's famous balancing boulders.
+        if r > 3.5 && rng.random_bool(0.55) {
+            let r2 = r * rng.random_range(0.45..0.65);
+            let dz = rng.random_range(-0.5..0.5);
+            rock(b, rng, p + Vec3::new(r * 0.25, r * 0.6 + r2 * 0.55, dz), r2);
         }
     }
     // Ruined mandapa: a grid of pillars with partial roof slabs.
@@ -512,24 +535,34 @@ fn hampi(b: &mut Builder, rng: &mut SmallRng) {
     b.chest(f, Vec3::new(-6.0, 0.6, 0.0), 0.0, ChestKind::Peti);
     // Stone chariot.
     let cf = f.child(Vec3::new(0.0, 0.0, 22.0), 0.0);
+    let first_chariot = b.map.blocks.len();
     b.span(cf, Vec3::new(-3.0, 0.0, -2.2), Vec3::new(3.0, 2.2, 2.2), Mat::Granite);
     for (x, z) in [(-1.6, -2.6), (1.6, -2.6), (-1.6, 2.6), (1.6, 2.6)] {
         b.push(cf.p(Vec3::new(x, 1.3, z)), cf.rot() * Quat::from_rotation_x(FRAC_PI_2),
                super::Shape::Cylinder { radius: 1.3, height: 0.4 }, Mat::Granite, true, true);
     }
     b.tower(cf, Vec3::new(0.0, 2.2, 0.0), 4.0, 3.0, 4.5, 3, 0.55, Mat::Granite);
+    for blk in &mut b.map.blocks[first_chariot..] {
+        blk.visible = false;
+    }
+    b.map.props.push(Prop { model: STONE_CHARIOT, pos: cf.origin, yaw: cf.yaw, scale: 1.0, trunk: None });
     // Gopuram gateway: two massive piers and a stepped tower above the passage.
     let gf = f.child(Vec3::new(0.0, 0.0, -32.0), 0.0);
+    let first_gate = b.map.blocks.len();
     b.span(gf, Vec3::new(-9.0, 0.0, -3.0), Vec3::new(-2.5, 7.0, 3.0), Mat::Granite);
     b.span(gf, Vec3::new(2.5, 0.0, -3.0), Vec3::new(9.0, 7.0, 3.0), Mat::Granite);
     b.span(gf, Vec3::new(-9.0, 7.0, -3.0), Vec3::new(9.0, 8.0, 3.0), Mat::Granite);
     b.tower(gf, Vec3::new(0.0, 8.0, 0.0), 16.0, 5.5, 14.0, 6, 0.6, Mat::Brick);
-    b.chest(gf, Vec3::new(-5.5, 8.0, 0.0), 0.0, ChestKind::Kalash);
+    for blk in &mut b.map.blocks[first_gate..] {
+        blk.visible = false;
+    }
+    b.map.props.push(Prop { model: GOPURAM, pos: gf.origin, yaw: gf.yaw, scale: 1.0, trunk: None });
+    b.chest(gf, Vec3::new(-1.8, 0.0, 1.5), 0.0, ChestKind::Kalash); // in the gateway passage
     b.stairs(gf.child(Vec3::new(-9.0, 0.0, 4.5), 0.0), Vec3::ZERO, 10.0, 7.0, 2.0, Mat::Granite);
     for _ in 0..6 {
         b.loot(f, Vec3::new(rng.random_range(-40.0..40.0), 0.3, rng.random_range(-40.0..40.0)));
     }
-    temple(b, rng, f.child(Vec3::new(30.0, 0.0, 10.0), -FRAC_PI_2), 0.8);
+    temple_dravida(b, rng, f.child(Vec3::new(30.0, 0.0, 10.0), -FRAC_PI_2), 0.8);
 }
 
 // ------------------------------------------------------------------ Garh Qila
