@@ -28,6 +28,15 @@ figures:
 characters:
     for v in male female; do {{blender}} -b -P tools/blender/characters/human.py -- $v 2>&1 | grep -E '^\[|Error|Traceback' || true; done
 
+# Head shots of the exported characters (front and three-quarter): just faces, or just faces after
+faces tag="latest":
+    {{blender}} -b --factory-startup -P tools/blender/characters/portrait.py -- previews/faces/{{tag}} 64 2>&1 | grep -E '^\[|Error|Traceback' || true
+    python3 tools/shots.py sheet previews/faces/{{tag}} -o previews/faces_{{tag}}.png --cols 4 --width 1600
+
+# Quick face iteration without garments or bake (~1 min): just face-lab female, just face-lab male "x1.5 hair=short04"
+face-lab variant opts="":
+    {{blender}} -b -P tools/blender/characters/face_lab.py -- previews/faces/lab {{variant}} {{opts}} 2>&1 | grep -E '^\[|Error|Traceback' || true
+
 # Warrior animation clips, per rig (needs build/char_<variant>_final.blend from `just characters`).
 # Prints foot slide per clip; add `-- male --preview DIR --clips run_f,idle` for pose renders.
 anims:

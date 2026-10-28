@@ -15,6 +15,9 @@ import export
 from nodes import Graph, new_material
 
 # Target skin tone (sRGB) for South Asian warm brown, per variant.
+# Alpha cards: (part, tint sRGB, how far the texture is pulled to the tint).
+CARDS = (("hair", (0.045, 0.032, 0.026), 0.7), ("eyebrows", (0.035, 0.025, 0.02), 0.85), ("eyelashes", (0.03, 0.02, 0.02), 0.6))
+
 SKIN_TONE = {"male": (0.66, 0.44, 0.31), "female": (0.71, 0.48, 0.35)}
 
 CLOTH = {
@@ -56,7 +59,10 @@ def find_image(obj):
 
 # ------------------------------------------------------------------ materials
 
-def skin_material(variant, img):
+def skin_material(variant, img, marks=None):
+    """The MakeHuman skin texture re-centred on our tone, with pores, mottling and the face marks
+    `face.decorate` stored on the proxy (`marks`): stubble (the `beard` attribute), kajal round
+    the eyes, a bindi."""
     m = new_material(f"{variant}_skin")
     g = Graph(m)
     uv = g.node("ShaderNodeUVMap", uv_map="src").outputs["UV"]
@@ -68,13 +74,67 @@ def skin_material(variant, img):
     co = g.texcoord("Object")
     pores = g.noise(co, 900.0, detail=2.0, rough=0.6)
     mottle = g.noise(co, 25.0, detail=3.0)
+    # The texture's freckle speckle reads as grain at game scale: keep only part of it.
+    ratio = g.mixc(0.3, ratio, (*target, 1))
     base = g.node("ShaderNodeMix", data_type="RGBA", clamp_factor=True)
-    g.set(base.inputs[0], g.mul(g.sub(mottle, 0.5), 0.15))
+    g.set(base.inputs[0], g.mul(g.sub(mottle, 0.5), 0.12))
     g.set(base.inputs[6], ratio)
     base.inputs[7].default_value = (*srgb_to_lin((0.45, 0.24, 0.16)), 1)
-    rough = g.add(0.48, g.mul(pores, 0.12))
-    normal = g.bump(g.add(g.mul(pores, 0.6), g.mul(mottle, 0.2)), 0.08, 0.0006)
-    g.principled(base.outputs[2], 0.0, rough, normal)
+    col = base.outputs[2]
+    rough = g.add(0.5, g.mul(pores, 0.1))
+    marks = marks or {}
+    if marks.get("beard"):
+        # Shaved stubble: fine dark dots over a faint blue-brown shadow.
+        dots = g.smooth(g.noise(co, 2600.0, detail=0.0), 0.5, 0.62)
+        amount = g.mul(g.attr("beard"), g.add(0.5, g.mul(dots, 0.4)))
+        col = g.mixc(amount, col, (*srgb_to_lin((0.075, 0.058, 0.055)), 1))
+        rough = g.add(rough, g.mul(g.attr("beard"), 0.1))
+    if marks.get("eyes"):
+        # Kajal: a soft dark line hugging each eye, heavier along the upper lid.
+        e = list(marks["eyes"])
+        el, er, rad = e[0:3], e[3:6], e[6]
+        xyz = g.node("ShaderNodeSeparateXYZ", {"Vector": co}).outputs
+        for c in (el, er):
+            # Elliptical distance with the lid opening (about 0.8 x 0.4 of the eyeball radius) at 1.
+            dx = g.mul(g.sub(xyz["X"], c[0]), 1.0 / (0.8 * rad))
+            dz = g.sub(xyz["Z"], c[2])
+            d = g.vec("LENGTH", g.combine(dx, g.mul(dz, 1.0 / (0.42 * rad)), 0.0))
+            line = g.band(d, 0.92, 1.12, 0.12)
+            # Bold along the upper lid, a fine line beneath.
+            line = g.mul(line, g.add(0.35, g.mul(g.smooth(dz, -0.1 * rad, 0.2 * rad), 0.55)))
+            col = g.mixc(line, col, (*srgb_to_lin((0.045, 0.03, 0.028)), 1))
+    if marks.get("bindi"):
+        d = g.vec("DISTANCE", co, tuple(marks["bindi"]))
+        dot = g.smooth(d, 0.0036, 0.0029)
+        col = g.mixc(dot, col, (*srgb_to_lin((0.55, 0.02, 0.05)), 1))
+        rough = g.mix(dot, rough, 0.45)
+    normal = g.bump(g.add(g.mul(pores, 0.6), g.mul(mottle, 0.2)), 0.04, 0.0005)
+    g.principled(col, 0.0, rough, normal)
+    return m
+
+
+def eye_material(name, img):
+    """MakeHuman's brown iris pulled toward a deep, less red brown; wet and glossy."""
+    m = new_material(name)
+    g = Graph(m)
+    uv = g.node("ShaderNodeUVMap", uv_map="src").outputs["UV"]
+    tex = g.node("ShaderNodeTexImage", {"Vector": uv}, image=img)
+    hsv = g.node("ShaderNodeHueSaturation", {"Color": tex.outputs["Color"]})
+    hsv.inputs["Hue"].default_value = 0.52
+    hsv.inputs["Saturation"].default_value = 0.7
+    hsv.inputs["Value"].default_value = 0.9
+    g.principled(hsv.outputs["Color"], 0.0, 0.06)
+    return m
+
+
+def hair_mesh_material(name):
+    """Sculpted facial hair: near-black brown with fine strands running down the lip."""
+    m = new_material(name)
+    g = Graph(m)
+    co = g.texcoord("Object")
+    strands = g.noise(g.mapping(co, scale=(1, 1, 0.06)), 2200.0, detail=1.0)
+    col = g.mixc(g.mul(strands, 0.7), (*srgb_to_lin((0.045, 0.033, 0.027)), 1), (*srgb_to_lin((0.13, 0.095, 0.075)), 1))
+    g.principled(col, 0.0, g.add(0.62, g.mul(strands, 0.2)), g.bump(strands, 0.6, 0.0005))
     return m
 
 
@@ -143,15 +203,31 @@ def metal_material(name, rgb, rough=0.28, metallic=1.0):
     return m
 
 
+def tinted_image(name, img, tint_srgb, strength):
+    """A copy of a card texture pulled toward `tint` (keeping its strand shading), packed so the
+    glTF export carries the colour: the exporter can't follow a node recolour."""
+    import numpy as np
+    w, h = img.size
+    px = np.empty(w * h * 4, dtype=np.float32)
+    img.pixels.foreach_get(px)
+    px = px.reshape(-1, 4)
+    lum = px[:, :3] @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+    # Byte images hand back their stored (sRGB-encoded) values, so tint in sRGB.
+    tint = np.array(tint_srgb, dtype=np.float32)
+    px[:, :3] = px[:, :3] * (1 - strength) + np.outer(lum * 1.8, tint) * strength
+    out = bpy.data.images.new(f"{name}_tinted", w, h, alpha=True)
+    out.colorspace_settings.name = img.colorspace_settings.name
+    out.pixels.foreach_set(px.ravel())
+    out.pack()
+    return out
+
+
 def alpha_card_material(name, img, tint_srgb, strength):
     """Hair / brows / lashes: texture recoloured toward `tint`, alpha-tested."""
     m = new_material(name)
     g = Graph(m)
-    tex = g.node("ShaderNodeTexImage", image=img)
-    bw = g.node("ShaderNodeRGBToBW", {"Color": tex.outputs["Color"]}).outputs["Val"]
-    tint = srgb_to_lin(tint_srgb)
-    col = g.mixc(strength, tex.outputs["Color"], g.combine(*(g.mul(bw, t * 2.2) for t in tint)))
-    p = g.principled(col, 0.0, 0.45)
+    tex = g.node("ShaderNodeTexImage", image=tinted_image(name, img, tint_srgb, strength))
+    p = g.principled(tex.outputs["Color"], 0.0, 0.45)
     cut = g.math("GREATER_THAN", tex.outputs["Alpha"], 0.5)
     g.set(p.inputs["Alpha"], cut)
     return m
@@ -205,11 +281,12 @@ def finish_character(variant, rig, proxy, parts, items, root):
     # --- materials per source object
     skin_img = find_image(proxy)
     proxy.data.materials.clear()
-    proxy.data.materials.append(skin_material(variant, skin_img))
+    marks = {"beard": "beard" in proxy.data.attributes, "eyes": proxy.get("eyes"), "bindi": proxy.get("bindi")}
+    proxy.data.materials.append(skin_material(variant, skin_img, marks))
     eyes = parts["eyes"]
     eye_img = find_image(eyes)
     eyes.data.materials.clear()
-    eyes.data.materials.append(textured_material(f"{variant}_eyes", eye_img, 0.12))
+    eyes.data.materials.append(eye_material(f"{variant}_eyes", eye_img))
     opaque = [proxy, eyes]
     for obj, role in items:
         kind = obj.get("kind", "cloth")
@@ -218,6 +295,8 @@ def finish_character(variant, rig, proxy, parts, items, root):
             obj.data.materials.append(metal_material("gold", (1.0, 0.76, 0.36)))
         elif kind == "silver":
             obj.data.materials.append(metal_material("silver", (0.86, 0.87, 0.89), 0.25))
+        elif kind == "hairmesh":
+            obj.data.materials.append(hair_mesh_material(obj.name))
         elif kind == "lacquer":
             obj.data.materials.append(metal_material("lacquer", (0.62, 0.06, 0.08), 0.18, 0.0))
         else:
@@ -254,8 +333,7 @@ def finish_character(variant, rig, proxy, parts, items, root):
 
     # --- alpha cards: hair, brows, lashes
     cards = []
-    for key, tint, strength in (("hair", (0.05, 0.035, 0.03), 0.92), ("eyebrows", (0.05, 0.035, 0.03), 0.6),
-                                ("eyelashes", (0.03, 0.02, 0.02), 0.5)):
+    for key, tint, strength in CARDS:
         o = parts.get(key)
         if o is None or o.name not in bpy.data.objects:
             continue

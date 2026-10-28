@@ -22,6 +22,7 @@ import numpy as np  # noqa: E402
 from mathutils import Vector  # noqa: E402
 from mathutils.bvhtree import BVHTree  # noqa: E402
 
+import face  # noqa: E402
 import garments  # noqa: E402
 import outfits  # noqa: E402
 
@@ -42,6 +43,13 @@ VARIANTS = {
         "skin": "skins/young_african_male/young_african_male.mhmat",
         "hair": "hair/short02/short02.mhclo",
         "brows": "eyebrows/eyebrow006/eyebrow006.mhclo",
+        "eyes": "brown",
+        # Face detail targets (MPFB data/targets/<group>/<name>), weight 0..1: a narrower, longer
+        # nose with a slight bridge, finer lips, eyes opened a little.
+        "face": {"nose/nose-scale-horiz-decr": 0.7, "nose/nose-flaring-decr": 0.9, "nose/nose-point-width-decr": 0.7,
+                 "nose/nose-hump-incr": 0.5, "nose/nose-scale-vert-incr": 0.4,
+                 "mouth/mouth-lowerlip-volume-decr": 0.7, "mouth/mouth-upperlip-volume-decr": 0.6, "mouth/mouth-scale-horiz-decr": 0.3,
+                 "eyes/l-eye-height2-incr": 0.7, "eyes/r-eye-height2-incr": 0.7, "eyes/l-eye-scale-incr": 0.3, "eyes/r-eye-scale-incr": 0.3},
         "outfit": outfits.male_warrior,
     },
     "female": {
@@ -49,8 +57,12 @@ VARIANTS = {
                   "cupsize": 0.45, "firmness": 0.6, "race": {"asian": 0.22, "caucasian": 0.48, "african": 0.30}},
         "proxy": "proxymeshes/female_generic/female_generic.proxy",
         "skin": "skins/young_african_female/young_african_female.mhmat",
-        "hair": "hair/braid01/braid01.mhclo",
+        "hair": "hair/long01/long01.mhclo",
         "brows": "eyebrows/eyebrow010/eyebrow010.mhclo",
+        "eyes": "brown",
+        "face": {"nose/nose-scale-horiz-decr": 0.7, "nose/nose-flaring-decr": 0.9, "nose/nose-point-width-decr": 0.7,
+                 "mouth/mouth-lowerlip-volume-decr": 0.5, "mouth/mouth-upperlip-volume-decr": 0.5, "mouth/mouth-scale-horiz-decr": 0.2,
+                 "eyes/l-eye-height2-incr": 0.8, "eyes/r-eye-height2-incr": 0.8, "eyes/l-eye-scale-incr": 0.35, "eyes/r-eye-scale-incr": 0.35},
         "outfit": outfits.female_warrior,
     },
 }
@@ -60,9 +72,15 @@ def clear_scene():
     bpy.ops.wm.read_homefile(use_empty=True)
 
 
+TARGETS = os.path.expanduser("~/.config/blender/5.2/extensions/blender_org/mpfb/data/targets")
+
+
 def build_body(cfg):
     hs = mpfb()
     body = hs.create_human(macro_detail_dict=cfg["macro"])
+    from bl_ext.blender_org.mpfb.services.targetservice import TargetService
+    for name, w in cfg.get("face", {}).items():
+        TargetService.load_target(body, os.path.join(TARGETS, f"{name}.target.gz"), weight=w)
     rig = hs.add_builtin_rig(body, "game_engine")
     proxy = hs.add_mhclo_asset(os.path.join(MPFB_DATA, cfg["proxy"]), body, asset_type="Proxymeshes", subdiv_levels=0)
     hs.set_character_skin(os.path.join(MPFB_DATA, cfg["skin"]), body, skin_type="GAMEENGINE")
@@ -126,8 +144,11 @@ def main():
     ctx = garments.BodyContext(proxy, rig, bone_weight_map(proxy))
     ctx.brow_top = max((parts["eyebrows"].matrix_world @ v.co).z for v in parts["eyebrows"].data.vertices)
     items = cfg["outfit"](ctx)          # list of (object, role) where role in {"cover", "accessory", "hair_replace"}
+    items += face.decorate(variant, proxy, parts, ctx)
     if any(role == "hair_replace" for _, role in items):
-        bpy.data.objects.remove(parts.pop("hair"))
+        # Short hair shows below the turban's lower edge (no bare scalp); the rest is inside it.
+        cut = face.trim_hair(parts["hair"], ctx.brow_top + 0.02)
+        print(f"[{variant}] hair: {cut} faces hidden by the turban removed")
     covers = [o for o, role in items if role == "cover"]
     removed = delete_hidden_body(proxy, covers)
     print(f"[{variant}] removed {removed} hidden body faces")

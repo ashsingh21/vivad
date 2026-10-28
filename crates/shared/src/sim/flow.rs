@@ -101,11 +101,13 @@ pub fn start_match(world: &mut World) {
 
     let melee = world.resource::<ItemDb>().default_melee.clone();
     let mut names: Vec<&str> = BOT_NAMES.to_vec();
+    // VIVAD_LOOK=1 swaps every warrior's look (the player's body) for captures.
+    let look_shift = std::env::var("VIVAD_LOOK").ok().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
     for i in 0..=bots {
         let is_bot = i > 0;
         let name = if is_bot { names.remove(rng.random_range(0..names.len())).to_string() } else { "You".into() };
         let mut e = world.spawn((
-            Warrior { name, is_bot, look: i, kills: 0 },
+            Warrior { name, is_bot, look: i + look_shift, kills: 0 },
             Health::default(),
             Inventory::new(&melee),
             Action::default(),

@@ -99,7 +99,7 @@ upper limb toward the thumb, edge or bow's back along the hand); see `crates/gam
 | studio_small_09 HDRI (2k) | [Poly Haven](https://polyhaven.com/a/studio_small_09) | CC0 | Preview renders (alternative) |
 
 | MPFB (MakeHuman plugin for Blender) | [extensions.blender.org/add-ons/mpfb](https://extensions.blender.org/add-ons/mpfb/) | GPL (tool only); generated humans are CC0 | Character base bodies, rig (`game_engine`) |
-| MakeHuman system assets (`makehuman_system_assets_cc0.zip`, sha256 `b542127a…0107`) | [makehumancommunity.org](https://static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html) | CC0 | Body proxies, skin detail (re-toned), eyes, brows, lashes, braid hair |
+| MakeHuman system assets (`makehuman_system_assets_cc0.zip`, sha256 `b542127a…0107`) | [makehumancommunity.org](https://static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html) | CC0 | Body proxies, skin detail (re-toned), eyes, brows, lashes, hair (long01, short02) |
 
 All other textures are generated: weapons and characters are baked from procedural Blender
 materials (`tools/blender/lib/`, `tools/blender/characters/finish.py`); leaf and bark textures are
@@ -111,7 +111,12 @@ Generic male and female warriors, stylized realistic, warm brown South Asian ski
 - Male: off-white dhoti with zari border and pleated fold, maroon kamarband, saffron angavastram,
   red pagdi (crossed wraps, bandhani dots), gold bajuband, kada and hansuli.
 - Female: Maratha nauvari (nine-yard) saree worn for movement, nirya pleats, pallu, maroon choli,
-  gold kamarbandh, bangles, bajuband, silver payal, braid.
+  gold kamarbandh, bangles, bajuband, silver payal, long centre-parted hair, bindi and kajal.
+- Faces: MPFB detail targets (narrower nose and nostrils, a slight bridge on the male, finer
+  lips, eyes a little larger and more open) over the race macros, in `human.py` VARIANTS.
+  `face.py` measures eyes and nose tip on the mesh and adds the male's moustache (a sculpted
+  tube on the lip) and stubble (a `beard` attribute the skin shader darkens), and trims his hair
+  to what shows below the pagdi. Check with `just faces` (exported GLB) or `just face-lab`.
 - Rig: MPFB `game_engine` (53 bones). GLB faces +Z with origin at the feet; the game turns it to -Z.
 - Budget: LOD0 30k, LOD1 13.5k, LOD2 5.4k tris; one 2k opaque texture set + alpha hair cards.
 
