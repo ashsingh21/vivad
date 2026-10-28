@@ -525,6 +525,8 @@ fn haveli(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, mat: Ma
             // Jharokhas get their balcony instead of an arch.
             let arched: Vec<Opening> = walls[i].iter().copied().filter(|o| !(k > 0 && i == 0 && o.top > 2.3)).collect();
             b.arch_openings(f, a, c, y0, t, &arched);
+            // The outward windows are screened with jali, as in a zenana; the court stays open.
+            b.jalis(f, a, c, y0, &arched);
             if k > 0 {
                 band(b, f, a, c, y0 - 0.08, 0.16, t + 0.12, trim);
             }

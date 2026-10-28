@@ -271,6 +271,61 @@ def chhatri(name="chhatri"):
     return finish_piece(name, kit)
 
 
+def jali(name="jali"):
+    """A pierced stone screen filling a 1.2 x 1.2 m window hole (sill at z = 0) on the wall's centre
+    plane: a 4 cm slab whose two faces carry the alpha-tested lattice (texgen.jali). The arch
+    surround's spandrel covers its top corners."""
+    m = bpy.data.materials.new("jali")
+    m.use_nodes = True
+    m.use_backface_culling = False
+    nt = m.node_tree
+    p = nt.nodes["Principled BSDF"]
+
+    def img(fn, non_color):
+        n = nt.nodes.new("ShaderNodeTexImage")
+        n.image = bpy.data.images.load(os.path.join(T.TEX, fn))
+        if non_color:
+            n.image.colorspace_settings.name = "Non-Color"
+        return n
+
+    base = img("jali_basecolor.png", False)
+    nt.links.new(base.outputs["Color"], p.inputs["Base Color"])
+    cut = nt.nodes.new("ShaderNodeMath")
+    cut.operation = "GREATER_THAN"
+    cut.inputs[1].default_value = 0.5
+    nt.links.new(base.outputs["Alpha"], cut.inputs[0])
+    nt.links.new(cut.outputs[0], p.inputs["Alpha"])
+    orm = img("jali_orm.png", True)
+    sep = nt.nodes.new("ShaderNodeSeparateColor")
+    nt.links.new(orm.outputs["Color"], sep.inputs["Color"])
+    nt.links.new(sep.outputs["Green"], p.inputs["Roughness"])
+    occ = nt.nodes.new("ShaderNodeGroup")
+    occ.node_tree = export.gltf_output_group()
+    nt.links.new(sep.outputs["Red"], occ.inputs["Occlusion"])
+    nm = nt.nodes.new("ShaderNodeNormalMap")
+    nt.links.new(img("jali_normal.png", True).outputs["Color"], nm.inputs["Color"])
+    nt.links.new(nm.outputs["Normal"], p.inputs["Normal"])
+
+    bm = bmesh.new()
+    uv = bm.loops.layers.uv.new("UVMap")
+    a, h, t = 0.6, 1.2, 0.02
+    for side in (-1, 1):
+        y = side * t
+        vs = [bm.verts.new(v) for v in ((-a, y, 0), (a, y, 0), (a, y, h), (-a, y, h))]
+        f = bm.faces.new(vs if side < 0 else list(reversed(vs)))
+        for loop in f.loops:
+            co = loop.vert.co
+            # Mirror U on the back face so the pattern lines up through the slab.
+            loop[uv].uv = ((co.x + a) / (2 * a), co.z / h)
+    me = bpy.data.meshes.new(f"{name}_LOD0")
+    bm.to_mesh(me)
+    bm.free()
+    obj = bpy.data.objects.new(f"{name}_LOD0", me)
+    bpy.context.scene.collection.objects.link(obj)
+    me.materials.append(m)
+    return obj
+
+
 def finish_piece(name, kit):
     obj = geo.join(kit.objs, f"{name}_LOD0")
     obj.data.set_sharp_from_angle(angle=math.radians(40))
@@ -284,6 +339,7 @@ def main():
     export.reset_scene()
     texgen.sandstone(T.TEX)
     texgen.trim_sheet(T.TEX)
+    texgen.jali(T.TEX)
     T.MATS.update({
         "stone": T.tex_material("sandstone", "sandstone"),
         "trim": T.tex_material("trim", "trim"),
@@ -297,13 +353,15 @@ def main():
                                           chhajja=False, pilasters=False),
         "jharokha": jharokha,
         "chhatri": chhatri,
+        "jali": jali,
     }
     for key, make in pieces.items():
         bpy.ops.object.select_all(action="DESELECT")
         for o in list(bpy.data.objects):
             bpy.data.objects.remove(o)
         obj = make()
-        T.bake_weathering(obj)
+        if key != "jali":
+            T.bake_weathering(obj)
         counts = export.export_glb([obj], os.path.join(OUT, f"{key}.gltf"))
         print(f"[ornament] {key}: {counts}")
 

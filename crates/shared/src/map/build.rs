@@ -5,6 +5,8 @@ use bevy::prelude::*;
 use super::{Block, ChestKind, ChestSpawn, Mat, MapLayout, Ornament, Shape};
 
 pub const ARCH_WINDOW: &str = "models/props/arch_window.gltf";
+/// Pierced stone screen for a window hole (1.2 x 1.2 m, sill at its base), on the wall's centre plane.
+pub const JALI: &str = "models/props/jali.gltf";
 pub const ARCH_DOOR: &str = "models/props/arch_door.gltf";
 pub const ARCH_GATE: &str = "models/props/arch_gate.gltf";
 pub const JHAROKHA: &str = "models/props/jharokha.gltf";
@@ -180,6 +182,17 @@ impl<'a> Builder<'a> {
                 (ARCH_WINDOW, 1.2, 1.2, 0.35)
             };
             self.ornament(wf, Vec3::new(o.at, o.bottom, 0.0), 0.0, model, Vec3::new(o.width / w0, h / h0, thick / t0));
+        }
+    }
+
+    /// Jali screens in the window openings of a wall (doors and arches stay open). Visual only:
+    /// like the lattice's holes, arrows pass.
+    pub fn jalis(&mut self, f: Frame, a: Vec2, b: Vec2, y0: f32, openings: &[Opening]) {
+        let dir = b - a;
+        let yaw = (-dir.y).atan2(dir.x);
+        let wf = f.child(Vec3::new(a.x, y0, a.y), yaw);
+        for o in openings.iter().filter(|o| o.bottom > 0.0) {
+            self.ornament(wf, Vec3::new(o.at, o.bottom, 0.0), 0.0, JALI, Vec3::new(o.width / 1.2, (o.top - o.bottom) / 1.2, 1.0));
         }
     }
 

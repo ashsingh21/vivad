@@ -155,22 +155,62 @@ def trim_sheet(out_dir, w=1024, strip_h=256, seed=4, tint=(0.80, 0.62, 0.43), na
     write_set(out_dir, name, col, normal_from_height(hgt_d, 9.0), ao, rough)
 
 
-def write_set(out_dir, name, col, nrm, ao, rough):
+def jali(out_dir, size=1024, cells=6, frame=0.045, seed=21, tint=(0.80, 0.62, 0.43)):
+    """A pierced sandstone screen for a square window, `cells` x `cells` panels inside a solid
+    frame (`frame` as a fraction of the side). Each cell: an eight-pointed star of two squares
+    traced as a rib, a rosette hub on four spokes inside it, and ribs from the star's tips out to
+    the cell border. The holes go in the basecolor alpha (alpha-tested in game); ribs are rounded
+    by blurring the solid mask into a height field."""
+    rng = np.random.default_rng(seed)
+    y, x = np.mgrid[0:size, 0:size].astype(np.float32) / size
+    inner = (x > frame) & (x < 1 - frame) & (y > frame) & (y < 1 - frame)
+    u = (x - frame) / (1 - 2 * frame) * cells
+    v = (y - frame) / (1 - 2 * frame) * cells
+    px, py = (u % 1.0) - 0.5, (v % 1.0) - 0.5
+    qx, qy = (px + py) / math.sqrt(2), (px - py) / math.sqrt(2)
+    star = np.minimum(np.maximum(abs(px), abs(py)), np.maximum(abs(qx), abs(qy)))
+    w = 0.075
+    r = 0.29
+    ring = abs(star - r) < w / 2
+    border = np.maximum(abs(px), abs(py)) > 0.5 - w / 2
+    hub = np.hypot(px, py) < 0.085
+    spokes = (star < r) & ((abs(px) < w * 0.35) | (abs(py) < w * 0.35))
+    tips = (star > r) & ((abs(px) < w * 0.4) | (abs(py) < w * 0.4) | (abs(qx) < w * 0.4) | (abs(qy) < w * 0.4))
+    solid = ~inner | ring | border | hub | spokes | tips
+    # Rounded ribs: blur the mask twice; height falls toward each rib's edge.
+    hgt = solid.astype(np.float32)
+    k = 5
+    ker = np.ones(2 * k + 1, dtype=np.float32) / (2 * k + 1)
+    for _ in range(2):
+        hgt = np.apply_along_axis(lambda row: np.convolve(np.pad(row, k, mode="edge"), ker, "valid"), 1, hgt)
+        hgt = np.apply_along_axis(lambda c: np.convolve(np.pad(c, k, mode="edge"), ker, "valid"), 0, hgt)
+    hgt = np.sqrt(np.clip(hgt, 0, 1)) * solid
+    grain = periodic_noise(size, size, rng, 5, 6)
+    col = np.dstack([0.82 + 0.18 * grain] * 3) * np.array(tint, dtype=np.float32)
+    # Darker in the cut recesses, sun-bleached on the rib crowns.
+    col *= (0.72 + 0.28 * hgt)[..., None]
+    rough = 0.82 + 0.1 * grain
+    ao = 0.55 + 0.45 * hgt
+    write_set(out_dir, "jali", np.clip(col, 0, 1), normal_from_height(hgt + 0.08 * grain * solid, 6.0), ao, rough,
+              alpha=solid.astype(np.float32))
+
+
+def write_set(out_dir, name, col, nrm, ao, rough, alpha=None):
     import bpy
     os.makedirs(out_dir, exist_ok=True)
     h, w = col.shape[:2]
 
-    def save(arr, fname, non_color):
-        img = bpy.data.images.new(fname, w, h, alpha=False)
+    def save(arr, fname, non_color, a=None):
+        img = bpy.data.images.new(fname, w, h, alpha=a is not None)
         if non_color:
             img.colorspace_settings.name = "Non-Color"
-        rgba = np.dstack([arr, np.ones((h, w), dtype=np.float32)]).astype(np.float32)
+        rgba = np.dstack([arr, a if a is not None else np.ones((h, w), dtype=np.float32)]).astype(np.float32)
         img.pixels.foreach_set(np.ascontiguousarray(rgba[::-1]).ravel())
         img.filepath_raw = os.path.join(out_dir, fname)
         img.file_format = "PNG"
         img.save()
 
-    save(np.clip(col, 0, 1), f"{name}_basecolor.png", False)
+    save(np.clip(col, 0, 1), f"{name}_basecolor.png", False, alpha)
     save(nrm, f"{name}_normal.png", True)
     orm = np.dstack([ao, rough, np.zeros_like(ao)])
     save(np.clip(orm, 0, 1), f"{name}_orm.png", True)

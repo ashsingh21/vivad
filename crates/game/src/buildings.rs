@@ -250,6 +250,11 @@ fn queue_model_mips(mut events: MessageReader<AssetEvent<Image>>, assets: Res<As
 }
 
 /// Give tiling textures a full mip chain (box-filtered on the CPU) and a repeating, anisotropic sampler.
+///
+/// Cut-out textures (leaf cards, with alpha tested at 0.5) are filtered so they keep their look at
+/// a distance: colour is averaged by alpha, so the empty background doesn't darken the leaves, and
+/// each level's alpha is scaled until the same share of texels passes the cutoff as at full size.
+/// Plain averaging thins the alpha below the cutoff, so canopies go sparse and leaves blink.
 fn mipmap_textures(mut pending: ResMut<PendingMips>, mut images: ResMut<Assets<Image>>) {
     pending.0.retain(|h| {
         let Some(mut img) = images.get_mut(h) else { return true };
@@ -258,22 +263,47 @@ fn mipmap_textures(mut pending: ResMut<PendingMips>, mut images: ResMut<Assets<I
         if data.len() != w * hgt * 4 {
             return false; // only RGBA8 sources are handled
         }
+        let coverage = |px: &[u8], scale: f32| px.chunks_exact(4).filter(|p| p[3] as f32 * scale >= 127.5).count() as f32 / (px.len() / 4) as f32;
+        let full = coverage(&data, 1.0);
+        let cutout = full < 0.98 && data.chunks_exact(4).any(|p| p[3] == 0);
+        // `chain` holds the plain filtered levels; `levels` the ones uploaded (alpha rescaled).
+        let mut chain: Vec<Vec<u8>> = vec![data.clone()];
         let mut levels: Vec<Vec<u8>> = vec![data];
         let (mut cw, mut ch) = (w, hgt);
         while cw > 1 && ch > 1 {
-            let prev = levels.last().unwrap();
+            let prev = chain.last().unwrap();
             let (nw, nh) = (cw / 2, ch / 2);
             let mut next = vec![0u8; nw * nh * 4];
             for y in 0..nh {
                 for x in 0..nw {
-                    for c in 0..4 {
-                        let s = |xx: usize, yy: usize| prev[((yy * cw) + xx) * 4 + c] as u32;
-                        let v = s(2 * x, 2 * y) + s(2 * x + 1, 2 * y) + s(2 * x, 2 * y + 1) + s(2 * x + 1, 2 * y + 1);
-                        next[(y * nw + x) * 4 + c] = (v / 4) as u8;
+                    let taps = [(2 * x, 2 * y), (2 * x + 1, 2 * y), (2 * x, 2 * y + 1), (2 * x + 1, 2 * y + 1)].map(|(xx, yy)| ((yy * cw) + xx) * 4);
+                    let alpha: u32 = taps.iter().map(|&i| prev[i + 3] as u32).sum();
+                    let o = (y * nw + x) * 4;
+                    for c in 0..3 {
+                        next[o + c] = if cutout && alpha > 0 {
+                            (taps.iter().map(|&i| prev[i + c] as u32 * prev[i + 3] as u32).sum::<u32>() / alpha) as u8
+                        } else {
+                            (taps.iter().map(|&i| prev[i + c] as u32).sum::<u32>() / 4) as u8
+                        };
                     }
+                    next[o + 3] = (alpha / 4) as u8;
                 }
             }
-            levels.push(next);
+            let mut out = next.clone();
+            if cutout {
+                // Bisect the alpha scale that restores the full-size coverage.
+                let (mut lo, mut hi) = (0.25f32, 8.0f32);
+                for _ in 0..14 {
+                    let mid = (lo + hi) * 0.5;
+                    if coverage(&next, mid) < full { lo = mid } else { hi = mid }
+                }
+                let scale = (lo + hi) * 0.5;
+                for p in out.chunks_exact_mut(4) {
+                    p[3] = (p[3] as f32 * scale).min(255.0) as u8;
+                }
+            }
+            chain.push(next);
+            levels.push(out);
             cw = nw;
             ch = nh;
         }
