@@ -79,6 +79,15 @@ pub struct Prop {
     pub trunk: Option<(f32, f32)>,
 }
 
+/// A visual-only kit piece (arch surround, jharokha, chhatri) with non-uniform scale.
+#[derive(Clone, Debug, Reflect)]
+pub struct Ornament {
+    pub model: &'static str,
+    pub pos: Vec3,
+    pub rot: Quat,
+    pub scale: Vec3,
+}
+
 #[derive(Resource, Clone, Debug, Default)]
 pub struct MapLayout {
     pub name: String,
@@ -91,5 +100,6 @@ pub struct MapLayout {
     pub floor_loot: Vec<Vec3>,
     pub pois: Vec<Poi>,
     pub props: Vec<Prop>,
+    pub ornaments: Vec<Ornament>,
     pub terrain: terrain::Terrain,
 }

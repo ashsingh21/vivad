@@ -2,7 +2,13 @@
 
 use bevy::prelude::*;
 
-use super::{Block, ChestKind, ChestSpawn, Mat, MapLayout, Shape};
+use super::{Block, ChestKind, ChestSpawn, Mat, MapLayout, Ornament, Shape};
+
+pub const ARCH_WINDOW: &str = "models/props/arch_window.glb";
+pub const ARCH_DOOR: &str = "models/props/arch_door.glb";
+pub const ARCH_GATE: &str = "models/props/arch_gate.glb";
+pub const JHAROKHA: &str = "models/props/jharokha.glb";
+pub const CHHATRI: &str = "models/props/chhatri.glb";
 
 pub const FLOOR_H: f32 = 3.4;
 pub const WALL_T: f32 = 0.35;
@@ -115,6 +121,81 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Visual-only box (no collider): trims, mouldings and ornament.
+    pub fn deco(&mut self, f: Frame, local: Vec3, size: Vec3, mat: Mat) {
+        if size.min_element() <= 0.001 {
+            return;
+        }
+        self.push(f.p(local), f.rot(), Shape::Box(size), mat, false, true);
+    }
+
+    pub fn deco_cyl(&mut self, f: Frame, base: Vec3, radius: f32, height: f32, mat: Mat) {
+        self.push(f.p(base + Vec3::Y * height * 0.5), f.rot(), Shape::Cylinder { radius, height }, mat, false, true);
+    }
+
+    /// Frames, sills and drip-shades around the openings of a wall built with `wall()`.
+    pub fn opening_trims(&mut self, f: Frame, a: Vec2, b: Vec2, y0: f32, thick: f32, openings: &[Opening], mat: Mat) {
+        let dir = b - a;
+        let yaw = (-dir.y).atan2(dir.x);
+        let wf = f.child(Vec3::new(a.x, y0, a.y), yaw);
+        let depth = thick + 0.14;
+        for o in openings {
+            let (x0, x1) = (o.at - o.width / 2.0, o.at + o.width / 2.0);
+            let jw = 0.14;
+            let top = o.top + 0.16;
+            // Jambs and lintel.
+            for x in [x0 - jw / 2.0, x1 + jw / 2.0] {
+                self.deco(wf, Vec3::new(x, (o.bottom + top) / 2.0, 0.0), Vec3::new(jw, top - o.bottom, depth), mat);
+            }
+            self.deco(wf, Vec3::new(o.at, top - 0.08, 0.0), Vec3::new(o.width + 2.0 * jw + 0.1, 0.16, depth + 0.04), mat);
+            if o.bottom > 0.0 {
+                // Projecting sill.
+                self.deco(wf, Vec3::new(o.at, o.bottom - 0.05, 0.0), Vec3::new(o.width + 0.36, 0.1, thick + 0.3), mat);
+                // Chhajja: a thin drip-shade slab over the window, both faces.
+                self.deco(wf, Vec3::new(o.at, top + 0.12, 0.0), Vec3::new(o.width + 0.6, 0.07, thick + 0.7), mat);
+            }
+        }
+    }
+
+    pub fn ornament(&mut self, f: Frame, local: Vec3, yaw: f32, model: &'static str, scale: Vec3) {
+        let rot = f.rot() * Quat::from_rotation_y(yaw);
+        self.map.ornaments.push(Ornament { model, pos: f.p(local), rot, scale });
+    }
+
+    /// Arched surrounds (cusped arch, carved spandrels, pilasters) for every opening of a wall.
+    /// The rectangular hole stays the collider; the arch is visual.
+    pub fn arch_openings(&mut self, f: Frame, a: Vec2, b: Vec2, y0: f32, thick: f32, openings: &[Opening]) {
+        let dir = b - a;
+        let yaw = (-dir.y).atan2(dir.x);
+        let wf = f.child(Vec3::new(a.x, y0, a.y), yaw);
+        for o in openings {
+            let h = o.top - o.bottom;
+            let (model, w0, h0, t0) = if o.bottom <= 0.0 && o.width >= 3.0 {
+                (ARCH_GATE, 5.0, 5.0, 2.0)
+            } else if o.bottom <= 0.0 {
+                (ARCH_DOOR, 1.4, 2.4, 0.35)
+            } else {
+                (ARCH_WINDOW, 1.2, 1.2, 0.35)
+            };
+            self.ornament(wf, Vec3::new(o.at, o.bottom, 0.0), 0.0, model, Vec3::new(o.width / w0, h / h0, thick / t0));
+        }
+    }
+
+    /// Kangura crenellation: rounded merlons along the top of a wall or parapet.
+    pub fn merlons(&mut self, f: Frame, a: Vec2, b: Vec2, y: f32, thick: f32, spacing: f32, size: Vec2, mat: Mat) {
+        let dir = b - a;
+        let len = dir.length();
+        let yaw = (-dir.y).atan2(dir.x);
+        let wf = f.child(Vec3::new(a.x, y, a.y), yaw);
+        let n = (len / spacing).floor() as i32;
+        let offset = (len - (n as f32 - 1.0) * spacing) / 2.0;
+        for i in 0..n.max(0) {
+            let x = offset + i as f32 * spacing;
+            self.deco(wf, Vec3::new(x, size.y / 2.0, 0.0), Vec3::new(size.x, size.y, thick), mat);
+            self.push(wf.p(Vec3::new(x, size.y, 0.0)), wf.rot(), Shape::Sphere(size.x * 0.5), mat, false, true);
+        }
+    }
+
     /// Stairs climbing along local +X from `start` (bottom front centre) by `rise` over `run`.
     /// Visual steps without collision, plus one invisible ramp collider for smooth movement.
     pub fn stairs(&mut self, f: Frame, start: Vec3, run: f32, rise: f32, width: f32, mat: Mat) {
@@ -182,15 +263,17 @@ impl<'a> Builder<'a> {
         self.map.floor_loot.push(f.p(local));
     }
 
-    /// Chhatri: four pillars and a dome, the domed rooftop pavilion of Rajasthan.
-    pub fn chhatri(&mut self, f: Frame, base: Vec3, size: f32, mat: Mat) {
+    /// Chhatri: four pillars and a dome, the domed rooftop pavilion of Rajasthan. The pillars
+    /// and slab are colliders; the visible art is the `CHHATRI` kit piece.
+    pub fn chhatri(&mut self, f: Frame, base: Vec3, size: f32, _mat: Mat) {
         let h = size * 1.1;
         for (sx, sz) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
-            self.cyl(f, base + Vec3::new(sx * size * 0.42, 0.0, sz * size * 0.42), size * 0.07, h, mat);
+            let p = f.p(base + Vec3::new(sx * size * 0.42, h * 0.5, sz * size * 0.42));
+            self.push(p, f.rot(), Shape::Cylinder { radius: size * 0.07, height: h }, Mat::Sandstone, true, false);
         }
-        self.bx(f, base + Vec3::new(0.0, h + 0.12, 0.0), Vec3::new(size * 1.05, 0.24, size * 1.05), mat);
-        self.sphere(f, base + Vec3::new(0.0, h + 0.24, 0.0), size * 0.48, mat, true);
-        self.cyl(f, base + Vec3::new(0.0, h + 0.24 + size * 0.46, 0.0), size * 0.05, size * 0.25, Mat::Gold);
+        self.push(f.p(base + Vec3::new(0.0, h + 0.12, 0.0)), f.rot(), Shape::Box(Vec3::new(size * 1.05, 0.24, size * 1.05)), Mat::Sandstone, true, false);
+        self.push(f.p(base + Vec3::new(0.0, h + 0.24, 0.0)), f.rot(), Shape::Sphere(size * 0.48), Mat::Sandstone, true, false);
+        self.ornament(f, base, 0.0, CHHATRI, Vec3::splat(size));
     }
 
     /// Tapered tower of stacked slabs (shikhara / gopuram silhouette).

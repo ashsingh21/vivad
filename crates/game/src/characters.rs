@@ -23,7 +23,8 @@ pub struct CharacterArtPlugin;
 impl Plugin for CharacterArtPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, load_models)
-            .add_systems(Update, (dress_props, dress_warriors, animate_warriors, swap_weapons));
+            .add_systems(Startup, spawn_ornaments.after(load_models))
+        .add_systems(Update, (dress_props, dress_warriors, animate_warriors, swap_weapons));
     }
 }
 
@@ -38,6 +39,9 @@ fn load_models(mut commands: Commands, assets: Res<AssetServer>, layout: Res<Map
     let mut props = HashMap::new();
     for p in &layout.props {
         props.entry(p.model).or_insert_with(|| assets.load(GltfAssetLabel::Scene(0).from_asset(p.model)));
+    }
+    for o in &layout.ornaments {
+        props.entry(o.model).or_insert_with(|| assets.load(GltfAssetLabel::Scene(0).from_asset(o.model)));
     }
     commands.insert_resource(Models {
         male: assets.load(GltfAssetLabel::Scene(0).from_asset("models/characters/male.glb")),
@@ -81,6 +85,22 @@ fn dress_props(mut commands: Commands, q: Query<(Entity, &PropIndex), Added<Prop
                 );
             });
     }
+}
+
+/// Architectural kit pieces (arches, jharokhas, chhatris): static, visual only, faded out at range.
+fn spawn_ornaments(mut commands: Commands, layout: Res<MapLayout>, models: Res<Models>) {
+    for o in &layout.ornaments {
+        let far = if o.model.contains("chhatri") || o.model.contains("gate") { 400.0 } else { 160.0 };
+        commands
+            .spawn((
+                WorldAssetRoot(models.props[o.model].clone()),
+                Transform { translation: o.pos, rotation: o.rot, scale: o.scale },
+            ))
+            .observe(move |ready: On<WorldInstanceReady>, children: Query<&Children>, names: Query<&Name>, mut commands: Commands| {
+                apply_lod_ranges(ready.entity, &[(0.0..0.0, far..far + 20.0)], &children, &names, &mut commands);
+            });
+    }
+    info!("ornaments: {}", layout.ornaments.len());
 }
 
 // ------------------------------------------------------------------ characters

@@ -170,3 +170,104 @@ def write_set(out_dir, name, col, nrm, ao, rough):
     save(nrm, f"{name}_normal.png", True)
     orm = np.dstack([ao, rough, np.zeros_like(ao)])
     save(np.clip(orm, 0, 1), f"{name}_orm.png", True)
+
+
+# ------------------------------------------------------------------ building materials (tiling, 2 m)
+
+def plaster(out_dir, size=1024, seed=11):
+    """Lime plaster, near-white so it can be tinted (white / ochre / Jodhpur blue) by the material.
+    Trowel waves, hairline cracks, damp staining toward the bottom of each tile."""
+    rng = np.random.default_rng(seed)
+    trowel = periodic_noise(size, size, rng, 4, 3)
+    speck = rng.random((size, size)).astype(np.float32)
+    cracks = periodic_noise(size, size, rng, 6, 5)
+    crack = np.clip(1 - np.abs(cracks - 0.5) / 0.012, 0, 1) * (periodic_noise(size, size, rng, 2, 2) > 0.6)
+    y = np.mgrid[0:size, 0:size][0].astype(np.float32) / size
+    stain = periodic_noise(size, size, rng, 3, 2) * 0.5
+    hgt = 0.6 * trowel + 0.08 * speck - 0.5 * crack
+    col = np.dstack([0.93 - 0.06 * trowel - 0.25 * crack - 0.08 * stain] * 3)
+    col *= np.array([1.0, 0.985, 0.96], dtype=np.float32)
+    write_set(out_dir, "plaster", np.clip(col, 0, 1), normal_from_height(hgt, 2.0), 1 - 0.4 * crack, 0.9 - 0.05 * trowel)
+
+
+def brick(out_dir, size=1024, seed=12):
+    """Small Indian bricks (lakhori-style thin bricks) in lime mortar, running bond."""
+    rng = np.random.default_rng(seed)
+    y, x = np.mgrid[0:size, 0:size].astype(np.float32) / size
+    rows, cols = 32, 8
+    row = np.floor(y * rows)
+    xs = (x * cols + 0.5 * (row % 2)) % 1.0
+    ys = (y * rows) % 1.0
+    bid = (row * cols + np.floor((x * cols + 0.5 * (row % 2)) % cols)).astype(int)
+    tone = rng.uniform(0.8, 1.15, rows * cols + 1)[bid]
+    jd = np.minimum(np.minimum(xs, 1 - xs) * (2.0 / cols) * 4, np.minimum(ys, 1 - ys) * (2.0 / rows))
+    joint = np.clip(1 - jd / 0.0045, 0, 1)
+    grain = periodic_noise(size, size, rng, 5, 8)
+    hgt = np.clip(jd / 0.01, 0, 1) * 0.8 + 0.15 * grain - 0.3 * joint
+    col = np.array([0.66, 0.34, 0.24], dtype=np.float32) * (tone * (0.85 + 0.2 * grain))[..., None]
+    col = col * (1 - joint[..., None]) + np.array([0.75, 0.70, 0.62]) * joint[..., None]
+    write_set(out_dir, "brick", np.clip(col, 0, 1), normal_from_height(hgt, 5.0), 1 - 0.5 * joint, 0.9 + 0 * hgt)
+
+
+def granite(out_dir, size=1024, seed=13):
+    """Hampi's pinkish-grey granite: speckled feldspar and biotite, broad exfoliation patches."""
+    rng = np.random.default_rng(seed)
+    big = periodic_noise(size, size, rng, 3, 2)
+    mid = periodic_noise(size, size, rng, 5, 6)
+    speck = rng.random((size, size)).astype(np.float32)
+    dark = (speck > 0.93).astype(np.float32)
+    pink = (speck < 0.10).astype(np.float32)
+    hgt = 0.5 * mid + 0.3 * big + 0.05 * speck
+    base = np.array([0.62, 0.57, 0.52], dtype=np.float32) * (0.85 + 0.25 * big)[..., None]
+    col = base * (1 - 0.6 * dark[..., None]) + np.array([0.72, 0.55, 0.50]) * 0.25 * pink[..., None]
+    col *= (0.9 + 0.15 * mid)[..., None]
+    write_set(out_dir, "granite", np.clip(col, 0, 1), normal_from_height(hgt, 3.5), 0.85 + 0.15 * mid, 0.75 + 0.15 * speck)
+
+
+def wood(out_dir, size=1024, seed=14):
+    """Weathered teak planks running along U."""
+    rng = np.random.default_rng(seed)
+    y, x = np.mgrid[0:size, 0:size].astype(np.float32) / size
+    planks = 8
+    pid = np.floor(y * planks)
+    ys = (y * planks) % 1.0
+    tone = rng.uniform(0.8, 1.15, planks + 1)[pid.astype(int)]
+    grain = periodic_noise(size, size, rng, 5, 4)
+    streak = 0.5 + 0.5 * np.sin(2 * np.pi * (x * 3 + ys * 0.4 + grain * 1.5 + pid * 0.37) * 6)
+    gap = np.clip(1 - np.minimum(ys, 1 - ys) / 0.03, 0, 1)
+    hgt = 0.4 * streak + 0.2 * grain - 0.7 * gap
+    col = np.array([0.42, 0.28, 0.16], dtype=np.float32) * (tone * (0.8 + 0.25 * streak))[..., None] * (1 - 0.6 * gap)[..., None]
+    write_set(out_dir, "wood", np.clip(col, 0, 1), normal_from_height(hgt, 3.0), 1 - 0.5 * gap, 0.7 + 0.15 * grain)
+
+
+def thatch(out_dir, size=1024, seed=15):
+    """Dry straw thatch: layered rows of strands hanging along -V."""
+    rng = np.random.default_rng(seed)
+    y, x = np.mgrid[0:size, 0:size].astype(np.float32) / size
+    rows = 10
+    ys = (y * rows) % 1.0
+    strands = periodic_noise(size, size, rng, 2, 1)
+    fib = np.zeros((size, size), dtype=np.float32)
+    for k in range(5):
+        f = rng.integers(60, 140)
+        fib += np.abs(np.sin(2 * np.pi * (x * f + ys * rng.uniform(0.1, 0.4) + rng.uniform())))
+    fib /= 5
+    hgt = 0.6 * fib + 0.6 * ys
+    col = np.array([0.76, 0.64, 0.38], dtype=np.float32) * (0.7 + 0.35 * fib)[..., None] * (0.75 + 0.3 * ys)[..., None]
+    col *= (0.9 + 0.15 * strands)[..., None]
+    write_set(out_dir, "thatch", np.clip(col, 0, 1), normal_from_height(hgt, 2.0), 0.7 + 0.3 * ys, 0.95 + 0 * ys)
+
+
+def building_set(out_dir):
+    sandstone(out_dir)
+    trim_sheet(out_dir)
+    plaster(out_dir)
+    brick(out_dir)
+    granite(out_dir)
+    wood(out_dir)
+    thatch(out_dir)
+
+
+if __name__ == "__main__":
+    import sys
+    building_set(sys.argv[sys.argv.index("--") + 1] if "--" in sys.argv else "assets/textures/india")

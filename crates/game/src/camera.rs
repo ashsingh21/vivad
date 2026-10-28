@@ -33,6 +33,9 @@ fn spawn_camera(mut commands: Commands) {
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection { fov: 70f32.to_radians(), near: 0.05, ..default() }),
         Tonemapping::AgX,
+        // Contact shadows in corners, under eaves and between blocks.
+        bevy::pbr::ScreenSpaceAmbientOcclusion { radius: 0.6, ..default() },
+        Msaa::Off,
         AtmosphereSettings::default(),
         DistanceFog {
             color: Color::srgba(0.78, 0.74, 0.68, 1.0),

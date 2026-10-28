@@ -2,7 +2,7 @@
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use game::{autoshot::AutoshotPlugin, camera::CameraPlugin, characters::CharacterArtPlugin, hud::HudPlugin, input::InputPlugin, visuals::VisualsPlugin, ASSET_DIR};
+use game::{autoshot::AutoshotPlugin, buildings::BuildingsPlugin, camera::CameraPlugin, characters::CharacterArtPlugin, hud::HudPlugin, input::InputPlugin, visuals::VisualsPlugin, ASSET_DIR};
 use shared::sim::{MatchConfig, SimPlugin};
 
 fn main() {
@@ -21,7 +21,7 @@ fn main() {
         )
         .add_plugins(PhysicsPlugins::default())
         .add_plugins(SimPlugin { items_ron })
-        .add_plugins((InputPlugin, VisualsPlugin, CharacterArtPlugin, CameraPlugin, HudPlugin, AutoshotPlugin))
+        .add_plugins((InputPlugin, VisualsPlugin, BuildingsPlugin, CharacterArtPlugin, CameraPlugin, HudPlugin, AutoshotPlugin))
         .add_plugins(bevy::diagnostic::LogDiagnosticsPlugin {
             wait_duration: std::time::Duration::from_secs(10),
             filter: std::env::var("VIVAD_PERF_LOG").is_ok().then(|| {

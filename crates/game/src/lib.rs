@@ -1,4 +1,5 @@
 pub mod autoshot;
+pub mod buildings;
 pub mod camera;
 pub mod characters;
 pub mod hud;

@@ -324,10 +324,12 @@ fn variant(p: Vec3) -> u8 {
 }
 
 /// Map blocks get a mesh child (scaled), so the collider on the parent stays unscaled.
-fn dress_blocks(mut commands: Commands, q: Query<(Entity, &MapBlock), Added<MapBlock>>, palette: Res<Palette>) {
-    for (e, MapBlock(b)) in &q {
+/// Per-entity meshes only for dynamic blocks (breakable doors) and water; static architecture is
+/// batched by `buildings`.
+fn dress_blocks(mut commands: Commands, q: Query<(Entity, &MapBlock, Has<shared::sim::Door>), Added<MapBlock>>, palette: Res<Palette>) {
+    for (e, MapBlock(b), door) in &q {
         commands.entity(e).insert(Visibility::default());
-        if !b.visible {
+        if !b.visible || (!door && crate::buildings::is_static_visual(b)) {
             continue;
         }
         let (mesh, scale) = match b.shape {

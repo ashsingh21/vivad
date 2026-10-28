@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use rand::rngs::SmallRng;
 use rand::{RngExt, SeedableRng};
 
-use super::build::{Builder, Frame, Opening, FLOOR_H, WALL_T};
+use super::build::{Builder, Frame, Opening, FLOOR_H, JHAROKHA, WALL_T};
 use super::terrain::{self, Pad, TerrainSpec};
 use super::{ChestKind, MapLayout, Mat, Poi, Prop};
 
@@ -280,10 +280,31 @@ pub fn house(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, floo
             front.push(Opening::door(w / 2.0));
         }
         let corners = [Vec2::new(-hw, hd), Vec2::new(hw, hd), Vec2::new(hw, -hd), Vec2::new(-hw, -hd)];
+        // A jharokha (projecting balcony window) replaces the central upper-floor window of wide havelis.
+        let jharokha = k > 0 && w >= 9.0;
+        if jharokha {
+            front.retain(|o| (o.at - w / 2.0).abs() > 1.4);
+            front.push(Opening { at: w / 2.0, width: 1.2, bottom: 0.9, top: 2.4 });
+        }
         b.wall(f, corners[0], corners[1], y0, FLOOR_H, t, mat, &front);
         b.wall(f, corners[1], corners[2], y0, FLOOR_H, t, mat, &win(d));
         b.wall(f, corners[2], corners[3], y0, FLOOR_H, t, mat, &[]);
         b.wall(f, corners[3], corners[0], y0, FLOOR_H, t, mat, &win(d));
+        let trim = trim_for(mat);
+        let arched: Vec<Opening> = front.iter().copied().filter(|o| !(jharokha && (o.at - w / 2.0).abs() < 0.1)).collect();
+        b.arch_openings(f, corners[0], corners[1], y0, t, &arched);
+        b.arch_openings(f, corners[1], corners[2], y0, t, &win(d));
+        b.arch_openings(f, corners[3], corners[0], y0, t, &win(d));
+        if jharokha {
+            // Balcony floor level with the window sill.
+            b.ornament(f, Vec3::new(0.0, y0 + 0.26, hd), 0.0, JHAROKHA, Vec3::ONE);
+        }
+        // String course marking each floor.
+        if k > 0 {
+            for (a, c) in [(corners[0], corners[1]), (corners[1], corners[2]), (corners[2], corners[3]), (corners[3], corners[0])] {
+                band(b, f, a, c, y0 - 0.08, 0.16, t + 0.12, trim);
+            }
+        }
         if k == 0 {
             b.door(f, corners[0], corners[1], w / 2.0, 0.0);
         }
@@ -308,8 +329,9 @@ pub fn house(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, floo
             b.loot(f, Vec3::new(rng.random_range(-hw + 1.5..hw - 1.5), y0 + 0.3, 0.8));
         }
     }
-    // Roof: parapet with a gap above the stairs, sometimes a chhatri.
+    // Roof: parapet with kangura merlons over a bracketed chhajja eave; plinth band at the base.
     let ry = floors as f32 * FLOOR_H;
+    let trim = trim_for(mat);
     for (a, c) in [
         (Vec2::new(-hw, hd), Vec2::new(hw, hd)),
         (Vec2::new(hw, hd), Vec2::new(hw, -hd)),
@@ -317,12 +339,48 @@ pub fn house(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, floo
         (Vec2::new(-hw, -hd), Vec2::new(-hw, hd)),
     ] {
         b.wall(f, a, c, ry, 1.0, t, mat, &[]);
+        band(b, f, a, c, ry - 0.22, 0.12, t + 0.9, trim);
+        corbels(b, f, a, c, ry - 0.62, t, trim);
+        b.merlons(f, a, c, ry + 1.0, t, 0.9, Vec2::new(0.34, 0.32), mat);
+        band(b, f, a, c, 0.0, 0.42, t + 0.16, trim);
     }
     if w > 9.5 && rng.random_bool(0.45) {
         b.chhatri(f, Vec3::new(hw - 2.2, ry, hd - 2.2), 2.8, mat);
     }
     if rng.random_bool(0.3) {
         b.loot(f, Vec3::new(0.0, ry + 0.3, 0.0));
+    }
+}
+
+/// Trim stone that contrasts with a wall finish.
+fn trim_for(wall: Mat) -> Mat {
+    match wall {
+        Mat::Sandstone => Mat::RedSandstone,
+        Mat::RedSandstone => Mat::Sandstone,
+        _ => Mat::Sandstone,
+    }
+}
+
+/// Continuous horizontal band along a wall run (string course, cornice, plinth).
+fn band(b: &mut Builder, f: Frame, a: Vec2, c: Vec2, y: f32, height: f32, depth: f32, mat: Mat) {
+    let dir = c - a;
+    let len = dir.length();
+    let yaw = (-dir.y).atan2(dir.x);
+    let wf = f.child(Vec3::new(a.x, y, a.y), yaw);
+    b.deco(wf, Vec3::new(len / 2.0, height / 2.0, 0.0), Vec3::new(len + depth - 0.2, height, depth), mat);
+}
+
+/// Stepped stone brackets under an eave, on both faces of the wall.
+fn corbels(b: &mut Builder, f: Frame, a: Vec2, c: Vec2, y: f32, thick: f32, mat: Mat) {
+    let dir = c - a;
+    let len = dir.length();
+    let yaw = (-dir.y).atan2(dir.x);
+    let wf = f.child(Vec3::new(a.x, y, a.y), yaw);
+    let n = (len / 1.4).floor() as i32;
+    for i in 0..n {
+        let x = (i as f32 + 0.5) * len / n as f32;
+        b.deco(wf, Vec3::new(x, 0.28, 0.0), Vec3::new(0.16, 0.2, thick + 0.75), mat);
+        b.deco(wf, Vec3::new(x, 0.12, 0.0), Vec3::new(0.14, 0.16, thick + 0.45), mat);
     }
 }
 
@@ -486,10 +544,20 @@ fn fort(b: &mut Builder, rng: &mut SmallRng) {
     let hd = d / 2.0 - 1.0;
     let wall_h = 7.0;
     b.wall(f, Vec2::new(-hw, hd), Vec2::new(hw, hd), top, wall_h, 2.0, Mat::RedSandstone, &[Opening::arch(hw - 8.0, 5.0, 5.0)]);
+    b.arch_openings(f, Vec2::new(-hw, hd), Vec2::new(hw, hd), top, 2.0, &[Opening::arch(hw - 8.0, 5.0, 5.0)]);
+    b.arch_openings(f, Vec2::new(-hw, -hd), Vec2::new(-hw, hd), top, 2.0, &[Opening::arch(hd, 4.0, 4.0)]);
     b.wall(f, Vec2::new(hw, hd), Vec2::new(hw, -hd), top, wall_h, 2.0, Mat::RedSandstone, &[]);
     b.wall(f, Vec2::new(hw, -hd), Vec2::new(-hw, -hd), top, wall_h, 2.0, Mat::RedSandstone, &[]);
     b.wall(f, Vec2::new(-hw, -hd), Vec2::new(-hw, hd), top, wall_h, 2.0, Mat::RedSandstone, &[Opening::arch(hd, 4.0, 4.0)]);
+    for (a, c) in [(Vec2::new(-hw, hd), Vec2::new(hw, hd)), (Vec2::new(hw, hd), Vec2::new(hw, -hd)),
+                   (Vec2::new(hw, -hd), Vec2::new(-hw, -hd)), (Vec2::new(-hw, -hd), Vec2::new(-hw, hd))] {
+        b.merlons(f, a, c, top + wall_h, 2.0, 2.2, Vec2::new(1.1, 1.0), Mat::RedSandstone);
+        band(b, f, a, c, top + wall_h - 0.5, 0.3, 2.5, Mat::Sandstone);
+        band(b, f, a, c, top, 0.8, 2.4, Mat::Sandstone);
+    }
     for (x, z) in [(-hw, -hd), (hw, -hd), (hw, hd), (-hw, hd)] {
+        b.deco_cyl(f, Vec3::new(x, top + wall_h + 2.6, z), 4.4, 0.4, Mat::Sandstone);
+        b.deco_cyl(f, Vec3::new(x, top, z), 4.3, 1.0, Mat::Sandstone);
         b.cyl(f, Vec3::new(x, top, z), 4.0, wall_h + 3.0, Mat::RedSandstone);
         b.chhatri(f, Vec3::new(x, top + wall_h + 3.0, z), 4.5, Mat::RedSandstone);
     }
@@ -641,6 +709,7 @@ fn hut(b: &mut Builder, rng: &mut SmallRng, f: Frame) {
     let (hw, hd) = (w / 2.0, d / 2.0);
     let h = 2.8;
     b.wall(f, Vec2::new(-hw, hd), Vec2::new(hw, hd), 0.0, h, 0.4, mat, &[Opening::door(hw)]);
+    b.arch_openings(f, Vec2::new(-hw, hd), Vec2::new(hw, hd), 0.0, 0.4, &[Opening::door(hw)]);
     b.wall(f, Vec2::new(hw, hd), Vec2::new(hw, -hd), 0.0, h, 0.4, mat, &[Opening::window(hd)]);
     b.wall(f, Vec2::new(hw, -hd), Vec2::new(-hw, -hd), 0.0, h, 0.4, mat, &[]);
     b.wall(f, Vec2::new(-hw, -hd), Vec2::new(-hw, hd), 0.0, h, 0.4, mat, &[]);
