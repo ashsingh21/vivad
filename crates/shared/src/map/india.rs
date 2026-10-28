@@ -72,6 +72,62 @@ pub const TEMPLE_DRAVIDA: &str = "models/props/temple_dravida.glb";
 pub const GOPURAM: &str = "models/props/gopuram.glb";
 pub const STONE_CHARIOT: &str = "models/props/stone_chariot.glb";
 pub const ROCKS: [&str; 3] = ["models/props/rock_a.glb", "models/props/rock_b.glb", "models/props/rock_c.glb"];
+pub const ROCKS_BASALT: [&str; 3] = ["models/props/rock_basalt_1.glb", "models/props/rock_basalt_2.glb", "models/props/rock_basalt_3.glb"];
+pub const HUT_MUD: &str = "models/props/hut_mud.glb";
+pub const HUT_BRICK: &str = "models/props/hut_brick.glb";
+pub const STALLS: [&str; 3] = ["models/props/stall_spice.glb", "models/props/stall_brass.glb", "models/props/stall_cloth.glb"];
+pub const STUPA: &str = "models/props/stupa.glb";
+pub const AJANTA: &str = "models/props/ajanta.glb";
+pub const MANDAPA_RUIN: &str = "models/props/mandapa_ruin.glb";
+pub const STEPWELL: &str = "models/props/stepwell.glb";
+
+/// Run `build` and hide everything it made: colliders whose art comes from a model placed separately.
+fn hidden(b: &mut Builder, build: impl FnOnce(&mut Builder)) {
+    let first = b.map.blocks.len();
+    build(b);
+    for blk in &mut b.map.blocks[first..] {
+        blk.visible = false;
+    }
+}
+
+/// A sloped slab collider whose top surface runs from `a` to `c` (local (z, y) in frame `f`),
+/// `width` along local X.
+fn slope(b: &mut Builder, f: Frame, a: Vec2, c: Vec2, width: f32, thick: f32) {
+    let d = c - a;
+    let len = d.length();
+    // Rotation about X that takes local +Z onto the a->c direction.
+    let ang = (-d.y).atan2(d.x);
+    let rot = f.rot() * Quat::from_rotation_x(ang);
+    let mut up = Quat::from_rotation_x(ang) * Vec3::Y;
+    if up.y < 0.0 {
+        up = -up;
+    }
+    let mid = Vec3::new(0.0, (a.y + c.y) / 2.0, (a.x + c.x) / 2.0) - up * thick / 2.0;
+    b.push(f.p(mid), rot, super::Shape::Box(Vec3::new(width, thick, len)), Mat::Thatch, true, false);
+}
+
+/// A ring of wall segments (radius `r`, base `y0`), with openings `gap_half` metres either side
+/// of each angle in `gaps` (angles measured from +X toward -Z).
+fn ring_wall(b: &mut Builder, f: Frame, r: f32, y0: f32, h: f32, thick: f32, gaps: &[f32], gap_half: f32) {
+    let da = gap_half / r;
+    let mut g: Vec<f32> = gaps.to_vec();
+    g.sort_by(f32::total_cmp);
+    for (i, &a0) in g.iter().enumerate() {
+        let a1 = if i + 1 < g.len() { g[i + 1] } else { g[0] + std::f32::consts::TAU };
+        let (s0, s1) = (a0 + da, a1 - da);
+        let n = ((s1 - s0) * r / 2.5).ceil().max(1.0) as i32;
+        for k in 0..n {
+            let (t0, t1) = (s0 + (s1 - s0) * k as f32 / n as f32, s0 + (s1 - s0) * (k + 1) as f32 / n as f32);
+            let p0 = Vec2::new(r * t0.cos(), -r * t0.sin());
+            let p1 = Vec2::new(r * t1.cos(), -r * t1.sin());
+            let mid = (p0 + p1) / 2.0;
+            let dir = p1 - p0;
+            let yaw = (-dir.y).atan2(dir.x);
+            let wf = f.child(Vec3::new(mid.x, y0, mid.y), yaw);
+            b.bx(wf, Vec3::new(0.0, h / 2.0, 0.0), Vec3::new(dir.length() + 0.05, h, thick), Mat::Sandstone);
+        }
+    }
+}
 
 /// Run `build`, hide everything it made (gameplay colliders only), and show `model` instead.
 fn art_over(b: &mut Builder, model: &'static str, f: Frame, scale: f32, build: impl FnOnce(&mut Builder)) {
@@ -243,7 +299,9 @@ fn bazaar(b: &mut Builder, rng: &mut SmallRng) {
             continue;
         }
         let z = if i % 2 == 0 { -4.5 } else { 4.5 };
-        stall(b, Frame::new(Vec3::new(x, 0.0, z), 0.0));
+        // The counter faces the street.
+        let yaw = if z > 0.0 { PI } else { 0.0 };
+        stall(b, Frame::new(Vec3::new(x, 0.0, z), yaw), STALLS[i % STALLS.len()]);
         if rng.random_bool(0.4) {
             b.loot(world(), Vec3::new(x, 0.3, z * 0.6));
         }
@@ -255,12 +313,16 @@ fn bazaar(b: &mut Builder, rng: &mut SmallRng) {
     b.chest(world(), Vec3::new(-6.5, 0.4, 6.5), 0.3, ChestKind::Peti);
 }
 
-fn stall(b: &mut Builder, f: Frame) {
-    for (x, z) in [(-1.6, -1.2), (1.6, -1.2), (1.6, 1.2), (-1.6, 1.2)] {
-        b.cyl(f, Vec3::new(x, 0.0, z), 0.07, 2.6, Mat::Wood);
-    }
-    b.bx(f, Vec3::new(0.0, 2.65, 0.0), Vec3::new(3.6, 0.06, 2.8), Mat::Cloth);
-    b.bx(f, Vec3::new(0.0, 0.45, 0.0), Vec3::new(3.0, 0.9, 1.6), Mat::Wood);
+/// Market stall: bamboo posts, a cloth awning and a counter of goods (`model`).
+fn stall(b: &mut Builder, f: Frame, model: &'static str) {
+    hidden(b, |b| {
+        for (x, z) in [(-1.6, -1.2), (1.6, -1.2), (1.6, 1.2), (-1.6, 1.2)] {
+            b.cyl(f, Vec3::new(x, 0.0, z), 0.07, 2.7, Mat::Wood);
+        }
+        b.bx(f, Vec3::new(0.0, 2.68, 0.0), Vec3::new(3.6, 0.06, 2.8), Mat::Cloth);
+        b.bx(f, Vec3::new(0.0, 0.45, 0.0), Vec3::new(3.0, 0.9, 1.6), Mat::Wood);
+    });
+    b.ornament(f, Vec3::ZERO, 0.0, model, Vec3::ONE);
 }
 
 // ------------------------------------------------------------------ buildings
@@ -358,7 +420,31 @@ pub fn house(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, floo
         b.merlons(f, a, c, ry + 1.0, t, 0.9, Vec2::new(0.34, 0.32), mat);
         band(b, f, a, c, 0.0, 0.42, t + 0.16, trim);
     }
-    if w > 9.5 && rng.random_bool(0.45) {
+    // Barsati: a rooftop room over the stair head, opening onto the terrace. It breaks up the
+    // box silhouette and roofs the last flight.
+    let barsati = rng.random_bool(if floors <= 2 { 0.6 } else { 0.35 });
+    if barsati {
+        let bw = (run + 1.4).max(w * 0.5).min(w - 2.0 * t - 1.0);
+        let bd = 2.0 * lane_w + 1.0;
+        let (x0, z0) = (-hw + t, -hd + t);
+        let (x1, z1) = (x0 + bw, z0 + bd);
+        let rh = 2.8;
+        let door = [Opening::door(bw / 2.0)];
+        let side = [Opening::window(bd / 2.0)];
+        b.wall(f, Vec2::new(x0, z1), Vec2::new(x1, z1), ry, rh, t, mat, &door);
+        b.arch_openings(f, Vec2::new(x0, z1), Vec2::new(x1, z1), ry, t, &door);
+        b.wall(f, Vec2::new(x1, z1), Vec2::new(x1, z0), ry, rh, t, mat, &side);
+        b.arch_openings(f, Vec2::new(x1, z1), Vec2::new(x1, z0), ry, t, &side);
+        b.wall(f, Vec2::new(x1, z0), Vec2::new(x0, z0), ry, rh, t, mat, &[]);
+        b.wall(f, Vec2::new(x0, z0), Vec2::new(x0, z1), ry, rh, t, mat, &[]);
+        b.slab_with_hole(f, Vec2::new(x0 - t / 2.0, z0 - t / 2.0), Vec2::new(x1 + t / 2.0, z1 + t / 2.0), ry + rh + 0.2, 0.2, None, mat);
+        for (a, c) in [(Vec2::new(x0, z1), Vec2::new(x1, z1)), (Vec2::new(x1, z1), Vec2::new(x1, z0))] {
+            band(b, f, a, c, ry + rh - 0.1, 0.12, t + 0.8, trim);
+            corbels(b, f, a, c, ry + rh - 0.5, t, trim);
+            b.merlons(f, a, c, ry + rh + 0.2, t, 0.7, Vec2::new(0.26, 0.26), mat);
+        }
+    }
+    if w > 9.5 && rng.random_bool(if barsati { 0.25 } else { 0.5 }) {
         b.chhatri(f, Vec3::new(hw - 2.2, ry, hd - 2.2), 2.8, mat);
     }
     if rng.random_bool(0.3) {
@@ -465,13 +551,16 @@ fn stepwell(b: &mut Builder, rng: &mut SmallRng) {
         // Landing platform.
         b.span(f, Vec3::new(x - landing, -dp, -hw), Vec3::new(x, bottom, hw), Mat::Sandstone);
         if i < 2 {
-            // Pavilion: pillars from the landing up to ground level, roof slab = bridge across the well.
-            for px in [x - landing + 0.6, x - 0.6] {
-                for pz in [-hw + 0.8, -3.0, 3.0, hw - 0.8] {
-                    b.cyl(f, Vec3::new(px, bottom, pz), 0.35, -bottom - 0.5, Mat::Sandstone);
+            // Pavilion: pillars from the landing up to ground level, roof slab = bridge across the
+            // well. The carved pillars and the bridge's fascia are in the stepwell model.
+            hidden(b, |b| {
+                for px in [x - landing + 0.6, x - 0.6] {
+                    for pz in [-hw + 0.8, -3.0, 3.0, hw - 0.8] {
+                        b.cyl(f, Vec3::new(px, bottom, pz), 0.3, -bottom - 0.5, Mat::Sandstone);
+                    }
                 }
-            }
-            b.span(f, Vec3::new(x - landing, -0.5, -hw), Vec3::new(x, 0.0, hw), Mat::Sandstone);
+                b.span(f, Vec3::new(x - landing, -0.5, -hw), Vec3::new(x, 0.0, hw), Mat::Sandstone);
+            });
             b.chest(f, Vec3::new(x - landing / 2.0, bottom, hw - 1.6), PI, ChestKind::Peti);
         }
         // Side galleries along the long walls at this level.
@@ -487,6 +576,8 @@ fn stepwell(b: &mut Builder, rng: &mut SmallRng) {
     for _ in 0..4 {
         b.loot(f, Vec3::new(rng.random_range(-hl + 3.0..hl - 3.0), 0.3, rng.random_range(-hw - 6.0..-hw - 2.0)));
     }
+    // Carved lining: tiers of niches on the walls (stepwell.py).
+    b.map.props.push(Prop { model: STEPWELL, pos: f.origin, yaw: f.yaw, scale: 1.0, trunk: None });
     // Surrounding chhatris on the rim.
     for (cx, cz) in [(hl + 3.0, hw + 3.0), (hl + 3.0, -hw - 3.0), (-hl - 3.0, hw + 3.0), (-hl - 3.0, -hw - 3.0)] {
         b.chhatri(f, Vec3::new(cx, 0.0, cz), 3.5, Mat::Sandstone);
@@ -520,18 +611,24 @@ fn hampi(b: &mut Builder, rng: &mut SmallRng) {
             rock(b, rng, p + Vec3::new(r * 0.25, r * 0.6 + r2 * 0.55, dz), r2);
         }
     }
-    // Ruined mandapa: a grid of pillars with partial roof slabs.
-    for i in 0..6 {
-        for j in 0..4 {
-            if rng.random_bool(0.15) {
-                continue;
+    // Ruined mandapa: a grid of pillars (some snapped, some gone), roof over the western half.
+    art_over(b, MANDAPA_RUIN, f, 1.0, |b| {
+        for (i, col) in MANDAPA_RUIN_PILLARS.iter().enumerate() {
+            for (j, st) in col.iter().enumerate() {
+                if let Some(h) = st {
+                    b.bx(f, Vec3::new(-10.0 + i as f32 * 4.0, h / 2.0 + 0.6, -6.0 + j as f32 * 4.0), Vec3::new(0.66, *h, 0.66), Mat::Granite);
+                }
             }
-            let h = if rng.random_bool(0.25) { rng.random_range(1.0..3.0) } else { 4.2 };
-            b.bx(f, Vec3::new(-10.0 + i as f32 * 4.0, h / 2.0 + 0.6, -6.0 + j as f32 * 4.0), Vec3::new(0.7, h, 0.7), Mat::Granite);
         }
-    }
-    b.span(f, Vec3::new(-12.0, 0.0, -8.0), Vec3::new(12.0, 0.6, 8.0), Mat::Granite);
-    b.span(f, Vec3::new(-11.0, 4.8, -7.0), Vec3::new(1.0, 5.4, 7.0), Mat::Granite);
+        b.span(f, Vec3::new(-12.0, 0.0, -8.0), Vec3::new(12.0, 0.6, 8.0), Mat::Granite);
+        b.span(f, Vec3::new(-11.0, 4.8, -7.0), Vec3::new(1.0, 5.4, 7.0), Mat::Granite);
+        // Steps up the plinth, front and back.
+        b.stairs(f.child(Vec3::new(4.0, 0.0, 9.9), FRAC_PI_2), Vec3::ZERO, 1.8, 0.6, 3.0, Mat::Granite);
+        b.stairs(f.child(Vec3::new(-4.0, 0.0, -9.9), -FRAC_PI_2), Vec3::ZERO, 1.8, 0.6, 3.0, Mat::Granite);
+        // Fallen shafts.
+        b.bx(f.child(Vec3::new(7.5, 0.0, 3.5), 0.3), Vec3::new(0.0, 0.92, 0.0), Vec3::new(3.4, 0.64, 0.64), Mat::Granite);
+        b.bx(f.child(Vec3::new(14.0, 0.0, -3.0), 1.2), Vec3::new(0.0, 0.32, 0.0), Vec3::new(3.0, 0.64, 0.64), Mat::Granite);
+    });
     b.chest(f, Vec3::new(-6.0, 0.6, 0.0), 0.0, ChestKind::Peti);
     // Stone chariot.
     let cf = f.child(Vec3::new(0.0, 0.0, 22.0), 0.0);
@@ -558,12 +655,22 @@ fn hampi(b: &mut Builder, rng: &mut SmallRng) {
     }
     b.map.props.push(Prop { model: GOPURAM, pos: gf.origin, yaw: gf.yaw, scale: 1.0, trunk: None });
     b.chest(gf, Vec3::new(-1.8, 0.0, 1.5), 0.0, ChestKind::Kalash); // in the gateway passage
-    b.stairs(gf.child(Vec3::new(-9.0, 0.0, 4.5), 0.0), Vec3::ZERO, 10.0, 7.0, 2.0, Mat::Granite);
     for _ in 0..6 {
         b.loot(f, Vec3::new(rng.random_range(-40.0..40.0), 0.3, rng.random_range(-40.0..40.0)));
     }
     temple_dravida(b, rng, f.child(Vec3::new(30.0, 0.0, 10.0), -FRAC_PI_2), 0.8);
 }
+
+/// Pillar heights of the ruined mandapa's 6 x 4 grid (None = gone); must match
+/// `hampi.py::RUIN` (4.2 = standing to the beams).
+const MANDAPA_RUIN_PILLARS: [[Option<f32>; 4]; 6] = [
+    [Some(4.2), Some(4.2), Some(4.2), Some(4.2)],
+    [Some(4.2), Some(4.2), Some(4.2), Some(4.2)],
+    [Some(4.2), Some(4.2), Some(4.2), Some(4.2)],
+    [Some(4.2), Some(2.2), Some(4.2), None],
+    [Some(1.4), Some(4.2), None, Some(2.8)],
+    [None, Some(1.0), Some(4.2), Some(2.0)],
+];
 
 // ------------------------------------------------------------------ Garh Qila
 
@@ -652,7 +759,8 @@ fn banyan_grove(b: &mut Builder, rng: &mut SmallRng) {
 // ------------------------------------------------------------------ Ajanta Gufa + stupa
 
 fn caves_and_stupa(b: &mut Builder, rng: &mut SmallRng) {
-    // Cliff face along Z at x = -195, caves cut westward into it.
+    // Cliff face along Z at x = -192, caves cut westward into it. The art is the `AJANTA` model
+    // (buddhist.py), authored at the face; everything below is its collider set.
     let face_x = -192.0;
     let back_x = -240.0;
     let hall_d = 20.0;
@@ -663,97 +771,155 @@ fn caves_and_stupa(b: &mut Builder, rng: &mut SmallRng) {
     let z0 = -75.0;
     let z1 = 75.0;
     let f = world();
-    // Solid rock behind the halls and above them.
-    b.span(f, Vec3::new(back_x, 0.0, z0), Vec3::new(face_x - hall_d, cliff_h, z1), Mat::Granite);
-    b.span(f, Vec3::new(face_x - hall_d, hall_h, z0), Vec3::new(face_x, cliff_h, z1), Mat::Granite);
-    // Rock between the halls.
-    let mut z = z0;
-    for &hz in &halls {
-        b.span(f, Vec3::new(face_x - hall_d, 0.0, z), Vec3::new(face_x, hall_h, hz - hall_w / 2.0), Mat::Granite);
-        z = hz + hall_w / 2.0;
-    }
-    b.span(f, Vec3::new(face_x - hall_d, 0.0, z), Vec3::new(face_x, hall_h, z1), Mat::Granite);
-    // Hall interiors: pillar rows, a stupa in the chaitya halls, carved facade pillars.
-    for (i, &hz) in halls.iter().enumerate() {
-        let hf = Frame::new(Vec3::new(face_x, 0.0, hz), 0.0);
-        for xi in 0..4 {
+    // The rock spur at the north end with a stair cut up it (z 67..73, stair in z 68..72).
+    let (spur_z0, spur_z1, spur_run) = (67.0, 73.0, 28.0);
+    art_over(b, AJANTA, Frame::new(Vec3::new(face_x, 0.0, 0.0), 0.0), 1.0, |b| {
+        // Solid rock behind the halls and above them.
+        b.span(f, Vec3::new(back_x, 0.0, z0), Vec3::new(face_x - hall_d, cliff_h, z1), Mat::Granite);
+        b.span(f, Vec3::new(face_x - hall_d, hall_h, z0), Vec3::new(face_x, cliff_h, z1), Mat::Granite);
+        // Rock between the halls.
+        let mut z = z0;
+        for &hz in &halls {
+            b.span(f, Vec3::new(face_x - hall_d, 0.0, z), Vec3::new(face_x, hall_h, hz - hall_w / 2.0), Mat::Granite);
+            z = hz + hall_w / 2.0;
+        }
+        b.span(f, Vec3::new(face_x - hall_d, 0.0, z), Vec3::new(face_x, hall_h, z1), Mat::Granite);
+        // Hall pillars (two rows inside, two pairs in the porch) and the chaitya stupas.
+        for (i, &hz) in halls.iter().enumerate() {
+            let hf = Frame::new(Vec3::new(face_x, 0.0, hz), 0.0);
+            for xi in 0..4 {
+                for s in [-1.0, 1.0] {
+                    b.cyl(hf, Vec3::new(-3.0 - xi as f32 * 4.0, 0.0, s * 3.6), 0.38, hall_h, Mat::Granite);
+                }
+            }
             for s in [-1.0, 1.0] {
-                b.cyl(hf, Vec3::new(-3.0 - xi as f32 * 4.0, 0.0, s * 3.6), 0.45, hall_h, Mat::Granite);
+                for off in [2.0, 4.6] {
+                    b.cyl(hf, Vec3::new(0.9, 0.0, s * off), 0.38, hall_h, Mat::Granite);
+                }
+            }
+            if i % 2 == 0 {
+                b.cyl(hf, Vec3::new(-hall_d + 4.0, 0.0, 0.0), 2.25, 1.6, Mat::Granite);
+                b.sphere(hf, Vec3::new(-hall_d + 4.0, 1.6, 0.0), 2.1, Mat::Granite, true);
+            } else {
+                // The shrine's plinth in the back wall.
+                b.span(hf, Vec3::new(-hall_d, 0.0, -1.5), Vec3::new(-hall_d + 1.2, 0.8, 1.5), Mat::Granite);
             }
         }
-        for s in [-1.0, 1.0] {
-            b.cyl(hf, Vec3::new(0.8, 0.0, s * 2.0), 0.5, hall_h, Mat::Granite);
+        // The spur: stair ramp, the rock filling under it, and parapets either side.
+        let sf = Frame::new(Vec3::new(face_x + spur_run, 0.0, (spur_z0 + spur_z1) / 2.0), PI);
+        b.stairs(sf, Vec3::ZERO, spur_run, cliff_h, 4.0, Mat::Granite);
+        let n = 7;
+        for k in 0..n {
+            let (x0, x1) = (spur_run * k as f32 / n as f32, spur_run * (k + 1) as f32 / n as f32);
+            let top = cliff_h * x0 / spur_run - 0.4;
+            if top > 0.1 {
+                b.span(sf, Vec3::new(x0, 0.0, -3.0), Vec3::new(x1, top, 3.0), Mat::Granite);
+            }
         }
+        for s in [-1.0f32, 1.0] {
+            let pf = sf.child(Vec3::new(0.0, 0.0, s * 2.5), FRAC_PI_2);
+            slope(b, pf, Vec2::new(0.0, 0.9), Vec2::new(spur_run, cliff_h + 0.9), 1.0, 1.2);
+        }
+    });
+    // Chests and loot in the halls and on the cliff top.
+    for (i, &hz) in halls.iter().enumerate() {
+        let hf = Frame::new(Vec3::new(face_x, 0.0, hz), 0.0);
         if i % 2 == 0 {
-            // Chaitya: rock-cut stupa at the back.
-            b.cyl(hf, Vec3::new(-hall_d + 4.0, 0.0, 0.0), 2.2, 1.6, Mat::Granite);
-            b.sphere(hf, Vec3::new(-hall_d + 4.0, 1.6, 0.0), 2.1, Mat::Granite, true);
             b.chest(hf, Vec3::new(-hall_d + 7.5, 0.0, 0.0), FRAC_PI_2, ChestKind::Kalash);
         } else {
-            // Vihara: monks' cells along the sides.
             b.chest(hf, Vec3::new(-hall_d + 2.0, 0.0, 3.5), FRAC_PI_2, ChestKind::Peti);
             b.loot(hf, Vec3::new(-8.0, 0.3, 0.0));
         }
     }
-    // Ledge path along the cliff top, reached by a long stair cut into the rock face.
-    b.stairs(Frame::new(Vec3::new(face_x + 2.0, 0.0, z1 + 4.0), PI), Vec3::new(-28.0, 0.0, 0.0), 28.0, cliff_h, 3.0, Mat::Granite);
-    b.span(f, Vec3::new(face_x - 1.0, 0.0, z1), Vec3::new(face_x + 30.0, cliff_h, z1 + 2.5), Mat::Granite);
     for _ in 0..4 {
         b.loot(f, Vec3::new(rng.random_range(back_x + 5.0..face_x - 25.0), cliff_h + 0.3, rng.random_range(z0..z1)));
     }
-
-    // Sanchi-style great stupa in front of the caves.
-    let sc = Frame::new(Vec3::new(-158.0, 0.0, 8.0), 0.0);
-    b.cyl(sc, Vec3::ZERO, 11.0, 3.0, Mat::Sandstone); // drum / terrace
-    b.sphere(sc, Vec3::new(0.0, 2.0, 0.0), 9.5, Mat::Plaster, true);
-    b.bx(sc, Vec3::new(0.0, 12.2, 0.0), Vec3::new(3.0, 1.6, 3.0), Mat::Sandstone); // harmika
-    b.cyl(sc, Vec3::new(0.0, 13.0, 0.0), 0.15, 3.0, Mat::Sandstone);
-    for i in 0..3 {
-        b.cyl(sc, Vec3::new(0.0, 13.6 + i as f32 * 0.9, 0.0), 1.6 - i as f32 * 0.4, 0.12, Mat::Sandstone); // chhatravali
-    }
-    // Terrace stairs and the railing (vedika) with four toranas.
-    b.stairs(sc.child(Vec3::new(-17.0, 0.0, 0.0), 0.0), Vec3::ZERO, 5.0, 3.0, 2.5, Mat::Sandstone);
-    for k in 0..48 {
-        let a = k as f32 / 48.0 * std::f32::consts::TAU;
-        if (a % FRAC_PI_2).min(FRAC_PI_2 - a % FRAC_PI_2) < 0.12 {
+    // Talus: fallen basalt blocks along the foot of the cliff, clear of the cave mouths and spur.
+    let rock = |b: &mut Builder, rng: &mut SmallRng, p: Vec3, r: f32| {
+        b.push(p, Quat::IDENTITY, super::Shape::Sphere(r * 0.8), Mat::Granite, true, false);
+        let model = ROCKS_BASALT[rng.random_range(0..ROCKS_BASALT.len())];
+        b.ornament(world(), p, rng.random_range(0.0..std::f32::consts::TAU), model, Vec3::splat(r));
+    };
+    for _ in 0..60 {
+        let z = rng.random_range(z0 + 2.0..z1 + 6.0);
+        if halls.iter().any(|hz| (z - hz).abs() < 10.0) || (spur_z0 - 2.0..spur_z1 + 2.0).contains(&z) {
             continue;
         }
-        b.bx(sc, Vec3::new(a.cos() * 15.0, 1.3, a.sin() * 15.0), Vec3::new(0.45, 2.6, 0.45), Mat::Sandstone);
+        let r = rng.random_range(0.7..2.2);
+        let x = face_x + rng.random_range(0.0..5.0) + r * 0.5;
+        rock(b, rng, Vec3::new(x, r * 0.25, z), r);
     }
-    for q in 0..4 {
-        let tf = sc.child(Vec3::ZERO, q as f32 * FRAC_PI_2).child(Vec3::new(17.0, 0.0, 0.0), 0.0);
-        for s in [-1.0, 1.0] {
-            b.bx(tf, Vec3::new(0.0, 3.5, s * 2.2), Vec3::new(0.7, 7.0, 0.7), Mat::Sandstone);
-        }
-        for (i, y) in [5.2, 6.2, 7.2].iter().enumerate() {
-            b.bx(tf, Vec3::new(0.0, *y, 0.0), Vec3::new(0.5, 0.45, 6.5 + i as f32 * 0.4), Mat::Sandstone);
+    // Scrub and boulders on the cliff top.
+    for _ in 0..24 {
+        let p = Vec3::new(rng.random_range(back_x + 4.0..face_x - 6.0), cliff_h, rng.random_range(z0 + 3.0..z1 - 3.0));
+        if rng.random_bool(0.35) {
+            let r = rng.random_range(0.8..1.8);
+            rock(b, rng, p + Vec3::Y * r * 0.25, r);
+        } else {
+            let m = if rng.random_bool(0.7) { BUSH_LANTANA } else { BUSH_BOUGAINVILLEA };
+            b.map.props.push(Prop { model: m, pos: p - Vec3::Y * 0.1, yaw: rng.random_range(0.0..std::f32::consts::TAU), scale: rng.random_range(0.8..1.3), trunk: None });
         }
     }
+
+    // Sanchi-style great stupa in front of the caves (art: `STUPA`, buddhist.py).
+    let sc = Frame::new(Vec3::new(-158.0, 0.0, 8.0), 0.0);
+    art_over(b, STUPA, sc, 1.0, |b| {
+        b.cyl(sc, Vec3::ZERO, 11.0, 3.0, Mat::Sandstone); // medhi (drum terrace)
+        b.sphere(sc, Vec3::new(0.0, 2.0, 0.0), 9.5, Mat::Plaster, true); // anda
+        b.bx(sc, Vec3::new(0.0, 12.1, 0.0), Vec3::new(3.0, 1.8, 3.0), Mat::Sandstone); // harmika
+        b.cyl(sc, Vec3::new(0.0, 13.0, 0.0), 0.15, 3.0, Mat::Sandstone);
+        for (i, r) in [1.6, 1.2, 0.8].iter().enumerate() {
+            b.cyl(sc, Vec3::new(0.0, 13.6 + i as f32 * 0.9, 0.0), *r, 0.12, Mat::Sandstone); // chhatravali
+        }
+        // Stair to the medhi on the west; the walkway railing round its top.
+        b.stairs(sc.child(Vec3::new(-16.0, 0.0, 0.0), 0.0), Vec3::ZERO, 5.0, 3.0, 2.5, Mat::Sandstone);
+        ring_wall(b, sc, 10.75, 3.0, 0.95, 0.3, &[PI], 1.4);
+        // Ground railing (vedika) with four entrances, each faced by a torana.
+        ring_wall(b, sc, 15.0, 0.0, 2.6, 0.5, &[0.0, FRAC_PI_2, PI, 1.5 * PI], 2.0);
+        for q in 0..4 {
+            let tf = sc.child(Vec3::ZERO, q as f32 * FRAC_PI_2).child(Vec3::new(17.0, 0.0, 0.0), 0.0);
+            for s in [-1.0, 1.0] {
+                b.bx(tf, Vec3::new(0.0, 2.95, s * 2.2), Vec3::new(0.7, 5.9, 0.7), Mat::Sandstone);
+            }
+            for (y, half) in [(5.9, 3.6), (6.85, 3.8), (7.8, 4.0)] {
+                b.bx(tf, Vec3::new(0.0, y + 0.225, 0.0), Vec3::new(0.5, 0.45, 2.0 * half), Mat::Sandstone);
+            }
+        }
+    });
     b.chest(sc, Vec3::new(12.5, 0.0, 6.0), 0.0, ChestKind::Peti);
     b.chest(sc, Vec3::new(-12.5, 0.0, -6.0), PI, ChestKind::Peti);
 }
 
 // ------------------------------------------------------------------ villages, nature
 
+/// Thatched mud (or brick) hut. The art is the hut model scaled to this footprint; the walls,
+/// roof slopes and door are the gameplay pieces. Door faces local +Z, window on the +X wall.
 fn hut(b: &mut Builder, rng: &mut SmallRng, f: Frame) {
-    let w = rng.random_range(4.5..6.0);
-    let d = rng.random_range(4.0..5.0);
-    let mat = if rng.random_bool(0.5) { Mat::PlasterOchre } else { Mat::Brick };
+    const W0: f32 = 5.2;
+    const D0: f32 = 4.5;
+    let w = rng.random_range(5.0..5.6);
+    let d = rng.random_range(4.2..4.8);
+    let model = if rng.random_bool(0.6) { HUT_MUD } else { HUT_BRICK };
     let (hw, hd) = (w / 2.0, d / 2.0);
     let h = 2.8;
-    b.wall(f, Vec2::new(-hw, hd), Vec2::new(hw, hd), 0.0, h, 0.4, mat, &[Opening::door(hw)]);
-    b.arch_openings(f, Vec2::new(-hw, hd), Vec2::new(hw, hd), 0.0, 0.4, &[Opening::door(hw)]);
-    b.wall(f, Vec2::new(hw, hd), Vec2::new(hw, -hd), 0.0, h, 0.4, mat, &[Opening::window(hd)]);
-    b.wall(f, Vec2::new(hw, -hd), Vec2::new(-hw, -hd), 0.0, h, 0.4, mat, &[]);
-    b.wall(f, Vec2::new(-hw, -hd), Vec2::new(-hw, hd), 0.0, h, 0.4, mat, &[]);
+    let (sx, sz) = (w / W0, d / D0);
+    hidden(b, |b| {
+        b.wall(f, Vec2::new(-hw, hd), Vec2::new(hw, hd), 0.0, h, 0.4, Mat::Plaster, &[Opening::door(hw)]);
+        b.wall(f, Vec2::new(hw, hd), Vec2::new(hw, -hd), 0.0, h, 0.4, Mat::Plaster, &[Opening::window(hd)]);
+        b.wall(f, Vec2::new(hw, -hd), Vec2::new(-hw, -hd), 0.0, h, 0.4, Mat::Plaster, &[]);
+        b.wall(f, Vec2::new(-hw, -hd), Vec2::new(-hw, hd), 0.0, h, 0.4, Mat::Plaster, &[]);
+        // Thatch slopes (see vernacular.py: ridge 4.35, eave top 2.83, 0.6 m eave, 0.45 m gables).
+        let eave = hd + 0.2 + 0.6 * sz;
+        let span = w + 0.4 + 0.9 * sx;
+        for s in [-1.0f32, 1.0] {
+            slope(b, f, Vec2::new(0.0, 4.35), Vec2::new(s * eave, 2.83), span, 0.25);
+        }
+    });
     b.door(f, Vec2::new(-hw, hd), Vec2::new(hw, hd), hw, 0.0);
-    // Thatched pitched roof (two tilted slabs, no collision under the eaves).
-    for s in [-1.0f32, 1.0] {
-        let rot = f.rot() * Quat::from_rotation_x(s * 0.55);
-        b.push(f.p(Vec3::new(0.0, h + 0.8, s * hd * 0.5)), rot, super::Shape::Box(Vec3::new(w + 0.8, 0.25, d * 0.62)), Mat::Thatch, true, true);
-    }
+    b.ornament(f, Vec3::ZERO, 0.0, model, Vec3::new(sx, 1.0, sz));
     if rng.random_bool(0.6) {
-        b.chest(f, Vec3::new(-hw + 1.0, 0.0, -hd + 1.0), 0.0, ChestKind::Peti);
+        // Back-right corner: the hearth is in the back-left one.
+        b.chest(f, Vec3::new(hw - 1.0, 0.0, -hd + 1.0), 0.0, ChestKind::Peti);
     } else {
         b.loot(f, Vec3::new(0.0, 0.3, 0.0));
     }

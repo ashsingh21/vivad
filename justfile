@@ -8,6 +8,12 @@ assets:
     for w in {{weapons}}; do just weapon $w; done
     just nature
     just characters
+    just architecture
+
+# Buildings and landmarks: temple, arches/jharokha/chhatri, Hampi, huts and stalls, stupa and
+# Ajanta caves, stepwell (each script bakes, decimates a LOD1 and exports GLBs to assets/models/props)
+architecture:
+    for s in temple ornaments hampi vernacular buddhist stepwell; do {{blender}} -b --factory-startup -P tools/blender/architecture/$s.py 2>&1 | grep -E '^\[|Error|Traceback' || true; done
 
 # Characters (needs the MPFB extension + MakeHuman CC0 assets, see docs/references.md)
 characters:

@@ -500,7 +500,7 @@ def flat_material(name, rgb, metal, rough):
     return m
 
 
-def bake_weathering(obj):
+def bake_weathering(obj, streak_k=0.18):
     """Ambient occlusion plus age into vertex colours: grime rising from the ground, rain streaks
     darkening below every ledge, a pale sun-bleached crown."""
     import bake as bk
@@ -519,15 +519,18 @@ def bake_weathering(obj):
     import random
     rnd = random.Random(5)
     streak_seed = {}
-    zmax = max(v.co.z for v in me.vertices)
+    # Heights from the model's lowest point (stepwells and caves reach below their origin).
+    zmin = min(v.co.z for v in me.vertices)
+    zmax = max(v.co.z for v in me.vertices) - zmin
     for li, loop in enumerate(me.loops):
-        v = me.vertices[loop.vertex_index].co
+        v = me.vertices[loop.vertex_index].co.copy()
+        v.z -= zmin
         ao = col.data[li].color[0]
         ground = 1.0 - 0.35 * max(0.0, 1.0 - v.z / 1.6)
         key = (round(v.x * 1.3), round(v.y * 1.3))
         if key not in streak_seed:
             streak_seed[key] = rnd.random()
-        streak = 1.0 - 0.18 * streak_seed[key] * (1.0 - v.z / zmax)
+        streak = 1.0 - streak_k * streak_seed[key] * (1.0 - v.z / zmax)
         bleach = 1.0 + 0.06 * (v.z / zmax)
         k = (0.45 + 0.55 * ao) * ground * streak * bleach
         col.data[li].color = (k, k * 0.98, k * 0.95, 1.0)

@@ -137,7 +137,7 @@ def _strip_heights(name, w, h, rng):
     return 0.6 - 0.3 * (np.clip(0.08 - np.minimum(v, 1 - v), 0, 1) / 0.08)
 
 
-def trim_sheet(out_dir, w=1024, strip_h=256, seed=4, tint=(0.80, 0.62, 0.43)):
+def trim_sheet(out_dir, w=1024, strip_h=256, seed=4, tint=(0.80, 0.62, 0.43), name="trim", streaks=0.0):
     rng = np.random.default_rng(seed)
     hs = [_strip_heights(nm, w, strip_h, rng) for nm in STRIPS]
     hgt = np.vstack(hs).astype(np.float32)
@@ -148,7 +148,11 @@ def trim_sheet(out_dir, w=1024, strip_h=256, seed=4, tint=(0.80, 0.62, 0.43)):
     col = base * (1 - 0.45 * cav[..., None])
     ao = 1 - 0.6 * cav
     rough = 0.85 - 0.1 * hgt
-    write_set(out_dir, "trim", col, normal_from_height(hgt_d, 9.0), ao, rough)
+    if streaks > 0:
+        for k in range(len(STRIPS)):
+            band = slice(k * strip_h, (k + 1) * strip_h)
+            col[band] = weather_streaks(col[band], rng, streaks)
+    write_set(out_dir, name, col, normal_from_height(hgt_d, 9.0), ao, rough)
 
 
 def write_set(out_dir, name, col, nrm, ao, rough):
@@ -174,7 +178,21 @@ def write_set(out_dir, name, col, nrm, ao, rough):
 
 # ------------------------------------------------------------------ building materials (tiling, 2 m)
 
-def plaster(out_dir, size=1024, seed=11, name="plaster", tint=(1.0, 0.985, 0.96), grime=0.08):
+def weather_streaks(col, rng, strength):
+    """Darken an (h, w, 3) tile with the black lichen and rain run-off of South Indian stucco:
+    soft vertical streaks hanging from the tile top (a ledge), in patches, plus faint mottling."""
+    h, w = col.shape[:2]
+    y = np.mgrid[0:h, 0:w][0].astype(np.float32) / h
+    row = periodic_noise(h, w, rng, 4, 20)[h // 3]
+    streak = np.clip((row - 0.45) * 2.5, 0, 1)[None, :]
+    patch = np.clip(periodic_noise(h, w, rng, 2, 2) * 1.6 - 0.3, 0, 1)
+    run = np.clip(1 - y * 1.1, 0, 1) ** 0.7
+    mottle = np.clip((periodic_noise(h, w, rng, 3, 3) - 0.5) * 1.5, 0, 1)
+    dark = np.clip(strength * (0.55 * streak * patch * (0.3 + 0.7 * run) + 0.25 * mottle), 0, 0.8)
+    return col * (1 - dark[..., None]) + dark[..., None] * np.array([0.08, 0.08, 0.07])
+
+
+def plaster(out_dir, size=1024, seed=11, name="plaster", tint=(1.0, 0.985, 0.96), grime=0.08, streaks=0.0):
     """Lime plaster, near-white so it can be tinted (white / ochre / Jodhpur blue) by the material.
     Trowel waves, hairline cracks, damp staining toward the bottom of each tile."""
     rng = np.random.default_rng(seed)
@@ -187,6 +205,8 @@ def plaster(out_dir, size=1024, seed=11, name="plaster", tint=(1.0, 0.985, 0.96)
     hgt = 0.6 * trowel + 0.08 * speck - 0.5 * crack
     col = np.dstack([0.93 - 0.06 * trowel - 0.25 * crack - grime * stain * 4] * 3)
     col *= np.array(tint, dtype=np.float32)
+    if streaks > 0:
+        col = weather_streaks(col, rng, streaks)
     write_set(out_dir, name, np.clip(col, 0, 1), normal_from_height(hgt, 2.0), 1 - 0.4 * crack, 0.9 - 0.05 * trowel)
 
 
@@ -241,21 +261,89 @@ def wood(out_dir, size=1024, seed=14):
 
 
 def thatch(out_dir, size=1024, seed=15):
-    """Dry straw thatch: layered rows of strands hanging along -V."""
+    """Old straw thatch, 1.5 m tile: overlapping courses of fine strands hanging along -V, sun-greyed
+    on top, darker and damp toward each course's butt ends, with moss and rot patches."""
     rng = np.random.default_rng(seed)
     y, x = np.mgrid[0:size, 0:size].astype(np.float32) / size
     rows = 10
-    ys = (y * rows) % 1.0
-    strands = periodic_noise(size, size, rng, 2, 1)
+    warp = periodic_noise(size, size, rng, 3, 3)
+    ys = (y * rows + 0.35 * warp) % 1.0
     fib = np.zeros((size, size), dtype=np.float32)
-    for k in range(5):
-        f = rng.integers(60, 140)
-        fib += np.abs(np.sin(2 * np.pi * (x * f + ys * rng.uniform(0.1, 0.4) + rng.uniform())))
-    fib /= 5
-    hgt = 0.6 * fib + 0.6 * ys
-    col = np.array([0.76, 0.64, 0.38], dtype=np.float32) * (0.7 + 0.35 * fib)[..., None] * (0.75 + 0.3 * ys)[..., None]
-    col *= (0.9 + 0.15 * strands)[..., None]
-    write_set(out_dir, "thatch", np.clip(col, 0, 1), normal_from_height(hgt, 2.0), 0.7 + 0.3 * ys, 0.95 + 0 * ys)
+    for k in range(8):
+        f = rng.integers(140, 320)
+        fib += np.abs(np.sin(2 * np.pi * (x * f + ys * rng.uniform(0.2, 0.9) + warp * rng.uniform(1, 3) + rng.uniform())))
+    fib /= 8
+    clump = periodic_noise(size, size, rng, 5, 12)
+    hgt = 0.55 * fib + 0.25 * clump + 0.25 * ys
+    age = periodic_noise(size, size, rng, 3, 2)
+    straw = np.array([0.62, 0.52, 0.36], dtype=np.float32)
+    grey = np.array([0.48, 0.45, 0.40], dtype=np.float32)
+    col = straw * (1 - 0.6 * age[..., None]) + grey * 0.6 * age[..., None]
+    col = col * (0.6 + 0.45 * fib)[..., None] * (0.7 + 0.35 * ys)[..., None] * (0.85 + 0.2 * clump)[..., None]
+    moss = np.clip((periodic_noise(size, size, rng, 4, 4) - 0.7) * 4, 0, 1)
+    col = col * (1 - 0.45 * moss[..., None]) + np.array([0.26, 0.28, 0.16]) * 0.45 * moss[..., None]
+    write_set(out_dir, "thatch", np.clip(col, 0, 1), normal_from_height(hgt, 3.0), 0.6 + 0.4 * ys, 0.95 + 0 * ys)
+
+
+def mudwall(out_dir, size=1024, seed=16, name="mudwall", tint=(0.78, 0.60, 0.42)):
+    """Village wall, 4 m tile: hand-smoothed mud-and-dung plaster above a red-ochre (geru) dado
+    with a white mandana border of triangles and dots. The dado fills V 0..0.15 (0..0.6 m)."""
+    rng = np.random.default_rng(seed)
+    y, x = np.mgrid[0:size, 0:size].astype(np.float32) / size
+    v = 1.0 - y  # image rows run top-down, V runs up
+    swirl = periodic_noise(size, size, rng, 4, 6)
+    hand = 0.5 + 0.5 * np.sin(2 * np.pi * (x * 40 + swirl * 3.0)) * np.sin(2 * np.pi * (v * 28 + swirl * 2.0))
+    crack = np.clip(1 - np.abs(periodic_noise(size, size, rng, 6, 4) - 0.5) / 0.01, 0, 1) * (periodic_noise(size, size, rng, 2, 2) > 0.62)
+    hgt = 0.35 * swirl + 0.12 * hand - 0.5 * crack
+    col = np.dstack([0.88 + 0.12 * swirl - 0.04 * hand] * 3) * np.array(tint, dtype=np.float32)
+    dado = v < 0.15
+    geru = np.array([0.55, 0.20, 0.12], dtype=np.float32) * (0.85 + 0.2 * swirl)[..., None]
+    col = np.where(dado[..., None], geru, col)
+    # Mandana border along the dado top: a band of white triangles with dots above.
+    band = (v > 0.118) & (v < 0.148)
+    tri = (np.abs(((x * 64) % 1.0) - 0.5) * 2) < (v - 0.118) / 0.03
+    dots = np.hypot(((x * 64) % 1.0 - 0.5) / 64, (v - 0.106)) < 0.0045
+    white = (band & tri) | dots | ((v > 0.148) & (v < 0.152))
+    col = np.where(white[..., None], np.array([0.92, 0.89, 0.82], dtype=np.float32) * (0.9 + 0.1 * swirl)[..., None], col)
+    # Damp and splash darkening at the foot of the wall.
+    col *= (1.0 - 0.25 * np.clip(1 - v / 0.05, 0, 1))[..., None]
+    col *= (1 - 0.35 * crack)[..., None]
+    write_set(out_dir, name, np.clip(col, 0, 1), normal_from_height(hgt, 2.5), 1 - 0.4 * crack, 0.92 + 0 * hgt)
+
+
+def basalt(out_dir, size=1024, seed=17):
+    """Deccan trap basalt (Ajanta): dark brown-grey rock in horizontal flow layers, with ochre
+    seepage stains and pale lichen. 4 m tile; layers run along U."""
+    rng = np.random.default_rng(seed)
+    y, x = np.mgrid[0:size, 0:size].astype(np.float32) / size
+    warp = periodic_noise(size, size, rng, 3, 2)
+    layers = 0.5 + 0.5 * np.sin(2 * np.pi * (y * 2 + warp * 1.5))
+    fine = periodic_noise(size, size, rng, 6, 8)
+    joints = np.clip(1 - np.abs(periodic_noise(size, size, rng, 3, 2) - 0.5) / 0.008, 0, 1) * (periodic_noise(size, size, rng, 2, 2) > 0.5)
+    pits = (rng.random((size, size)) > 0.985).astype(np.float32)
+    hgt = 0.45 * layers + 0.35 * fine - 0.6 * joints - 0.2 * pits
+    base = np.array([0.36, 0.31, 0.27], dtype=np.float32) * (0.8 + 0.3 * fine)[..., None] * (0.88 + 0.16 * layers)[..., None]
+    stain = periodic_noise(size, size, rng, 3, 2)
+    ochre = np.clip((stain - 0.55) * 3, 0, 1)
+    col = base * (1 - 0.3 * ochre[..., None]) + np.array([0.55, 0.38, 0.22]) * 0.3 * ochre[..., None]
+    lichen = np.clip((periodic_noise(size, size, rng, 5, 5) - 0.72) * 5, 0, 1)
+    col = col * (1 - 0.35 * lichen[..., None]) + np.array([0.62, 0.62, 0.52]) * 0.35 * lichen[..., None]
+    col *= (1 - 0.5 * joints)[..., None]
+    write_set(out_dir, "basalt", np.clip(col, 0, 1), normal_from_height(hgt, 4.0), 1 - 0.5 * joints, 0.88 + 0.08 * fine)
+
+
+def cloth(out_dir, name, colors, stripes=8, size=512, seed=18):
+    """Cotton awning cloth: woven stripes of `colors` (repeating) along U, 1 m tile, with weave
+    texture and sun fading."""
+    rng = np.random.default_rng(seed)
+    y, x = np.mgrid[0:size, 0:size].astype(np.float32) / size
+    idx = np.floor(x * stripes).astype(int) % len(colors)
+    pal = np.array(colors, dtype=np.float32)
+    weave = 0.5 + 0.25 * np.sin(2 * np.pi * x * 180) + 0.25 * np.sin(2 * np.pi * y * 180)
+    fade = periodic_noise(size, size, rng, 3, 2)
+    col = pal[idx] * (0.85 + 0.15 * weave)[..., None]
+    col = col * (1 - 0.2 * fade[..., None]) + 0.2 * fade[..., None] * np.array([0.9, 0.85, 0.75])
+    write_set(out_dir, name, np.clip(col, 0, 1), normal_from_height(weave, 0.6), 0.95 + 0 * weave, 0.95 + 0 * weave)
 
 
 def building_set(out_dir):

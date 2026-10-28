@@ -27,10 +27,10 @@ OUT = os.path.join(T.ROOT, "assets", "models", "props")
 
 def mats():
     texgen.sandstone(T.TEX)
-    texgen.trim_sheet(T.TEX, tint=(0.66, 0.60, 0.55))
+    texgen.trim_sheet(T.TEX, tint=(0.66, 0.60, 0.55), streaks=0.8)
     texgen.granite(T.TEX)
     # Weathered lime stucco over brick, grey with age.
-    texgen.plaster(T.TEX, name="stucco", tint=(0.74, 0.72, 0.67), grime=0.12)
+    texgen.plaster(T.TEX, name="stucco", tint=(0.66, 0.64, 0.60), grime=0.2, streaks=1.5)
     T.MATS.update({
         "stone": T.tex_material("granite", "granite"),
         "trim": T.tex_material("trim", "trim"),
@@ -46,7 +46,7 @@ def finish(name, kit, lods=(0.4,), smooth=False):
         obj.data.set_sharp_from_angle(angle=math.radians(40))
     for p in obj.data.polygons:
         p.use_smooth = True
-    T.bake_weathering(obj)
+    T.bake_weathering(obj, streak_k=0.32)
     export.triangulate(obj)
     return export.make_lods(obj, lods) if lods else [obj]
 
@@ -131,7 +131,8 @@ def shala(kit, x, y, z, length, s, axis="x", mat="stucco"):
         bm.faces.new([rows[k][e] for k in range(seg + 1)])
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     o = T.new_obj("vault", bm, (mat,))
-    T.cube_uvs(o)
+    from vernacular import proj_uvs
+    proj_uvs(o, T.TILE)
     kit.add(o)
     # Finials along the ridge.
     n = max(1, int(length / (0.6 * s)))
@@ -319,6 +320,135 @@ def stone_chariot():
     return finish("stone_chariot", kit)
 
 
+# ------------------------------------------------------------------ ruined mandapa
+
+# Pillar states on the 6 x 4 grid (x = -10 + 4i, game z = -6 + 4j): "F" standing to the beams,
+# a number = a broken stump of that height, None = gone. Must match `india.rs::MANDAPA_RUIN`.
+RUIN = [
+    ["F", "F", "F", "F"],
+    ["F", "F", "F", "F"],
+    ["F", "F", "F", "F"],
+    ["F", 2.2, "F", None],
+    [1.4, "F", None, 2.8],
+    [None, 1.0, "F", 2.0],
+]
+RUIN_PLINTH = 0.6
+RUIN_PILLAR = 4.2
+
+
+def broken_pillar(kit, x, y, z0, h, seed):
+    """A snapped Vijayanagara pillar: base, a carved block or two, a rough fractured top."""
+    rnd = random.Random(seed)
+    w = 0.32
+    kit.add(T.box("pb", (x - w - 0.05, y - w - 0.05, z0), (x + w + 0.05, y + w + 0.05, z0 + 0.26)))
+    zz = z0 + 0.26
+    blk = 0.73
+    k = 0
+    while zz + 0.05 < z0 + h:
+        top = min(zz + blk, z0 + h)
+        o = T.box("cube", (x - w, y - w, zz), (x + w, y + w, top), "trim")
+        v0, v1 = texgen.strip_v("lata" if k % 2 == 0 else "padma")
+        uvl = o.data.uv_layers[0]
+        for loop, d in zip(o.data.loops, uvl.data):
+            c = o.data.vertices[loop.vertex_index].co
+            d.uv = ((c.x + c.y) / (2 * w) * 0.5, v0 + (v1 - v0) * (c.z - zz) / blk)
+        if top >= z0 + h - 1e-4:
+            # Fracture: tilt and jag the top face.
+            tx, ty = rnd.uniform(-0.25, 0.25), rnd.uniform(-0.25, 0.25)
+            for v in o.data.vertices:
+                if v.co.z > top - 1e-4:
+                    v.co.z += (v.co.x - x) * tx + (v.co.y - y) * ty + rnd.uniform(-0.06, 0.06)
+        kit.add(o)
+        zz = top + 0.25
+        if zz < z0 + h:
+            kit.add(T.lathe("oct", [(w * 0.85, top), (w * 0.8, top + 0.12), (w * 0.85, zz)], 8, (x, y)))
+        k += 1
+
+
+def fallen_pillar(kit, cx, cy, z, yaw, length, seed):
+    """A toppled pillar shaft lying on its side."""
+    w = 0.32
+    parts = []
+    n = 3
+    for k in range(n):
+        x0 = -length / 2 + k * length / n
+        o = T.box("fcube", (x0 + 0.04, -w, -w), (x0 + length / n - 0.04, w, w), "trim" if k % 2 == 0 else "stone")
+        parts.append(o)
+    for o in parts:
+        o.rotation_euler = (0.0, 0.0, yaw)
+        o.location = (cx, cy, z + w)
+        bpy.context.view_layer.objects.active = o
+        o.select_set(True)
+        bpy.ops.object.transform_apply(location=True, rotation=True)
+        o.select_set(False)
+        kit.add(o)
+
+
+def mandapa_ruin():
+    """The ruined pillared hall at Hampi: a moulded granite plinth with steps front and back, a
+    grid of composite pillars (some snapped, some gone), the beams and roof slabs still in place
+    over the western half with a broken edge, fallen shafts and a cracked slab on the ground."""
+    kit = T.Kit()
+    plan = T.rect(12.0, 8.0)
+    prof = [(0.0, 0.18, "padma"), (0.2, 0.12, "bead"), (0.32, 0.06, None), (0.48, 0.12, "dentil"), (RUIN_PLINTH, 0.12, None)]
+    kit.add(T.molded("rplinth", [(z, T.offset_poly(plan, d), st) for z, d, st in prof]))
+    for (sx, sy) in ((4.0, -1), (-4.0, 1)):
+        for k in range(3):
+            y_out = sy * (8.12 + 1.8 - k * 0.6)
+            y_in = sy * 8.1
+            kit.add(T.box("rstep", (sx - 1.5, min(y_out, y_in), 0.0), (sx + 1.5, max(y_out, y_in), (k + 1) * 0.2)))
+    z0 = RUIN_PLINTH
+    for i, col in enumerate(RUIN):
+        for j, st in enumerate(col):
+            x, y = -10.0 + 4 * i, -(-6.0 + 4 * j)
+            if st == "F":
+                vijayanagara_pillar(kit, x, y, z0, RUIN_PILLAR)
+            elif st is not None:
+                broken_pillar(kit, x, y, z0, st, i * 7 + j)
+    # Beams along both axes over the roofed bay (x -10..-2, plus the stubs reaching x = 1).
+    top = z0 + RUIN_PILLAR
+    for j in range(4):
+        y = -(-6.0 + 4 * j)
+        kit.add(T.molded("rbeam", [(top - 0.42, T.rect(5.8, 0.24, -5.2, y), "lata"), (top, T.rect(5.8, 0.24, -5.2, y), None)]))
+    for i in range(3):
+        x = -10.0 + 4 * i
+        kit.add(T.box("rbeam_y", (x - 0.24, -6.5, top - 0.42), (x + 0.24, 6.5, top)))
+    # Roof: granite slabs laid across the beams, the eastern edge broken off unevenly, a kapota
+    # eave on the three intact sides.
+    rnd = random.Random(11)
+    for k in range(6):
+        xa = -11.0 + k * 2.0
+        xb = xa + 2.0
+        if k == 5:
+            xb = 1.0
+        o = T.box("rslab", (xa + 0.02, -7.0, top), (xb - 0.02, 7.0, top + 0.6))
+        if k == 5:
+            for v in o.data.vertices:
+                if v.co.x > xa + 1.0:
+                    v.co.x = xa + 0.3 + 1.6 * (0.5 + 0.5 * math.sin(v.co.y * 1.7 + 0.4)) + rnd.uniform(-0.2, 0.2)
+        kit.add(o)
+    prof = [(0.0, 0.0, "bead"), (0.08, 0.25, "plain"), (0.18, 0.45, "plain"), (0.3, 0.6, "plain"), (0.38, 0.66, None)]
+    for side in (-1, 1):
+        kit.add(T.molded("rkapota", [(top - 0.25 + dz, T.rect(6.0 + d / 2, 0.01 + d / 2, -5.0, side * (7.0 + d / 2)), st)
+                                      for dz, d, st in prof]))
+    kit.add(T.molded("rkapota_w", [(top - 0.25 + dz, T.rect(0.01 + d / 2, 7.0 + d, -11.0 - d / 2, 0.0), st) for dz, d, st in prof]))
+    # Debris: fallen shafts, a cracked slab, rubble blocks.
+    fallen_pillar(kit, 7.5, -3.5, z0, 0.3, 3.4, 1)
+    fallen_pillar(kit, 14.0, 3.0, 0.0, 1.2, 3.0, 2)
+    o = T.box("fslab", (2.6, 3.8, z0), (5.4, 6.3, z0 + 0.4))
+    o.rotation_euler = (0.0, 0.08, 0.15)
+    kit.add(o)
+    for k in range(9):
+        x, y = rnd.uniform(1.5, 11.0), rnd.uniform(-7.5, 7.5)
+        if any(abs(x - (-10 + 4 * i)) < 0.8 and abs(y - (6 - 4 * j)) < 0.8 for i in range(6) for j in range(4)):
+            continue
+        s = rnd.uniform(0.25, 0.5)
+        o = T.box("rubble", (x - s, y - s * 0.7, z0), (x + s, y + s * 0.7, z0 + s * 0.8))
+        o.rotation_euler = (0.0, 0.0, rnd.uniform(0, math.pi))
+        kit.add(o)
+    return finish("mandapa_ruin", kit)
+
+
 def main():
     export.reset_scene()
     mats()
@@ -330,7 +460,8 @@ def main():
         kit.add(boulder(seed))
         lods = finish(name, kit, lods=(0.35,), smooth=True)
         out[name] = export.export_glb(lods, os.path.join(OUT, f"{name}.glb"))
-    for name, make in (("gopuram", gopuram), ("temple_dravida", dravida_temple), ("stone_chariot", stone_chariot)):
+    for name, make in (("gopuram", gopuram), ("temple_dravida", dravida_temple), ("stone_chariot", stone_chariot),
+                       ("mandapa_ruin", mandapa_ruin)):
         for o in list(bpy.data.objects):
             bpy.data.objects.remove(o)
         lods = make()

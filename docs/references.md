@@ -97,3 +97,28 @@ Generic male and female warriors, stylized realistic, warm brown South Asian ski
 
 Neem, peepal, banyan (hero, aerial prop roots), coconut palm, lantana and bougainvillea bushes.
 Trees have trunk colliders; bushes are soft cover.
+
+## Architecture kit
+
+All procedural (Blender scripts in `tools/blender/architecture/`, numpy textures in `texgen.py`),
+no third-party meshes or textures. Each model matches its gameplay colliders in
+`crates/shared/src/map/india.rs`; when you change one, change the other.
+
+- **Village huts** (`vernacular.py`): mud-and-dung plaster over a geru (red ochre) dado with a
+  white mandana border, or exposed brick; gable thatch on bamboo rafters; plinth (chabutra),
+  matka pots, hearth. Scaled per hut in X/Z around a 5.2 x 4.5 m base.
+- **Market stalls**: bamboo posts, striped cotton awning, takht counter with spices, brass or cloth.
+- **Great stupa** (`buddhist.py`), after Sanchi Stupa 1: medhi with walkway railing, anda,
+  harmika, three chhatras, vedika railing, four toranas (three architraves with volutes,
+  dharmachakra, triratnas, yakshi brackets).
+- **Ajanta cliff**: Deccan basalt cliff with flow ledges and an eroded lip; two chaitya halls
+  (horseshoe window, ribbed vault, rock-cut stupa) and two viharas (cells, a shrine Buddha);
+  niches with seated Buddhas on the facades; a stair cut up a rock spur at the north end.
+- **Rani ki Baoli lining** (`stepwell.py`), after Rani ki Vav: tiers of niches with four-armed
+  Vishnu figures, jali panels, cornices; carved pavilion pillars.
+- **Hampi** (`hampi.py`): boulders, gopuram, Dravidian temple, stone chariot, and the ruined
+  mandapa (pillar states in `RUIN`, mirrored by `MANDAPA_RUIN_PILLARS`). Stucco is weathered with
+  black lichen and rain streaks (`texgen.weather_streaks`).
+
+Figures are simple stylised forms (seated Buddha, standing Vishnu), readable at gameplay distance,
+not sculpted.

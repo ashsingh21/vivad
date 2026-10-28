@@ -69,7 +69,7 @@ fn apply_lod_ranges(root: Entity, ranges: &[(Range<f32>, Range<f32>)], children:
 fn dress_props(mut commands: Commands, q: Query<(Entity, &PropIndex), Added<PropIndex>>, layout: Res<MapLayout>, models: Res<Models>) {
     for (e, PropIndex(i)) in &q {
         let prop = &layout.props[*i];
-        let big = prop.model.contains("banyan");
+        let big = ["banyan", "ajanta", "stupa", "gopuram", "temple"].iter().any(|k| prop.model.contains(k));
         let bush = prop.model.contains("bush");
         let (lod0_end, far) = if bush { (35.0, 220.0) } else if big { (90.0, 900.0) } else { (60.0, 700.0) };
         commands.entity(e).insert(Visibility::default());
@@ -90,14 +90,30 @@ fn dress_props(mut commands: Commands, q: Query<(Entity, &PropIndex), Added<Prop
 /// Architectural kit pieces (arches, jharokhas, chhatris): static, visual only, faded out at range.
 fn spawn_ornaments(mut commands: Commands, layout: Res<MapLayout>, models: Res<Models>) {
     for o in &layout.ornaments {
-        let far = if o.model.contains("chhatri") || o.model.contains("gate") { 400.0 } else { 160.0 };
+        // Pieces that replace a whole building must outlast the distance its silhouette matters.
+        let far = if o.model.contains("hut") {
+            700.0
+        } else if o.model.contains("chhatri") || o.model.contains("gate") || o.model.contains("rock") {
+            400.0
+        } else if o.model.contains("stall") {
+            250.0
+        } else {
+            160.0
+        };
         commands
             .spawn((
                 WorldAssetRoot(models.props[o.model].clone()),
                 Transform { translation: o.pos, rotation: o.rot, scale: o.scale },
             ))
             .observe(move |ready: On<WorldInstanceReady>, children: Query<&Children>, names: Query<&Name>, mut commands: Commands| {
-                apply_lod_ranges(ready.entity, &[(0.0..0.0, far..far + 20.0)], &children, &names, &mut commands);
+                // Pieces with a LOD1 switch to it at 45 m; single-LOD pieces stay on LOD0 until they fade.
+                let has_lod1 = children.iter_descendants(ready.entity).any(|e| names.get(e).is_ok_and(|n| n.as_str().ends_with("LOD1")));
+                let ranges: &[(Range<f32>, Range<f32>)] = if has_lod1 {
+                    &[(0.0..0.0, 45.0..50.0), (45.0..50.0, far..far + 20.0)]
+                } else {
+                    &[(0.0..0.0, far..far + 20.0)]
+                };
+                apply_lod_ranges(ready.entity, ranges, &children, &names, &mut commands);
             });
     }
     info!("ornaments: {}", layout.ornaments.len());
