@@ -193,6 +193,21 @@ def arm_ik(rig, s, wrist, pole):
     rig.aim(f"lowerarm_{s}", h + u * d - elbow)
 
 
+def face_anchor(rig, body):
+    """The bow's draw anchor, in the head bone's frame: the corner of the mouth on the string-hand
+    (left) side, a finger's width off the skin, found from the nose tip of the rest-pose face."""
+    hz = rig.head("head").z
+    mw = body.matrix_world
+    face = [mw @ v.co for v in body.data.vertices]
+    # The nose tip: the most forward point on the midline between the lips and the eyes (below a
+    # pagri's brim, which juts further out above the brow).
+    nose = min((p for p in face if abs(p.x) < 0.012 and hz - 0.04 < p.z < hz + 0.05), key=lambda p: p.y)
+    anchor = nose + Vector((0.045, 0.03, -0.045))
+    head = rig.obj.matrix_world @ rig.pb["head"].matrix
+    print(f"[anims] nose tip {nose.z - hz:+.3f} m above the head bone, {nose.y - rig.head('head').y:+.3f} forward")
+    return head.inverted() @ anchor
+
+
 def roll_hand(rig, s, angle):
     """Turn the hand about its own length (pronation / supination)."""
     rig.rotate(f"hand_{s}", rig.tail(f"hand_{s}") - rig.head(f"hand_{s}"), angle)
@@ -434,13 +449,21 @@ def bow_draw_pose(rig, t):
     grip = rig.head("hand_r").lerp(rig.head("middle_01_r"), 0.6)
     shot = (rig.head("hand_r") - rig.head("upperarm_r")).normalized()
     rest = grip - shot * BOW_BRACE
-    cheek = rig.head("head") + Vector((-0.03, -0.1, -0.03))
+    head = rig.obj.matrix_world @ rig.pb["head"].matrix
+    cheek = head @ rig.anchor
     k = smooth(t)
-    pinch = rest.lerp(cheek, k)
-    # The pinch (index and middle fingers on the string) sits ahead of the wrist.
-    wrist = pinch + shot * 0.07 * (1 - 0.3 * k) + Vector((0, 0, -0.02))
-    arm_ik(rig, "l", wrist, Vector((0.3, 0.8, 0.25 + 0.4 * k)))
-    rig.aim("hand_l", pinch - wrist + shot * 0.05)
+    goal = rest.lerp(cheek, k)
+    # Place the wrist, then nudge it until the pinch (index and middle fingers on the string, where
+    # the game hangs the string: 1.3 x hand-to-middle-knuckle) lands on the goal.
+    wrist = goal + shot * 0.07 * (1 - 0.3 * k) + Vector((0, 0, -0.02))
+    for _ in range(6):
+        arm_ik(rig, "l", wrist, Vector((0.3, 0.8, 0.25 + 0.4 * k)))
+        rig.aim("hand_l", goal - rig.head("hand_l") + shot * 0.05)
+        h = rig.head("hand_l")
+        err = goal - (h + (rig.head("middle_01_l") - h) * 1.3)
+        if err.length < 0.004:
+            break
+        wrist += err
     relax_fingers(rig, "l", 0.55)
 
 
@@ -490,11 +513,12 @@ def main():
     bpy.ops.wm.open_mainfile(filepath=os.path.join(ROOT, "build", f"char_{variant}_final.blend"))
     preview = sys.argv[sys.argv.index("--preview") + 1] if "--preview" in sys.argv else None
     arm = bpy.data.objects["Human.rig"]
+    rig = Rig(arm)
+    rig.anchor = face_anchor(rig, bpy.data.objects[f"{variant}_LOD0"])
     for o in list(bpy.data.objects):
         # Keep the LOD0 body for previews; everything else goes.
         if o is not arm and not (preview and o.type == "MESH" and o.name.endswith("LOD0")):
             bpy.data.objects.remove(o)
-    rig = Rig(arm)
     cycles = {}
     for name, speed, d in (("walk", WALK, None), ("run", RUN, None)):
         cad = 2.8 if speed == WALK else 3.0
