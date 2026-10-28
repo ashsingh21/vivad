@@ -5,10 +5,16 @@
 //!   VIVAD_TOUR_FRAMES=n  n consecutive frames per view (`<name>_f<k>.png`), for flicker checks.
 //!   VIVAD_TOUR_DRIFT=m   during a burst, slide the camera sideways m metres per frame.
 //! VIVAD_SHOTS=<dir>     with VIVAD_AUTOPILOT=1: screenshot the match at set times, then exit.
+//! VIVAD_ARMOURY=<dir>   stand the player on open ground and screenshot every item in hand, carried
+//!   and in use (aiming, drawing, swinging, drinking), from the front and the side, then exit.
+//!   VIVAD_ARMOURY_ONLY=a,b only the poses whose names contain one of these.
 
 use bevy::prelude::*;
 use bevy::render::view::window::screenshot::{Screenshot, save_to_disk};
+use shared::items::{ItemDb, ItemKind, ItemStack, Rarity};
+use shared::map::MapLayout;
 use shared::sim::flow::Match;
+use shared::sim::{Action, HALF_HEIGHT, Health, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, btn};
 
 use crate::camera::MainCamera;
 
@@ -27,6 +33,67 @@ pub struct MatchShots {
     next: usize,
     taken_at: f32,
 }
+
+/// One armoury shot: item in hand, what the warrior is doing, and where the camera stands.
+#[derive(Clone, Copy)]
+struct Pose {
+    item: &'static str,
+    state: Use,
+    view: View,
+    pitch: f32,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Use {
+    Carry,
+    Aim,
+    /// Hold fire: draw a charged bow, or drink.
+    Hold,
+    /// One press of fire, shot mid-swing.
+    Strike,
+}
+
+#[derive(Clone, Copy)]
+enum View {
+    Front,
+    Side,
+    Back,
+}
+
+#[derive(Resource)]
+pub struct Armoury {
+    dir: String,
+    poses: Vec<Pose>,
+    index: usize,
+    /// Seconds into the current pose.
+    t: f32,
+    shot: bool,
+    /// Fire has been pressed for this pose (drinking and swinging start on a press).
+    pressed: bool,
+    spot: Option<Vec3>,
+}
+
+impl Armoury {
+    fn name(&self, p: &Pose) -> String {
+        let state = match p.state {
+            Use::Carry => "carry",
+            Use::Aim => "aim",
+            Use::Hold => "hold",
+            Use::Strike => "strike",
+        };
+        let view = match p.view {
+            View::Front => "front",
+            View::Side => "side",
+            View::Back => "back",
+        };
+        let up = if p.pitch > 0.1 { "_up" } else if p.pitch < -0.1 { "_down" } else { "" };
+        format!("{:02}_{}_{state}{up}_{view}", self.index, p.item)
+    }
+}
+
+/// Settle time before each armoury shot; a strike is pressed STRIKE_AT seconds in.
+const POSE_TIME: f32 = 1.3;
+const STRIKE_AT: f32 = 1.1;
 
 pub struct AutoshotPlugin;
 
@@ -75,6 +142,34 @@ impl Plugin for AutoshotPlugin {
                 app.world_mut().resource_mut::<Tour>().shots.retain(|s| keys.iter().any(|k| s.0.contains(k.as_str())));
             }
             app.add_systems(PostUpdate, run_tour.after(crate::camera::CameraSystems).before(TransformSystems::Propagate));
+        }
+        if let Ok(dir) = std::env::var("VIVAD_ARMOURY") {
+            let p = |item, state, view, pitch| Pose { item, state, view, pitch };
+            let mut poses = vec![
+                p("khanda", Use::Carry, View::Front, 0.0),
+                p("khanda", Use::Strike, View::Front, 0.0),
+                p("khanda", Use::Strike, View::Side, 0.0),
+                p("gandiva", Use::Carry, View::Front, 0.0),
+                p("gandiva", Use::Aim, View::Front, 0.0),
+                p("gandiva", Use::Aim, View::Side, 0.0),
+                p("gandiva", Use::Aim, View::Back, 0.0),
+                p("gandiva", Use::Aim, View::Side, 0.5),
+                p("sharanga", Use::Aim, View::Side, 0.0),
+                p("pinaka", Use::Hold, View::Side, 0.0),
+                p("pinaka", Use::Hold, View::Front, -0.4),
+                p("agneyastra", Use::Carry, View::Front, 0.0),
+                p("vayavyastra", Use::Carry, View::Side, 0.0),
+                p("sanjeevani", Use::Carry, View::Front, 0.0),
+                p("soma", Use::Hold, View::Front, 0.0),
+                p("amrita", Use::Carry, View::Front, 0.0),
+            ];
+            if let Ok(only) = std::env::var("VIVAD_ARMOURY_ONLY").map(|s| s.trim().to_owned()).and_then(|s| if s.is_empty() { Err(std::env::VarError::NotPresent) } else { Ok(s) }) {
+                let keys: Vec<String> = only.split(',').map(str::to_owned).collect();
+                poses.retain(|q| keys.iter().any(|k| q.item.contains(k.as_str())));
+            }
+            app.insert_resource(Armoury { dir, poses, index: 0, t: -3.0, shot: false, pressed: false, spot: None })
+                .add_systems(PreUpdate, armoury_actor.after(crate::input::LocalInput))
+                .add_systems(PostUpdate, armoury_camera.after(crate::camera::CameraSystems).before(TransformSystems::Propagate));
         }
         if let Ok(dir) = std::env::var("VIVAD_SHOTS") {
             app.insert_resource(MatchShots { dir, times: vec![6.0, 20.0, 34.0, 50.0, 80.0, 120.0, 170.0, 230.0], next: 0, taken_at: -1.0 })
@@ -148,5 +243,100 @@ fn match_shots(
         commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
         shots.next += 1;
         shots.taken_at = now;
+    }
+}
+
+/// Holds the local player still on open ground with the pose's item, pitch and buttons. Runs in
+/// place of the keyboard and mouse (just after them) so the sim and the animation both see it.
+#[allow(clippy::type_complexity)]
+fn armoury_actor(
+    mut arm: ResMut<Armoury>,
+    db: Res<ItemDb>,
+    layout: Res<MapLayout>,
+    mut q: Query<(&mut Transform, &mut Kinematic, &mut Inventory, &mut PlayerIntent, &mut Health, &mut Action), With<LocalPlayer>>,
+) {
+    let Ok((mut tf, mut kin, mut inv, mut intent, mut health, mut act)) = q.single_mut() else { return };
+    let spot = *arm.spot.get_or_insert_with(|| {
+        let (x, z) = (38.0, 104.0);
+        Vec3::new(x, layout.terrain.height(x, z) + HALF_HEIGHT + 0.05, z)
+    });
+    tf.translation = spot;
+    kin.mode = MoveMode::Ground;
+    kin.velocity = Vec3::ZERO;
+    health.hp = 40.0;
+    let Some(pose) = arm.poses.get(arm.index).copied() else { return };
+    let t = arm.t;
+    let def = db.get(pose.item);
+    let stack = |count| Some(ItemStack { id: pose.item.into(), rarity: Rarity::Epic, count });
+    match &def.kind {
+        ItemKind::Melee { .. } => inv.selected = 0,
+        ItemKind::Bow { magazine, .. } => {
+            inv.slots[0] = stack(*magazine);
+            inv.arrows = 60;
+            inv.selected = 1;
+        }
+        _ => {
+            inv.slots[0] = stack(3);
+            inv.selected = 1;
+        }
+    }
+    if pose.state == Use::Carry {
+        act.since_attack = act.since_attack.max(5.0);
+    }
+    intent.yaw = 0.0;
+    intent.pitch = pose.pitch;
+    intent.move_axis = Vec2::ZERO;
+    intent.select = None;
+    intent.held = match pose.state {
+        Use::Carry => 0,
+        Use::Aim => btn::AIM,
+        Use::Hold => btn::FIRE | btn::AIM,
+        Use::Strike => if t >= STRIKE_AT { btn::FIRE } else { 0 },
+    };
+    let press_at = if pose.state == Use::Strike { STRIKE_AT } else { 0.2 };
+    if intent.held(btn::FIRE) && t >= press_at && !arm.pressed {
+        intent.pressed |= btn::FIRE;
+        arm.pressed = true;
+    }
+}
+
+/// Frames the player for each pose, screenshots it once settled, then moves to the next.
+fn armoury_camera(
+    mut commands: Commands,
+    mut arm: ResMut<Armoury>,
+    time: Res<Time>,
+    player: Query<Entity, With<LocalPlayer>>,
+    visuals: Query<(&crate::visuals::WarriorVisual, &Transform), Without<MainCamera>>,
+    mut cam: Query<&mut Transform, With<MainCamera>>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    arm.t += time.delta_secs();
+    let (Ok(me), Ok(mut ct)) = (player.single(), cam.single_mut()) else { return };
+    let Some(body) = visuals.iter().find(|(v, _)| v.sim == me).map(|(_, t)| t.translation) else { return };
+    let Some(pose) = arm.poses.get(arm.index).copied() else {
+        if arm.t > 0.5 {
+            exit.write(AppExit::Success);
+        }
+        return;
+    };
+    // The player faces -Z; its right is +X.
+    let chest = body + Vec3::Y * 0.45;
+    let (eye, look) = match pose.view {
+        View::Front => (chest + Vec3::new(1.5, 0.35, -2.1), chest + Vec3::new(0.15, -0.05, 0.0)),
+        View::Side => (chest + Vec3::new(2.6, 0.2, -0.5), chest + Vec3::new(0.0, 0.0, -0.45)),
+        View::Back => (chest + Vec3::new(0.9, 0.5, 2.3), chest + Vec3::new(0.0, 0.1, -0.6)),
+    };
+    *ct = Transform::from_translation(eye).looking_at(look, Vec3::Y);
+    let at = if pose.state == Use::Strike { STRIKE_AT + 0.17 } else { POSE_TIME };
+    if arm.t >= at && !arm.shot {
+        let path = format!("{}/{}.png", arm.dir, arm.name(&pose));
+        commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
+        arm.shot = true;
+    }
+    if arm.t >= at + 0.25 {
+        arm.index += 1;
+        arm.t = 0.0;
+        arm.shot = false;
+        arm.pressed = false;
     }
 }

@@ -128,6 +128,18 @@ def main():
         "6_close_plate_tip": camera("plate", Vector((0.17, -0.02, 0.50)), Vector((0, 0.0, 0.48)), y, lens=60),
         "7_close_tip": camera("tip", Vector((0.20, 0.05, 0.84)), Vector((0, 0.004, 0.84)), y, lens=60),
     }
+    if name != "khanda":
+        for v in ("5_close_hilt", "6_close_plate_tip", "7_close_tip"):
+            del views[v]
+        # Other models: close-ups on the upper end, the middle and the lower end of the long axis,
+        # framed from the bounding box.
+        size = hi - lo
+        d = max(size.x, size.y, 0.06) * 2.2 + 0.12
+        span = max(size.z, 0.05)
+        for k, (label, f) in enumerate((("top", 0.85), ("mid", 0.5), ("low", 0.15))):
+            target = Vector((centre.x, centre.y, lo.z + span * f))
+            views[f"{5 + k}_close_{label}"] = camera(label, target + Vector((d * 0.8, -d * 0.55, d * 0.25)), target, z,
+                                                     lens=60)
     for view, cam in views.items():
         render(cam, os.path.join(out_dir, f"{name}_{view}.png"), sq if "close" in view else wide)
 
@@ -150,8 +162,9 @@ def main():
     scene.display.shading.color_type = "OBJECT"
     lod0.color = (0.62, 0.62, 0.63, 1)
     wire.color = (0.05, 0.05, 0.06, 1)
-    render(views["5_close_hilt"], os.path.join(out_dir, f"{name}_8_wire_hilt.png"), sq)
-    render(views["6_close_plate_tip"], os.path.join(out_dir, f"{name}_9_wire_blade.png"), sq)
+    closes = [v for v in views if "close" in v]
+    render(views[closes[0]], os.path.join(out_dir, f"{name}_8_wire_a.png"), sq)
+    render(views[closes[1]], os.path.join(out_dir, f"{name}_9_wire_b.png"), sq)
 
 
 if __name__ == "__main__":

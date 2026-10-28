@@ -1,0 +1,7 @@
+// Written by tools/blender/weapons/arsenal.py: string anchors per bow in its glTF frame
+// (limbs along Y, target -Z). The bottom limb mirrors y. Do not edit by hand.
+{
+    "gandiva": (nock: (0.0, 0.6383, 0.1608), bridge: (0.0, 0.5356, 0.1994), rest: (0.026, 0.075, -0.0), half_len: 0.735),
+    "sharanga": (nock: (0.0, 0.5143, 0.1505), bridge: (0.0, 0.4321, 0.1918), rest: (0.028, 0.075, -0.0), half_len: 0.609),
+    "pinaka": (nock: (0.0, 0.809, 0.2068), bridge: (0.0, 0.704, 0.2426), rest: (0.029, 0.075, -0.0), half_len: 0.921),
+}

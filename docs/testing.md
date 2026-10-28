@@ -22,6 +22,11 @@ pixels only when the numbers point somewhere.
 
 The HUD (minimap, status, hotbar) is masked out of every measurement.
 
+**Weapons in the hand.** `just armoury` stands the player on open ground and captures every item
+carried and in use (aiming, drawing, swinging, drinking) from the front, side and back, then
+tiles them into `previews/armoury_sheet.png`; `just armoury pinaka,soma` for a few. Crop the
+interesting ones before looking.
+
 **Flicker and shimmer.** `just flicker` captures 8-frame bursts while the camera drifts a few
 millimetres per frame and scores each view by how many pixels fail to move smoothly. Without
 anti-aliasing the carved, normal-mapped surfaces scored 5-16 % (they crawl and sparkle); with

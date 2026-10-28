@@ -1,6 +1,7 @@
 //! Presentation of simulation entities: graybox map, warriors, loot, projectiles, effects, sky.
 
 use std::collections::HashMap;
+use std::f32::consts::FRAC_PI_2;
 
 use bevy::light::{Atmosphere, CascadeShadowConfigBuilder, atmosphere::ScatteringMedium};
 use bevy::prelude::*;
@@ -11,7 +12,7 @@ use shared::sim::flow::Vimana;
 use shared::sim::loot::{Chest, Pickup};
 use shared::sim::zone::Zone;
 use shared::sim::{
-    CAPSULE_LENGTH, CAPSULE_RADIUS, Eliminated, Inventory, Kinematic, MapBlock, MoveMode,
+    Eliminated, Inventory, Kinematic, MapBlock, MoveMode,
     PosHistory, Warrior,
 };
 
@@ -42,25 +43,31 @@ impl Plugin for VisualsPlugin {
     }
 }
 
+/// Baked models in assets/models/weapons, one per item (the arrow-quiver pickup shows the tarkash).
+pub const WEAPON_MODELS: [&str; 11] =
+    ["khanda", "gandiva", "sharanga", "pinaka", "arrow", "tarkash", "agneyastra", "vayavyastra", "sanjeevani", "soma", "amrita"];
+
+/// One weapon model's LOD0 mesh and its material (converted from the glTF material once loaded).
+pub struct ModelHandles {
+    pub mesh: Handle<Mesh>,
+    pub mat: Handle<StandardMaterial>,
+    gltf_mat: Handle<bevy::gltf::GltfMaterial>,
+}
+
 #[derive(Resource)]
 pub struct Palette {
     cube: Handle<Mesh>,
-    cylinder: Handle<Mesh>,
+    pub(crate) cylinder: Handle<Mesh>,
     sphere: Handle<Mesh>,
-    capsule: Handle<Mesh>,
     mats: HashMap<(Mat, u8), Handle<StandardMaterial>>,
-    rarity: HashMap<Rarity, Handle<StandardMaterial>>,
     rarity_glow: HashMap<Rarity, Handle<StandardMaterial>>,
-    skin: Handle<StandardMaterial>,
     wood: Handle<StandardMaterial>,
     gold: Handle<StandardMaterial>,
-    string: Handle<StandardMaterial>,
+    pub(crate) string: Handle<StandardMaterial>,
     fire: Handle<StandardMaterial>,
     wind: Handle<StandardMaterial>,
     zone: Handle<StandardMaterial>,
-    khanda_mesh: Handle<Mesh>,
-    khanda_mat: Handle<StandardMaterial>,
-    khanda_gltf_mat: Handle<bevy::gltf::GltfMaterial>,
+    pub(crate) models: HashMap<&'static str, ModelHandles>,
     outfits: Vec<(Handle<StandardMaterial>, Handle<StandardMaterial>)>,
 }
 
@@ -122,10 +129,8 @@ fn setup_assets(
             mats.insert((m, v), materials.add(sm));
         }
     }
-    let mut rarity = HashMap::new();
     let mut rarity_glow = HashMap::new();
     for r in Rarity::ALL {
-        rarity.insert(r, materials.add(StandardMaterial { base_color: r.color(), perceptual_roughness: 0.4, metallic: 0.3, ..default() }));
         let l = r.color().to_linear();
         rarity_glow.insert(r, materials.add(StandardMaterial {
             base_color: r.color(),
@@ -157,14 +162,10 @@ fn setup_assets(
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         cylinder: meshes.add(Cylinder::new(0.5, 1.0).mesh().resolution(20)),
         sphere: meshes.add(Sphere::new(1.0).mesh().uv(24, 14)),
-        capsule: meshes.add(Capsule3d::new(CAPSULE_RADIUS, CAPSULE_LENGTH)),
         mats,
-        rarity,
         rarity_glow,
-        skin: materials.add(StandardMaterial { base_color: Color::srgb(0.62, 0.42, 0.30), perceptual_roughness: 0.7, ..default() }),
         wood: materials.add(StandardMaterial { base_color: Color::srgb(0.40, 0.24, 0.12), perceptual_roughness: 0.7, ..default() }),
         gold: materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.78, 0.34), metallic: 1.0, perceptual_roughness: 0.3, ..default() }),
-        string: materials.add(StandardMaterial { base_color: Color::srgb(0.9, 0.88, 0.8), unlit: true, ..default() }),
         fire: materials.add(StandardMaterial {
             base_color: Color::srgba(1.0, 0.45, 0.1, 0.7),
             emissive: LinearRgba::rgb(12.0, 3.5, 0.6),
@@ -186,10 +187,19 @@ fn setup_assets(
             unlit: true,
             ..default()
         }),
-        khanda_mesh: assets.load("models/weapons/khanda.glb#Mesh0/Primitive0"),
-        // Steel placeholder until the glTF material loads; then it's replaced in place.
-        khanda_mat: materials.add(StandardMaterial { base_color: Color::srgb(0.6, 0.6, 0.62), metallic: 1.0, perceptual_roughness: 0.3, ..default() }),
-        khanda_gltf_mat: assets.load("models/weapons/khanda.glb#Material0"),
+        models: WEAPON_MODELS
+            .iter()
+            .map(|&id| {
+                let path = format!("models/weapons/{id}.glb");
+                (id, ModelHandles {
+                    mesh: assets.load(format!("{path}#Mesh0/Primitive0")),
+                    // Neutral placeholder until the glTF material loads; then it's replaced in place.
+                    mat: materials.add(StandardMaterial { base_color: Color::srgb(0.5, 0.45, 0.4), perceptual_roughness: 0.5, ..default() }),
+                    gltf_mat: assets.load(format!("{path}#Material0")),
+                })
+            })
+            .collect(),
+        string: materials.add(StandardMaterial { base_color: Color::srgb(0.86, 0.82, 0.70), perceptual_roughness: 0.8, ..default() }),
         outfits,
     });
 }
@@ -227,19 +237,24 @@ fn update_zone_wall(zone: Res<Zone>, mut q: Query<&mut Transform, With<ZoneWall>
     }
 }
 
-/// Bevy 0.20 loads glTF materials as `GltfMaterial`; convert once and swap into our handle.
+/// Bevy 0.20 loads glTF materials as `GltfMaterial`; convert each once and swap it into our handle.
 fn resolve_gltf_materials(
     palette: Res<Palette>,
     gltf_mats: Res<Assets<bevy::gltf::GltfMaterial>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut done: Local<bool>,
+    mut done: Local<Vec<&'static str>>,
 ) {
-    if *done {
+    if done.len() == palette.models.len() {
         return;
     }
-    if let Some(gm) = gltf_mats.get(&palette.khanda_gltf_mat) {
-        let _ = materials.insert(palette.khanda_mat.id(), bevy::pbr::gltf::standard_material_from_gltf_material(gm));
-        *done = true;
+    for (id, m) in &palette.models {
+        if done.contains(id) {
+            continue;
+        }
+        if let Some(gm) = gltf_mats.get(&m.gltf_mat) {
+            let _ = materials.insert(m.mat.id(), bevy::pbr::gltf::standard_material_from_gltf_material(gm));
+            done.push(id);
+        }
     }
 }
 
@@ -426,37 +441,36 @@ fn pose_warriors(
     }
 }
 
-pub fn spawn_weapon_model(commands: &mut Commands, parent: Entity, id: &str, rarity: Rarity, db: &ItemDb, p: &Palette) {
-    let kind = &db.get(id).kind;
-    let r = p.rarity[&rarity].clone();
-    commands.entity(parent).with_children(|c| match kind {
-        ItemKind::Melee { .. } => {
-            // The real khanda GLB: blade along +Y, origin at the grip.
-            c.spawn((Mesh3d(p.khanda_mesh.clone()), MeshMaterial3d(p.khanda_mat.clone()), Transform::default()));
-        }
-        ItemKind::Bow { pellets, charge, .. } => {
-            let len = if *charge > 0.0 { 1.7 } else if *pellets > 1 { 1.1 } else { 1.4 };
-            // Recurve silhouette: grip plus two angled limbs, and a string.
-            c.spawn((Mesh3d(p.cube.clone()), MeshMaterial3d(p.wood.clone()), Transform::from_scale(Vec3::new(0.05, 0.22, 0.06))));
-            for s in [-1.0f32, 1.0] {
-                c.spawn((Mesh3d(p.cube.clone()), MeshMaterial3d(r.clone()),
-                         Transform::from_xyz(0.0, s * len * 0.27, -0.06).with_rotation(Quat::from_rotation_x(s * 0.25))
-                             .with_scale(Vec3::new(0.035, len * 0.5, 0.045))));
-                c.spawn((Mesh3d(p.cube.clone()), MeshMaterial3d(p.gold.clone()),
-                         Transform::from_xyz(0.0, s * len * 0.52, 0.02).with_rotation(Quat::from_rotation_x(-s * 0.5))
-                             .with_scale(Vec3::new(0.03, 0.12, 0.03))));
-            }
-            c.spawn((Mesh3d(p.cube.clone()), MeshMaterial3d(p.string.clone()),
-                     Transform::from_xyz(0.0, 0.0, 0.06).with_scale(Vec3::new(0.008, len * 1.02, 0.008))));
-        }
-        ItemKind::Astra { .. } => {
-            c.spawn((Mesh3d(p.sphere.clone()), MeshMaterial3d(p.rarity_glow[&rarity].clone()), Transform::from_scale(Vec3::splat(0.12))));
-        }
-        ItemKind::Consumable { .. } => {
-            c.spawn((Mesh3d(p.cylinder.clone()), MeshMaterial3d(r), Transform::from_scale(Vec3::new(0.12, 0.2, 0.12))));
-        }
-        ItemKind::Arrows { .. } => {}
-    });
+/// The model an item shows (in hand, on the ground): its own, or the quiver for arrows.
+pub fn model_for(id: &str) -> &str {
+    if id == "arrows" { "tarkash" } else { id }
+}
+
+/// Where the hand closes on each model, in its glTF frame (the origin unless noted): vessels are
+/// held by the neck, the herb bundle by its binding.
+fn grip_point(model: &str) -> Vec3 {
+    match model {
+        "soma" => Vec3::Y * 0.052,
+        "amrita" => Vec3::Y * 0.045,
+        "sanjeevani" => Vec3::Y * -0.018,
+        _ => Vec3::ZERO,
+    }
+}
+
+/// Spawn an item's model under `parent` (a hand socket or a pickup), grip at the parent's origin.
+/// Bows also get a string, drawn each frame by `crate::arms`.
+pub fn spawn_weapon_model(commands: &mut Commands, parent: Entity, id: &str, _rarity: Rarity, db: &ItemDb, p: &Palette) {
+    let model = model_for(id);
+    let Some(m) = p.models.get(model) else { return };
+    let mut e = commands.spawn((
+        Mesh3d(m.mesh.clone()),
+        MeshMaterial3d(m.mat.clone()),
+        Transform::from_translation(-grip_point(model)),
+        ChildOf(parent),
+    ));
+    if let ItemKind::Bow { pellets, .. } = &db.get(id).kind {
+        e.insert(crate::arms::BowRig::new(model, *pellets));
+    }
 }
 
 // ------------------------------------------------------------------ loot
@@ -517,17 +531,14 @@ fn dress_pickups(mut commands: Commands, q: Query<(Entity, &Pickup), Added<Picku
         commands.spawn((Mesh3d(palette.cylinder.clone()), MeshMaterial3d(palette.rarity_glow[&rarity].clone()),
                         Transform::from_xyz(0.0, -0.22, 0.0).with_scale(Vec3::new(0.9, 0.02, 0.9)),
                         bevy::light::NotShadowCaster, ChildOf(e)));
-        let spin = commands.spawn((PickupSpin, Transform::from_xyz(0.0, 0.25, 0.0), Visibility::default(), ChildOf(e))).id();
-        if matches!(db.get(&p.stack.id).kind, ItemKind::Arrows { .. }) {
-            commands.entity(spin).with_children(|s| {
-                for i in 0..5 {
-                    s.spawn((Mesh3d(palette.cube.clone()), MeshMaterial3d(palette.wood.clone()),
-                             Transform::from_xyz((i as f32 - 2.0) * 0.05, 0.0, 0.0).with_scale(Vec3::new(0.02, 0.7, 0.02))));
-                }
-            });
-        } else {
-            spawn_weapon_model(&mut commands, spin, &p.stack.id, rarity, &db, &palette);
-        }
+        // Small things (vessels, herbs, astras) are shown larger so they read from a distance.
+        let scale = match db.get(&p.stack.id).kind {
+            ItemKind::Consumable { .. } => 2.2,
+            ItemKind::Astra { .. } => 1.6,
+            _ => 1.0,
+        };
+        let spin = commands.spawn((PickupSpin, Transform::from_xyz(0.0, 0.25, 0.0).with_scale(Vec3::splat(scale)), Visibility::default(), ChildOf(e))).id();
+        spawn_weapon_model(&mut commands, spin, &p.stack.id, rarity, &db, &palette);
     }
 }
 
@@ -535,7 +546,7 @@ fn animate_pickups(time: Res<Time>, mut q: Query<&mut Transform, With<PickupSpin
     let t = time.elapsed_secs();
     for mut tf in &mut q {
         tf.rotation = Quat::from_rotation_y(t * 1.6) * Quat::from_rotation_z(0.5);
-        tf.translation.y = 0.3 + (t * 2.0).sin() * 0.08;
+        tf.translation.y = 0.3 * tf.scale.y.max(1.0) + (t * 2.0).sin() * 0.08;
     }
 }
 
@@ -543,12 +554,18 @@ fn dress_projectiles(mut commands: Commands, q: Query<(Entity, &Projectile), Add
     for (e, p) in &q {
         commands.entity(e).insert(Visibility::default()).with_children(|c| {
             if p.astra.is_some() {
-                let m = if p.item == "agneyastra" { palette.fire.clone() } else { palette.wind.clone() };
-                c.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(m), Transform::from_scale(Vec3::splat(0.22))));
+                // The astra itself, point first, wrapped in a small glow of its element.
+                let glow = if p.item == "agneyastra" { palette.fire.clone() } else { palette.wind.clone() };
+                if let Some(m) = palette.models.get(p.item.as_str()) {
+                    c.spawn((Mesh3d(m.mesh.clone()), MeshMaterial3d(m.mat.clone()), Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2))));
+                }
+                c.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(glow), Transform::from_xyz(0.0, 0.0, -0.3).with_scale(Vec3::splat(0.1)),
+                         bevy::light::NotShadowCaster));
             } else {
-                c.spawn((Mesh3d(palette.cube.clone()), MeshMaterial3d(palette.wood.clone()), Transform::from_scale(Vec3::new(0.025, 0.025, 0.85))));
-                c.spawn((Mesh3d(palette.cube.clone()), MeshMaterial3d(palette.string.clone()),
-                         Transform::from_xyz(0.0, 0.0, 0.38).with_scale(Vec3::new(0.09, 0.005, 0.12))));
+                // The arrow model points +Y from its nock; the projectile's point is the arrowhead.
+                let m = &palette.models["arrow"];
+                c.spawn((Mesh3d(m.mesh.clone()), MeshMaterial3d(m.mat.clone()),
+                         Transform::from_xyz(0.0, 0.0, crate::arms::ARROW_LEN).with_rotation(Quat::from_rotation_x(-FRAC_PI_2))));
             }
         });
     }

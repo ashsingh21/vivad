@@ -8,7 +8,7 @@ Opens build/char_<variant>_final.blend (written by human.py, so the rig is exact
   locomotion  (loops, one cycle = two steps, all start at the left foot's contact)
     idle, walk_{f,b,l,r} (AIM_SPEED 3.6 m/s), run_{f,b,l,r} (WALK_SPEED 5.6), sprint_f (7.4)
   air         jump, fall, freefall, glide (loops / holds)
-  upper body  melee_guard, melee_swing, bow_aim, consume (the game masks these to the torso)
+  upper body  melee_guard, melee_swing(_b), bow_draw, consume (the game masks these to the torso)
   death       one-shot, holds its last frame
 
 Legs are posed by analytic two-bone IK against foot paths in which the planted foot travels
@@ -154,11 +154,48 @@ def arm_swing(rig, s, swing, elbow, out=0.12):
     rig.aim(f"hand_{s}", fa)
 
 
+def palm_frame(rig, s):
+    """(forward, thumbward, palm normal) of hand `s` from its knuckles: forward runs wrist to
+    knuckles, thumbward from the little finger's knuckle to the index's, and the palm normal points
+    away from the back of the hand (the middle knuckle arches toward the back)."""
+    h = rig.head(f"hand_{s}")
+    i, p, m = rig.head(f"index_01_{s}"), rig.head(f"pinky_01_{s}"), rig.head(f"middle_01_{s}")
+    fwd = (m - h).normalized()
+    k = i - p
+    k = (k - fwd * k.dot(fwd)).normalized()
+    arch = m - i
+    arch = arch - k * arch.dot(k) - fwd * arch.dot(fwd)
+    return fwd, k, -arch.normalized()
+
+
 def relax_fingers(rig, s, curl=0.35):
+    """Curl the fingers toward the palm (about the knuckle hinge, whatever the arm's pose)."""
+    fwd, _, palm = palm_frame(rig, s)
+    hinge = fwd.cross(palm)
     for f in ("index", "middle", "ring", "pinky"):
         for k in (1, 2, 3):
-            n = f"{f}_0{k}_{s}"
-            rig.rotate(n, (rig.tail(n) - rig.head(n)).cross(UP).normalized() or LEFT, curl * (0.6 if k == 1 else 1.0))
+            rig.rotate(f"{f}_0{k}_{s}", hinge, curl * (0.6 if k == 1 else 1.0))
+
+
+def arm_ik(rig, s, wrist, pole):
+    """Two-bone IK: put side `s`'s wrist at world `wrist`, elbow bending toward `pole`."""
+    h = rig.head(f"upperarm_{s}")
+    l1 = (rig.head(f"lowerarm_{s}") - h).length
+    l2 = (rig.head(f"hand_{s}") - rig.head(f"lowerarm_{s}")).length
+    v = Vector(wrist) - h
+    d = min(max(v.length, abs(l1 - l2) + 0.02), (l1 + l2) * 0.999)
+    u = v.normalized()
+    a = math.acos(max(-1.0, min(1.0, (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d))))
+    w = Vector(pole) - u * Vector(pole).dot(u)
+    w.normalize()
+    elbow = h + u * (l1 * math.cos(a)) + w * (l1 * math.sin(a))
+    rig.aim(f"upperarm_{s}", elbow - h)
+    rig.aim(f"lowerarm_{s}", h + u * d - elbow)
+
+
+def roll_hand(rig, s, angle):
+    """Turn the hand about its own length (pronation / supination)."""
+    rig.rotate(f"hand_{s}", rig.tail(f"hand_{s}") - rig.head(f"hand_{s}"), angle)
 
 
 # ------------------------------------------------------------------ locomotion
@@ -346,15 +383,24 @@ def melee_guard_pose(rig, t):
     relax_fingers(rig, "l", 0.5)
 
 
-def melee_swing_pose(rig, t):
-    """Windup over the right shoulder, a diagonal cut down to the left, follow-through."""
+SWING_FORE = [  # (t, spine twist, upper arm dir, forearm dir)
+    (0.0, -0.2, (-0.35, -0.55, -0.75), (0.15, -0.9, 0.35)),
+    (0.3, -0.75, (-0.6, 0.2, 0.75), (-0.2, 0.6, 0.75)),
+    (0.55, 0.45, (0.2, -0.95, 0.05), (0.6, -0.75, -0.25)),
+    (1.0, 0.35, (0.15, -0.6, -0.75), (0.55, -0.7, -0.4)),
+]
+SWING_BACK = [  # the return cut: from over the left shoulder, back across and down to the right
+    (0.0, -0.2, (-0.35, -0.55, -0.75), (0.15, -0.9, 0.35)),
+    (0.3, 0.55, (0.45, -0.45, 0.35), (0.55, 0.25, 0.7)),
+    (0.55, -0.5, (-0.6, -0.75, 0.05), (-0.8, -0.5, -0.2)),
+    (1.0, -0.4, (-0.5, -0.4, -0.7), (-0.6, -0.6, -0.45)),
+]
+
+
+def melee_swing_pose(rig, t, keys=SWING_FORE):
+    """Windup over the right shoulder, a diagonal cut down to the left, follow-through (or the
+    backhand return with SWING_BACK)."""
     legs_neutral(rig)
-    keys = [  # (t, spine twist, upper arm dir, forearm dir)
-        (0.0, -0.2, (-0.35, -0.55, -0.75), (0.15, -0.9, 0.35)),
-        (0.3, -0.75, (-0.6, 0.2, 0.75), (-0.2, 0.6, 0.75)),
-        (0.55, 0.45, (0.2, -0.95, 0.05), (0.6, -0.75, -0.25)),
-        (1.0, 0.35, (0.15, -0.6, -0.75), (0.55, -0.7, -0.4)),
-    ]
     for (t0, s0, u0, f0), (t1, s1, u1, f1) in zip(keys, keys[1:]):
         if t0 <= t <= t1:
             k = smooth((t - t0) / (t1 - t0))
@@ -369,23 +415,33 @@ def melee_swing_pose(rig, t):
     relax_fingers(rig, "r", 0.9)
 
 
-def bow_aim_pose(rig, t):
-    """Side-on archer: bow arm (right, holding the bow) straight at the target, the left hand
-    drawing the string back to the cheek."""
-    b = math.sin(2 * math.pi * t)
+BOW_BRACE = 0.2   # grip to string at rest, roughly, across the three bows
+
+
+def bow_draw_pose(rig, t):
+    """Side-on archer drawing: the bow arm (right, holding the bow) straight at the target; the left
+    hand travels from the string at rest (t = 0) back to the cheek at full draw (t = 1). The game
+    seeks this clip by draw fraction and pulls the string to wherever the left hand is."""
     legs_neutral(rig)
     rig.rotate("spine_02", UP, 0.55)
-    rig.rotate("spine_02", LEFT, 0.04 + 0.006 * b)
+    rig.rotate("spine_02", LEFT, 0.04)
     rig.rotate("head", UP, -0.5)
     rig.aim("upperarm_r", (-0.08, -1.0, 0.04))
     rig.aim("lowerarm_r", (-0.04, -1.0, 0.04))
     rig.aim("hand_r", (-0.04, -1.0, 0.25))
-    cheek = rig.head("head") + Vector((-0.02, -0.08, -0.05))
-    sh = rig.head("upperarm_l")
-    rig.aim("upperarm_l", (sh.x * 0 - 0.15, -0.9, 0.12))
-    rig.aim("lowerarm_l", cheek - rig.head("lowerarm_l"))
     relax_fingers(rig, "r", 1.0)
-    relax_fingers(rig, "l", 0.6)
+    # Where the string sits: back from the bow hand along the shot, at the bow's grip height.
+    grip = rig.head("hand_r").lerp(rig.head("middle_01_r"), 0.6)
+    shot = (rig.head("hand_r") - rig.head("upperarm_r")).normalized()
+    rest = grip - shot * BOW_BRACE
+    cheek = rig.head("head") + Vector((-0.03, -0.1, -0.03))
+    k = smooth(t)
+    pinch = rest.lerp(cheek, k)
+    # The pinch (index and middle fingers on the string) sits ahead of the wrist.
+    wrist = pinch + shot * 0.07 * (1 - 0.3 * k) + Vector((0, 0, -0.02))
+    arm_ik(rig, "l", wrist, Vector((0.3, 0.8, 0.25 + 0.4 * k)))
+    rig.aim("hand_l", pinch - wrist + shot * 0.05)
+    relax_fingers(rig, "l", 0.55)
 
 
 def consume_pose(rig, t):
@@ -458,7 +514,8 @@ def main():
     hold_pose(rig, "death", 30, death_pose)
     hold_pose(rig, "melee_guard", 60, melee_guard_pose)
     hold_pose(rig, "melee_swing", 12, melee_swing_pose)
-    hold_pose(rig, "bow_aim", 60, bow_aim_pose)
+    hold_pose(rig, "melee_swing_b", 12, lambda r, t: melee_swing_pose(r, t, SWING_BACK))
+    hold_pose(rig, "bow_draw", 20, bow_draw_pose)
     hold_pose(rig, "consume", 30, consume_pose)
     print(f"[anims] {variant}: cycles {cycles}, IK reach clamped on {rig.clamped} leg poses")
     print(f"[anims] stance duty: {rig.duty}")

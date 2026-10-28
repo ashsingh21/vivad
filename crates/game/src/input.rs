@@ -83,13 +83,17 @@ pub struct ShowPerf(pub bool);
 
 pub struct InputPlugin;
 
+/// The local player's intent is written in here (PreUpdate).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LocalInput;
+
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Bindings>()
             .init_resource::<ActionState>()
             .init_resource::<ShowPerf>()
             .add_systems(PreUpdate, (resolve_actions, write_intent, grab_cursor, meta_actions).chain()
-                .after(bevy::input::InputSystems));
+                .in_set(LocalInput).after(bevy::input::InputSystems));
     }
 }
 

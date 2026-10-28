@@ -20,7 +20,7 @@ use bevy::gltf::Gltf;
 use bevy::prelude::*;
 use shared::items::{ItemDb, ItemKind};
 use shared::sim::movement::{AIM_SPEED, SPRINT_SPEED, WALK_SPEED};
-use shared::sim::{Action, Eliminated, Inventory, Kinematic, MoveMode, PosHistory, Warrior};
+use shared::sim::{Action, Eliminated, Inventory, Kinematic, MoveMode, PlayerIntent, PosHistory, Warrior, btn};
 
 use crate::visuals::WarriorVisual;
 
@@ -35,7 +35,7 @@ impl Plugin for WarriorAnimationPlugin {
 /// Clips the torso can't share with the legs: played legs-only under a weapon action.
 const LOCOMOTION: [&str; 10] = ["idle", "walk_f", "walk_b", "walk_l", "walk_r", "run_f", "run_b", "run_l", "run_r", "sprint_f"];
 const FULL_BODY: [&str; 5] = ["jump", "fall", "freefall", "glide", "death"];
-const UPPER_BODY: [&str; 4] = ["melee_guard", "melee_swing", "bow_aim", "consume"];
+const UPPER_BODY: [&str; 5] = ["melee_guard", "melee_swing", "melee_swing_b", "bow_draw", "consume"];
 /// Bones driven by the legs layer; everything else is upper body.
 const LOWER_BONES: [&str; 10] = ["Root", "pelvis", "thigh_l", "thigh_r", "calf_l", "calf_r", "foot_l", "foot_r", "ball_l", "ball_r"];
 const LOWER: u32 = 0;
@@ -79,6 +79,13 @@ pub struct WarriorAnim {
     phase: f32,
     clock: f32,
     weights: HashMap<AnimationNodeIndex, f32>,
+    /// Alternate sword cuts: forehand, then the backhand return.
+    backhand: bool,
+    last_swing: f32,
+    /// Weight of the bow draw clip: how far the string follows the drawing hand.
+    pub bow_weight: f32,
+    /// How much of the aim pitch the torso takes (eased with the held item).
+    pub aim_share: f32,
 }
 
 fn load_sets(mut commands: Commands, assets: Res<AssetServer>) {
@@ -157,7 +164,17 @@ pub fn bind(commands: &mut Commands, sets: &AnimSets, variant: usize, rig_root: 
         }
     }
     commands.entity(rig_root).insert((AnimationPlayer::default(), AnimationGraphHandle(graph)));
-    Some(WarriorAnim { variant, player: rig_root, phase: 0.0, clock: 0.0, weights: HashMap::new() })
+    Some(WarriorAnim {
+        variant,
+        player: rig_root,
+        phase: 0.0,
+        clock: 0.0,
+        weights: HashMap::new(),
+        backhand: false,
+        last_swing: f32::MAX,
+        bow_weight: 0.0,
+        aim_share: 0.0,
+    })
 }
 
 /// Body-relative locomotion weights from velocity: two nearest directions by angle, then the
@@ -203,6 +220,24 @@ fn locomotion_weights(forward: f32, right: f32) -> Vec<(&'static str, f32)> {
     out
 }
 
+/// How far a held bow is drawn (0 = string at rest, 1 = full draw), or None when it's carried
+/// rather than raised. Raised while aiming, charging, or for a moment after a shot; a fast bow
+/// redraws over its shot interval, a charged one draws as the charge builds.
+pub fn bow_draw(kind: &ItemKind, act: &Action, loaded: bool, aiming: bool) -> Option<f32> {
+    let ItemKind::Bow { interval, charge, .. } = kind else { return None };
+    if !(aiming || act.since_attack < 1.2 || act.charge > 0.0) || act.reload_left > 0.0 {
+        return aiming.then_some(0.0);
+    }
+    if !loaded {
+        return Some(0.0);
+    }
+    Some(if *charge > 0.0 {
+        0.1 + 0.9 * (act.charge / charge).clamp(0.0, 1.0)
+    } else {
+        ((act.since_attack - 0.04) / (interval * 0.85)).clamp(0.0, 1.0)
+    })
+}
+
 fn clip_speed(name: &str) -> f32 {
     match name {
         n if n.starts_with("walk") => AIM_SPEED,
@@ -219,14 +254,14 @@ fn drive(
     sets: Res<AnimSets>,
     db: Res<ItemDb>,
     mut vis: Query<(&WarriorVisual, &Transform, &mut WarriorAnim)>,
-    sims: Query<(&Kinematic, &PosHistory, &Inventory, &Action, Option<&Eliminated>), With<Warrior>>,
+    sims: Query<(&Kinematic, &PosHistory, &Inventory, &Action, &PlayerIntent, Option<&Eliminated>), With<Warrior>>,
     mut players: Query<&mut AnimationPlayer>,
     mut died: Local<HashMap<Entity, f32>>,
     mut steps: MessageWriter<Footstep>,
 ) {
     let dt = time.delta_secs();
     for (wv, tf, mut anim) in &mut vis {
-        let Ok((kin, hist, inv, act, elim)) = sims.get(wv.sim) else { continue };
+        let Ok((kin, hist, inv, act, intent, elim)) = sims.get(wv.sim) else { continue };
         let set = &sets.0[anim.variant];
         anim.clock += dt;
         let clock = anim.clock;
@@ -272,12 +307,19 @@ fn drive(
                             steps.write(Footstep { pos: tf.translation - Vec3::Y * shared::sim::HALF_HEIGHT, speed });
                         }
                     }
-                    // Upper-body action from what's in hand.
+                    // Upper-body action from what's in hand. A new swing starts when the time
+                    // since the last attack drops; each one alternates forehand and backhand.
                     let held = inv.current().map(|s| &db.get(&s.id).kind);
+                    if matches!(held, Some(ItemKind::Melee { .. })) && act.since_attack < anim.last_swing {
+                        anim.backhand = !anim.backhand;
+                    }
+                    anim.last_swing = act.since_attack;
+                    let swing = if anim.backhand { "melee_swing_b" } else { "melee_swing" };
+                    let loaded = inv.current().is_some_and(|s| s.count > 0);
                     let action = match held {
-                        Some(ItemKind::Melee { .. }) if act.since_attack < SWING_TIME => Some(("melee_swing", act.since_attack / SWING_TIME * dur("melee_swing"))),
+                        Some(ItemKind::Melee { .. }) if act.since_attack < SWING_TIME => Some((swing, act.since_attack / SWING_TIME * dur(swing))),
                         Some(ItemKind::Melee { .. }) => Some(("melee_guard", clock % dur("melee_guard"))),
-                        Some(ItemKind::Bow { .. }) => Some(("bow_aim", clock % dur("bow_aim"))),
+                        Some(k @ ItemKind::Bow { .. }) => bow_draw(k, act, loaded, intent.held(btn::AIM)).map(|d| ("bow_draw", d * (dur("bow_draw") - 1e-3))),
                         Some(ItemKind::Consumable { .. }) if act.using.is_some() => Some(("consume", clock % dur("consume"))),
                         _ => None,
                     };
@@ -293,6 +335,11 @@ fn drive(
             }
         }
 
+        // The torso follows the aim fully with a bow up, partly otherwise.
+        let raised = want.iter().any(|w| w.0 == "bow_draw");
+        let share = if elim.is_some() { 0.0 } else if raised { 1.0 } else { 0.45 };
+        anim.aim_share += (share - anim.aim_share) * (dt * 8.0).min(1.0);
+
         // Ease every node toward its target weight; nodes not wanted fade to zero.
         let Ok(mut player) = players.get_mut(anim.player) else { continue };
         let k = (dt * FADE_RATE).min(1.0);
@@ -306,6 +353,7 @@ fn drive(
         all.extend(targets.keys().copied());
         all.sort();
         all.dedup();
+        anim.bow_weight = 0.0;
         for node in all {
             let (target, t) = targets.get(&node).copied().unwrap_or((0.0, -1.0));
             let w = anim.weights.entry(node).or_insert(0.0);
@@ -316,6 +364,9 @@ fn drive(
                 continue;
             }
             let w = *w;
+            if set.nodes.get("bow_draw").is_some_and(|n| n.1 == Some(node)) {
+                anim.bow_weight = w;
+            }
             let a = if player.is_playing_animation(node) { player.animation_mut(node).unwrap() } else { player.play(node) };
             a.set_speed(0.0).set_weight(w);
             // Fading-out nodes keep their last time.

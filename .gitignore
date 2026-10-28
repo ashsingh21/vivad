@@ -23,3 +23,8 @@ previews/hampi/h1/
 previews/kit2/
 previews/kit3/
 previews/flicker/
+# Review renders and in-game captures for the armoury; rebuilt on demand (just preview / armoury).
+previews/*/p1/
+previews/anims_p/
+previews/armoury/
+previews/armoury_sheet.png

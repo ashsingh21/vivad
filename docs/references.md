@@ -67,6 +67,28 @@ Spiral wraps will appear where history supports them (e.g. jian, dao).
   with leaves and, on the grip, a field of four-petal rosettes (buti). All of it is procedural and
   baked; no image sources are used.
 
+## Bows, astras and vessels
+
+Built by `tools/blender/weapons/arsenal.py` (`just arsenal`), lofted and baked like the khanda, but
+stylised further toward their myths: they are divine weapons, not museum pieces.
+
+| Item | Built as | Notes |
+|---|---|---|
+| Gandiva (Arjuna) | Indo-Persian composite bow, 1.4 m strung | Strung profile: flat grip, limbs bending back in a widening arc to the knee, stiff ears (siyah) angled forward. Crimson lacquer with gold-painted vines, as on lacquered Persian and Mughal bows; thread-bound grip, bone nocks. |
+| Sharanga (Vishnu) | Short, deeply recurved horn bow, 1.15 m | *Sharanga* means "of horn". Indigo lacquer, polished horn ears, a gold Sudarshana chakra boss each side of the grip. |
+| Pinaka (Shiva) | Great bow, 1.8 m | Charcoal limbs striped with ash (the tripundra's three lines), silver fittings, Vasuki coiled three and a half times round the grip with his hood raised, a trishula at each tip. |
+| Arrow | Cane shaft, 0.82 m | Leaf-shaped steel head, three barred feathers, thread bindings, bone nock. |
+| Tarkash | Leather quiver, gold-embroidered bands, brass mouth | Seven arrows; the arrow pickup. |
+| Agneyastra / Vayavyastra | Short ornamented javelins | Flame-tongued copper head on red lacquer; twisted silver wind-vane head and white fletching on blue. |
+| Sanjeevani | Five glowing herb sprigs bound with red and gold thread | |
+| Soma | Small chased-silver lota with a gold stopper | |
+| Amrita Kalash | Purna kalash: gold pot, five mango leaves, a coconut, mauli thread | |
+
+Strings are not modelled: the game draws them between the anchors the script writes to
+`assets/data/bows.ron` (each nock, and the bridge where the string leaves the ear's belly at rest),
+so they bend with the draw. Every item is held by one rule from the hand's own bones (blade or
+upper limb toward the thumb, edge or bow's back along the hand); see `crates/game/src/arms.rs`.
+
 ---
 
 ## Third-party assets and licences

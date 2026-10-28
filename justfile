@@ -6,6 +6,7 @@ weapons := "khanda"
 # Rebuild every model from its script (bake + LODs + GLB export).
 assets:
     for w in {{weapons}}; do just weapon $w; done
+    just arsenal
     just nature
     just characters
     just anims
@@ -44,6 +45,18 @@ nature:
 weapon name:
     {{blender}} -b --factory-startup -P tools/blender/weapons/{{name}}.py 2>&1 | grep -E '^\[|Error|Traceback|  File' || true
     test -f assets/models/weapons/{{name}}.glb
+
+# The bows, arrow and quiver, astras and healing vessels (all by default): just arsenal pinaka soma
+# Writes assets/models/weapons/<name>.glb and the bow string anchors in assets/data/bows.ron.
+arsenal *names:
+    {{blender}} -b --factory-startup -P tools/blender/weapons/arsenal.py -- {{names}} 2>&1 | grep -E '^\[|Error|Traceback|  File' || true
+
+# Every item in the player's hand (carried, aimed, drawn, swung, drunk) from set angles, then a
+# contact sheet: just armoury, or just armoury pinaka,soma
+armoury only="":
+    rm -rf previews/armoury && mkdir -p previews/armoury
+    VIVAD_MUTE=1 VIVAD_BOTS=1 VIVAD_ARMOURY=previews/armoury VIVAD_ARMOURY_ONLY="{{only}}" cargo run --release -p game --bin game
+    python3 tools/shots.py sheet previews/armoury -o previews/armoury_sheet.png --cols 4 --width 1600
 
 # Render review images from the exported GLB: just preview khanda pass2
 preview name tag="latest" samples="64":

@@ -9,3 +9,5 @@ bevy = { workspace = true }
 shared = { workspace = true }
 avian3d = { workspace = true }
 rand = { workspace = true }
+ron = { workspace = true }
+serde = { workspace = true }

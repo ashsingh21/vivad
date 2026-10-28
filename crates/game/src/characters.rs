@@ -1,9 +1,7 @@
-//! Character and vegetation art: skinned warriors driven by a procedural animator, and map props
-//! with distance LODs.
+//! Character and vegetation art: skinned warriors (animated by `crate::animation`, holding their
+//! weapon per `crate::arms`) and map props with distance LODs.
 //!
-//! Character GLBs face +Z (MakeHuman), origin at the feet, `game_engine` rig. Until authored
-//! animation clips exist, the skeleton is posed procedurally from the simulation state: stride from
-//! velocity, idle breathing, freefall / glide poses, melee swings, bow stance.
+//! Character GLBs face +Z (MakeHuman), origin at the feet, `game_engine` rig.
 
 use std::collections::HashMap;
 use std::f32::consts::PI;
@@ -125,12 +123,10 @@ const BONES: [&str; 17] = [
     "upperarm_r", "lowerarm_l", "lowerarm_r", "hand_r", "thigh_l", "thigh_r", "calf_l", "calf_r",
 ];
 
-/// Bone handles plus their rest pose, captured when the character scene is ready.
+/// Bone handles, captured when the character scene is ready.
 #[derive(Component)]
 struct CharRig {
     bones: HashMap<&'static str, Entity>,
-    /// (rest local rotation, rest model-space rotation)
-    rest: HashMap<Entity, (Quat, Quat)>,
     weapon_attached: bool,
     /// For binding the animation player once the clips are loaded.
     variant: usize,
@@ -158,7 +154,6 @@ fn dress_warriors(mut commands: Commands, q: Query<(Entity, &WarriorVisual), Add
                            children: Query<&Children>,
                            names: Query<&Name>,
                            transforms: Query<&Transform>,
-                           parents: Query<&ChildOf>,
                            mut commands: Commands| {
                 apply_lod_ranges(
                     ready.entity,
@@ -178,22 +173,17 @@ fn dress_warriors(mut commands: Commands, q: Query<(Entity, &WarriorVisual), Add
                     }
                 }
                 let rig_root = named.get("Human.rig").copied();
-                // Rest model-space rotation = product of rest local rotations up to the scene root.
-                let mut rest = HashMap::new();
-                for &e in bones.values() {
-                    let local = transforms.get(e).map(|t| t.rotation).unwrap_or(Quat::IDENTITY);
-                    let mut model = local;
-                    let mut cur = e;
-                    while let Ok(p) = parents.get(cur) {
-                        cur = p.parent();
-                        if cur == ready.entity {
-                            break;
-                        }
-                        model = transforms.get(cur).map(|t| t.rotation).unwrap_or(Quat::IDENTITY) * model;
-                    }
-                    rest.insert(e, (local, model));
+                // Torso and drawing-hand bones for the aim layer and the bow string.
+                let at = |n: &str| named.get(n).and_then(|&e| transforms.get(e).ok()).map(|t| t.translation);
+                let spine = ["spine_01", "spine_02", "spine_03", "neck_01"].map(|n| named.get(n).copied());
+                if let (Some(hand_l), [Some(a), Some(b), Some(c), Some(d)], Some(i), Some(m), Some(p)) =
+                    (named.get("hand_l").copied(), spine, at("index_01_l"), at("middle_01_l"), at("pinky_01_l"))
+                {
+                    // The string sits in the crook of the curled index and middle fingers.
+                    let pinch_l = m * 1.3 + crate::arms::palm_normal(i, m, p) * 0.025;
+                    commands.entity(vis).insert(crate::arms::Body { root: ready.entity, spine: [a, b, c, d], hand_l, pinch_l });
                 }
-                commands.entity(vis).insert(CharRig { bones, rest, weapon_attached: false, variant, rig_root, named });
+                commands.entity(vis).insert(CharRig { bones, weapon_attached: false, variant, rig_root, named });
             });
     }
 }
@@ -216,11 +206,12 @@ fn bind_animations(
     }
 }
 
-/// Move the held-weapon socket onto the right hand bone once the rig exists.
+/// Move the held-weapon socket into the right fist once the rig exists (see `crate::arms`).
 fn swap_weapons(
     mut commands: Commands,
     mut vis: Query<(&mut CharRig, &Children), With<WarriorVisual>>,
     mut held: Query<(Entity, &mut Transform), (With<HeldWeapon>, Without<WarriorVisual>)>,
+    bones: Query<&Transform, Without<HeldWeapon>>,
     gliders: Query<(), With<Glider>>,
 ) {
     for (mut rig, children) in &mut vis {
@@ -228,16 +219,16 @@ fn swap_weapons(
             continue;
         }
         let Some(&hand) = rig.bones.get("hand_r") else { continue };
-        let Some(&(_, hand_model)) = rig.rest.get(&hand) else { continue };
+        let knuckle = |n: &str| rig.named.get(n).and_then(|&e| bones.get(e).ok()).map(|t| t.translation);
+        let (Some(i), Some(m), Some(p)) = (knuckle("index_01_r"), knuckle("middle_01_r"), knuckle("pinky_01_r")) else { continue };
+        let (rotation, grip) = crate::arms::hand_grip(i, m, p);
         for c in children.iter() {
             if gliders.contains(c) {
                 continue;
             }
             if let Ok((e, mut t)) = held.get_mut(c) {
-                // Blade (+Y) forward and up in model space (+Z forward), expressed in the hand's frame.
-                let want = Quat::from_rotation_arc(Vec3::Y, Vec3::new(0.0, 0.55, 1.0).normalize());
-                t.rotation = hand_model.inverse() * want;
-                t.translation = Vec3::new(0.0, 0.085, 0.0);
+                t.rotation = rotation;
+                t.translation = grip;
                 commands.entity(e).insert(ChildOf(hand));
                 rig.weapon_attached = true;
             }
