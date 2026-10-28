@@ -26,4 +26,9 @@ The HUD (minimap, status, hotbar) is masked out of every measurement.
 millimetres per frame and scores each view by how many pixels fail to move smoothly. Without
 anti-aliasing the carved, normal-mapped surfaces scored 5-16 % (they crawl and sparkle); with
 TAA plus sharpening, now the default, 1-4 %. `just zfight` lists coplanar overlapping faces of
-different materials in the map blocks (currently only unseen undersides on the fort hill).
+different materials in the map blocks, then checks every placed model's faces against the blocks
+and the terrain (`tools/zfight_models.py`). What remains is faces pressed together inside walls.
+
+**Sound** can't be judged by ear here: `just sfx` prints peak / RMS level, length, spectral
+centroid and loop-seam size per sound, and `VIVAD_AUDIO_LOG=1` makes the game log how often each
+sound fired (run automated sessions with `VIVAD_MUTE=1`). Whether it sounds right needs a listen.

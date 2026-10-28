@@ -10,6 +10,7 @@ assets:
     just characters
     just anims
     just architecture
+    just sfx
     python3 tools/prune_textures.py
 
 # Buildings and landmarks: temple, arches/jharokha/chhatri, Hampi, huts and stalls, stupa and
@@ -30,6 +31,10 @@ characters:
 # Prints foot slide per clip; add `-- male --preview DIR --clips run_f,idle` for pose renders.
 anims:
     for v in male female; do {{blender}} -b -P tools/blender/characters/anims.py -- $v 2>&1 | grep -E '^\[|Error|Traceback' || true; done
+
+# Every sound effect, synthesized (prints level, length, brightness and loop-seam numbers).
+sfx:
+    python3 tools/audio/sfx.py --report
 
 # Trees and bushes
 nature:
@@ -88,9 +93,11 @@ flicker views="haveli_front,bazaar_street,hampi_temple,village_close,stupa":
     VIVAD_TOUR=previews/flicker VIVAD_TOUR_ONLY={{views}} VIVAD_TOUR_FRAMES=8 VIVAD_TOUR_DRIFT=0.004 cargo run --release -p game --bin game
     python3 tools/shots.py flicker --moving previews/flicker
 
-# Coplanar overlapping faces of different materials in the map blocks (z-fighting).
+# Z-fighting: coplanar overlapping faces between map blocks, and between the art models and the
+# blocks / terrain.
 zfight:
-    cargo run --release -p shared --bin zfight_check
+    cargo run --release -p shared --bin zfight_check -- --dump build/zfight.json
+    python3 tools/zfight_models.py build/zfight.json
 
 # Geometry report for exported models (tris per LOD, size, open edges, pieces, materials).
 mesh +models:

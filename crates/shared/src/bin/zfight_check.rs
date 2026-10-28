@@ -2,7 +2,10 @@
 //! same way and overlap, with different materials (same-material overlaps shade identically, since
 //! building textures are mapped in world space, so they can't be seen to fight).
 //!
-//! cargo run --release -p shared --bin zfight_check [-- --all]
+//! cargo run --release -p shared --bin zfight_check [-- --all] [--dump <file.json>]
+//!
+//! `--dump` also writes model placements, visible box faces and the terrain heights for
+//! tools/zfight_models.py, which checks the models' own faces against both.
 
 use std::collections::HashMap;
 
@@ -49,7 +52,9 @@ fn overlap(a: &Face, b: &Face) -> f32 {
 }
 
 fn main() {
-    let all = std::env::args().any(|a| a == "--all");
+    let args: Vec<String> = std::env::args().collect();
+    let all = args.iter().any(|a| a == "--all");
+    let dump = args.iter().position(|a| a == "--dump").and_then(|i| args.get(i + 1)).cloned();
     let map = shared::map::india::generate(7);
     let blocks: Vec<&Block> = map.blocks.iter().chain(map.doors.iter()).collect();
     let mut buckets: HashMap<(i32, i32, i32, i32), Vec<Face>> = HashMap::new();
@@ -95,6 +100,33 @@ fn main() {
                 }
             }
         }
+    }
+    if let Some(path) = dump {
+        let v3 = |v: Vec3| format!("[{:.4},{:.4},{:.4}]", v.x, v.y, v.z);
+        let q4 = |q: Quat| format!("[{:.6},{:.6},{:.6},{:.6}]", q.x, q.y, q.z, q.w);
+        let mut out = String::from("{\"placements\":[");
+        let mut first = true;
+        for p in &map.props {
+            out += &format!("{}{{\"model\":\"{}\",\"pos\":{},\"rot\":{},\"scale\":{}}}", if first { "" } else { "," }, p.model, v3(p.pos),
+                            q4(Quat::from_rotation_y(p.yaw)), v3(Vec3::splat(p.scale)));
+            first = false;
+        }
+        for o in &map.ornaments {
+            out += &format!(",{{\"model\":\"{}\",\"pos\":{},\"rot\":{},\"scale\":{}}}", o.model, v3(o.pos), q4(o.rot), v3(o.scale));
+        }
+        out += "],\"faces\":[";
+        let mut first = true;
+        for fs in buckets.values() {
+            for f in fs {
+                out += &format!("{}[{},{},{},{:.4},{:.4},\"{:?}\",{}]", if first { "" } else { "," }, v3(f.c), v3(f.u), v3(f.v), f.hu, f.hv, blocks[f.block].mat, v3(f.n));
+                first = false;
+            }
+        }
+        let t = &map.terrain;
+        out += &format!("],\"terrain\":{{\"n\":{},\"size\":{},\"h\":[{}]}}}}", t.n, t.size,
+                        t.h.iter().map(|h| format!("{h:.3}")).collect::<Vec<_>>().join(","));
+        std::fs::write(&path, out).unwrap();
+        println!("dumped {} placements and the box faces to {path}", map.props.len() + map.ornaments.len());
     }
     let mut rows: Vec<_> = pairs.into_iter().collect();
     rows.sort_by(|a, b| b.1 .1.total_cmp(&a.1 .1));

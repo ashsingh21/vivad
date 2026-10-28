@@ -170,7 +170,9 @@ impl<'a> Builder<'a> {
         let wf = f.child(Vec3::new(a.x, y0, a.y), yaw);
         for o in openings {
             let h = o.top - o.bottom;
-            let (model, w0, h0, t0) = if o.bottom <= 0.0 && o.width >= 3.0 {
+            // The gate surround is made for thick (fort) walls; squashed onto a thin one its relief
+            // flattens into the wall faces, so thin walls use the door surround widened.
+            let (model, w0, h0, t0) = if o.bottom <= 0.0 && o.width >= 3.0 && thick > 1.0 {
                 (ARCH_GATE, 5.0, 5.0, 2.0)
             } else if o.bottom <= 0.0 {
                 (ARCH_DOOR, 1.4, 2.4, 0.35)

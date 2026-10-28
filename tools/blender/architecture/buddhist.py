@@ -732,7 +732,9 @@ def stupa():
         M = Matrix.Rotation(a, 4, "Z") @ Matrix.Translation((17.0, 0.0, 0.0)) @ Matrix.Rotation(math.pi / 2, 4, "Z")
         torana(kit, M)
     # Paving of the circumambulatory path.
-    kit.add(T.lathe("path", [(11.3, 0.02), (14.8, 0.02)], 64, (0, 0)))
+    # The pradakshina path: a paved ring standing clear of the terrain (a skin-thin disc on the
+    # ground shimmers against it).
+    kit.add(T.lathe("path", [(11.3, -0.06), (11.3, 0.08), (14.8, 0.08), (14.8, -0.06)], 64, (0, 0)))
     return finish("stupa", kit, lods=(0.3,))
 
 

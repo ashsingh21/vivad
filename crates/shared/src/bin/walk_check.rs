@@ -116,7 +116,8 @@ fn main() {
     // centre; the gate ornament gives the facing).
     let tulsis: Vec<Vec3> = layout.props.iter().filter(|p| p.model.contains("lantana") && p.pos.y - layout.terrain.height(p.pos.x, p.pos.z) > 0.6 && p.pos.x.abs() < 70.0 && p.pos.z.abs() < 40.0).map(|p| p.pos).collect();
     for (i, c) in tulsis.iter().enumerate() {
-        let Some(gate) = layout.ornaments.iter().filter(|o| o.model.contains("arch_gate")).min_by(|a, b| a.pos.distance(*c).total_cmp(&b.pos.distance(*c))) else { continue };
+        // The gateway: the widest arched surround on this haveli.
+        let Some(gate) = layout.ornaments.iter().filter(|o| o.model.contains("arch_") && o.pos.distance(*c) < 12.0).max_by(|a, b| a.scale.x.total_cmp(&b.scale.x)) else { continue };
         let inward = gate.rot * Vec3::NEG_Z;
         let hd = (gate.pos - *c).with_y(0.0).length();
         println!("haveli {} centre ({:.1}, {:.1}) facing ({:.2}, {:.2}) half depth {:.1}", i + 1, c.x, c.z, -inward.x, -inward.z, hd);

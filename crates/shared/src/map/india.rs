@@ -158,7 +158,7 @@ fn prop(b: &mut Builder, model: &'static str, pos: Vec3, yaw: f32, scale: f32) {
 }
 
 const HALF: f32 = 250.0;
-const RIVER_X: (f32, f32) = (172.0, 196.0);
+pub const RIVER_X: (f32, f32) = (172.0, 196.0);
 const RIVER_BED: f32 = -1.6;
 const STEPWELL_C: Vec3 = Vec3::new(-110.0, 0.0, 95.0);
 const STEPWELL_L: f32 = 46.0;
@@ -706,10 +706,12 @@ fn stepwell(b: &mut Builder, rng: &mut SmallRng) {
     let hl = STEPWELL_L / 2.0;
     let hw = STEPWELL_W / 2.0;
     let dp = STEPWELL_DEPTH;
-    // Retaining walls.
-    b.span(f, Vec3::new(-hl - 1.0, -dp - 2.0, -hw - 1.0), Vec3::new(hl + 1.0, 0.0, -hw), Mat::Sandstone);
-    b.span(f, Vec3::new(-hl - 1.0, -dp - 2.0, hw), Vec3::new(hl + 1.0, 0.0, hw + 1.0), Mat::Sandstone);
-    b.span(f, Vec3::new(-hl - 1.0, -dp - 2.0, -hw), Vec3::new(-hl, 0.0, hw), Mat::Sandstone);
+    // Retaining walls, set 3 cm behind the plane of the carved lining (stepwell.py) so the two
+    // surfaces don't fight where the lining lies flat.
+    let g = 0.03;
+    b.span(f, Vec3::new(-hl - 1.0, -dp - 2.0, -hw - 1.0), Vec3::new(hl + 1.0, 0.0, -hw - g), Mat::Sandstone);
+    b.span(f, Vec3::new(-hl - 1.0, -dp - 2.0, hw + g), Vec3::new(hl + 1.0, 0.0, hw + 1.0), Mat::Sandstone);
+    b.span(f, Vec3::new(-hl - 1.0, -dp - 2.0, -hw), Vec3::new(-hl - g, 0.0, hw), Mat::Sandstone);
     b.span(f, Vec3::new(-hl, -dp - 2.0, -hw), Vec3::new(hl, -dp, hw), Mat::Sandstone);
     // Three flights with pillared pavilions over the landings (their roofs are walkable bridges).
     let lvl = dp / 3.0;

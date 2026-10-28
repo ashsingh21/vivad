@@ -145,3 +145,13 @@ use two-bone IK against foot paths that move at the clip's ground speed (the scr
 remaining foot slide per clip, under 1 cm). Clips are per rig because the male and female rest
 bone orientations differ. In game (`crates/game/src/animation.rs`) they are blended from the
 simulation state, with weapon actions layered on the torso by bone masks.
+
+## Sound
+
+All synthesized in `tools/audio/sfx.py` (noise, filters, modal resonators, Karplus-Strong
+strings), no recordings: footsteps on dirt, stone, wood, grass and water; sword whooshes and
+hits; bow twang and draw, arrow impacts; flesh and shield hits; hit markers; jump, land, glider;
+chest creak with coins, and a temple bell (ghanta) for the golden kalash; drinking, reloading;
+Agni fire and Vayu gusts; a conch (shankha) when the Pralaya starts to close, a bell for kills,
+a low gong on elimination; loops for wind, freefall, the zone wall, the river, a tanpura drone
+aboard the vimana and the day's ambience (wind, koel, sparrows, crows).

@@ -28,7 +28,7 @@ pub struct WarriorAnimationPlugin;
 
 impl Plugin for WarriorAnimationPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, load_sets).add_systems(Update, (build_graphs, drive).chain());
+        app.add_message::<Footstep>().add_systems(Startup, load_sets).add_systems(Update, (build_graphs, drive).chain());
     }
 }
 
@@ -61,6 +61,14 @@ impl AnimSets {
     pub fn ready(&self, variant: usize) -> bool {
         self.0[variant].graph.is_some()
     }
+}
+
+/// A foot coming down (from the locomotion cycle's contact points), for footstep sounds.
+#[derive(Message, Clone, Copy)]
+pub struct Footstep {
+    /// Where the foot lands (ground level under the warrior).
+    pub pos: Vec3,
+    pub speed: f32,
 }
 
 /// Per-warrior blend state, on the visual entity.
@@ -214,6 +222,7 @@ fn drive(
     sims: Query<(&Kinematic, &PosHistory, &Inventory, &Action, Option<&Eliminated>), With<Warrior>>,
     mut players: Query<&mut AnimationPlayer>,
     mut died: Local<HashMap<Entity, f32>>,
+    mut steps: MessageWriter<Footstep>,
 ) {
     let dt = time.delta_secs();
     for (wv, tf, mut anim) in &mut vis {
@@ -234,6 +243,8 @@ fn drive(
         } else {
             died.remove(&wv.sim);
             match kin.mode {
+                // Riding the vimana (hidden): stand still, no steps.
+                MoveMode::Vimana => want.push(("idle", false, 1.0, clock % dur("idle"))),
                 MoveMode::Freefall => want.push(("freefall", false, 1.0, clock % dur("freefall"))),
                 MoveMode::Gliding => want.push(("glide", false, 1.0, clock % dur("glide"))),
                 MoveMode::Ground if !kin.grounded => {
@@ -253,7 +264,13 @@ fn drive(
                         }
                     }
                     if wsum > 0.0 {
+                        // Contacts are at the cycle's start (left foot) and middle (right).
+                        let before = anim.phase;
                         anim.phase = (anim.phase + dt * rate / wsum).fract();
+                        let crossed = anim.phase < before || (before < 0.5 && anim.phase >= 0.5);
+                        if crossed && speed > 0.8 {
+                            steps.write(Footstep { pos: tf.translation - Vec3::Y * shared::sim::HALF_HEIGHT, speed });
+                        }
                     }
                     // Upper-body action from what's in hand.
                     let held = inv.current().map(|s| &db.get(&s.id).kind);

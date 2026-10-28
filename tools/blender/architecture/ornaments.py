@@ -118,7 +118,8 @@ def arch_opening(name, w, h, *, lobes=7, cusp=0.07, spring_frac=0.62, wall_t=WAL
     kit = T.Kit()
     a = w / 2
     spring = h * spring_frac
-    apex = h - 0.02
+    # Keep the arch's crown well clear of the wall's lintel face just above (they'd shimmer).
+    apex = h - 0.08
     inner = cusped_arch(a, spring, apex, lobes, cusp)
     # Spandrel infill: the part of the rectangular hole above the arch, carved with a vine scroll.
     spandrel = inner + [(a, h), (-a, h)]
@@ -128,7 +129,8 @@ def arch_opening(name, w, h, *, lobes=7, cusp=0.07, spring_frac=0.62, wall_t=WAL
         kit.add(rim_sweep("rim", inner, side * (wall_t / 2 + 0.02), 0.045))
     # Alfiz: rectangular frame around the whole arch.
     fw = 0.11
-    for (x0, z0, x1, z1) in ((-a - fw * 2, h, a + fw * 2, h + fw), (-a - fw * 2, 0, -a - fw, h), (a + fw, 0, a + fw * 2, h)):
+    # The top bar sits a little above the opening so its underside isn't level with the lintel's.
+    for (x0, z0, x1, z1) in ((-a - fw * 2, h + 0.04, a + fw * 2, h + fw + 0.04), (-a - fw * 2, 0, -a - fw, h), (a + fw, 0, a + fw * 2, h)):
         kit.add(T.box("alfiz", (x0, -wall_t / 2 - 0.06, z0), (x1, wall_t / 2 + 0.06, z1), "trim"))
     if pilasters:
         for sx in (-1, 1):
@@ -138,7 +140,8 @@ def arch_opening(name, w, h, *, lobes=7, cusp=0.07, spring_frac=0.62, wall_t=WAL
                 kit.add(T.lathe("pil", [(0.05, 0.0), (0.05, 0.06), (0.035, 0.1), (0.035, spring - 0.12), (0.055, spring - 0.06),
                                         (0.06, spring)], 10, (x, y), uv_strip="bead"))
     if sill:
-        kit.add(T.box("sill", (-a - 0.25, -wall_t / 2 - 0.14, -0.1), (a + 0.25, wall_t / 2 + 0.14, 0.0), "stone"))
+        # Stands 3 cm proud of the wall top under the opening, so the two don't share a plane.
+        kit.add(T.box("sill", (-a - 0.25, -wall_t / 2 - 0.14, -0.1), (a + 0.25, wall_t / 2 + 0.14, 0.03), "stone"))
     if chhajja:
         # Thin sloping drip-shade on corbels over the opening, both faces.
         for side in (-1, 1):

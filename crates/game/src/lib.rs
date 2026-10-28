@@ -1,4 +1,5 @@
 pub mod animation;
+pub mod audio;
 pub mod autoshot;
 pub mod buildings;
 pub mod camera;
