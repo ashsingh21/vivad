@@ -202,7 +202,7 @@ fn setup_sky(mut commands: Commands, mut media: ResMut<Assets<ScatteringMedium>>
     // Late-afternoon sun from the west-south-west: long shadows across the ghats.
     commands.spawn((
         Sun,
-        DirectionalLight { illuminance: 32_000.0, shadow_maps_enabled: true, color: Color::srgb(1.0, 0.94, 0.84), ..default() },
+        DirectionalLight { illuminance: 32_000.0, shadow_maps_enabled: std::env::var("VIVAD_NO_SHADOWS").is_err(), color: Color::srgb(1.0, 0.94, 0.84), ..default() },
         Transform::from_xyz(-1.0, 0.75, 0.45).looking_at(Vec3::ZERO, Vec3::Y),
         CascadeShadowConfigBuilder { num_cascades: 4, maximum_distance: 260.0, first_cascade_far_bound: 18.0, ..default() }.build(),
     ));

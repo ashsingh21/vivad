@@ -8,6 +8,9 @@ thousand per image. Look at pixels only when the numbers say something is worth 
                                                      of several full-size shots
   python3 tools/shots.py crop <png> <x0> <y0> <x1> <y1> -o out.png [--width 640]
                                                      a region (fractions 0..1) at small size
+  python3 tools/shots.py flicker <dir> [--moving]   from bursts (VIVAD_TOUR_FRAMES): pixels that
+                                                     change frame to frame (still camera) or that
+                                                     don't move smoothly (VIVAD_TOUR_DRIFT)
   python3 tools/shots.py baseline <dir> <baseline_dir>
                                                      keep the current shots as the reference
 
@@ -167,6 +170,36 @@ def cmd_crop(a):
     print(f"{a.out}: {c.width}x{c.height} (~{c.width * c.height / 750:.0f} tokens to view)")
 
 
+def cmd_flicker(a):
+    """Shots named <view>_f<k>.png: with the camera still, any change between frames is the
+    renderer's own noise (unresolved SSAO, shadow or LOD dithering)."""
+    views = {}
+    for p in files([a.dir]):
+        n = os.path.splitext(os.path.basename(p))[0]
+        if "_f" in n:
+            views.setdefault(n.rsplit("_f", 1)[0], []).append(p)
+    print(f"{'view':<24} {'frames':>6} {'flicker%':>8} {'meanΔ':>6} {'maxΔ':>5}  where (4x4; # >5% . >1%)")
+    for v, ps in sorted(views.items()):
+        imgs = [luma(load(p)) for p in sorted(ps)]
+        h, w = imgs[0].shape
+        m = hud_mask(h, w)
+        if a.moving:
+            # Camera drifting steadily: a smoothly moving image has each frame close to the mean
+            # of its neighbours; shimmer, z-fighting and popping break that.
+            d = np.max([np.abs(m1 - (m0 + m2) / 2) for m0, m1, m2 in zip(imgs, imgs[1:], imgs[2:])], axis=0)
+        else:
+            d = np.max([np.abs(b - a) for a, b in zip(imgs, imgs[1:])], axis=0)
+        fl = (d > 6) & m
+        grid = []
+        for i in range(GRID):
+            row = ""
+            for j in range(GRID):
+                c = fl[i * h // GRID:(i + 1) * h // GRID, j * w // GRID:(j + 1) * w // GRID].mean()
+                row += "#" if c > 0.05 else "." if c > 0.01 else " "
+            grid.append(row)
+        print(f"{v[:24]:<24} {len(ps):6d} {fl[m].mean() * 100:8.2f} {d[m].mean():6.2f} {d[m].max():5.0f}  [{'|'.join(grid)}]")
+
+
 def cmd_baseline(a):
     os.makedirs(a.baseline, exist_ok=True)
     ps = files([a.dir])
@@ -186,6 +219,8 @@ def main():
     for k in ("x0", "y0", "x1", "y1"):
         p.add_argument(k, type=float)
     p.add_argument("-o", "--out", required=True); p.add_argument("--width", type=int, default=640); p.set_defaults(f=cmd_crop)
+    p = sub.add_parser("flicker"); p.add_argument("dir"); p.add_argument("--moving", action="store_true")
+    p.set_defaults(f=cmd_flicker)
     p = sub.add_parser("baseline"); p.add_argument("dir"); p.add_argument("baseline"); p.set_defaults(f=cmd_baseline)
     a = ap.parse_args()
     a.f(a)

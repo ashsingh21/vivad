@@ -75,6 +75,17 @@ shots-keep dir="previews/graybox":
 sheet glob out="previews/sheet.png":
     python3 tools/shots.py sheet {{glob}} -o {{out}} --width 1200
 
+# Flicker while moving: bursts with a drifting camera, scored per view (no AA ~5-16%, TAA ~1-4%).
+# Compare render settings with VIVAD_AA=none|smaa, VIVAD_NO_SSAO=1, VIVAD_NO_SHADOWS=1.
+flicker views="haveli_front,bazaar_street,hampi_temple,village_close,stupa":
+    rm -rf previews/flicker && mkdir -p previews/flicker
+    VIVAD_TOUR=previews/flicker VIVAD_TOUR_ONLY={{views}} VIVAD_TOUR_FRAMES=8 VIVAD_TOUR_DRIFT=0.004 cargo run --release -p game --bin game
+    python3 tools/shots.py flicker --moving previews/flicker
+
+# Coplanar overlapping faces of different materials in the map blocks (z-fighting).
+zfight:
+    cargo run --release -p shared --bin zfight_check
+
 # Geometry report for exported models (tris per LOD, size, open edges, pieces, materials).
 mesh +models:
     {{blender}} -b --factory-startup -P tools/blender/mesh_report.py -- {{models}} 2>&1 | grep -E '^==|^  ' || true

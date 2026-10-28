@@ -2,6 +2,8 @@
 //!
 //! VIVAD_TOUR=<dir>      fly the camera to each landmark, screenshot, exit.
 //!   VIVAD_TOUR_ONLY=a,b only the views whose names contain one of these.
+//!   VIVAD_TOUR_FRAMES=n  n consecutive frames per view (`<name>_f<k>.png`), for flicker checks.
+//!   VIVAD_TOUR_DRIFT=m   during a burst, slide the camera sideways m metres per frame.
 //! VIVAD_SHOTS=<dir>     with VIVAD_AUTOPILOT=1: screenshot the match at set times, then exit.
 
 use bevy::prelude::*;
@@ -105,16 +107,23 @@ fn run_tour(
             look = pos + inward * 5.0 + Vec3::Y * 0.5;
         }
     }
-    *ct = Transform::from_translation(pos).looking_at(look, Vec3::Y);
-    tour.frames += 1;
-    // Let shadows, the atmosphere and LOD settle for a few frames per view.
-    // The first view also waits for the scene to finish its first renders.
     let settle = if tour.index == 0 { 150 } else { 45 };
-    if tour.frames == settle {
-        let path = format!("{}/{}.png", tour.dir, name);
+    let drift: f32 = std::env::var("VIVAD_TOUR_DRIFT").ok().and_then(|s| s.parse().ok()).unwrap_or(0.0);
+    let side = (look - pos).cross(Vec3::Y).normalize_or_zero() * drift * tour.frames.saturating_sub(settle - 1) as f32;
+    *ct = Transform::from_translation(pos + side).looking_at(look + side, Vec3::Y);
+    tour.frames += 1;
+    // Let shadows, the atmosphere and LOD settle for a few frames per view (the first view also
+    // waits for the scene to finish its first renders); `settle` is set above.
+    let burst: u32 = std::env::var("VIVAD_TOUR_FRAMES").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
+    if tour.frames >= settle && tour.frames < settle + burst {
+        let path = if burst > 1 {
+            format!("{}/{}_f{}.png", tour.dir, name, tour.frames - settle)
+        } else {
+            format!("{}/{}.png", tour.dir, name)
+        };
         commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
     }
-    if tour.frames >= settle + 10 {
+    if tour.frames >= settle + burst + 10 {
         tour.frames = 0;
         tour.index += 1;
     }

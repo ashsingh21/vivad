@@ -21,3 +21,9 @@ pixels only when the numbers point somewhere.
    pointed at. Full-size shots only for a final check of something new.
 
 The HUD (minimap, status, hotbar) is masked out of every measurement.
+
+**Flicker and shimmer.** `just flicker` captures 8-frame bursts while the camera drifts a few
+millimetres per frame and scores each view by how many pixels fail to move smoothly. Without
+anti-aliasing the carved, normal-mapped surfaces scored 5-16 % (they crawl and sparkle); with
+TAA plus sharpening, now the default, 1-4 %. `just zfight` lists coplanar overlapping faces of
+different materials in the map blocks (currently only unseen undersides on the fort hill).
