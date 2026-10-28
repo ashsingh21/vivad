@@ -459,13 +459,13 @@ def main():
         kit = T.Kit()
         kit.add(boulder(seed))
         lods = finish(name, kit, lods=(0.35,), smooth=True)
-        out[name] = export.export_glb(lods, os.path.join(OUT, f"{name}.glb"))
+        out[name] = export.export_glb(lods, os.path.join(OUT, f"{name}.gltf"))
     for name, make in (("gopuram", gopuram), ("temple_dravida", dravida_temple), ("stone_chariot", stone_chariot),
                        ("mandapa_ruin", mandapa_ruin)):
         for o in list(bpy.data.objects):
             bpy.data.objects.remove(o)
         lods = make()
-        out[name] = export.export_glb(lods, os.path.join(OUT, f"{name}.glb"))
+        out[name] = export.export_glb(lods, os.path.join(OUT, f"{name}.gltf"))
     for k, v in out.items():
         print(f"[hampi] {k}: {v}")
 

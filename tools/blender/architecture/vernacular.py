@@ -452,7 +452,7 @@ def main():
         for o in list(bpy.data.objects):
             bpy.data.objects.remove(o)
         lods = make()
-        print(f"[vernacular] {key}: {export.export_glb(lods, os.path.join(OUT, f'{key}.glb'))}")
+        print(f"[vernacular] {key}: {export.export_glb(lods, os.path.join(OUT, f'{key}.gltf'))}")
 
 
 if __name__ == "__main__":

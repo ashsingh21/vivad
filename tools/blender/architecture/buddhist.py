@@ -732,7 +732,7 @@ def main():
             bpy.data.objects.remove(o)
         mat_setup()
         lods = make()
-        print(f"[buddhist] {key}: {export.export_glb(lods, os.path.join(OUT, f'{key}.glb'))}")
+        print(f"[buddhist] {key}: {export.export_glb(lods, os.path.join(OUT, f'{key}.gltf'))}")
 
     run("stupa", sandstone_mats, stupa)
     run("ajanta", basalt_mats, ajanta)

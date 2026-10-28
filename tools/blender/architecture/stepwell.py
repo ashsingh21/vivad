@@ -133,7 +133,7 @@ def main():
     for o in list(bpy.data.objects):
         bpy.data.objects.remove(o)
     lods = stepwell()
-    print(f"[stepwell] {export.export_glb(lods, os.path.join(OUT, 'stepwell.glb'))}")
+    print(f"[stepwell] {export.export_glb(lods, os.path.join(OUT, 'stepwell.gltf'))}")
 
 
 if __name__ == "__main__":

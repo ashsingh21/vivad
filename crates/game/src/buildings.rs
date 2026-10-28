@@ -19,7 +19,7 @@ pub struct BuildingsPlugin;
 
 impl Plugin for BuildingsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, build_chunks).add_systems(Update, mipmap_textures);
+        app.add_systems(Startup, build_chunks).add_systems(Update, (queue_model_mips, mipmap_textures).chain());
     }
 }
 
@@ -234,6 +234,19 @@ fn build_chunks(
     }
     info!("architecture: {} static blocks merged into {} chunk meshes", layout.blocks.iter().filter(|b| is_static_visual(b)).count(), n);
     commands.insert_resource(pending);
+}
+
+/// Model textures (the shared `models/textures/` set the props' glTFs point at) arrive without
+/// mips; queue each one as it loads.
+fn queue_model_mips(mut events: MessageReader<AssetEvent<Image>>, assets: Res<AssetServer>, mut pending: ResMut<PendingMips>) {
+    for ev in events.read() {
+        if let AssetEvent::Added { id } = ev
+            && assets.get_path(*id).is_some_and(|p| p.path().starts_with("models/textures"))
+            && let Some(h) = assets.get_id_handle(*id)
+        {
+            pending.0.push(h);
+        }
+    }
 }
 
 /// Give tiling textures a full mip chain (box-filtered on the CPU) and a repeating, anisotropic sampler.

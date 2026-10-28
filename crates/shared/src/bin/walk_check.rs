@@ -112,6 +112,60 @@ fn main() {
         });
     }
 
+    // Havelis: from the street through the gateway into the court (the tulsi platform marks its
+    // centre; the gate ornament gives the facing).
+    let tulsis: Vec<Vec3> = layout.props.iter().filter(|p| p.model.contains("lantana") && p.pos.y - layout.terrain.height(p.pos.x, p.pos.z) > 0.6 && p.pos.x.abs() < 70.0 && p.pos.z.abs() < 40.0).map(|p| p.pos).collect();
+    for (i, c) in tulsis.iter().enumerate() {
+        let Some(gate) = layout.ornaments.iter().filter(|o| o.model.contains("arch_gate")).min_by(|a, b| a.pos.distance(*c).total_cmp(&b.pos.distance(*c))) else { continue };
+        let inward = gate.rot * Vec3::NEG_Z;
+        let hd = (gate.pos - *c).with_y(0.0).length();
+        println!("haveli {} centre ({:.1}, {:.1}) facing ({:.2}, {:.2}) half depth {:.1}", i + 1, c.x, c.z, -inward.x, -inward.z, hd);
+        let center = c.with_y(0.0);
+        cases.push(Case {
+            name: format!("into haveli {} court", i + 1),
+            start: ground(gate.pos.x, gate.pos.z) - inward * 3.0,
+            dir: inward,
+            seconds: 2.5,
+            // Stopped by the tulsi platform in the middle of the court.
+            pass: Box::new(move |p, _, _| p.with_y(0.0).distance(center) < 2.2),
+            want: "at the tulsi platform".into(),
+            track: everywhere(),
+        });
+        // The stair flights in the back-left (see `haveli`): the jharokhas sit at +-0.3 w.
+        let Some(jh) = layout.ornaments.iter().filter(|o| o.model.contains("jharokha") && o.pos.distance(gate.pos) < 12.0).map(|o| o.pos.with_y(0.0).distance(gate.pos.with_y(0.0))).reduce(f32::max) else { continue };
+        let (hw, t, run, lane) = (jh / 0.3 / 2.0, 0.35, 5.0, 1.15);
+        let sx = -hw + t + 0.4;
+        let lane_z = |k: f32| -hd + t + 0.15 + lane / 2.0 + k * (lane + 0.1);
+        let local = move |p: Vec3| center + gate.rot * p;
+        let east = gate.rot * Vec3::X;
+        let first = local(Vec3::new(sx - 0.7, 0.0, lane_z(0.0)));
+        cases.push(Case {
+            name: format!("haveli {} stair to floor 1", i + 1),
+            start: ground(first.x, first.z),
+            dir: east,
+            seconds: 1.6,
+            pass: Box::new(|_, _, hi| hi > 3.3),
+            want: "up on the first floor (feet > 3.3)".into(),
+            track: everywhere(),
+        });
+        let second = local(Vec3::new(sx + run + 0.7, 3.4 + 1.2, lane_z(1.0)));
+        cases.push(Case {
+            name: format!("haveli {} stair to roof", i + 1),
+            start: second,
+            dir: -east,
+            seconds: 1.8,
+            pass: Box::new(|_, _, hi| hi > 6.7),
+            want: "up in the barsati on the roof (feet > 6.7)".into(),
+            track: everywhere(),
+        });
+    }
+
+    // Static geometry only: doors are opened by players, not walked through.
+    let doors: Vec<Entity> = app.world_mut().query_filtered::<Entity, With<shared::sim::Door>>().iter(app.world()).collect();
+    for d in doors {
+        app.world_mut().despawn(d);
+    }
+
     let mut failed = 0;
     for c in cases {
         let id = app

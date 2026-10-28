@@ -301,7 +301,7 @@ def main():
             bpy.data.objects.remove(o)
         obj = make()
         T.bake_weathering(obj)
-        counts = export.export_glb([obj], os.path.join(OUT, f"{key}.glb"))
+        counts = export.export_glb([obj], os.path.join(OUT, f"{key}.gltf"))
         print(f"[ornament] {key}: {counts}")
 
 

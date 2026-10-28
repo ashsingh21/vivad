@@ -4,11 +4,11 @@ use bevy::prelude::*;
 
 use super::{Block, ChestKind, ChestSpawn, Mat, MapLayout, Ornament, Shape};
 
-pub const ARCH_WINDOW: &str = "models/props/arch_window.glb";
-pub const ARCH_DOOR: &str = "models/props/arch_door.glb";
-pub const ARCH_GATE: &str = "models/props/arch_gate.glb";
-pub const JHAROKHA: &str = "models/props/jharokha.glb";
-pub const CHHATRI: &str = "models/props/chhatri.glb";
+pub const ARCH_WINDOW: &str = "models/props/arch_window.gltf";
+pub const ARCH_DOOR: &str = "models/props/arch_door.gltf";
+pub const ARCH_GATE: &str = "models/props/arch_gate.gltf";
+pub const JHAROKHA: &str = "models/props/jharokha.gltf";
+pub const CHHATRI: &str = "models/props/chhatri.gltf";
 
 pub const FLOOR_H: f32 = 3.4;
 pub const WALL_T: f32 = 0.35;

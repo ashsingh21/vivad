@@ -562,7 +562,7 @@ def main():
     bake_weathering(temple)
     export.triangulate(temple)
     lods = export.make_lods(temple, (0.35,))
-    out = os.path.join(ROOT, "assets", "models", "props", "temple_nagara.glb")
+    out = os.path.join(ROOT, "assets", "models", "props", "temple_nagara.gltf")
     bpy.ops.wm.save_as_mainfile(filepath=os.path.join(ROOT, "build", "temple_nagara.blend"))
     counts = export.export_glb(lods, out)
     print(f"[temple] {counts}")

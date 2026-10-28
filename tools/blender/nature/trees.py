@@ -358,7 +358,7 @@ def main():
         textures.draw_atlas(atlas)
         lods = [build(species, lod, atlas) for lod in (0, 1)]
         prefix = "bush" if species in ("lantana", "bougainvillea") else "tree"
-        out = os.path.join(ROOT, "assets", "models", "props", f"{prefix}_{species}.glb")
+        out = os.path.join(ROOT, "assets", "models", "props", f"{prefix}_{species}.gltf")
         counts = export.export_glb(lods, out)
         print(f"[tree {species}] {counts}")
 

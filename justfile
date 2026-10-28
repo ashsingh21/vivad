@@ -9,6 +9,7 @@ assets:
     just nature
     just characters
     just architecture
+    python3 tools/prune_textures.py
 
 # Buildings and landmarks: temple, arches/jharokha/chhatri, Hampi, huts and stalls, stupa and
 # Ajanta caves, stepwell (each script bakes, decimates a LOD1 and exports GLBs to assets/models/props)

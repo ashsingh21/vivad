@@ -1,6 +1,10 @@
 """Final game material, LODs, UV packing and GLB export."""
 
+import hashlib
+import json
 import os
+import shutil
+import tempfile
 
 import bpy
 
@@ -117,6 +121,11 @@ def triangulate(obj):
 
 
 def export_glb(objs, path):
+    """Export `objs` to `path`. A `.glb` embeds everything; a `.gltf` (used for map props) writes
+    its geometry next to it and its textures to the shared `../textures`, named by content, so
+    models built from the same texture load (and upload to the GPU) one copy of it."""
+    if path.endswith(".gltf"):
+        return _export_gltf_shared(objs, path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     bpy.ops.object.select_all(action="DESELECT")
     for o in objs:
@@ -134,3 +143,50 @@ def export_glb(objs, path):
         export_image_format="AUTO",
     )
     return {o.name: tri_count(o) for o in objs}
+
+
+def _export_gltf_shared(objs, path):
+    out_dir = os.path.dirname(path)
+    tex_dir = os.path.join(os.path.dirname(out_dir), "textures")
+    os.makedirs(tex_dir, exist_ok=True)
+    stem = os.path.splitext(os.path.basename(path))[0]
+    tmp = tempfile.mkdtemp(prefix="vivad_gltf_")
+    try:
+        bpy.ops.object.select_all(action="DESELECT")
+        for o in objs:
+            o.select_set(True)
+        bpy.context.view_layer.objects.active = objs[0]
+        bpy.ops.export_scene.gltf(
+            filepath=os.path.join(tmp, f"{stem}.gltf"),
+            export_format="GLTF_SEPARATE",
+            use_selection=True,
+            export_yup=True,
+            export_apply=True,
+            export_tangents=True,
+            export_normals=True,
+            export_materials="EXPORT",
+            export_image_format="AUTO",
+        )
+        with open(os.path.join(tmp, f"{stem}.gltf")) as f:
+            doc = json.load(f)
+        for im in doc.get("images", []):
+            src = os.path.join(tmp, im["uri"])
+            with open(src, "rb") as f:
+                digest = hashlib.sha1(f.read()).hexdigest()[:10]
+            base, ext = os.path.splitext(os.path.basename(im["uri"]))
+            name = f"{base}_{digest}{ext}"
+            if not os.path.exists(os.path.join(tex_dir, name)):
+                shutil.copyfile(src, os.path.join(tex_dir, name))
+            im["uri"] = f"../textures/{name}"
+        for buf in doc.get("buffers", []):
+            shutil.copyfile(os.path.join(tmp, buf["uri"]), os.path.join(out_dir, f"{stem}.bin"))
+            buf["uri"] = f"{stem}.bin"
+        with open(path, "w") as f:
+            json.dump(doc, f, separators=(",", ":"))
+        old = os.path.splitext(path)[0] + ".glb"
+        if os.path.exists(old):
+            os.remove(old)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return {o.name: tri_count(o) for o in objs}
+

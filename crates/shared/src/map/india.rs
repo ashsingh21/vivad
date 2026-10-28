@@ -64,26 +64,26 @@ fn terrain_spec(seed: u64) -> TerrainSpec {
     }
 }
 
-pub const TREE_NEEM: &str = "models/props/tree_neem.glb";
-pub const TREE_PEEPAL: &str = "models/props/tree_peepal.glb";
-pub const TREE_PALM: &str = "models/props/tree_palm.glb";
-pub const TREE_BANYAN: &str = "models/props/tree_banyan.glb";
-pub const BUSH_LANTANA: &str = "models/props/bush_lantana.glb";
-pub const BUSH_BOUGAINVILLEA: &str = "models/props/bush_bougainvillea.glb";
-pub const TEMPLE_NAGARA: &str = "models/props/temple_nagara.glb";
-pub const TEMPLE_DRAVIDA: &str = "models/props/temple_dravida.glb";
-pub const GOPURAM: &str = "models/props/gopuram.glb";
-pub const STONE_CHARIOT: &str = "models/props/stone_chariot.glb";
-pub const ROCKS: [&str; 3] = ["models/props/rock_a.glb", "models/props/rock_b.glb", "models/props/rock_c.glb"];
-pub const ROCKS_BASALT: [&str; 3] = ["models/props/rock_basalt_1.glb", "models/props/rock_basalt_2.glb", "models/props/rock_basalt_3.glb"];
-pub const HUT_MUD: &str = "models/props/hut_mud.glb";
-pub const HUT_BRICK: &str = "models/props/hut_brick.glb";
-pub const STALLS: [&str; 3] = ["models/props/stall_spice.glb", "models/props/stall_brass.glb", "models/props/stall_cloth.glb"];
-pub const STUPA: &str = "models/props/stupa.glb";
-pub const AJANTA: &str = "models/props/ajanta.glb";
-pub const MANDAPA_RUIN: &str = "models/props/mandapa_ruin.glb";
-pub const STEPWELL: &str = "models/props/stepwell.glb";
-pub const SAMAI: &str = "models/props/samai.glb";
+pub const TREE_NEEM: &str = "models/props/tree_neem.gltf";
+pub const TREE_PEEPAL: &str = "models/props/tree_peepal.gltf";
+pub const TREE_PALM: &str = "models/props/tree_palm.gltf";
+pub const TREE_BANYAN: &str = "models/props/tree_banyan.gltf";
+pub const BUSH_LANTANA: &str = "models/props/bush_lantana.gltf";
+pub const BUSH_BOUGAINVILLEA: &str = "models/props/bush_bougainvillea.gltf";
+pub const TEMPLE_NAGARA: &str = "models/props/temple_nagara.gltf";
+pub const TEMPLE_DRAVIDA: &str = "models/props/temple_dravida.gltf";
+pub const GOPURAM: &str = "models/props/gopuram.gltf";
+pub const STONE_CHARIOT: &str = "models/props/stone_chariot.gltf";
+pub const ROCKS: [&str; 3] = ["models/props/rock_a.gltf", "models/props/rock_b.gltf", "models/props/rock_c.gltf"];
+pub const ROCKS_BASALT: [&str; 3] = ["models/props/rock_basalt_1.gltf", "models/props/rock_basalt_2.gltf", "models/props/rock_basalt_3.gltf"];
+pub const HUT_MUD: &str = "models/props/hut_mud.gltf";
+pub const HUT_BRICK: &str = "models/props/hut_brick.gltf";
+pub const STALLS: [&str; 3] = ["models/props/stall_spice.gltf", "models/props/stall_brass.gltf", "models/props/stall_cloth.gltf"];
+pub const STUPA: &str = "models/props/stupa.gltf";
+pub const AJANTA: &str = "models/props/ajanta.gltf";
+pub const MANDAPA_RUIN: &str = "models/props/mandapa_ruin.gltf";
+pub const STEPWELL: &str = "models/props/stepwell.gltf";
+pub const SAMAI: &str = "models/props/samai.gltf";
 
 /// Run `build` and hide everything it made: colliders whose art comes from a model placed separately.
 fn hidden(b: &mut Builder, build: impl FnOnce(&mut Builder)) {
@@ -278,12 +278,25 @@ fn river_and_ghats(b: &mut Builder, rng: &mut SmallRng) {
 
 fn bazaar(b: &mut Builder, rng: &mut SmallRng) {
     // A long street (along X) of havelis, a cross street, and a chowk with a temple.
+    let mut gates: Vec<Vec2> = vec![];
     for side in [-1.0f32, 1.0] {
         let mut x = -58.0;
         while x < 58.0 {
             let wdt = rng.random_range(9.0..13.0);
             if x < 16.0 && x + wdt > -16.0 {
                 x = 16.0; // leave the chowk open
+                continue;
+            }
+            // Now and then a courtyard haveli takes a double lot.
+            let hw = rng.random_range(15.0..17.0);
+            if rng.random_bool(0.35) && x + hw < 58.0 && !(x < 16.0 && x + hw > -16.0) {
+                let hd = rng.random_range(15.0..17.0);
+                let yaw = if side > 0.0 { PI } else { 0.0 };
+                let f = Frame::new(Vec3::new(x + hw / 2.0, 0.0, side * (7.0 + hd / 2.0)), yaw);
+                let mat = pick_plaster(rng);
+                haveli(b, rng, f, hw, hd, mat);
+                gates.push(Vec2::new(x + hw / 2.0, side));
+                x += hw + rng.random_range(1.5..4.0);
                 continue;
             }
             let dep = rng.random_range(9.0..12.0);
@@ -296,13 +309,13 @@ fn bazaar(b: &mut Builder, rng: &mut SmallRng) {
             x += wdt + rng.random_range(1.5..4.0);
         }
     }
-    // Market stalls with cloth awnings down the street.
+    // Market stalls with cloth awnings down the street, clear of the haveli gateways.
     for i in 0..14 {
         let x = -55.0 + i as f32 * 8.5 + rng.random_range(-1.0..1.0);
-        if x.abs() < 15.0 {
+        let z = if i % 2 == 0 { -4.5 } else { 4.5 };
+        if x.abs() < 15.0 || gates.iter().any(|g| (g.x - x).abs() < 4.5 && g.y * z > 0.0) {
             continue;
         }
-        let z = if i % 2 == 0 { -4.5 } else { 4.5 };
         // The counter faces the street.
         let yaw = if z > 0.0 { PI } else { 0.0 };
         stall(b, Frame::new(Vec3::new(x, 0.0, z), yaw), STALLS[i % STALLS.len()]);
@@ -429,30 +442,188 @@ pub fn house(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, floo
     let barsati = rng.random_bool(if floors <= 2 { 0.6 } else { 0.35 });
     if barsati {
         let bw = (run + 1.4).max(w * 0.5).min(w - 2.0 * t - 1.0);
-        let bd = 2.0 * lane_w + 1.0;
-        let (x0, z0) = (-hw + t, -hd + t);
-        let (x1, z1) = (x0 + bw, z0 + bd);
-        let rh = 2.8;
-        let door = [Opening::door(bw / 2.0)];
-        let side = [Opening::window(bd / 2.0)];
-        b.wall(f, Vec2::new(x0, z1), Vec2::new(x1, z1), ry, rh, t, mat, &door);
-        b.arch_openings(f, Vec2::new(x0, z1), Vec2::new(x1, z1), ry, t, &door);
-        b.wall(f, Vec2::new(x1, z1), Vec2::new(x1, z0), ry, rh, t, mat, &side);
-        b.arch_openings(f, Vec2::new(x1, z1), Vec2::new(x1, z0), ry, t, &side);
-        b.wall(f, Vec2::new(x1, z0), Vec2::new(x0, z0), ry, rh, t, mat, &[]);
-        b.wall(f, Vec2::new(x0, z0), Vec2::new(x0, z1), ry, rh, t, mat, &[]);
-        b.slab_with_hole(f, Vec2::new(x0 - t / 2.0, z0 - t / 2.0), Vec2::new(x1 + t / 2.0, z1 + t / 2.0), ry + rh + 0.2, 0.2, None, mat);
-        for (a, c) in [(Vec2::new(x0, z1), Vec2::new(x1, z1)), (Vec2::new(x1, z1), Vec2::new(x1, z0))] {
-            band(b, f, a, c, ry + rh - 0.1, 0.12, t + 0.8, trim);
-            corbels(b, f, a, c, ry + rh - 0.5, t, trim);
-            b.merlons(f, a, c, ry + rh + 0.2, t, 0.7, Vec2::new(0.26, 0.26), mat);
-        }
+        barsati_room(b, f, Vec2::new(-hw + t, -hd + t), bw, 2.0 * lane_w + 1.0, ry, mat, false);
     }
     if w > 9.5 && rng.random_bool(if barsati { 0.25 } else { 0.5 }) {
         b.chhatri(f, Vec3::new(hw - 2.2, ry, hd - 2.2), 2.8, mat);
     }
     if rng.random_bool(0.3) {
         b.loot(f, Vec3::new(0.0, ry + 0.3, 0.0));
+    }
+}
+
+/// A rooftop room (barsati) with its back-left corner at `corner`: a door and a window onto the
+/// terrace (the door in the +Z face, or the +X face with `door_east`), merloned eaves on both.
+fn barsati_room(b: &mut Builder, f: Frame, corner: Vec2, bw: f32, bd: f32, ry: f32, mat: Mat, door_east: bool) {
+    let t = WALL_T;
+    let trim = trim_for(mat);
+    let (x0, z0) = (corner.x, corner.y);
+    let (x1, z1) = (x0 + bw, z0 + bd);
+    let rh = 2.8;
+    let (mut front, mut side) = ([Opening::door(bw / 2.0)], [Opening::window(bd / 2.0)]);
+    if door_east {
+        (front, side) = ([Opening::window(bw / 2.0)], [Opening::door(bd / 2.0)]);
+    }
+    b.wall(f, Vec2::new(x0, z1), Vec2::new(x1, z1), ry, rh, t, mat, &front);
+    b.arch_openings(f, Vec2::new(x0, z1), Vec2::new(x1, z1), ry, t, &front);
+    b.wall(f, Vec2::new(x1, z1), Vec2::new(x1, z0), ry, rh, t, mat, &side);
+    b.arch_openings(f, Vec2::new(x1, z1), Vec2::new(x1, z0), ry, t, &side);
+    b.wall(f, Vec2::new(x1, z0), Vec2::new(x0, z0), ry, rh, t, mat, &[]);
+    b.wall(f, Vec2::new(x0, z0), Vec2::new(x0, z1), ry, rh, t, mat, &[]);
+    b.slab_with_hole(f, Vec2::new(x0 - t / 2.0, z0 - t / 2.0), Vec2::new(x1 + t / 2.0, z1 + t / 2.0), ry + rh + 0.2, 0.2, None, mat);
+    for (a, c) in [(Vec2::new(x0, z1), Vec2::new(x1, z1)), (Vec2::new(x1, z1), Vec2::new(x1, z0))] {
+        band(b, f, a, c, ry + rh - 0.1, 0.12, t + 0.8, trim);
+        corbels(b, f, a, c, ry + rh - 0.5, t, trim);
+        b.merlons(f, a, c, ry + rh + 0.2, t, 0.7, Vec2::new(0.26, 0.26), mat);
+    }
+}
+
+/// Courtyard haveli: two storeys of rooms round an open chowk, entered from the street through
+/// an arched gateway. Arcades open the ground floor onto the court; above, doors and windows open
+/// onto a bracketed gallery round it. A switchback stair in the back range climbs to the roof
+/// terrace. Door faces local +Z.
+fn haveli(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, mat: Mat) {
+    let (hw, hd) = (w / 2.0, d / 2.0);
+    let t = WALL_T;
+    let floors = 2;
+    let ring = 4.6;
+    let (cx, cz) = (hw - ring, hd - ring); // court half extents
+    let gallery = 1.0;
+    let trim = trim_for(mat);
+    // Switchback stair in the back-left of the back range (as in `house`).
+    let run = 5.0;
+    let lane_w = 1.15;
+    let sx = -hw + t + 0.4;
+    let lane_z = |k: u32| -hd + t + 0.15 + lane_w / 2.0 + (k % 2) as f32 * (lane_w + 0.1);
+
+    b.push(f.p(Vec3::new(0.0, 0.03, 0.0)), f.rot(), super::Shape::Box(Vec3::new(w - 0.1, 0.06, d - 0.1)), Mat::Sandstone, false, true);
+    let outer = [Vec2::new(-hw, hd), Vec2::new(hw, hd), Vec2::new(hw, -hd), Vec2::new(-hw, -hd)];
+    // Court walls stand just outside the court rectangle, running the same way round.
+    let (ix, iz) = (cx + t / 2.0, cz + t / 2.0);
+    let inner = [Vec2::new(-ix, iz), Vec2::new(ix, iz), Vec2::new(ix, -iz), Vec2::new(-ix, -iz)];
+    let spaced = |len: f32, n: u32, make: &dyn Fn(f32) -> Opening| -> Vec<Opening> {
+        (0..n).map(|i| make((i as f32 + 0.5) * len / n as f32)).collect()
+    };
+    for k in 0..floors {
+        let y0 = k as f32 * FLOOR_H;
+        // Street front: the gateway and two windows below, two jharokhas and a window above.
+        let front: Vec<Opening> = if k == 0 {
+            vec![Opening::window(w * 0.2), Opening::arch(hw, 3.0, 3.6), Opening::window(w * 0.8)]
+        } else {
+            vec![
+                Opening { at: w * 0.2, width: 1.2, bottom: 0.9, top: 2.4 },
+                Opening::window(hw),
+                Opening { at: w * 0.8, width: 1.2, bottom: 0.9, top: 2.4 },
+            ]
+        };
+        let side: Vec<Opening> = if k == 0 { vec![] } else { spaced(d, 3, &Opening::window) };
+        let back: Vec<Opening> = if k == 0 { vec![] } else { vec![Opening::window(w * 0.75)] };
+        let walls = [front, side.clone(), back, side];
+        for i in 0..4 {
+            let (a, c) = (outer[i], outer[(i + 1) % 4]);
+            b.wall(f, a, c, y0, FLOOR_H, t, mat, &walls[i]);
+            // Jharokhas get their balcony instead of an arch.
+            let arched: Vec<Opening> = walls[i].iter().copied().filter(|o| !(k > 0 && i == 0 && o.top > 2.3)).collect();
+            b.arch_openings(f, a, c, y0, t, &arched);
+            if k > 0 {
+                band(b, f, a, c, y0 - 0.08, 0.16, t + 0.12, trim);
+            }
+        }
+        if k > 0 {
+            for at in [w * 0.2, w * 0.8] {
+                b.ornament(f, Vec3::new(at - hw, y0 + 0.26, hd), 0.0, JHAROKHA, Vec3::ONE);
+            }
+        }
+        // Court walls: a three-bay arcade below; a door and two windows onto the gallery above.
+        for i in 0..4 {
+            let (a, c) = (inner[i], inner[(i + 1) % 4]);
+            let len = a.distance(c);
+            let ops = if k == 0 {
+                spaced(len, 3, &|at| Opening::arch(at, 1.8, 2.8))
+            } else {
+                vec![Opening::window(len * 0.2), Opening::door(len * 0.5), Opening::window(len * 0.8)]
+            };
+            b.wall(f, a, c, y0, FLOOR_H, t, mat, &ops);
+            b.arch_openings(f, a, c, y0, t, &ops);
+            if k > 0 {
+                band(b, f, a, c, y0 - 0.08, 0.16, t + 0.12, trim);
+            }
+        }
+        // Cross walls split the ranges into rooms (the back-left stays open for the stair).
+        for (a, c) in [
+            (Vec2::new(-ix, iz), Vec2::new(-ix, hd)),
+            (Vec2::new(ix, iz), Vec2::new(ix, hd)),
+            (Vec2::new(ix, -iz), Vec2::new(ix, -hd)),
+        ] {
+            let len = a.distance(c);
+            b.wall(f, a, c, y0, FLOOR_H, t, mat, &[Opening::door(len / 2.0)]);
+        }
+        if k == 0 {
+            // A pair of doors in the gateway.
+            b.door(f, outer[0], outer[1], hw - 0.75, 0.0);
+            b.door(f, outer[0], outer[1], hw + 0.75, 0.0);
+        }
+        // Stair flight up from this floor.
+        let lz = lane_z(k);
+        if k % 2 == 0 {
+            b.stairs(f, Vec3::new(sx, y0, lz), run, FLOOR_H, lane_w, Mat::Wood);
+        } else {
+            b.stairs(f.child(Vec3::new(sx + run, 0.0, 0.0), PI), Vec3::new(0.0, y0, -lz), run, FLOOR_H, lane_w, Mat::Wood);
+        }
+        let stair_hole = (Vec2::new(sx - 0.05, lz - lane_w / 2.0 - 0.05), Vec2::new(sx + run + 0.05, lz + lane_w / 2.0 + 0.05));
+        // The first floor's slab runs out over the court as the gallery; the roof stops at the walls.
+        let g = if k + 1 < floors { gallery } else { 0.0 };
+        let court = (Vec2::new(-cx + g, -cz + g), Vec2::new(cx - g, cz - g));
+        for (mn, mx) in super::build::subtract_all((Vec2::new(-hw, -hd), Vec2::new(hw, hd)), &[court, stair_hole]) {
+            b.span(f, Vec3::new(mn.x, y0 + FLOOR_H - 0.25, mn.y), Vec3::new(mx.x, y0 + FLOOR_H, mx.y), mat);
+        }
+        if k + 1 < floors {
+            // Gallery railing and the brackets carrying it.
+            let (gx, gz) = (cx - g + 0.08, cz - g + 0.08);
+            let rail = [Vec2::new(-gx, gz), Vec2::new(gx, gz), Vec2::new(gx, -gz), Vec2::new(-gx, -gz)];
+            for i in 0..4 {
+                let (a, c) = (rail[i], rail[(i + 1) % 4]);
+                b.wall(f, a, c, y0 + FLOOR_H, 0.95, 0.16, mat, &[]);
+                band(b, f, a, c, y0 + FLOOR_H + 0.95, 0.08, 0.26, trim);
+                corbels(b, f, inner[i], inner[(i + 1) % 4], y0 + FLOOR_H - 0.62, t, trim);
+            }
+        }
+        // Loot: a chest in a side room, floor loot in the ranges.
+        if rng.random_bool(0.6) {
+            let sx_room = if rng.random_bool(0.5) { -hw + 1.2 } else { hw - 1.2 };
+            b.chest(f, Vec3::new(sx_room, y0, 0.0), FRAC_PI_2, ChestKind::Peti);
+        }
+        b.loot(f, Vec3::new(rng.random_range(-cx..cx), y0 + 0.3, hd - ring / 2.0));
+    }
+    // The court: a raised tulsi platform and the household's best chest.
+    b.span(f, Vec3::new(-0.6, 0.0, -0.6), Vec3::new(0.6, 0.8, 0.6), trim);
+    b.deco(f, Vec3::new(0.0, 0.85, 0.0), Vec3::new(1.4, 0.1, 1.4), trim);
+    b.map.props.push(Prop { model: BUSH_LANTANA, pos: f.p(Vec3::new(0.0, 0.85, 0.0)), yaw: rng.random_range(0.0..PI), scale: 0.35, trunk: None });
+    b.chest(f, Vec3::new(0.0, 0.0, -cz + 1.0), 0.0, ChestKind::Kalash);
+    // Roof: merloned parapet with a bracketed eave outside, a plain parapet round the court.
+    let ry = floors as f32 * FLOOR_H;
+    for i in 0..4 {
+        let (a, c) = (outer[i], outer[(i + 1) % 4]);
+        b.wall(f, a, c, ry, 1.0, t, mat, &[]);
+        band(b, f, a, c, ry - 0.22, 0.12, t + 0.9, trim);
+        corbels(b, f, a, c, ry - 0.62, t, trim);
+        b.merlons(f, a, c, ry + 1.0, t, 0.9, Vec2::new(0.34, 0.32), mat);
+        band(b, f, a, c, 0.0, 0.42, t + 0.16, trim);
+        let (a, c) = (inner[i], inner[(i + 1) % 4]);
+        b.wall(f, a, c, ry, 0.9, t, mat, &[]);
+        band(b, f, a, c, ry + 0.9, 0.1, t + 0.15, trim);
+    }
+    // The stair arrives in a barsati in the back-left corner of the terrace; its door faces along
+    // the back range (the court parapet is too close in front of it).
+    barsati_room(b, f, Vec2::new(-hw + t, -hd + t), run + 1.4, 2.0 * lane_w + 1.0, ry, mat, true);
+    // Chhatris on the front corners of the terrace.
+    for sxf in [-1.0, 1.0] {
+        if rng.random_bool(0.75) {
+            b.chhatri(f, Vec3::new(sxf * (hw - 1.8), ry, hd - 1.8), 2.6, mat);
+        }
+    }
+    if rng.random_bool(0.5) {
+        b.loot(f, Vec3::new(0.0, ry + 0.3, -hd + ring / 2.0));
     }
 }
 
