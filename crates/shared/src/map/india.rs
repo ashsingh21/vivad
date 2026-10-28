@@ -39,6 +39,7 @@ fn terrain_spec(seed: u64) -> TerrainSpec {
         pad(95.0, 170.0, 50.0, 25.0),
         pad(-200.0, 0.0, 62.0, 25.0),
         pad(-158.0, 8.0, 24.0, 20.0),
+        pad(138.0, 45.0, 42.0, 25.0), // Kashi: ghat town and its temples
     ];
     for (c, _) in VILLAGES {
         pads.push(pad(c.x, c.z, 42.0, 25.0));
@@ -66,6 +67,7 @@ pub const TREE_PALM: &str = "models/props/tree_palm.glb";
 pub const TREE_BANYAN: &str = "models/props/tree_banyan.glb";
 pub const BUSH_LANTANA: &str = "models/props/bush_lantana.glb";
 pub const BUSH_BOUGAINVILLEA: &str = "models/props/bush_bougainvillea.glb";
+pub const TEMPLE_NAGARA: &str = "models/props/temple_nagara.glb";
 
 fn prop(b: &mut Builder, model: &'static str, pos: Vec3, yaw: f32, scale: f32) {
     let trunk = match model {
@@ -325,7 +327,17 @@ pub fn house(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, floo
 }
 
 /// Nagara-style temple: plinth, pillared mandapa, sanctum with a shikhara tower.
+/// The blocks below are the gameplay colliders; the visible art is the `TEMPLE_NAGARA` model.
 fn temple(b: &mut Builder, rng: &mut SmallRng, f: Frame, scale: f32) {
+    let first = b.map.blocks.len();
+    temple_blocks(b, rng, f, scale);
+    for blk in &mut b.map.blocks[first..] {
+        blk.visible = false;
+    }
+    b.map.props.push(Prop { model: TEMPLE_NAGARA, pos: f.origin, yaw: f.yaw, scale, trunk: None });
+}
+
+fn temple_blocks(b: &mut Builder, rng: &mut SmallRng, f: Frame, scale: f32) {
     let s = scale;
     let plinth_h = 1.2 * s;
     b.span(f, Vec3::new(-7.0 * s, 0.0, -9.0 * s), Vec3::new(7.0 * s, plinth_h, 9.0 * s), Mat::Sandstone);
