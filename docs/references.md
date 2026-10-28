@@ -135,3 +135,13 @@ halo, crown and attributes. Faces are soft, not carved in detail: they hold up a
 **Textures**: props export as `.gltf` + `.bin` that point at `assets/models/textures/`, one
 file per distinct texture named by content hash, shared by every model that uses it.
 `tools/prune_textures.py` (run by `just assets`) dedupes and removes unused ones.
+
+## Warrior animation
+
+Authored procedurally in `tools/blender/characters/anims.py`, no mocap or third-party clips:
+idle; walk (3.6 m/s) and run (5.6 m/s) in four directions; forward sprint (7.4 m/s); jump, fall,
+skydiving freefall, glide; death; and torso-only sword guard and swing, bow aim, drinking. Legs
+use two-bone IK against foot paths that move at the clip's ground speed (the script prints the
+remaining foot slide per clip, under 1 cm). Clips are per rig because the male and female rest
+bone orientations differ. In game (`crates/game/src/animation.rs`) they are blended from the
+simulation state, with weapon actions layered on the torso by bone masks.

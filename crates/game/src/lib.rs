@@ -1,3 +1,4 @@
+pub mod animation;
 pub mod autoshot;
 pub mod buildings;
 pub mod camera;

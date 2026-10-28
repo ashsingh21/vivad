@@ -8,6 +8,7 @@ assets:
     for w in {{weapons}}; do just weapon $w; done
     just nature
     just characters
+    just anims
     just architecture
     python3 tools/prune_textures.py
 
@@ -24,6 +25,11 @@ figures:
 # Characters (needs the MPFB extension + MakeHuman CC0 assets, see docs/references.md)
 characters:
     for v in male female; do {{blender}} -b -P tools/blender/characters/human.py -- $v 2>&1 | grep -E '^\[|Error|Traceback' || true; done
+
+# Warrior animation clips, per rig (needs build/char_<variant>_final.blend from `just characters`).
+# Prints foot slide per clip; add `-- male --preview DIR --clips run_f,idle` for pose renders.
+anims:
+    for v in male female; do {{blender}} -b -P tools/blender/characters/anims.py -- $v 2>&1 | grep -E '^\[|Error|Traceback' || true; done
 
 # Trees and bushes
 nature:

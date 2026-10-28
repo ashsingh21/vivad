@@ -1,7 +1,6 @@
 //! Presentation of simulation entities: graybox map, warriors, loot, projectiles, effects, sky.
 
 use std::collections::HashMap;
-use std::f32::consts::FRAC_PI_2;
 
 use bevy::light::{Atmosphere, CascadeShadowConfigBuilder, atmosphere::ScatteringMedium};
 use bevy::prelude::*;
@@ -404,13 +403,8 @@ fn pose_warriors(
     for (v, socket, mut visibility, children, mut vt) in &mut vis {
         let Ok((kin, inv, dead)) = sims.get(v.sim) else { continue };
         *visibility = if kin.mode == MoveMode::Vimana { Visibility::Hidden } else { Visibility::Inherited };
-        if dead {
-            // Topple over where they fell.
-            vt.rotation *= Quat::from_rotation_x(-FRAC_PI_2);
-            vt.translation.y -= 0.6;
-        } else if matches!(kin.mode, MoveMode::Freefall) {
-            vt.rotation *= Quat::from_rotation_x(-1.2);
-        } else if matches!(kin.mode, MoveMode::Gliding) {
+        // Death and the skydiving arch are in the animation clips.
+        if !dead && matches!(kin.mode, MoveMode::Gliding) {
             vt.rotation *= Quat::from_rotation_x(-0.25);
         }
         for c in children.iter() {
