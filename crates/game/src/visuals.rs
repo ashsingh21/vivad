@@ -216,7 +216,7 @@ fn setup_sky(mut commands: Commands, mut media: ResMut<Assets<ScatteringMedium>>
         CascadeShadowConfigBuilder { num_cascades: 4, maximum_distance: 260.0, first_cascade_far_bound: 18.0, ..default() }.build(),
     ));
     commands.spawn(Atmosphere::earth(media.add(ScatteringMedium::default())));
-    commands.insert_resource(GlobalAmbientLight { color: Color::srgb(0.85, 0.88, 1.0), brightness: 700.0, ..default() });
+    commands.insert_resource(GlobalAmbientLight { color: Color::srgb(0.85, 0.88, 1.0), brightness: 450.0, ..default() });
     // The Pralaya wall.
     commands.spawn((
         ZoneWall,
@@ -258,7 +258,7 @@ fn resolve_gltf_materials(
     }
 }
 
-/// Terrain mesh from the shared heightfield, painted by slope, height and context.
+/// Terrain mesh from the shared heightfield, painted by `grass::paint`.
 fn dress_terrain(
     mut commands: Commands,
     q: Query<Entity, Added<shared::sim::MapTerrain>>,
@@ -268,7 +268,6 @@ fn dress_terrain(
 ) {
     use bevy::asset::RenderAssetUsages;
     use bevy::mesh::{Indices, PrimitiveTopology};
-    use shared::map::terrain::fbm;
     for e in &q {
         let t = &layout.terrain;
         let n = t.n;
@@ -276,14 +275,6 @@ fn dress_terrain(
         let mut nrm = Vec::with_capacity(n * n);
         let mut col = Vec::with_capacity(n * n);
         let mut uv = Vec::with_capacity(n * n);
-        let lin = |c: [f32; 3]| Color::srgb(c[0], c[1], c[2]).to_linear();
-        let grass = lin([0.40, 0.48, 0.22]);
-        let grass2 = lin([0.33, 0.43, 0.20]);
-        let dry = lin([0.66, 0.60, 0.34]);
-        let rock = lin([0.50, 0.45, 0.40]);
-        let dirt = lin([0.62, 0.48, 0.33]);
-        let sand = lin([0.74, 0.66, 0.50]);
-        let mix = |a: LinearRgba, b: LinearRgba, t: f32| a.mix(&b, t.clamp(0.0, 1.0));
         for i in 0..n {
             for j in 0..n {
                 let (x, z) = (t.coord(i), t.coord(j));
@@ -292,20 +283,8 @@ fn dress_terrain(
                 pos.push([x, h, z]);
                 nrm.push(nn.to_array());
                 uv.push([x / 4.0, z / 4.0]);
-                let patch = fbm(x / 22.0, z / 22.0, 3, 91);
-                let mut c = mix(grass, grass2, patch * 1.6 - 0.3);
-                // Sun-dried grass on high ground and in patches.
-                c = mix(c, dry, (h - 6.0) / 18.0 + (fbm(x / 60.0, z / 60.0, 2, 17) - 0.55) * 2.0);
-                // Rock on steep slopes.
-                c = mix(c, rock, (0.86 - nn.y) * 6.0);
-                // Sandy river banks.
-                let (rx0, rx1) = (172.0, 196.0);
-                let rd = if x < rx0 { rx0 - x } else if x > rx1 { x - rx1 } else { 0.0 };
-                c = mix(c, sand, 1.0 - rd / 9.0);
-                // Roads.
-                c = mix(c, dirt, (5.0 - t.road_d[i * n + j]) / 2.5);
-                let v = 0.92 + 0.16 * fbm(x / 3.0, z / 3.0, 2, 5);
-                col.push([c.red * v, c.green * v, c.blue * v, 1.0]);
+                let (c, _) = crate::grass::paint(x, z, h, nn, t.road_d[i * n + j]);
+                col.push([c.red, c.green, c.blue, 1.0]);
             }
         }
         let mut idx: Vec<u32> = Vec::with_capacity((n - 1) * (n - 1) * 6);

@@ -22,6 +22,10 @@ pixels only when the numbers point somewhere.
 
 The HUD (minimap, status, hotbar) is masked out of every measurement.
 
+Render switches for comparisons: `VIVAD_EV=9.7` (camera exposure, default 10.35),
+`VIVAD_NO_GRASS=1`, `VIVAD_AA=none|smaa`, `VIVAD_NO_SSAO=1`, `VIVAD_NO_SHADOWS=1`; with
+`VIVAD_PERF_LOG=1` the game logs FPS every 10 s.
+
 **Weapons in the hand.** `just armoury` stands the player on open ground and captures every item
 carried and in use (aiming, drawing, swinging, drinking) from the front, side and back, then
 tiles them into `previews/armoury_sheet.png`; `just armoury pinaka,soma` for a few. The last

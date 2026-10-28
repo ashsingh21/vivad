@@ -33,6 +33,9 @@ fn spawn_camera(mut commands: Commands) {
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection { fov: 70f32.to_radians(), near: 0.05, ..default() }),
         Tonemapping::AgX,
+        // Two-thirds of a stop under Bevy's default (9.7): the afternoon sun and sky were washing
+        // out the ground and plaster. VIVAD_EV overrides for tuning.
+        bevy::camera::Exposure { ev100: std::env::var("VIVAD_EV").ok().and_then(|s| s.parse().ok()).unwrap_or(10.35) },
         // Contact shadows in corners, under eaves and between blocks.
         bevy::pbr::ScreenSpaceAmbientOcclusion { radius: 0.6, ..default() },
         Msaa::Off,
