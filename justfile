@@ -45,7 +45,7 @@ view name:
 
 # Play the graybox (release build; first build takes a few minutes).
 play:
-    cargo run --release -p game
+    cargo run --release -p game --bin game
 
 # Headless matches to sanity-check the loop and bots: just sim 5
 sim matches="3" bots="15":
@@ -57,8 +57,8 @@ walk:
 
 # Fly the camera over every landmark and screenshot it.
 tour:
-    mkdir -p previews/graybox && VIVAD_TOUR=previews/graybox cargo run --release -p game
+    mkdir -p previews/graybox && VIVAD_TOUR=previews/graybox cargo run --release -p game --bin game
 
 # Let a bot play as you and screenshot the match.
 autoplay:
-    mkdir -p previews/graybox/match && VIVAD_AUTOPILOT=1 VIVAD_SHOTS=previews/graybox/match cargo run --release -p game
+    mkdir -p previews/graybox/match && VIVAD_AUTOPILOT=1 VIVAD_SHOTS=previews/graybox/match cargo run --release -p game --bin game
