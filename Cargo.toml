@@ -1,0 +1,20 @@
+[workspace]
+resolver = "3"
+members = ["crates/game", "crates/shared"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+rust-version = "1.97.1"
+
+[workspace.dependencies]
+# Pinned exactly; Bevy breaks APIs between minor releases.
+bevy = "=0.20.0"
+shared = { path = "crates/shared" }
+
+# Fast iterative builds: optimise dependencies even in dev.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

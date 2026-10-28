@@ -1,0 +1,9 @@
+[package]
+name = "game"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bevy = { workspace = true }
+shared = { workspace = true }

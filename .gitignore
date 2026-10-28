@@ -1,0 +1,9 @@
+/target
+/build
+*.blend1
+.env
+# Intermediate review passes stay local; the final pass and the Bevy check are committed.
+/previews/*/pass1/
+/previews/*/pass2/
+/previews/*/pass3*/
+__pycache__/
