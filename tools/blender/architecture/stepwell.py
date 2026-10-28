@@ -31,37 +31,25 @@ FLIGHT, LANDING = 9.0, 4.0
 
 
 def vishnu(kit, mat_world, s=1.0):
-    """Standing four-armed Vishnu (samabhanga) with a tall crown, conch and discus raised in the
-    upper hands. Built at the origin facing -Y, ~1.75*s tall."""
-    parts = [T.lathe("vpad", [(0.26 * s, 0.0), (0.3 * s, 0.07 * s), (0.22 * s, 0.14 * s)], 16, (0, 0), uv_strip="padma")]
-    for sx in (-1, 1):
-        parts.append(cylinder_between("leg", (sx * 0.08 * s, 0, 0.14 * s), (sx * 0.07 * s, 0, 0.82 * s), 0.065 * s, "stone", 8))
-    hip = T.lathe("dhoti", [(r * s, z * s) for r, z in ((0.12, 0.55), (0.19, 0.78), (0.17, 0.98))], 12, (0, 0))
-    torso = T.lathe("torso", [(r * s, z * s) for r, z in ((0.15, 0.98), (0.14, 1.12), (0.19, 1.3), (0.2, 1.36), (0.08, 1.42))], 12, (0, 0))
-    for o in (hip, torso):
-        for v in o.data.vertices:
-            v.co.y *= 0.7
-        parts.append(o)
-    for sx in (-1, 1):
-        sh = Vector((sx * 0.19, 0, 1.33)) * s
-        # Upper arms raised, holding the conch (left) and the discus (right).
-        el, hd = Vector((sx * 0.34, 0.02, 1.2)) * s, Vector((sx * 0.37, -0.02, 1.48)) * s
-        parts.append(cylinder_between("ua", sh, el, 0.045 * s, "stone", 6))
-        parts.append(cylinder_between("fa", el, hd, 0.04 * s, "stone", 6))
-        if sx > 0:
-            parts.append(cylinder_between("chakra", hd + Vector((0, -0.02, 0.1)) * s, hd + Vector((0, 0.02, 0.1)) * s, 0.09 * s, "trim", 16))
-        else:
-            parts.append(B.uv_sphere("shankha", hd + Vector((0, 0, 0.08)) * s, (0.05 * s, 0.05 * s, 0.09 * s), "stone", 8, 6))
-        # Lower arms: one resting on the mace, one in varada (giving).
-        el2, hd2 = Vector((sx * 0.26, -0.02, 1.08)) * s, Vector((sx * 0.3, -0.12, 0.88)) * s
-        parts.append(cylinder_between("ua2", sh, el2, 0.05 * s, "stone", 6))
-        parts.append(cylinder_between("fa2", el2, hd2, 0.045 * s, "stone", 6))
-    parts.append(cylinder_between("gada", (-0.34 * s, -0.14 * s, 0.14 * s), (-0.31 * s, -0.12 * s, 0.86 * s), 0.035 * s, "stone", 6))
-    parts.append(B.uv_sphere("gadahead", (-0.31 * s, -0.12 * s, 0.9 * s), (0.07 * s, 0.07 * s, 0.07 * s), "stone", 8, 6))
-    parts.append(B.uv_sphere("head", (0, 0.0, 1.5 * s), (0.085 * s, 0.09 * s, 0.1 * s), "stone"))
-    parts.append(T.lathe("kirita", [(r * s, z * s) for r, z in ((0.085, 1.56), (0.09, 1.62), (0.07, 1.72), (0.03, 1.78), (0.0, 1.8))],
-                         10, (0, 0), uv_strip="bead"))
-    parts.append(T.lathe("hara", [(0.16 * s, 1.27 * s), (0.17 * s, 1.3 * s), (0.15 * s, 1.33 * s)], 12, (0, 0), uv_strip="bead"))
+    """Standing four-armed Vishnu (samabhanga) on a lotus pedestal: the sculpted figure
+    (figures.py) with a tall crown, the discus and conch in the upper hands and the mace under
+    the lower left. ~1.75*s tall, at the origin facing -Y, moved by `mat_world`."""
+    base, h = 0.14 * s, 1.5 * s
+    parts = [T.lathe("vpad", [(0.26 * s, 0.0), (0.3 * s, 0.07 * s), (0.22 * s, base)], 16, (0, 0), uv_strip="padma")]
+    meta = B.figure_meta("vishnu")
+    at = {k: Vector((v.x * h, v.y * h, base + v.z * h)) for k, v in meta.items()}
+    lod = "hi" if s > 1.2 else "lo"
+    kit.add(B.figure("vishnu", lod, mat_world @ Matrix.Translation((0, 0, base)) @ Matrix.Scale(h, 4)))
+    # Kirita mukuta: the tall cylindrical crown, set down over the crown of the head.
+    top = at["head_top"]
+    parts.append(T.lathe("kirita", [(r * s, top.z + z * s) for r, z in ((0.07, -0.05), (0.075, 0.0), (0.068, 0.08), (0.05, 0.16), (0.02, 0.21), (0.0, 0.23))],
+                         12, (top.x, top.y), uv_strip="bead"))
+    d, c = at["discus"], at["conch"]
+    parts.append(cylinder_between("chakra", d + Vector((0, -0.02, 0.07)) * s, d + Vector((0, 0.02, 0.07)) * s, 0.09 * s, "trim", 16))
+    parts.append(B.uv_sphere("shankha", c + Vector((0, 0, 0.06)) * s, (0.045 * s, 0.045 * s, 0.08 * s), "stone", 8, 6))
+    m = at["mace"]
+    parts.append(cylinder_between("gada", (m.x, m.y, base), (m.x, m.y, m.z - 0.04 * s), 0.03 * s, "stone", 6))
+    parts.append(B.uv_sphere("gadahead", (m.x, m.y, m.z - 0.02 * s), (0.065 * s, 0.065 * s, 0.07 * s), "stone", 8, 6))
     for o in parts:
         kit.add(B.transform(o, mat_world))
 

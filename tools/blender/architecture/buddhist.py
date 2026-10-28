@@ -11,6 +11,7 @@ Blender Y = -game Z, Z up.
 blender -b --factory-startup -P tools/blender/architecture/buddhist.py [-- stupa|ajanta|rocks]
 """
 
+import json
 import math
 import os
 import random
@@ -97,31 +98,45 @@ def uv_sphere(name, c, r, mat, seg=12, rings=8):
 
 # ------------------------------------------------------------------ figures and reliefs
 
+FIGURES = os.path.join(HERE, "figures")
+_figure_meshes = {}
+
+
+def figure(name, lod, M, mat="stone"):
+    """A sculpted figure from figures.py (unit height, base at the origin, facing -Y), moved by
+    `M`, box-mapped for the tiling stone."""
+    key = (name, lod)
+    if key not in _figure_meshes:
+        bpy.ops.wm.ply_import(filepath=os.path.join(FIGURES, f"{name}_{lod}.ply"))
+        src = bpy.context.selected_objects[0]
+        _figure_meshes[key] = src.data
+        bpy.data.objects.remove(src)
+    bm = bmesh.new()
+    bm.from_mesh(_figure_meshes[key])
+    bm.loops.layers.uv.new("UVMap")
+    o = T.new_obj(name, bm, (mat,))
+    for p in o.data.polygons:
+        p.use_smooth = True
+    o = transform(o, M)
+    proj_uvs(o, 1.0)
+    return o
+
+
+def figure_meta(name):
+    with open(os.path.join(FIGURES, f"{name}.json")) as f:
+        return {k: Vector(v) for k, v in json.load(f).items()}
+
+
 def seated_buddha(kit, mat_world, s=1.0):
-    """Seated Buddha in dhyana: lotus pedestal, crossed legs, robed torso, hands in the lap, head
-    with ushnisha, halo. Built at the origin facing -Y, ~1.1*s tall, then moved by `mat_world`."""
-    parts = []
+    """Seated Buddha in dhyana on a lotus pedestal, with a halo: the sculpted figure (figures.py)
+    with the carved setting round it. ~1.1*s tall, at the origin facing -Y, moved by `mat_world`."""
     pad = [(0.46, 0.0), (0.5, 0.08), (0.44, 0.16), (0.36, 0.2)]
-    parts.append(T.lathe("padma", [(r * s, z * s) for r, z in pad], 20, (0, 0), uv_strip="padma"))
-    parts.append(uv_sphere("legs", (0, -0.03 * s, 0.31 * s), (0.42 * s, 0.27 * s, 0.13 * s), "stone"))
-    torso = T.lathe("torso", [(r * s, z * s) for r, z in ((0.19, 0.3), (0.21, 0.45), (0.23, 0.6), (0.24, 0.68), (0.13, 0.75), (0.07, 0.8))],
-                    14, (0, 0))
-    for v in torso.data.vertices:
-        v.co.y = v.co.y * 0.72 + 0.03 * s
-    parts.append(torso)
-    for sx in (-1, 1):
-        sh, el, hd = Vector((sx * 0.22, 0.03, 0.66)), Vector((sx * 0.29, -0.03, 0.43)), Vector((sx * 0.07, -0.16, 0.36))
-        parts.append(cylinder_between("uarm", sh * s, el * s, 0.06 * s, "stone", 8))
-        parts.append(cylinder_between("farm", el * s, hd * s, 0.05 * s, "stone", 8))
-    parts.append(uv_sphere("hands", (0, -0.16 * s, 0.37 * s), (0.1 * s, 0.06 * s, 0.04 * s), "stone"))
-    parts.append(uv_sphere("head", (0, 0.02 * s, 0.9 * s), (0.1 * s, 0.11 * s, 0.12 * s), "stone"))
-    parts.append(uv_sphere("ushnisha", (0, 0.03 * s, 1.0 * s), (0.055 * s, 0.055 * s, 0.05 * s), "stone"))
-    for sx in (-1, 1):
-        parts.append(uv_sphere("ear", (sx * 0.1 * s, 0.03 * s, 0.86 * s), (0.02 * s, 0.03 * s, 0.07 * s), "stone", 6, 4))
-    halo = cylinder_between("halo", (0, 0.13 * s, 0.9 * s), (0, 0.17 * s, 0.9 * s), 0.3 * s, "trim", 24)
-    parts.append(halo)
-    for o in parts:
-        kit.add(transform(o, mat_world))
+    kit.add(transform(T.lathe("padma", [(r * s, z * s) for r, z in pad], 20, (0, 0), uv_strip="padma"), mat_world))
+    # Close-up figures (the shrine) get the detailed mesh; the many niche figures the light one.
+    lod = "hi" if s > 1.6 else "lo"
+    kit.add(figure("buddha_seated", lod, mat_world @ Matrix.Translation((0, 0, 0.17 * s)) @ Matrix.Scale(0.88 * s, 4)))
+    halo = cylinder_between("halo", (0, 0.15 * s, 0.86 * s), (0, 0.19 * s, 0.86 * s), 0.3 * s, "trim", 24)
+    kit.add(transform(halo, mat_world))
 
 
 def piece_to_world(y_center, x_out=0.0):

@@ -120,5 +120,18 @@ no third-party meshes or textures. Each model matches its gameplay colliders in
   mandapa (pillar states in `RUIN`, mirrored by `MANDAPA_RUIN_PILLARS`). Stucco is weathered with
   black lichen and rain streaks (`texgen.weather_streaks`).
 
-Figures are simple stylised forms (seated Buddha, standing Vishnu), readable at gameplay distance,
-not sculpted.
+- **Courtyard havelis** (`india.rs::haveli`, built from the kit's walls, arches and jharokhas):
+  rooms round an open chowk with a tulsi platform, arcaded below, a bracketed gallery above,
+  an arched street gateway, a stair to a barsati on the roof terrace, chhatris.
+- **Samai** (`vernacular.py`): the brass standing oil lamp lighting the cave shrines; the game
+  adds its flames and light from `MapLayout::lamps`.
+
+**Figures** (`figures.py`, needs MPFB like the characters): the seated Buddha (padmasana,
+dhyana mudra, ushnisha) and the four-armed standing Vishnu (abhaya, mace, discus and conch,
+dhoti) are posed MakeHuman bodies fused into stone by voxel remeshing, saved as
+`figures/*_{hi,lo}.ply` plus attribute anchors in `figures/*.json`. The kit adds pedestals,
+halo, crown and attributes. Faces are soft, not carved in detail: they hold up at a few metres.
+
+**Textures**: props export as `.gltf` + `.bin` that point at `assets/models/textures/`, one
+file per distinct texture named by content hash, shared by every model that uses it.
+`tools/prune_textures.py` (run by `just assets`) dedupes and removes unused ones.

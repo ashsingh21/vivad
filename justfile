@@ -16,6 +16,11 @@ assets:
 architecture:
     for s in temple ornaments hampi vernacular buddhist stepwell; do {{blender}} -b --factory-startup -P tools/blender/architecture/$s.py 2>&1 | grep -E '^\[|Error|Traceback' || true; done
 
+# Carved figures for the kit (needs MPFB; writes tools/blender/architecture/figures/, which the
+# architecture scripts read, so run this first when a figure changes)
+figures:
+    {{blender}} -b -P tools/blender/architecture/figures.py 2>&1 | grep -E '^\[|Error|Traceback' || true
+
 # Characters (needs the MPFB extension + MakeHuman CC0 assets, see docs/references.md)
 characters:
     for v in male female; do {{blender}} -b -P tools/blender/characters/human.py -- $v 2>&1 | grep -E '^\[|Error|Traceback' || true; done
