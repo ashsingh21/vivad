@@ -59,6 +59,26 @@ walk:
 tour:
     mkdir -p previews/graybox && VIVAD_TOUR=previews/graybox cargo run --release -p game --bin game
 
+# Screenshot triage in text (see docs/testing.md): numbers and flags per tour shot.
+shots dir="previews/graybox":
+    python3 tools/shots.py stats {{dir}}
+
+# What changed in the tour since `just shots-keep`: changed %, brightness shift, 4x4 change map.
+shots-diff dir="previews/graybox":
+    python3 tools/shots.py diff previews/baseline {{dir}}
+
+# Keep the current tour shots as the reference for shots-diff.
+shots-keep dir="previews/graybox":
+    python3 tools/shots.py baseline {{dir}} previews/baseline
+
+# One small labelled contact sheet of some shots: just sheet "previews/graybox/2*.png"
+sheet glob out="previews/sheet.png":
+    python3 tools/shots.py sheet {{glob}} -o {{out}} --width 1200
+
+# Geometry report for exported models (tris per LOD, size, open edges, pieces, materials).
+mesh +models:
+    {{blender}} -b --factory-startup -P tools/blender/mesh_report.py -- {{models}} 2>&1 | grep -E '^==|^  ' || true
+
 # Let a bot play as you and screenshot the match.
 autoplay:
     mkdir -p previews/graybox/match && VIVAD_AUTOPILOT=1 VIVAD_SHOTS=previews/graybox/match cargo run --release -p game --bin game
