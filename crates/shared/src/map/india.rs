@@ -6,8 +6,59 @@ use bevy::prelude::*;
 use rand::rngs::SmallRng;
 use rand::{RngExt, SeedableRng};
 
-use super::build::{Builder, Frame, Opening, FLOOR_H, WALL_T, subtract_all};
+use super::build::{Builder, Frame, Opening, FLOOR_H, WALL_T};
+use super::terrain::{self, Pad, TerrainSpec};
 use super::{ChestKind, MapLayout, Mat, Poi, Prop};
+
+const FORT_C: Vec2 = Vec2::new(125.0, -135.0);
+/// The fort's hill summit height.
+const FORT_TOP: f32 = 18.0;
+const VILLAGES: [(Vec3, u32); 5] = [
+    (Vec3::new(-40.0, 0.0, 195.0), 7),
+    (Vec3::new(30.0, 0.0, -190.0), 7),
+    (Vec3::new(-205.0, 0.0, 185.0), 6),
+    (Vec3::new(222.0, 0.0, -10.0), 5),
+    (Vec3::new(-30.0, 0.0, -95.0), 5),
+];
+/// Packed-earth roads linking the POIs (painted into the terrain, which is flattened along them).
+const ROADS: [(Vec2, Vec2); 6] = [
+    (Vec2::new(-60.0, 0.0), Vec2::new(165.0, 0.0)),
+    (Vec2::new(0.0, -180.0), Vec2::new(0.0, 190.0)),
+    (Vec2::new(-200.0, 5.0), Vec2::new(-60.0, 0.0)),
+    (Vec2::new(0.0, 60.0), Vec2::new(-110.0, 80.0)),
+    (Vec2::new(0.0, -60.0), Vec2::new(-140.0, -120.0)),
+    (Vec2::new(40.0, 0.0), Vec2::new(105.0, -82.0)),
+];
+
+fn terrain_spec(seed: u64) -> TerrainSpec {
+    let pad = |x: f32, z: f32, r: f32, f: f32| Pad { center: Vec2::new(x, z), radius: r, falloff: f };
+    let mut pads = vec![
+        pad(0.0, 0.0, 66.0, 30.0),
+        pad(STEPWELL_C.x, STEPWELL_C.z, 34.0, 25.0),
+        pad(-140.0, -130.0, 42.0, 30.0),
+        pad(95.0, 170.0, 50.0, 25.0),
+        pad(-200.0, 0.0, 62.0, 25.0),
+        pad(-158.0, 8.0, 24.0, 20.0),
+    ];
+    for (c, _) in VILLAGES {
+        pads.push(pad(c.x, c.z, 42.0, 25.0));
+    }
+    TerrainSpec {
+        size: 2.0 * HALF + 60.0,
+        n: 311,
+        seed: seed as u32,
+        half_extent: HALF,
+        pads,
+        roads: ROADS.to_vec(),
+        river: (RIVER_X.0, RIVER_X.1, RIVER_BED),
+        pits: vec![(
+            Vec2::new(STEPWELL_C.x - STEPWELL_L / 2.0, STEPWELL_C.z - STEPWELL_W / 2.0),
+            Vec2::new(STEPWELL_C.x + STEPWELL_L / 2.0, STEPWELL_C.z + STEPWELL_W / 2.0),
+            -STEPWELL_DEPTH - 2.0,
+        )],
+        mesas: vec![(FORT_C, Vec2::new(34.0, 28.0), FORT_TOP, 62.0)],
+    }
+}
 
 pub const TREE_NEEM: &str = "models/props/tree_neem.glb";
 pub const TREE_PEEPAL: &str = "models/props/tree_peepal.glb";
@@ -25,6 +76,8 @@ fn prop(b: &mut Builder, model: &'static str, pos: Vec3, yaw: f32, scale: f32) {
         _ => None, // bushes are soft cover: you can hide in them, not stand on them
     }
     .map(|(r, h)| (r * scale, h * scale));
+    // Sit on the terrain, sunk a little so roots/flare meet slopes.
+    let pos = Vec3::new(pos.x, b.map.terrain.height(pos.x, pos.z) - 0.15, pos.z);
     b.map.props.push(Prop { model, pos, yaw, scale, trunk });
 }
 
@@ -38,6 +91,7 @@ const STEPWELL_DEPTH: f32 = 9.0;
 
 pub fn generate(seed: u64) -> MapLayout {
     let mut map = MapLayout { name: "Bharat".into(), half_extent: HALF, ..default() };
+    map.terrain = terrain::generate(&terrain_spec(seed));
     let mut rng = SmallRng::seed_from_u64(seed);
     let mut b = Builder::new(&mut map);
 
@@ -49,13 +103,7 @@ pub fn generate(seed: u64) -> MapLayout {
     fort(&mut b, &mut rng);
     banyan_grove(&mut b, &mut rng);
     caves_and_stupa(&mut b, &mut rng);
-    for (c, n) in [
-        (Vec3::new(-40.0, 0.0, 195.0), 7),
-        (Vec3::new(30.0, 0.0, -190.0), 7),
-        (Vec3::new(-205.0, 0.0, 185.0), 6),
-        (Vec3::new(222.0, 0.0, -10.0), 5),
-        (Vec3::new(-30.0, 0.0, -95.0), 5),
-    ] {
+    for (c, n) in VILLAGES {
         village(&mut b, &mut rng, c, n);
     }
     scatter_trees(&mut b, &mut rng, 230);
@@ -84,54 +132,21 @@ fn world() -> Frame {
 // ------------------------------------------------------------------ terrain
 
 fn ground(b: &mut Builder) {
-    let holes = [
-        (Vec2::new(RIVER_X.0, -HALF - 30.0), Vec2::new(RIVER_X.1, HALF + 30.0)),
-        (
-            Vec2::new(STEPWELL_C.x - STEPWELL_L / 2.0, STEPWELL_C.z - STEPWELL_W / 2.0),
-            Vec2::new(STEPWELL_C.x + STEPWELL_L / 2.0, STEPWELL_C.z + STEPWELL_W / 2.0),
-        ),
-    ];
-    let outer = (Vec2::splat(-HALF - 30.0), Vec2::splat(HALF + 30.0));
-    for (a, c) in subtract_all(outer, &holes) {
-        b.span(world(), Vec3::new(a.x, -4.0, a.y), Vec3::new(c.x, 0.0, c.y), Mat::Grass);
-    }
-    // Packed-earth roads linking the POIs (visual only, laid just above the grass).
-    for (from, to) in [
-        (Vec2::new(-60.0, 0.0), Vec2::new(165.0, 0.0)),
-        (Vec2::new(0.0, -180.0), Vec2::new(0.0, 190.0)),
-        (Vec2::new(-200.0, 5.0), Vec2::new(-60.0, 0.0)),
-        (Vec2::new(0.0, 60.0), Vec2::new(-110.0, 80.0)),
-        (Vec2::new(0.0, -60.0), Vec2::new(-140.0, -120.0)),
-        (Vec2::new(40.0, 0.0), Vec2::new(110.0, -100.0)),
-    ] {
-        road(b, from, to, 7.0);
-    }
-    // Arena boundary.
+    // The terrain itself is the heightfield in `map.terrain`; only the arena boundary is built here.
     for (c, s) in [
-        (Vec3::new(HALF + 2.0, 60.0, 0.0), Vec3::new(4.0, 140.0, 2.0 * HALF + 8.0)),
-        (Vec3::new(-HALF - 2.0, 60.0, 0.0), Vec3::new(4.0, 140.0, 2.0 * HALF + 8.0)),
-        (Vec3::new(0.0, 60.0, HALF + 2.0), Vec3::new(2.0 * HALF + 8.0, 140.0, 4.0)),
-        (Vec3::new(0.0, 60.0, -HALF - 2.0), Vec3::new(2.0 * HALF + 8.0, 140.0, 4.0)),
+        (Vec3::new(HALF + 2.0, 60.0, 0.0), Vec3::new(4.0, 160.0, 2.0 * HALF + 8.0)),
+        (Vec3::new(-HALF - 2.0, 60.0, 0.0), Vec3::new(4.0, 160.0, 2.0 * HALF + 8.0)),
+        (Vec3::new(0.0, 60.0, HALF + 2.0), Vec3::new(2.0 * HALF + 8.0, 160.0, 4.0)),
+        (Vec3::new(0.0, 60.0, -HALF - 2.0), Vec3::new(2.0 * HALF + 8.0, 160.0, 4.0)),
     ] {
         b.push(c, Quat::IDENTITY, super::Shape::Box(s), Mat::Granite, true, false);
     }
 }
 
-fn road(b: &mut Builder, from: Vec2, to: Vec2, width: f32) {
-    let d = to - from;
-    let len = d.length();
-    let mid = (from + to) / 2.0;
-    let yaw = (-d.y).atan2(d.x);
-    b.push(Vec3::new(mid.x, 0.01, mid.y), Quat::from_rotation_y(yaw),
-           super::Shape::Box(Vec3::new(len, 0.02, width)), Mat::Dirt, false, true);
-}
-
 // ------------------------------------------------------------------ Kashi Ghat
 
 fn river_and_ghats(b: &mut Builder, rng: &mut SmallRng) {
-    let w = world();
     let (x0, x1) = RIVER_X;
-    b.span(w, Vec3::new(x0, RIVER_BED - 3.0, -HALF - 30.0), Vec3::new(x1, RIVER_BED, HALF + 30.0), Mat::Dirt);
     b.push(Vec3::new((x0 + x1) / 2.0, -0.55, 0.0), Quat::IDENTITY,
            super::Shape::Box(Vec3::new(x1 - x0, 0.02, 2.0 * HALF + 60.0)), Mat::Water, false, true);
 
@@ -450,24 +465,10 @@ fn hampi(b: &mut Builder, rng: &mut SmallRng) {
 // ------------------------------------------------------------------ Garh Qila
 
 fn fort(b: &mut Builder, rng: &mut SmallRng) {
-    let f = Frame::new(Vec3::new(125.0, 0.0, -135.0), 0.0);
-    // Three hill terraces.
-    let tiers = [(90.0, 72.0, 6.0), (72.0, 58.0, 12.0), (56.0, 44.0, 18.0)];
-    let mut prev_top = 0.0;
-    for (i, &(w, d, top)) in tiers.iter().enumerate() {
-        b.span(f, Vec3::new(-w / 2.0, -1.0, -d / 2.0), Vec3::new(w / 2.0, top, d / 2.0), Mat::Dirt);
-        // Ramp road up the south face (alternating sides).
-        // Switchback road along the south face, climbing from the tier's outer corner inward;
-        // it stays on the tier below and ends beside this tier's edge.
-        let side = if i % 2 == 0 { -1.0 } else { 1.0 };
-        let run = 22.0;
-        let rise = top - prev_top;
-        let rf = Frame::new(f.p(Vec3::new(side * (w / 2.0 - 4.0), 0.0, d / 2.0 + 3.5)), if side < 0.0 { 0.0 } else { PI });
-        b.ramp(rf, Vec3::new(0.0, prev_top, 0.0), run, rise, 6.0, 0.6, Mat::Sandstone);
-        prev_top = top;
-    }
-    let top = prev_top;
-    let (w, d) = (tiers[2].0, tiers[2].1);
+    let f = Frame::new(Vec3::new(FORT_C.x, 0.0, FORT_C.y), 0.0);
+    // The fort crowns a natural hill (a terrain mesa); its summit is flat at FORT_TOP.
+    let top = FORT_TOP;
+    let (w, d) = (56.0, 44.0);
     // Curtain walls with a gate on the south side, corner bastions.
     let hw = w / 2.0 - 1.0;
     let hd = d / 2.0 - 1.0;

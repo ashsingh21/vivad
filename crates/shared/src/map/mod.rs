@@ -3,6 +3,7 @@
 
 pub mod build;
 pub mod india;
+pub mod terrain;
 
 use bevy::prelude::*;
 
@@ -90,4 +91,5 @@ pub struct MapLayout {
     pub floor_loot: Vec<Vec3>,
     pub pois: Vec<Poi>,
     pub props: Vec<Prop>,
+    pub terrain: terrain::Terrain,
 }

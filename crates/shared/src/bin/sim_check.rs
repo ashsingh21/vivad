@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
+use bevy::ecs::system::RunSystemOnce;
 use bevy::time::TimeUpdateStrategy;
 use shared::sim::flow::{Match, MatchState};
 use shared::sim::loot::Chest;
@@ -29,6 +30,28 @@ fn main() {
     // Driving the app by hand: plugins must be finalised as `App::run` would.
     app.finish();
     app.cleanup();
+
+    // Terrain sanity: the physics heightfield must agree with MapLayout::terrain.height().
+    for _ in 0..3 {
+        app.update();
+    }
+    let worst = app
+        .world_mut()
+        .run_system_once(|spatial: SpatialQuery, layout: Res<shared::map::MapLayout>| {
+            let mut worst = 0.0f32;
+            for (x, z) in [(-180.0, -170.0), (60.0, 120.0), (130.0, -135.0), (210.0, 200.0), (-90.0, -40.0), (230.0, -230.0)] {
+                let filter = SpatialQueryFilter::from_mask(shared::sim::solid_mask());
+                if let Some(hit) = spatial.cast_ray(Vec3::new(x, 300.0, z), Dir3::NEG_Y, 600.0, true, &filter) {
+                    let phys = 300.0 - hit.distance;
+                    let want = layout.terrain.height(x, z);
+                    println!("terrain check ({x:>6.0},{z:>6.0}): physics {phys:6.2}  data {want:6.2}");
+                    worst = worst.max((phys - want).abs());
+                }
+            }
+            worst
+        })
+        .unwrap();
+    println!("terrain max mismatch {worst:.2} m");
 
     let mut results = vec![];
     for n in 0..matches {

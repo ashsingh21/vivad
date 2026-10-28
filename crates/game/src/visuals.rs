@@ -25,6 +25,7 @@ impl Plugin for VisualsPlugin {
                 Update,
                 (
                     dress_blocks,
+                    dress_terrain,
                     resolve_gltf_materials,
                     dress_warriors,
                     (interpolate_warriors, pose_warriors).chain(),
@@ -240,6 +241,80 @@ fn resolve_gltf_materials(
     if let Some(gm) = gltf_mats.get(&palette.khanda_gltf_mat) {
         let _ = materials.insert(palette.khanda_mat.id(), bevy::pbr::gltf::standard_material_from_gltf_material(gm));
         *done = true;
+    }
+}
+
+/// Terrain mesh from the shared heightfield, painted by slope, height and context.
+fn dress_terrain(
+    mut commands: Commands,
+    q: Query<Entity, Added<shared::sim::MapTerrain>>,
+    layout: Res<shared::map::MapLayout>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::mesh::{Indices, PrimitiveTopology};
+    use shared::map::terrain::fbm;
+    for e in &q {
+        let t = &layout.terrain;
+        let n = t.n;
+        let mut pos = Vec::with_capacity(n * n);
+        let mut nrm = Vec::with_capacity(n * n);
+        let mut col = Vec::with_capacity(n * n);
+        let mut uv = Vec::with_capacity(n * n);
+        let lin = |c: [f32; 3]| Color::srgb(c[0], c[1], c[2]).to_linear();
+        let grass = lin([0.40, 0.48, 0.22]);
+        let grass2 = lin([0.33, 0.43, 0.20]);
+        let dry = lin([0.66, 0.60, 0.34]);
+        let rock = lin([0.50, 0.45, 0.40]);
+        let dirt = lin([0.62, 0.48, 0.33]);
+        let sand = lin([0.74, 0.66, 0.50]);
+        let mix = |a: LinearRgba, b: LinearRgba, t: f32| a.mix(&b, t.clamp(0.0, 1.0));
+        for i in 0..n {
+            for j in 0..n {
+                let (x, z) = (t.coord(i), t.coord(j));
+                let h = t.at(i, j);
+                let nn = t.normal(x, z);
+                pos.push([x, h, z]);
+                nrm.push(nn.to_array());
+                uv.push([x / 4.0, z / 4.0]);
+                let patch = fbm(x / 22.0, z / 22.0, 3, 91);
+                let mut c = mix(grass, grass2, patch * 1.6 - 0.3);
+                // Sun-dried grass on high ground and in patches.
+                c = mix(c, dry, (h - 6.0) / 18.0 + (fbm(x / 60.0, z / 60.0, 2, 17) - 0.55) * 2.0);
+                // Rock on steep slopes.
+                c = mix(c, rock, (0.86 - nn.y) * 6.0);
+                // Sandy river banks.
+                let (rx0, rx1) = (172.0, 196.0);
+                let rd = if x < rx0 { rx0 - x } else if x > rx1 { x - rx1 } else { 0.0 };
+                c = mix(c, sand, 1.0 - rd / 9.0);
+                // Roads.
+                c = mix(c, dirt, (5.0 - t.road_d[i * n + j]) / 2.5);
+                let v = 0.92 + 0.16 * fbm(x / 3.0, z / 3.0, 2, 5);
+                col.push([c.red * v, c.green * v, c.blue * v, 1.0]);
+            }
+        }
+        let mut idx: Vec<u32> = Vec::with_capacity((n - 1) * (n - 1) * 6);
+        for i in 0..n - 1 {
+            for j in 0..n - 1 {
+                let a = (i * n + j) as u32;
+                let b = ((i + 1) * n + j) as u32;
+                let c = ((i + 1) * n + j + 1) as u32;
+                let d = (i * n + j + 1) as u32;
+                idx.extend_from_slice(&[a, d, c, a, c, b]);
+            }
+        }
+        let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nrm)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, col)
+            .with_inserted_indices(Indices::U32(idx));
+        commands.entity(e).insert((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.95, ..default() })),
+            Visibility::default(),
+        ));
     }
 }
 

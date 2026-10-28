@@ -202,6 +202,10 @@ pub struct Action {
 #[derive(Component, Clone, Debug)]
 pub struct MapBlock(pub Block);
 
+/// The heightfield ground; clients build its mesh from `MapLayout::terrain`.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct MapTerrain;
+
 /// Index into `MapLayout::props`; clients attach the art.
 #[derive(Component, Clone, Copy, Debug)]
 pub struct PropIndex(pub usize);
@@ -321,6 +325,14 @@ impl Plugin for SimPlugin {
 }
 
 fn spawn_map(mut commands: Commands, layout: Res<MapLayout>) {
+    let t = &layout.terrain;
+    commands.spawn((
+        MapTerrain,
+        Transform::default(),
+        RigidBody::Static,
+        Collider::heightfield(t.rows(), Vec3::new(t.size, 1.0, t.size)),
+        CollisionLayers::new(Layer::World, LayerMask::ALL),
+    ));
     for block in &layout.blocks {
         let mut e = commands.spawn((
             MapBlock(block.clone()),
