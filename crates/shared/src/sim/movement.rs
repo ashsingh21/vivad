@@ -3,7 +3,7 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-use super::{Eliminated, HALF_HEIGHT, Kinematic, MoveMode, PlayerIntent, SimSet, btn, solid_mask};
+use super::{CAPSULE_LENGTH, CAPSULE_RADIUS, Eliminated, Kinematic, MoveMode, PlayerIntent, SimSet, btn, solid_mask};
 
 pub const GRAVITY: f32 = 22.0;
 pub const JUMP_SPEED: f32 = 7.6;
@@ -49,6 +49,21 @@ fn ground_probe(spatial: &SpatialQuery, center: Vec3, entity: Entity, max: f32) 
         .map(|hit| (hit.distance, hit.normal))
 }
 
+/// Sweeps a sphere a little smaller than the capsule's base down from its centre: returns how far
+/// the capsule's base is above the surface it would land on, and that surface's normal. Unlike a
+/// single ray this sees what the capsule actually stands on at stair feet, ridges and ledges.
+fn feet_probe(spatial: &SpatialQuery, center: Vec3, entity: Entity, max: f32) -> Option<(f32, Vec3)> {
+    let shrink = 0.9;
+    let r = CAPSULE_RADIUS * shrink;
+    let filter = SpatialQueryFilter::from_mask(solid_mask()).with_excluded_entities([entity]);
+    let config = ShapeCastConfig { max_distance: max, ignore_origin_penetration: true, ..default() };
+    let origin = center - Vec3::Y * (CAPSULE_LENGTH / 2.0);
+    spatial.cast_shape(&Collider::sphere(r), origin, Quat::IDENTITY, Dir3::NEG_Y, &config, &filter).map(|hit| {
+        let n = hit.normal1.normalize_or(Vec3::Y);
+        (hit.distance - (CAPSULE_RADIUS - r) / n.y.max(0.2), n)
+    })
+}
+
 #[allow(clippy::type_complexity)]
 fn move_warriors(
     mut q: Query<(Entity, &mut Transform, &mut Kinematic, &PlayerIntent, &Collider), Without<Eliminated>>,
@@ -91,7 +106,9 @@ fn move_warriors(
                 let h = approach(kin.velocity.with_y(0.0), wish * speed, accel * dt);
                 let mut vy = kin.velocity.y;
                 if kin.grounded {
-                    vy = vy.max(0.0);
+                    // Follow the ground plane so slopes and stair ramps don't sap speed.
+                    let n = kin.ground_normal;
+                    vy = if n.y > 0.0 { -(h.x * n.x + h.z * n.z) / n.y } else { 0.0 };
                     if intent.pressed(btn::JUMP) {
                         vy = JUMP_SPEED;
                         kin.grounded = false;
@@ -120,13 +137,14 @@ fn move_warriors(
 
         // Ground check and snapping (keeps us glued to ramps and stairs going down).
         let was_grounded = kin.grounded;
-        let probe = ground_probe(&spatial, tf.translation, entity, HALF_HEIGHT + 0.35);
+        let probe = feet_probe(&spatial, tf.translation, entity, 0.4);
         kin.grounded = false;
-        if let Some((dist, normal)) = probe {
-            let gap = dist - HALF_HEIGHT;
+        if let Some((gap, normal)) = probe {
             let walkable = normal.y >= MIN_GROUND_NORMAL_Y;
-            if walkable && kin.velocity.y <= 0.5 && (gap < 0.06 || (was_grounded && gap < 0.3)) {
+            // Leaving the surface only by jumping: momentum up a ramp shouldn't launch us off its top.
+            if walkable && (was_grounded || kin.velocity.dot(normal) <= 0.5) && (gap < 0.06 || (was_grounded && gap < 0.3)) {
                 kin.grounded = true;
+                kin.ground_normal = normal;
                 tf.translation.y -= gap.max(0.0) - 0.01;
                 kin.velocity.y = 0.0;
             }

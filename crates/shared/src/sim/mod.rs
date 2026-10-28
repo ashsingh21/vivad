@@ -145,6 +145,8 @@ pub enum MoveMode {
 pub struct Kinematic {
     pub velocity: Vec3,
     pub grounded: bool,
+    /// Surface normal under the feet while grounded.
+    pub ground_normal: Vec3,
     pub mode: MoveMode,
 }
 

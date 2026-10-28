@@ -45,6 +45,10 @@ play:
 sim matches="3" bots="15":
     cargo run --release -p shared --bin sim_check -- {{matches}} {{bots}}
 
+# Walk a test character up the stairs, into the caves and over roofs; fails on a stuck walker.
+walk:
+    cargo run --release -p shared --bin walk_check
+
 # Fly the camera over every landmark and screenshot it.
 tour:
     mkdir -p previews/graybox && VIVAD_TOUR=previews/graybox cargo run --release -p game

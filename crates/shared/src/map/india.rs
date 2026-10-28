@@ -38,6 +38,9 @@ fn terrain_spec(seed: u64) -> TerrainSpec {
         pad(-140.0, -130.0, 42.0, 30.0),
         pad(95.0, 170.0, 50.0, 25.0),
         pad(-200.0, 0.0, 62.0, 25.0),
+        // The cliff's ends: the north one holds the spur stair's foot.
+        pad(-180.0, 62.0, 24.0, 20.0),
+        pad(-180.0, -62.0, 24.0, 20.0),
         pad(-158.0, 8.0, 24.0, 20.0),
         pad(138.0, 45.0, 42.0, 25.0), // Kashi: ghat town and its temples
     ];
