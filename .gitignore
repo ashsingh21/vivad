@@ -7,3 +7,10 @@
 /previews/*/pass2/
 /previews/*/pass3*/
 __pycache__/
+assets_src/downloads/
+assets_src/makehuman/
+previews/characters/probe/
+previews/characters/*_b[0-9]/
+previews/characters/*_f1/
+previews/trees/p1/
+previews/trees/p2/

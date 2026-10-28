@@ -12,7 +12,7 @@ use shared::sim::flow::Vimana;
 use shared::sim::loot::{Chest, Pickup};
 use shared::sim::zone::Zone;
 use shared::sim::{
-    Action, CAPSULE_LENGTH, CAPSULE_RADIUS, Eliminated, Inventory, Kinematic, LocalPlayer, MapBlock, MoveMode,
+    CAPSULE_LENGTH, CAPSULE_RADIUS, Eliminated, Inventory, Kinematic, MapBlock, MoveMode,
     PosHistory, Warrior,
 };
 
@@ -27,8 +27,7 @@ impl Plugin for VisualsPlugin {
                     dress_blocks,
                     resolve_gltf_materials,
                     dress_warriors,
-                    interpolate_warriors,
-                    pose_warriors,
+                    (interpolate_warriors, pose_warriors).chain(),
                     dress_chests,
                     dress_pickups,
                     animate_pickups,
@@ -278,31 +277,26 @@ pub struct WarriorVisual {
 }
 
 #[derive(Component)]
-struct HeldWeapon {
+pub struct HeldWeapon {
     showing: Option<String>,
 }
 
 #[derive(Component)]
-struct Glider;
+pub struct Glider;
+
+/// The held-weapon socket entity (reparented to the hand bone once the character rig loads).
+#[derive(Component)]
+pub struct WeaponSocket(pub Entity);
 
 fn dress_warriors(mut commands: Commands, q: Query<(Entity, &Warrior, &Transform), Added<Warrior>>, palette: Res<Palette>) {
     for (e, w, t) in &q {
-        let (body, trim) = palette.outfits[(w.look as usize) % palette.outfits.len()].clone();
-        commands
-            .spawn((WarriorVisual { sim: e }, Transform::from_translation(t.translation), Visibility::default()))
-            .with_children(|p| {
-                // Dhoti/kurta body, sash, head with turban.
-                p.spawn((Mesh3d(palette.capsule.clone()), MeshMaterial3d(body.clone()), Transform::from_scale(Vec3::new(1.0, 0.95, 0.85))));
-                p.spawn((Mesh3d(palette.cube.clone()), MeshMaterial3d(trim.clone()),
-                         Transform::from_xyz(0.0, 0.05, 0.0).with_rotation(Quat::from_rotation_z(0.5)).with_scale(Vec3::new(0.12, 0.95, 0.7))));
-                p.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(palette.skin.clone()),
-                         Transform::from_xyz(0.0, 0.98, 0.0).with_scale(Vec3::splat(0.2))));
-                p.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(trim.clone()),
-                         Transform::from_xyz(0.0, 1.08, 0.02).with_scale(Vec3::new(0.23, 0.15, 0.24))));
-                p.spawn((HeldWeapon { showing: None }, Transform::from_xyz(0.36, 0.15, -0.25), Visibility::default()));
-                p.spawn((Glider, Mesh3d(palette.cube.clone()), MeshMaterial3d(trim),
-                         Transform::from_xyz(0.0, 1.6, 0.0).with_scale(Vec3::new(3.4, 0.06, 1.3)), Visibility::Hidden));
-            });
+        let (_, trim) = palette.outfits[(w.look as usize) % palette.outfits.len()].clone();
+        let root = commands.spawn((WarriorVisual { sim: e }, Transform::from_translation(t.translation), Visibility::default())).id();
+        let held = commands.spawn((HeldWeapon { showing: None }, Transform::from_xyz(0.36, 0.15, -0.25), Visibility::default(), ChildOf(root))).id();
+        // Garuda wings: a saffron canopy held overhead while gliding.
+        commands.spawn((Glider, Mesh3d(palette.cube.clone()), MeshMaterial3d(trim),
+                        Transform::from_xyz(0.0, 1.6, 0.0).with_scale(Vec3::new(3.4, 0.06, 1.3)), Visibility::Hidden, ChildOf(root)));
+        commands.entity(root).insert(WeaponSocket(held));
     }
 }
 
@@ -323,15 +317,15 @@ fn interpolate_warriors(
 #[allow(clippy::type_complexity)]
 fn pose_warriors(
     mut commands: Commands,
-    sims: Query<(&Kinematic, &Inventory, &Action, Has<Eliminated>, Has<LocalPlayer>)>,
-    mut vis: Query<(&WarriorVisual, &mut Visibility, &Children, &mut Transform)>,
-    mut weapons: Query<(Entity, &mut HeldWeapon, &mut Transform), Without<WarriorVisual>>,
+    sims: Query<(&Kinematic, &Inventory, Has<Eliminated>)>,
+    mut vis: Query<(&WarriorVisual, &WeaponSocket, &mut Visibility, &Children, &mut Transform)>,
+    mut weapons: Query<&mut HeldWeapon>,
     mut gliders: Query<&mut Visibility, (With<Glider>, Without<WarriorVisual>)>,
     palette: Res<Palette>,
     db: Res<ItemDb>,
 ) {
-    for (v, mut visibility, children, mut vt) in &mut vis {
-        let Ok((kin, inv, act, dead, _local)) = sims.get(v.sim) else { continue };
+    for (v, socket, mut visibility, children, mut vt) in &mut vis {
+        let Ok((kin, inv, dead)) = sims.get(v.sim) else { continue };
         *visibility = if kin.mode == MoveMode::Vimana { Visibility::Hidden } else { Visibility::Inherited };
         if dead {
             // Topple over where they fell.
@@ -346,30 +340,22 @@ fn pose_warriors(
             if let Ok(mut g) = gliders.get_mut(c) {
                 *g = if kin.mode == MoveMode::Gliding && !dead { Visibility::Inherited } else { Visibility::Hidden };
             }
-            let Ok((we, mut held, mut wt)) = weapons.get_mut(c) else { continue };
+        }
+        if let Ok(mut held) = weapons.get_mut(socket.0) {
             let current = inv.current().map(|s| (s.id.clone(), s.rarity));
             let id = current.as_ref().map(|c| c.0.clone());
             if held.showing != id {
-                held.showing = id.clone();
-                commands.entity(we).despawn_children();
+                held.showing = id;
+                commands.entity(socket.0).despawn_children();
                 if let Some((id, rarity)) = current {
-                    spawn_weapon_model(&mut commands, we, &id, rarity, &db, &palette);
+                    spawn_weapon_model(&mut commands, socket.0, &id, rarity, &db, &palette);
                 }
             }
-            // Melee swing arc driven by time since the last attack.
-            let swing = (act.since_attack / 0.3).clamp(0.0, 1.0);
-            let is_melee = matches!(inv.current().map(|s| &db.get(&s.id).kind), Some(ItemKind::Melee { .. }));
-            wt.rotation = if is_melee {
-                let a = if swing < 1.0 { (1.0 - swing) * 2.4 - 1.0 } else { 0.0 };
-                Quat::from_rotation_x(-0.9 - a) * Quat::from_rotation_z(-0.3 * a)
-            } else {
-                Quat::IDENTITY
-            };
         }
     }
 }
 
-fn spawn_weapon_model(commands: &mut Commands, parent: Entity, id: &str, rarity: Rarity, db: &ItemDb, p: &Palette) {
+pub fn spawn_weapon_model(commands: &mut Commands, parent: Entity, id: &str, rarity: Rarity, db: &ItemDb, p: &Palette) {
     let kind = &db.get(id).kind;
     let r = p.rarity[&rarity].clone();
     commands.entity(parent).with_children(|c| match kind {

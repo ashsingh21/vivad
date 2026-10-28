@@ -76,4 +76,24 @@ Spiral wraps will appear where history supports them (e.g. jian, dao).
 | studio_small_08 HDRI (2k) | [Poly Haven](https://polyhaven.com/a/studio_small_08) | CC0 | Preview renders only |
 | studio_small_09 HDRI (2k) | [Poly Haven](https://polyhaven.com/a/studio_small_09) | CC0 | Preview renders (alternative) |
 
-All textures shipped in GLBs are baked from procedural Blender materials in `tools/blender/lib/`.
+| MPFB (MakeHuman plugin for Blender) | [extensions.blender.org/add-ons/mpfb](https://extensions.blender.org/add-ons/mpfb/) | GPL (tool only); generated humans are CC0 | Character base bodies, rig (`game_engine`) |
+| MakeHuman system assets (`makehuman_system_assets_cc0.zip`, sha256 `b542127a…0107`) | [makehumancommunity.org](https://static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html) | CC0 | Body proxies, skin detail (re-toned), eyes, brows, lashes, braid hair |
+
+All other textures are generated: weapons and characters are baked from procedural Blender
+materials (`tools/blender/lib/`, `tools/blender/characters/finish.py`); leaf and bark textures are
+drawn procedurally (`tools/blender/nature/textures.py`).
+
+## Characters
+
+Generic male and female warriors, stylized realistic, warm brown South Asian skin.
+- Male: off-white dhoti with zari border and pleated fold, maroon kamarband, saffron angavastram,
+  red pagdi (crossed wraps, bandhani dots), gold bajuband, kada and hansuli.
+- Female: Maratha nauvari (nine-yard) saree worn for movement, nirya pleats, pallu, maroon choli,
+  gold kamarbandh, bangles, bajuband, silver payal, braid.
+- Rig: MPFB `game_engine` (53 bones). GLB faces +Z with origin at the feet; the game turns it to -Z.
+- Budget: LOD0 30k, LOD1 13.5k, LOD2 5.4k tris; one 2k opaque texture set + alpha hair cards.
+
+## Vegetation
+
+Neem, peepal, banyan (hero, aerial prop roots), coconut palm, lantana and bougainvillea bushes.
+Trees have trunk colliders; bushes are soft cover.

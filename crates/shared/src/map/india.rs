@@ -7,7 +7,26 @@ use rand::rngs::SmallRng;
 use rand::{RngExt, SeedableRng};
 
 use super::build::{Builder, Frame, Opening, FLOOR_H, WALL_T, subtract_all};
-use super::{ChestKind, MapLayout, Mat, Poi};
+use super::{ChestKind, MapLayout, Mat, Poi, Prop};
+
+pub const TREE_NEEM: &str = "models/props/tree_neem.glb";
+pub const TREE_PEEPAL: &str = "models/props/tree_peepal.glb";
+pub const TREE_PALM: &str = "models/props/tree_palm.glb";
+pub const TREE_BANYAN: &str = "models/props/tree_banyan.glb";
+pub const BUSH_LANTANA: &str = "models/props/bush_lantana.glb";
+pub const BUSH_BOUGAINVILLEA: &str = "models/props/bush_bougainvillea.glb";
+
+fn prop(b: &mut Builder, model: &'static str, pos: Vec3, yaw: f32, scale: f32) {
+    let trunk = match model {
+        TREE_NEEM => Some((0.28, 3.0)),
+        TREE_PEEPAL => Some((0.36, 3.6)),
+        TREE_PALM => Some((0.2, 9.0)),
+        TREE_BANYAN => Some((1.4, 5.5)),
+        _ => None, // bushes are soft cover: you can hide in them, not stand on them
+    }
+    .map(|(r, h)| (r * scale, h * scale));
+    b.map.props.push(Prop { model, pos, yaw, scale, trunk });
+}
 
 const HALF: f32 = 250.0;
 const RIVER_X: (f32, f32) = (172.0, 196.0);
@@ -39,7 +58,7 @@ pub fn generate(seed: u64) -> MapLayout {
     ] {
         village(&mut b, &mut rng, c, n);
     }
-    scatter_trees(&mut b, &mut rng, 170);
+    scatter_trees(&mut b, &mut rng, 230);
 
     map.pois = vec![
         poi("Chandni Bazaar", 0.0, 0.0, 55.0),
@@ -485,22 +504,21 @@ fn fort(b: &mut Builder, rng: &mut SmallRng) {
 
 fn banyan_grove(b: &mut Builder, rng: &mut SmallRng) {
     let c = Vec3::new(95.0, 0.0, 170.0);
-    for (dx, dz, r) in [(0.0, 0.0, 2.6), (24.0, -10.0, 2.0), (-20.0, 14.0, 2.2), (6.0, 26.0, 1.8)] {
-        let tc = c + Vec3::new(dx, 0.0, dz);
-        let f = Frame::new(tc, 0.0);
-        b.cyl(f, Vec3::ZERO, r, 9.0, Mat::Bark);
-        // Spreading canopy (no collision) held up by aerial-root pillars (collision: cover).
-        b.push(tc + Vec3::Y * 11.0, Quat::IDENTITY, super::Shape::Cylinder { radius: r * 7.0, height: 3.5 }, Mat::Foliage, false, true);
-        b.push(tc + Vec3::Y * 13.5, Quat::IDENTITY, super::Shape::Sphere(r * 5.0), Mat::Foliage, false, true);
-        for _ in 0..14 {
-            let a = rng.random_range(0.0..std::f32::consts::TAU);
-            let d = rng.random_range(r + 2.5..r * 6.0);
-            b.cyl(f, Vec3::new(a.cos() * d, 0.0, a.sin() * d), rng.random_range(0.15..0.4), 10.0, Mat::Bark);
+    // Three hero banyans whose prop roots make a maze of cover.
+    for (dx, dz, sc) in [(0.0, 0.0, 1.0), (30.0, -16.0, 0.8), (-26.0, 18.0, 0.85)] {
+        prop(b, TREE_BANYAN, c + Vec3::new(dx, 0.0, dz), rng.random_range(0.0..std::f32::consts::TAU), sc);
+    }
+    // Machans: hunters' watch platforms on stilts under the canopy, reached by ladders.
+    for (dx, dz) in [(7.0, 6.0), (24.0, -6.0), (-20.0, 10.0)] {
+        let f = Frame::new(c + Vec3::new(dx, 0.0, dz), rng.random_range(0.0..PI));
+        for (x, z) in [(-1.8, -1.8), (1.8, -1.8), (1.8, 1.8), (-1.8, 1.8)] {
+            b.cyl(f, Vec3::new(x, 0.0, z), 0.12, 4.6, Mat::Wood);
         }
-        // Platform in the boughs reached by a ladder-ramp.
-        b.span(f, Vec3::new(-4.0, 7.0, -4.0), Vec3::new(4.0, 7.4, 4.0), Mat::Wood);
-        b.stairs(f.child(Vec3::new(-14.0, 0.0, 0.0), 0.0), Vec3::ZERO, 10.0, 7.0, 1.6, Mat::Wood);
-        b.chest(f, Vec3::new(2.5, 7.4, 2.5), 0.0, ChestKind::Peti);
+        b.span(f, Vec3::new(-2.0, 4.2, -2.0), Vec3::new(2.0, 4.5, 2.0), Mat::Wood);
+        b.wall(f, Vec2::new(-2.0, 2.0), Vec2::new(2.0, 2.0), 4.5, 0.8, 0.12, Mat::Wood, &[]);
+        b.wall(f, Vec2::new(2.0, -2.0), Vec2::new(-2.0, -2.0), 4.5, 0.8, 0.12, Mat::Wood, &[]);
+        b.stairs(f.child(Vec3::new(-7.5, 0.0, 0.0), 0.0), Vec3::ZERO, 5.5, 4.5, 1.2, Mat::Wood);
+        b.chest(f, Vec3::new(0.8, 4.5, 0.8), 0.0, ChestKind::Peti);
     }
     // Shrine under the main tree with offerings.
     b.span(world(), c + Vec3::new(3.0, 0.0, -3.0), c + Vec3::new(6.0, 0.8, 0.0), Mat::Sandstone);
@@ -509,6 +527,11 @@ fn banyan_grove(b: &mut Builder, rng: &mut SmallRng) {
         let p = c + Vec3::new(rng.random_range(-30.0..30.0), 0.0, rng.random_range(-25.0..30.0));
         let yaw = rng.random_range(0.0..PI);
         hut(b, rng, Frame::new(p, yaw));
+    }
+    for _ in 0..30 {
+        let p = c + Vec3::new(rng.random_range(-40.0..40.0), 0.0, rng.random_range(-35.0..40.0));
+        let m = if rng.random_bool(0.7) { BUSH_LANTANA } else { BUSH_BOUGAINVILLEA };
+        prop(b, m, p, rng.random_range(0.0..std::f32::consts::TAU), rng.random_range(0.7..1.2));
     }
 }
 
@@ -647,32 +670,58 @@ fn village(b: &mut Builder, rng: &mut SmallRng, c: Vec3, n: u32) {
 
 fn scatter_trees(b: &mut Builder, rng: &mut SmallRng, n: u32) {
     let pois = [
-        (Vec2::new(0.0, 0.0), 70.0),
-        (STEPWELL_C.xz(), 38.0),
-        (Vec2::new(-140.0, -130.0), 60.0),
-        (Vec2::new(125.0, -135.0), 60.0),
-        (Vec2::new(150.0, 40.0), 45.0),
-        (Vec2::new(-200.0, 0.0), 80.0),
+        (Vec2::new(0.0, 0.0), 66.0),
+        (STEPWELL_C.xz(), 34.0),
+        (Vec2::new(-140.0, -130.0), 30.0),
+        (Vec2::new(125.0, -135.0), 52.0),
+        (Vec2::new(150.0, 40.0), 30.0),
+        (Vec2::new(-200.0, 0.0), 78.0),
+        (Vec2::new(95.0, 170.0), 45.0),
     ];
+    let clear = |p: Vec2| !pois.iter().any(|(c, r)| p.distance(*c) < *r) && !(p.x > RIVER_X.0 - 3.0 && p.x < RIVER_X.1 + 3.0);
+    let tau = std::f32::consts::TAU;
+    // Trees: neem and peepal across the plains, in small groves.
     let mut placed = 0;
     while placed < n {
-        let p = Vec2::new(rng.random_range(-HALF + 5.0..HALF - 5.0), rng.random_range(-HALF + 5.0..HALF - 5.0));
-        if pois.iter().any(|(c, r)| p.distance(*c) < *r) || (p.x > RIVER_X.0 - 4.0 && p.x < RIVER_X.1 + 4.0) {
-            continue;
+        let g = Vec2::new(rng.random_range(-HALF + 8.0..HALF - 8.0), rng.random_range(-HALF + 8.0..HALF - 8.0));
+        let grove = rng.random_range(1..=4);
+        for _ in 0..grove {
+            let p = g + Vec2::new(rng.random_range(-9.0..9.0), rng.random_range(-9.0..9.0));
+            if !clear(p) {
+                continue;
+            }
+            let m = if rng.random_bool(0.6) { TREE_NEEM } else { TREE_PEEPAL };
+            prop(b, m, Vec3::new(p.x, 0.0, p.y), rng.random_range(0.0..tau), rng.random_range(0.8..1.25));
+            placed += 1;
         }
-        placed += 1;
-        let base = Vec3::new(p.x, 0.0, p.y);
-        if rng.random_bool(0.35) {
-            // Palm: tall thin trunk, small crown.
-            let h = rng.random_range(7.0..11.0);
-            b.cyl(world(), base, 0.25, h, Mat::Bark);
-            b.push(base + Vec3::Y * h, Quat::IDENTITY, super::Shape::Sphere(2.2), Mat::Foliage, false, true);
-        } else {
-            // Neem / peepal: stout trunk, broad crown.
-            let h = rng.random_range(3.5..5.0);
-            let r = rng.random_range(3.0..5.0);
-            b.cyl(world(), base, rng.random_range(0.35..0.6), h + 1.0, Mat::Bark);
-            b.push(base + Vec3::Y * (h + r * 0.6), Quat::IDENTITY, super::Shape::Sphere(r), Mat::Foliage, false, true);
+    }
+    // Coconut palms line both river banks and the ghats.
+    for _ in 0..70 {
+        let z = rng.random_range(-HALF + 5.0..HALF - 5.0);
+        let x = if rng.random_bool(0.6) { rng.random_range(RIVER_X.0 - 14.0..RIVER_X.0 - 3.0) } else { rng.random_range(RIVER_X.1 + 3.0..RIVER_X.1 + 16.0) };
+        if (x - 150.0).abs() < 12.0 && z > -45.0 && z < 135.0 {
+            continue; // keep the ghat town's houses clear
+        }
+        prop(b, TREE_PALM, Vec3::new(x, 0.0, z), rng.random_range(0.0..tau), rng.random_range(0.85..1.15));
+    }
+    // Dense scrub: lantana thickets and bougainvillea, clustered so they make real cover.
+    for _ in 0..170 {
+        let g = Vec2::new(rng.random_range(-HALF + 5.0..HALF - 5.0), rng.random_range(-HALF + 5.0..HALF - 5.0));
+        let n = rng.random_range(2..=6);
+        for _ in 0..n {
+            let p = g + Vec2::new(rng.random_range(-4.0..4.0), rng.random_range(-4.0..4.0));
+            if !clear(p) {
+                continue;
+            }
+            let m = if rng.random_bool(0.78) { BUSH_LANTANA } else { BUSH_BOUGAINVILLEA };
+            prop(b, m, Vec3::new(p.x, 0.0, p.y), rng.random_range(0.0..tau), rng.random_range(0.7..1.3));
+        }
+    }
+    // Bougainvillea spilling over village and bazaar walls.
+    for c in [Vec2::new(-40.0, 195.0), Vec2::new(30.0, -190.0), Vec2::new(-205.0, 185.0), Vec2::new(222.0, -10.0), Vec2::new(-30.0, -95.0)] {
+        for _ in 0..8 {
+            let p = c + Vec2::new(rng.random_range(-30.0..30.0), rng.random_range(-28.0..28.0));
+            prop(b, BUSH_BOUGAINVILLEA, Vec3::new(p.x, 0.0, p.y), rng.random_range(0.0..tau), rng.random_range(0.8..1.2));
         }
     }
 }

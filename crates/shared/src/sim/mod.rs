@@ -202,6 +202,10 @@ pub struct Action {
 #[derive(Component, Clone, Debug)]
 pub struct MapBlock(pub Block);
 
+/// Index into `MapLayout::props`; clients attach the art.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct PropIndex(pub usize);
+
 #[derive(Component, Clone, Debug)]
 pub struct Door {
     pub hp: f32,
@@ -336,10 +340,28 @@ fn spawn_map(mut commands: Commands, layout: Res<MapLayout>) {
             CollisionLayers::new(Layer::Door, LayerMask::ALL),
         ));
     }
+    for (i, prop) in layout.props.iter().enumerate() {
+        let mut e = commands.spawn((
+            PropIndex(i),
+            Transform::from_translation(prop.pos).with_rotation(Quat::from_rotation_y(prop.yaw)).with_scale(Vec3::splat(prop.scale)),
+        ));
+        if let Some((r, h)) = prop.trunk {
+            // Collider as a child so the prop's scale doesn't double-apply.
+            e.with_children(|c| {
+                c.spawn((
+                    Transform::from_translation(Vec3::Y * h / prop.scale / 2.0).with_scale(Vec3::splat(1.0 / prop.scale)),
+                    RigidBody::Static,
+                    Collider::cylinder(r, h),
+                    CollisionLayers::new(Layer::World, LayerMask::ALL),
+                ));
+            });
+        }
+    }
     info!(
-        "map {}: {} blocks, {} doors, {} chests, {} floor loot",
+        "map {}: {} blocks, {} props, {} doors, {} chests, {} floor loot",
         layout.name,
         layout.blocks.len(),
+        layout.props.len(),
         layout.doors.len(),
         layout.chests.len(),
         layout.floor_loot.len()

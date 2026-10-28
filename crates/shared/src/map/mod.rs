@@ -68,6 +68,16 @@ pub struct Poi {
     pub radius: f32,
 }
 
+/// A placed art asset (tree, bush). `trunk` = (radius, height) of its solid collider, if any.
+#[derive(Clone, Debug, Reflect)]
+pub struct Prop {
+    pub model: &'static str,
+    pub pos: Vec3,
+    pub yaw: f32,
+    pub scale: f32,
+    pub trunk: Option<(f32, f32)>,
+}
+
 #[derive(Resource, Clone, Debug, Default)]
 pub struct MapLayout {
     pub name: String,
@@ -79,4 +89,5 @@ pub struct MapLayout {
     pub chests: Vec<ChestSpawn>,
     pub floor_loot: Vec<Vec3>,
     pub pois: Vec<Poi>,
+    pub props: Vec<Prop>,
 }

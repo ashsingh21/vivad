@@ -1,5 +1,6 @@
 pub mod autoshot;
 pub mod camera;
+pub mod characters;
 pub mod hud;
 pub mod input;
 pub mod studio_env;

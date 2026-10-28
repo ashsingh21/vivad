@@ -6,6 +6,16 @@ weapons := "khanda"
 # Rebuild every model from its script (bake + LODs + GLB export).
 assets:
     for w in {{weapons}}; do just weapon $w; done
+    just nature
+    just characters
+
+# Characters (needs the MPFB extension + MakeHuman CC0 assets, see docs/references.md)
+characters:
+    for v in male female; do {{blender}} -b -P tools/blender/characters/human.py -- $v 2>&1 | grep -E '^\[|Error|Traceback' || true; done
+
+# Trees and bushes
+nature:
+    {{blender}} -b --factory-startup -P tools/blender/nature/trees.py 2>&1 | grep -E '^\[|Error|Traceback' || true
 
 # Build one weapon: just weapon khanda
 weapon name:
