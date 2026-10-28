@@ -24,8 +24,11 @@ The HUD (minimap, status, hotbar) is masked out of every measurement.
 
 **Weapons in the hand.** `just armoury` stands the player on open ground and captures every item
 carried and in use (aiming, drawing, swinging, drinking) from the front, side and back, then
-tiles them into `previews/armoury_sheet.png`; `just armoury pinaka,soma` for a few. Crop the
-interesting ones before looking.
+tiles them into `previews/armoury_sheet.png`; `just armoury pinaka,soma` for a few. The last
+poses use the bot as a frozen target (healed every tick): a sword cut and bow volleys seen from
+the side and through the game camera, shot a set number of milliseconds after the strike, so the
+blade ribbon, arrow streaks, hit puffs and damage numbers can be checked. Crop the interesting
+ones before looking.
 
 **Flicker and shimmer.** `just flicker` captures 8-frame bursts while the camera drifts a few
 millimetres per frame and scores each view by how many pixels fail to move smoothly. Without

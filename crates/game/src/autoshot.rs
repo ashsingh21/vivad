@@ -7,14 +7,15 @@
 //! VIVAD_SHOTS=<dir>     with VIVAD_AUTOPILOT=1: screenshot the match at set times, then exit.
 //! VIVAD_ARMOURY=<dir>   stand the player on open ground and screenshot every item in hand, carried
 //!   and in use (aiming, drawing, swinging, drinking), from the front and the side, then exit.
-//!   VIVAD_ARMOURY_ONLY=a,b only the poses whose names contain one of these.
+//!   VIVAD_ARMOURY_ONLY=a,b only the poses whose names contain one of these. The range poses
+//!   freeze the one bot (VIVAD_BOTS=1) in front as a target and shoot or cut at it.
 
 use bevy::prelude::*;
 use bevy::render::view::window::screenshot::{Screenshot, save_to_disk};
 use shared::items::{ItemDb, ItemKind, ItemStack, Rarity};
 use shared::map::MapLayout;
 use shared::sim::flow::Match;
-use shared::sim::{Action, HALF_HEIGHT, Health, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, btn};
+use shared::sim::{Action, HALF_HEIGHT, Health, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, Warrior, btn};
 
 use crate::camera::MainCamera;
 
@@ -41,6 +42,10 @@ struct Pose {
     state: Use,
     view: View,
     pitch: f32,
+    /// A target this far ahead (the frozen bot), aimed at; the shot is taken `after` seconds
+    /// after the strike.
+    target: Option<f32>,
+    after: f32,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -58,6 +63,10 @@ enum View {
     Front,
     Side,
     Back,
+    /// Wide, from the side, taking in the player and the target.
+    Range,
+    /// The game's own camera (HUD numbers, kick and shake show as a player sees them).
+    Player,
 }
 
 #[derive(Resource)]
@@ -85,9 +94,12 @@ impl Armoury {
             View::Front => "front",
             View::Side => "side",
             View::Back => "back",
+            View::Range => "range",
+            View::Player => "player",
         };
         let up = if p.pitch > 0.1 { "_up" } else if p.pitch < -0.1 { "_down" } else { "" };
-        format!("{:02}_{}_{state}{up}_{view}", self.index, p.item)
+        let at = if p.target.is_some() { format!("_{:.0}ms", p.after * 1000.0) } else { String::new() };
+        format!("{:02}_{}_{state}{up}_{view}{at}", self.index, p.item)
     }
 }
 
@@ -144,7 +156,8 @@ impl Plugin for AutoshotPlugin {
             app.add_systems(PostUpdate, run_tour.after(crate::camera::CameraSystems).before(TransformSystems::Propagate));
         }
         if let Ok(dir) = std::env::var("VIVAD_ARMOURY") {
-            let p = |item, state, view, pitch| Pose { item, state, view, pitch };
+            let p = |item, state, view, pitch| Pose { item, state, view, pitch, target: None, after: 0.17 };
+            let range = |item, view, dist, after| Pose { item, state: Use::Strike, view, pitch: 0.0, target: Some(dist), after };
             let mut poses = vec![
                 p("khanda", Use::Carry, View::Front, 0.0),
                 p("khanda", Use::Strike, View::Front, 0.0),
@@ -162,6 +175,13 @@ impl Plugin for AutoshotPlugin {
                 p("sanjeevani", Use::Carry, View::Front, 0.0),
                 p("soma", Use::Hold, View::Front, 0.0),
                 p("amrita", Use::Carry, View::Front, 0.0),
+                range("khanda", View::Front, 1.7, 0.21),
+                range("khanda", View::Player, 1.7, 0.24),
+                range("gandiva", View::Range, 12.0, 0.05),
+                range("gandiva", View::Player, 12.0, 0.25),
+                range("sharanga", View::Range, 9.0, 0.08),
+                range("sharanga", View::Player, 9.0, 0.3),
+                range("agneyastra", View::Range, 9.0, 0.25),
             ];
             if let Ok(only) = std::env::var("VIVAD_ARMOURY_ONLY").map(|s| s.trim().to_owned()).and_then(|s| if s.is_empty() { Err(std::env::VarError::NotPresent) } else { Ok(s) }) {
                 let keys: Vec<String> = only.split(',').map(str::to_owned).collect();
@@ -248,12 +268,14 @@ fn match_shots(
 
 /// Holds the local player still on open ground with the pose's item, pitch and buttons. Runs in
 /// place of the keyboard and mouse (just after them) so the sim and the animation both see it.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn armoury_actor(
+    mut commands: Commands,
     mut arm: ResMut<Armoury>,
     db: Res<ItemDb>,
     layout: Res<MapLayout>,
     mut q: Query<(&mut Transform, &mut Kinematic, &mut Inventory, &mut PlayerIntent, &mut Health, &mut Action), With<LocalPlayer>>,
+    mut bots: Query<(Entity, &mut Transform, &mut Kinematic, &mut Health, &mut PlayerIntent), (With<Warrior>, Without<LocalPlayer>)>,
 ) {
     let Ok((mut tf, mut kin, mut inv, mut intent, mut health, mut act)) = q.single_mut() else { return };
     let spot = *arm.spot.get_or_insert_with(|| {
@@ -285,6 +307,27 @@ fn armoury_actor(
     }
     intent.yaw = 0.0;
     intent.pitch = pose.pitch;
+    // The range target: the bot, frozen ahead, healed every tick; aim the crosshair ray at its chest.
+    if let Some((bot, mut btf, mut bkin, mut bhp, mut bint)) = bots.iter_mut().next() {
+        commands.entity(bot).remove::<shared::sim::bots::BotBrain>();
+        let ahead = pose.target.unwrap_or(40.0);
+        btf.translation = Vec3::new(spot.x, layout.terrain.height(spot.x, spot.z - ahead) + HALF_HEIGHT + 0.05, spot.z - ahead);
+        btf.rotation = Quat::from_rotation_y(std::f32::consts::PI);
+        bkin.mode = MoveMode::Ground;
+        bkin.velocity = Vec3::ZERO;
+        bhp.hp = 100.0;
+        bhp.shield = if pose.item == "sharanga" { 50.0 } else { 0.0 };
+        *bint = PlayerIntent::default();
+        if pose.target.is_some() {
+            let aim_at = btf.translation + Vec3::Y * 0.3;
+            for _ in 0..3 {
+                let (origin, _) = shared::sim::aim_ray(spot, &intent);
+                let d = aim_at - origin;
+                intent.yaw = (-d.x).atan2(-d.z);
+                intent.pitch = d.y.atan2(d.xz().length());
+            }
+        }
+    }
     intent.move_axis = Vec2::ZERO;
     intent.select = None;
     intent.held = match pose.state {
@@ -321,13 +364,18 @@ fn armoury_camera(
     };
     // The player faces -Z; its right is +X.
     let chest = body + Vec3::Y * 0.45;
-    let (eye, look) = match pose.view {
-        View::Front => (chest + Vec3::new(1.5, 0.35, -2.1), chest + Vec3::new(0.15, -0.05, 0.0)),
-        View::Side => (chest + Vec3::new(2.6, 0.2, -0.5), chest + Vec3::new(0.0, 0.0, -0.45)),
-        View::Back => (chest + Vec3::new(0.9, 0.5, 2.3), chest + Vec3::new(0.0, 0.1, -0.6)),
+    let far = pose.target.unwrap_or(0.0);
+    let view = match pose.view {
+        View::Front => Some((chest + Vec3::new(1.5, 0.35, -2.1), chest + Vec3::new(0.15, -0.05, 0.0))),
+        View::Side => Some((chest + Vec3::new(2.6, 0.2, -0.5), chest + Vec3::new(0.0, 0.0, -0.45))),
+        View::Back => Some((chest + Vec3::new(0.9, 0.5, 2.3), chest + Vec3::new(0.0, 0.1, -0.6))),
+        View::Range => Some((chest + Vec3::new(far * 0.55 + 2.0, 0.8, -far * 0.5), chest + Vec3::new(0.0, -0.2, -far * 0.5))),
+        View::Player => None,
     };
-    *ct = Transform::from_translation(eye).looking_at(look, Vec3::Y);
-    let at = if pose.state == Use::Strike { STRIKE_AT + 0.17 } else { POSE_TIME };
+    if let Some((eye, look)) = view {
+        *ct = Transform::from_translation(eye).looking_at(look, Vec3::Y);
+    }
+    let at = if pose.state == Use::Strike { STRIKE_AT + pose.after } else { POSE_TIME };
     if arm.t >= at && !arm.shot {
         let path = format!("{}/{}.png", arm.dir, arm.name(&pose));
         commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));

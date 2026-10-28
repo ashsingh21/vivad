@@ -82,6 +82,9 @@ pub struct WarriorAnim {
     /// Alternate sword cuts: forehand, then the backhand return.
     backhand: bool,
     last_swing: f32,
+    /// Seconds left of a hit-stop (the swing holds), and how far the swing has fallen behind.
+    pub hit_stop: f32,
+    swing_lag: f32,
     /// Weight of the bow draw clip: how far the string follows the drawing hand.
     pub bow_weight: f32,
     /// How much of the aim pitch the torso takes (eased with the held item).
@@ -172,6 +175,8 @@ pub fn bind(commands: &mut Commands, sets: &AnimSets, variant: usize, rig_root: 
         weights: HashMap::new(),
         backhand: false,
         last_swing: f32::MAX,
+        hit_stop: 0.0,
+        swing_lag: 0.0,
         bow_weight: 0.0,
         aim_share: 0.0,
     })
@@ -312,12 +317,18 @@ fn drive(
                     let held = inv.current().map(|s| &db.get(&s.id).kind);
                     if matches!(held, Some(ItemKind::Melee { .. })) && act.since_attack < anim.last_swing {
                         anim.backhand = !anim.backhand;
+                        anim.swing_lag = 0.0;
                     }
                     anim.last_swing = act.since_attack;
+                    if anim.hit_stop > 0.0 {
+                        anim.hit_stop -= dt;
+                        anim.swing_lag += dt;
+                    }
                     let swing = if anim.backhand { "melee_swing_b" } else { "melee_swing" };
+                    let swung = (act.since_attack - anim.swing_lag).max(0.0);
                     let loaded = inv.current().is_some_and(|s| s.count > 0);
                     let action = match held {
-                        Some(ItemKind::Melee { .. }) if act.since_attack < SWING_TIME => Some((swing, act.since_attack / SWING_TIME * dur(swing))),
+                        Some(ItemKind::Melee { .. }) if swung < SWING_TIME => Some((swing, swung / SWING_TIME * dur(swing))),
                         Some(ItemKind::Melee { .. }) => Some(("melee_guard", clock % dur("melee_guard"))),
                         Some(k @ ItemKind::Bow { .. }) => bow_draw(k, act, loaded, intent.held(btn::AIM)).map(|d| ("bow_draw", d * (dur("bow_draw") - 1e-3))),
                         Some(ItemKind::Consumable { .. }) if act.using.is_some() => Some(("consume", clock % dur("consume"))),

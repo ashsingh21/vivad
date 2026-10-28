@@ -10,7 +10,7 @@ use super::zone::Zone;
 use super::{
     EYE_OFFSET, Eliminated, Health, HitMsg, Inventory, Kinematic, MoveMode, PlayerIntent, SimSet, Warrior, btn, solid_mask,
 };
-use crate::items::{ItemDb, ItemKind};
+use crate::items::{AstraEffect, ItemDb, ItemKind};
 
 #[derive(Component, Clone, Debug)]
 pub struct BotBrain {
@@ -258,6 +258,7 @@ fn drive_bots(
                         }
                     }
                     Some(ItemKind::Bow { .. }) => intent.held |= btn::FIRE,
+                    Some(ItemKind::Astra { .. }) => intent.pressed |= btn::FIRE,
                     _ => {}
                 }
             }
@@ -339,6 +340,8 @@ fn choose_weapon(inv: &Inventory, db: &ItemDb, dist: f32) -> usize {
                     6.0
                 }
             }
+            // Fire astras go to a mid-range target; the wind astra is left to players.
+            ItemKind::Astra { effect: AstraEffect::Fire { .. }, .. } if s.count > 0 && (8.0..24.0).contains(&dist) => 7.0,
             _ => 0.0,
         } * s.rarity.damage_scale();
         if score > best.1 {

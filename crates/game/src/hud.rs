@@ -19,7 +19,8 @@ impl Plugin for HudPlugin {
         app.add_plugins((FrameTimeDiagnosticsPlugin::default(), EntityCountDiagnosticsPlugin::default()))
             .init_resource::<Feed>()
             .add_systems(Startup, build_hud)
-            .add_systems(Update, (vitals, hotbar, prompts, feed, hit_marker, top_right, minimap, overlay, perf));
+            .add_systems(Update, (vitals, hotbar, prompts, feed, hit_marker, top_right, minimap, overlay, perf))
+            .add_systems(PostUpdate, (damage_numbers, hurt_markers).after(crate::camera::CameraSystems));
     }
 }
 
@@ -43,6 +44,24 @@ const MINIMAP: f32 = 190.0;
 #[derive(Component)] struct PerfText;
 #[derive(Component)] struct ProgressBar;
 #[derive(Component)] struct ProgressFill;
+
+/// Damage dealt by the local player, floating up from where it landed.
+#[derive(Component)]
+struct DamageNumber {
+    target: Entity,
+    at: Vec3,
+    amount: f32,
+    size: f32,
+    age: f32,
+}
+
+/// A red bar round the crosshair pointing at whoever just hit the local player.
+#[derive(Component)]
+struct HurtMarker {
+    from: Entity,
+    last: Vec3,
+    age: f32,
+}
 
 #[derive(Resource, Default)]
 struct Feed {
@@ -389,5 +408,128 @@ fn perf(show: Res<ShowPerf>, diag: Res<DiagnosticsStore>, mut q: Query<(&mut Tex
         let ms = diag.get(&FrameTimeDiagnosticsPlugin::FRAME_TIME).and_then(|d| d.smoothed()).unwrap_or(0.0);
         let ents = diag.get(&EntityCountDiagnosticsPlugin::ENTITY_COUNT).and_then(|d| d.value()).unwrap_or(0.0);
         **t = format!("{fps:.0} fps   {ms:.2} ms   {ents:.0} entities");
+    }
+}
+
+/// Numbers for the local player's hits: white on flesh, blue on a ward (shield), gold for a
+/// headshot. Hits on one target within a moment add up (the Sharanga's fan reads as one number).
+#[allow(clippy::type_complexity)]
+fn damage_numbers(
+    mut commands: Commands,
+    mut hits: MessageReader<HitMsg>,
+    local: Query<Entity, With<LocalPlayer>>,
+    cam: Query<(&Camera, &GlobalTransform), With<crate::camera::MainCamera>>,
+    mut nums: Query<(Entity, &mut DamageNumber, &mut Node, &mut Text, &mut TextColor, &mut TextFont)>,
+    time: Res<Time>,
+) {
+    let Ok(me) = local.single() else { return };
+    // This frame's hits per target (a volley lands in one tick), added to a recent number or new.
+    let mut fresh: Vec<(Entity, Vec3, f32, bool, bool)> = vec![];
+    for h in hits.read() {
+        if h.attacker != me || h.target == me {
+            continue;
+        }
+        match fresh.iter_mut().find(|f| f.0 == h.target) {
+            Some(f) => {
+                f.2 += h.amount;
+                f.3 |= h.headshot;
+                f.4 &= h.shield;
+            }
+            None => fresh.push((h.target, h.at, h.amount, h.headshot, h.shield)),
+        }
+    }
+    for (target, at, amount, headshot, shield) in fresh {
+        if let Some((_, mut n, ..)) = nums.iter_mut().find(|(_, n, ..)| n.target == target && n.age < 0.15) {
+            n.amount += amount;
+            continue;
+        }
+        let color = if headshot {
+            Color::srgb(1.0, 0.82, 0.25)
+        } else if shield {
+            Color::srgb(0.55, 0.8, 1.0)
+        } else {
+            Color::WHITE
+        };
+        let size = if headshot { 30.0 } else { 24.0 };
+        commands.spawn((
+            DamageNumber { target, at: at + Vec3::Y * 0.5, amount, size, age: 0.0 },
+            text("", size, color),
+            TextShadow::default(),
+            Node { position_type: PositionType::Absolute, ..default() },
+            Visibility::Hidden,
+        ));
+    }
+    let Ok((camera, cam_g)) = cam.single() else { return };
+    let dt = time.delta_secs();
+    for (e, mut n, mut node, mut t, mut c, mut font) in &mut nums {
+        n.age += dt;
+        if n.age > 0.9 {
+            commands.entity(e).despawn();
+            continue;
+        }
+        **t = format!("{}", n.amount.round() as i32);
+        let rise = n.at + Vec3::Y * (n.age * 0.9);
+        if let Ok(p) = camera.world_to_viewport(cam_g, rise) {
+            node.left = px(p.x - 14.0);
+            node.top = px(p.y - 14.0);
+            commands.entity(e).insert(Visibility::Inherited);
+        }
+        // Pop in a touch larger, then settle and fade.
+        font.font_size = FontSize::Px(n.size * (1.0 + 0.35 * (1.0 - n.age / 0.12).max(0.0)));
+        c.0.set_alpha(1.0 - ((n.age - 0.55) / 0.35).clamp(0.0, 1.0));
+    }
+}
+
+/// Markers round the crosshair for the local player's attackers; each follows its attacker as
+/// the view turns and fades over a second.
+#[allow(clippy::type_complexity)]
+fn hurt_markers(
+    mut commands: Commands,
+    mut hits: MessageReader<HitMsg>,
+    local: Query<(Entity, &Transform), With<LocalPlayer>>,
+    sims: Query<&Transform, (With<Warrior>, Without<LocalPlayer>)>,
+    cam: Query<&GlobalTransform, With<crate::camera::MainCamera>>,
+    window: Query<&Window>,
+    mut markers: Query<(Entity, &mut HurtMarker, &mut Node, &mut UiTransform, &mut BackgroundColor)>,
+    time: Res<Time>,
+) {
+    const RADIUS: f32 = 95.0;
+    let Ok((me, my_tf)) = local.single() else { return };
+    for h in hits.read() {
+        if h.target != me || h.attacker == me {
+            continue;
+        }
+        let from = sims.get(h.attacker).map(|t| t.translation).unwrap_or(h.at);
+        if let Some((_, mut m, ..)) = markers.iter_mut().find(|(_, m, ..)| m.from == h.attacker) {
+            m.age = 0.0;
+            m.last = from;
+            continue;
+        }
+        commands.spawn((
+            HurtMarker { from: h.attacker, last: from, age: 0.0 },
+            Node { position_type: PositionType::Absolute, width: px(64.0), height: px(7.0), border_radius: BorderRadius::MAX, ..default() },
+            UiTransform::default(),
+            BackgroundColor(Color::srgba(0.95, 0.12, 0.08, 0.9)),
+        ));
+    }
+    let (Ok(cam_g), Ok(win)) = (cam.single(), window.single()) else { return };
+    let (fwd, right) = (cam_g.forward().as_vec3().with_y(0.0).normalize_or(Vec3::NEG_Z), cam_g.right().as_vec3().with_y(0.0).normalize_or(Vec3::X));
+    let centre = Vec2::new(win.width(), win.height()) * 0.5;
+    let dt = time.delta_secs();
+    for (e, mut m, mut node, mut ui, mut bg) in &mut markers {
+        m.age += dt;
+        if m.age > 1.1 {
+            commands.entity(e).despawn();
+            continue;
+        }
+        if let Ok(t) = sims.get(m.from) {
+            m.last = t.translation;
+        }
+        let d = m.last - my_tf.translation;
+        let a = d.dot(right).atan2(d.dot(fwd));
+        node.left = px(centre.x + RADIUS * a.sin() - 32.0);
+        node.top = px(centre.y - RADIUS * a.cos() - 3.5);
+        ui.rotation = Rot2::radians(a);
+        bg.0.set_alpha(0.9 * (1.0 - ((m.age - 0.5) / 0.6).clamp(0.0, 1.0)));
     }
 }

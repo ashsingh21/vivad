@@ -79,6 +79,7 @@ fn follow(
     m: Res<Match>,
     spatial: SpatialQuery,
     time: Res<Time>,
+    punch: Res<crate::fx::CameraPunch>,
 ) {
     let Ok((mut ct, mut proj, mut mc)) = cam.single_mut() else { return };
     let Ok((me, intent, kin)) = local.single() else { return };
@@ -104,10 +105,13 @@ fn follow(
             pos = pivot + dir * (hit.distance - 0.25).max(0.2);
         }
     }
-    ct.translation = pos;
-    ct.rotation = rot;
+    // Punches (crate::fx): bow kick tips the view up, hits shake it, a charging bow zooms in.
+    let t = time.elapsed_secs();
+    let shake = Vec3::new((t * 53.0).sin() + (t * 31.0).sin() * 0.5, (t * 61.0).cos() + (t * 37.0).cos() * 0.5, 0.0) * punch.shake;
+    ct.translation = pos + rot * shake;
+    ct.rotation = rot * Quat::from_rotation_x(punch.kick);
     if let Projection::Perspective(p) = proj.as_mut() {
-        let target = fov.to_radians();
+        let target = fov.to_radians() + if aiming { punch.fov } else { 0.0 };
         p.fov += (target - p.fov) * (1.0 - (-dt * 14.0).exp());
     }
 }
