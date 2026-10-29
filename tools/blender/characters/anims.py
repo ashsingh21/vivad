@@ -299,13 +299,38 @@ def idle(rig):
 
 # ------------------------------------------------------------------ air
 
+def blade_clearance(rig):
+    """How far the khanda's blade (as the game holds it: grip in the right fist, blade out of the
+    thumb side, 0.06 to 0.88 m) passes from the head and pagri (a capsule up the head bone)."""
+    h = rig.head("hand_r")
+    fwd, k, palm = palm_frame(rig, "r")
+    grip = h + (rig.head("middle_01_r") - h) * 0.85 + palm * 0.028
+    head = rig.obj.matrix_world @ rig.pb["head"].matrix
+    up = (head.to_3x3() @ Vector((0, 1, 0))).normalized()
+    a, b = head.translation + up * 0.04, head.translation + up * 0.2
+    best = 9.0
+    for i in range(41):
+        q = grip + k * (0.06 + 0.82 * i / 40)
+        t = max(0.0, min(1.0, (q - a).dot(b - a) / (b - a).length_squared))
+        best = min(best, (q - a.lerp(b, t)).length - HEAD_R)
+    return best
+
+
+HEAD_R = 0.13   # the pagri's radius round the head bone, roughly
+
+
 def hold_pose(rig, name, frames, pose):
     """A pose (with optional motion over t in [0, 1]) keyed over `frames`."""
     new_action(rig, name)
+    gap = []
     for f in range(frames + 1):
         rig.rest()
         pose(rig, f / frames)
+        if name.startswith("melee"):
+            gap.append(blade_clearance(rig))
         rig.key(f + 1)
+    if gap:
+        print(f"[anims] {name}: blade clears the head by {min(gap):+.3f} m at closest")
 
 
 def jump_pose(rig, t):
@@ -383,47 +408,64 @@ def legs_neutral(rig):
         rig.foot_pitch(s, 0.0)
 
 
+def grip_blade(rig, blade):
+    """Turn the sword hand so the blade (out of the thumb side of the fist) points along `blade`,
+    bending the wrist as little as that allows."""
+    fwd, k, _ = palm_frame(rig, "r")
+    b = Vector(blade).normalized()
+    f = fwd - b * fwd.dot(b)
+    f.normalize()
+    cur = Matrix((fwd, k, fwd.cross(k))).transposed()
+    goal = Matrix((f, b, f.cross(b))).transposed()
+    rig._apply("hand_r", (goal @ cur.transposed()).to_4x4(), rig.head("hand_r"))
+
+
 def melee_guard_pose(rig, t):
-    """Khanda held ready: sword arm forward and bent, blade up; off hand guarding."""
+    """Khanda held ready: sword fist forward of the right chest, blade up and leaning forward
+    (clear of the face); off hand guarding."""
     b = math.sin(2 * math.pi * t)
     legs_neutral(rig)
     rig.rotate("spine_02", UP, -0.2)
     rig.rotate("spine_02", LEFT, 0.08 + 0.01 * b)
-    rig.aim("upperarm_r", (-0.35, -0.55, -0.75))
-    rig.aim("lowerarm_r", (0.15, -0.9, 0.35))
-    rig.aim("hand_r", (0.1, -0.6, 0.8))
+    rig.aim("upperarm_r", GUARD[2])
+    rig.aim("lowerarm_r", GUARD[3])
+    grip_blade(rig, GUARD[4])
     rig.aim("upperarm_l", (0.4, -0.35, -0.85))
     rig.aim("lowerarm_l", (-0.35, -0.85, 0.3))
     relax_fingers(rig, "r", 0.9)
     relax_fingers(rig, "l", 0.5)
 
 
-SWING_FORE = [  # (t, spine twist, upper arm dir, forearm dir)
-    (0.0, -0.2, (-0.35, -0.55, -0.75), (0.15, -0.9, 0.35)),
-    (0.3, -0.75, (-0.6, 0.2, 0.75), (-0.2, 0.6, 0.75)),
-    (0.55, 0.45, (0.2, -0.95, 0.05), (0.6, -0.75, -0.25)),
-    (1.0, 0.35, (0.15, -0.6, -0.75), (0.55, -0.7, -0.4)),
+# (t, spine twist, upper arm dir, forearm dir, blade dir)
+GUARD = (0.0, -0.2, (-0.35, -0.55, -0.75), (0.1, -0.9, 0.4), (-0.15, -0.55, 0.82))
+SWING_FORE = [  # windup over the right shoulder, a diagonal cut down to the left, follow-through
+    GUARD,
+    (0.3, -0.75, (-0.6, 0.2, 0.75), (-0.2, 0.6, 0.75), (-0.35, 0.55, 0.75)),
+    (0.42, -0.15, (-0.35, -0.45, 0.75), (0.1, -0.75, 0.6), (0.3, -0.85, 0.45)),
+    (0.55, 0.45, (0.2, -0.95, 0.05), (0.6, -0.75, -0.25), (0.6, -0.75, -0.2)),
+    (1.0, 0.35, (0.15, -0.6, -0.75), (0.55, -0.7, -0.4), (0.55, -0.45, -0.7)),
 ]
 SWING_BACK = [  # the return cut: from over the left shoulder, back across and down to the right
-    (0.0, -0.2, (-0.35, -0.55, -0.75), (0.15, -0.9, 0.35)),
-    (0.3, 0.55, (0.45, -0.45, 0.35), (0.55, 0.25, 0.7)),
-    (0.55, -0.5, (-0.6, -0.75, 0.05), (-0.8, -0.5, -0.2)),
-    (1.0, -0.4, (-0.5, -0.4, -0.7), (-0.6, -0.6, -0.45)),
+    GUARD,
+    (0.3, 0.55, (0.45, -0.45, 0.35), (0.55, 0.25, 0.7), (0.55, 0.35, 0.75)),
+    (0.42, 0.0, (0.0, -0.85, 0.3), (0.05, -0.85, 0.5), (0.1, -0.9, 0.4)),
+    (0.55, -0.5, (-0.6, -0.75, 0.05), (-0.8, -0.5, -0.2), (-0.7, -0.65, -0.2)),
+    (1.0, -0.4, (-0.5, -0.4, -0.7), (-0.6, -0.6, -0.45), (-0.55, -0.4, -0.7)),
 ]
 
 
 def melee_swing_pose(rig, t, keys=SWING_FORE):
-    """Windup over the right shoulder, a diagonal cut down to the left, follow-through (or the
-    backhand return with SWING_BACK)."""
+    """Windup, cut and follow-through between the keys above, the blade direction turning with
+    the arm."""
     legs_neutral(rig)
-    for (t0, s0, u0, f0), (t1, s1, u1, f1) in zip(keys, keys[1:]):
+    for (t0, s0, u0, f0, b0), (t1, s1, u1, f1, b1) in zip(keys, keys[1:]):
         if t0 <= t <= t1:
             k = smooth((t - t0) / (t1 - t0))
             rig.rotate("spine_02", UP, lerp(s0, s1, k))
             rig.rotate("spine_02", LEFT, 0.1 + 0.15 * math.sin(math.pi * t))
             rig.aim("upperarm_r", Vector(u0).lerp(Vector(u1), k))
             rig.aim("lowerarm_r", Vector(f0).lerp(Vector(f1), k))
-            rig.aim("hand_r", Vector(f0).lerp(Vector(f1), k))
+            grip_blade(rig, Vector(b0).normalized().slerp(Vector(b1).normalized(), k))
             break
     rig.aim("upperarm_l", (0.45, -0.2, -0.85))
     rig.aim("lowerarm_l", (0.1, -0.8, -0.3))
