@@ -34,7 +34,7 @@ fn terrain_spec(seed: u64) -> TerrainSpec {
     let pad = |x: f32, z: f32, r: f32, f: f32| Pad { center: Vec2::new(x, z), radius: r, falloff: f };
     let mut pads = vec![
         pad(0.0, 0.0, 66.0, 30.0),
-        pad(STEPWELL_C.x, STEPWELL_C.z, 34.0, 25.0),
+        pad(STEPWELL_C.x, STEPWELL_C.z, 42.0, 25.0),
         pad(-140.0, -130.0, 42.0, 30.0),
         pad(95.0, 170.0, 50.0, 25.0),
         pad(-200.0, 0.0, 62.0, 25.0),
@@ -60,8 +60,8 @@ fn terrain_spec(seed: u64) -> TerrainSpec {
         roads: ROADS.to_vec(),
         river: (RIVER_X.0, RIVER_X.1, RIVER_BED),
         pits: vec![(
-            Vec2::new(STEPWELL_C.x - STEPWELL_L / 2.0, STEPWELL_C.z - STEPWELL_W / 2.0),
-            Vec2::new(STEPWELL_C.x + STEPWELL_L / 2.0, STEPWELL_C.z + STEPWELL_W / 2.0),
+            Vec2::new(STEPWELL_C.x - STEPWELL_L / 2.0 - STEPWELL_WALL, STEPWELL_C.z - STEPWELL_W / 2.0 - STEPWELL_WALL),
+            Vec2::new(STEPWELL_C.x + STEPWELL_L / 2.0 + STEPWELL_WALL, STEPWELL_C.z + STEPWELL_W / 2.0 + STEPWELL_WALL),
             -STEPWELL_DEPTH - 2.0,
         )],
         mesas: vec![(FORT_C, Vec2::new(34.0, 28.0), FORT_TOP, 62.0)],
@@ -165,9 +165,21 @@ const HALF: f32 = 250.0;
 pub const RIVER_X: (f32, f32) = (172.0, 196.0);
 const RIVER_BED: f32 = -1.6;
 const STEPWELL_C: Vec3 = Vec3::new(-110.0, 0.0, 95.0);
-const STEPWELL_L: f32 = 46.0;
-const STEPWELL_W: f32 = 18.0;
-const STEPWELL_DEPTH: f32 = 9.0;
+// Rani ki Baoli (after Rani ki Vav): seven levels of 3 m, a flight and a landing for each but the
+// last, whose floor holds the well head. Shared with tools/blender/architecture/stepwell.py.
+const STEPWELL_L: f32 = 62.0;
+const STEPWELL_W: f32 = 20.0;
+const STEPWELL_LEVELS: usize = 7;
+const STEPWELL_LVL: f32 = 3.0;
+const STEPWELL_DEPTH: f32 = STEPWELL_LEVELS as f32 * STEPWELL_LVL;
+const STEPWELL_FLIGHT: f32 = 4.5;
+const STEPWELL_LANDING: f32 = 3.2;
+const STEPWELL_STAIR_W: f32 = 9.0;
+/// The well head's centre (local x) on the bottom floor, and its radius.
+const STEPWELL_WELL: (f32, f32) = (-26.0, 3.2);
+/// Retaining walls and the entrance forecourt: at least two terrain cells thick, so the slope the
+/// heightfield makes down into the pit lies hidden inside them.
+const STEPWELL_WALL: f32 = 4.0;
 
 pub fn generate(seed: u64) -> MapLayout {
     let mut map = MapLayout { name: "Bharat".into(), half_extent: HALF, ..default() };
@@ -191,7 +203,7 @@ pub fn generate(seed: u64) -> MapLayout {
 
     map.pois = vec![
         poi("Chandni Bazaar", 0.0, 0.0, 55.0),
-        poi("Rani ki Baoli", STEPWELL_C.x, STEPWELL_C.z, 32.0),
+        poi("Rani ki Baoli", STEPWELL_C.x, STEPWELL_C.z, 40.0),
         poi("Hampi Khandahar", -140.0, -130.0, 45.0),
         poi("Garh Qila", 125.0, -135.0, 50.0),
         poi("Kashi Ghat", 150.0, 40.0, 50.0),
@@ -714,60 +726,78 @@ fn stepwell(b: &mut Builder, rng: &mut SmallRng) {
     let f = Frame::new(STEPWELL_C, 0.0);
     let hl = STEPWELL_L / 2.0;
     let hw = STEPWELL_W / 2.0;
-    let dp = STEPWELL_DEPTH;
+    let (dp, lvl) = (STEPWELL_DEPTH, STEPWELL_LVL);
+    let (flight, landing, sw) = (STEPWELL_FLIGHT, STEPWELL_LANDING, STEPWELL_STAIR_W / 2.0);
     // Retaining walls, set 3 cm behind the plane of the carved lining (stepwell.py) so the two
-    // surfaces don't fight where the lining lies flat.
-    let g = 0.03;
-    b.span(f, Vec3::new(-hl - 1.0, -dp - 2.0, -hw - 1.0), Vec3::new(hl + 1.0, 0.0, -hw - g), Mat::Sandstone);
-    b.span(f, Vec3::new(-hl - 1.0, -dp - 2.0, hw + g), Vec3::new(hl + 1.0, 0.0, hw + 1.0), Mat::Sandstone);
-    b.span(f, Vec3::new(-hl - 1.0, -dp - 2.0, -hw), Vec3::new(-hl - g, 0.0, hw), Mat::Sandstone);
+    // surfaces don't fight where the lining lies flat; their tops are a paved surround. The
+    // entrance forecourt; the floor of the bottom level.
+    let (g, wall) = (0.03, STEPWELL_WALL);
+    b.span(f, Vec3::new(-hl - wall, -dp - 2.0, -hw - wall), Vec3::new(hl + wall, 0.0, -hw - g), Mat::Sandstone);
+    b.span(f, Vec3::new(-hl - wall, -dp - 2.0, hw + g), Vec3::new(hl + wall, 0.0, hw + wall), Mat::Sandstone);
+    b.span(f, Vec3::new(-hl - wall, -dp - 2.0, -hw), Vec3::new(-hl - g, 0.0, hw), Mat::Sandstone);
+    b.span(f, Vec3::new(hl, -dp - 2.0, -hw), Vec3::new(hl + wall, 0.0, hw), Mat::Sandstone);
     b.span(f, Vec3::new(-hl, -dp - 2.0, -hw), Vec3::new(hl, -dp, hw), Mat::Sandstone);
-    // Three flights with pillared pavilions over the landings (their roofs are walkable bridges).
-    let lvl = dp / 3.0;
-    let flight = 9.0;
-    let landing = 4.0;
-    let mut x = hl; // top of the first flight
-    for i in 0..3 {
+    // A flight down each level; beside it, galleries along both walls at the flight's foot (a
+    // drop from the landing above, level with the one below). Between flights, landings under
+    // pavilions whose pillars rise storey by storey to ground level, a beam across the well at
+    // each storey and the roof a bridge. The pillar rows flank the stairs, leaving the middle
+    // lane clear.
+    let mut x = hl;
+    for i in 0..STEPWELL_LEVELS {
         let top = -(i as f32) * lvl;
         let bottom = top - lvl;
-        b.stairs(f.child(Vec3::new(x - flight, 0.0, 0.0), 0.0), Vec3::new(0.0, bottom, 0.0), flight, lvl, 7.0, Mat::Sandstone);
-        // Fill under the stairs.
-        b.span(f, Vec3::new(x - flight, -dp, -3.5), Vec3::new(x, bottom, 3.5), Mat::Sandstone);
-        x -= flight;
-        // Landing platform.
-        b.span(f, Vec3::new(x - landing, -dp, -hw), Vec3::new(x, bottom, hw), Mat::Sandstone);
-        if i < 2 {
-            // Pavilion: pillars from the landing up to ground level, roof slab = bridge across the
-            // well. The carved pillars and the bridge's fascia are in the stepwell model.
-            hidden(b, |b| {
-                for px in [x - landing + 0.6, x - 0.6] {
-                    for pz in [-hw + 0.8, -3.0, 3.0, hw - 0.8] {
-                        b.cyl(f, Vec3::new(px, bottom, pz), 0.3, -bottom - 0.5, Mat::Sandstone);
-                    }
-                }
-                b.span(f, Vec3::new(x - landing, -0.5, -hw), Vec3::new(x, 0.0, hw), Mat::Sandstone);
-            });
-            b.chest(f, Vec3::new(x - landing / 2.0, bottom, hw - 1.6), PI, ChestKind::Peti);
+        b.stairs(f.child(Vec3::new(x - flight, 0.0, 0.0), 0.0), Vec3::new(0.0, bottom, 0.0), flight, lvl, 2.0 * sw, Mat::Sandstone);
+        b.span(f, Vec3::new(x - flight, -dp, -sw), Vec3::new(x, bottom, sw), Mat::Sandstone);
+        for s in [-1.0, 1.0] {
+            b.span(f, Vec3::new(x - flight, -dp, (s * sw).min(s * hw)), Vec3::new(x, bottom, (s * sw).max(s * hw)), Mat::Sandstone);
         }
-        // Side galleries along the long walls at this level.
-        b.span(f, Vec3::new(x, bottom, -hw), Vec3::new(x + flight, bottom + 0.3, -3.5), Mat::Sandstone);
-        b.span(f, Vec3::new(x, bottom, 3.5), Vec3::new(x + flight, bottom + 0.3, hw), Mat::Sandstone);
+        x -= flight;
+        if i + 1 == STEPWELL_LEVELS {
+            break;
+        }
+        b.span(f, Vec3::new(x - landing, -dp, -hw), Vec3::new(x, bottom, hw), Mat::Sandstone);
+        // Pavilion: the carved pillars, beams and the bridge's fascia are in the stepwell model.
+        hidden(b, |b| {
+            for px in stepwell_pillar_rows(x, landing) {
+                for pz in [-hw + 0.9, -sw - 0.4, sw + 0.4, hw - 0.9] {
+                    b.cyl(f, Vec3::new(px, bottom, pz), 0.3, -bottom - 0.5, Mat::Sandstone);
+                }
+                for storey in 1..=i {
+                    let y = bottom + storey as f32 * lvl;
+                    b.span(f, Vec3::new(px - 0.28, y - 0.45, -hw), Vec3::new(px + 0.28, y, hw), Mat::Sandstone);
+                }
+            }
+            b.span(f, Vec3::new(x - landing, -0.5, -hw), Vec3::new(x, 0.0, hw), Mat::Sandstone);
+        });
+        if i % 2 == 0 {
+            b.chest(f, Vec3::new(x - landing / 2.0, bottom, if i % 4 == 0 { hw - 1.6 } else { -hw + 1.6 }), PI, ChestKind::Peti);
+        }
         x -= landing;
     }
-    // The well shaft at the west end.
-    b.cyl(f, Vec3::new(-hl + 4.5, -dp, 0.0), 3.6, 1.0, Mat::Sandstone);
-    b.push(f.p(Vec3::new(-hl + 4.5, -dp + 0.6, 0.0)), Quat::IDENTITY,
-           super::Shape::Cylinder { radius: 3.0, height: 0.05 }, Mat::Water, false, true);
-    b.chest(f, Vec3::new(-hl + 9.0, -dp, -hw + 1.5), 0.0, ChestKind::Kalash);
+    // The well head on the bottom floor: a parapet ring (the model) round a pool.
+    let (wx, wr) = STEPWELL_WELL;
+    hidden(b, |b| b.cyl(f, Vec3::new(wx, -dp, 0.0), wr, 0.9, Mat::Sandstone));
+    b.push(f.p(Vec3::new(wx, -dp + 0.6, 0.0)), Quat::IDENTITY, super::Shape::Cylinder { radius: wr - 0.55, height: 0.05 }, Mat::Water, false, true);
+    b.chest(f, Vec3::new(wx + 5.5, -dp, -hw + 1.5), 0.0, ChestKind::Kalash);
     for _ in 0..4 {
         b.loot(f, Vec3::new(rng.random_range(-hl + 3.0..hl - 3.0), 0.3, rng.random_range(-hw - 6.0..-hw - 2.0)));
+    }
+    for _ in 0..3 {
+        let lx = rng.random_range(-hl + 6.0..hl - 6.0);
+        let lvl_at = ((hl - lx) / (flight + landing)).floor().min(STEPWELL_LEVELS as f32 - 1.0) + 1.0;
+        b.loot(f, Vec3::new(lx, -lvl_at * lvl + 0.3, rng.random_range(sw + 1.0..hw - 1.0)));
     }
     // Carved lining: tiers of niches on the walls (stepwell.py).
     b.map.props.push(Prop { model: STEPWELL, pos: f.origin, yaw: f.yaw, scale: 1.0, trunk: None });
     // Surrounding chhatris on the rim.
-    for (cx, cz) in [(hl + 3.0, hw + 3.0), (hl + 3.0, -hw - 3.0), (-hl - 3.0, hw + 3.0), (-hl - 3.0, -hw - 3.0)] {
+    for (cx, cz) in [(hl + 5.0, hw + 5.0), (hl + 5.0, -hw - 5.0), (-hl - 5.0, hw + 5.0), (-hl - 5.0, -hw - 5.0)] {
         b.chhatri(f, Vec3::new(cx, 0.0, cz), 3.5, Mat::Sandstone);
     }
+}
+
+/// A pavilion's two pillar rows (local x), inset from its landing's ends.
+fn stepwell_pillar_rows(x: f32, landing: f32) -> [f32; 2] {
+    [x - landing + 0.6, x - 0.6]
 }
 
 // ------------------------------------------------------------------ Hampi Khandahar
@@ -1219,7 +1249,7 @@ fn blocked(map: &MapLayout, p: Vec2, r: f32) -> bool {
 fn scatter_trees(b: &mut Builder, rng: &mut SmallRng, n: u32) {
     let pois = [
         (Vec2::new(0.0, 0.0), 66.0),
-        (STEPWELL_C.xz(), 34.0),
+        (STEPWELL_C.xz(), 42.0),
         (Vec2::new(-140.0, -130.0), 30.0),
         (Vec2::new(125.0, -135.0), 52.0),
         (Vec2::new(150.0, 40.0), 30.0),

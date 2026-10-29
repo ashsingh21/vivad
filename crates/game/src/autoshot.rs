@@ -4,6 +4,7 @@
 //!   VIVAD_TOUR_ONLY=a,b only the views whose names contain one of these.
 //!   VIVAD_TOUR_FRAMES=n  n consecutive frames per view (`<name>_f<k>.png`), for flicker checks.
 //!   VIVAD_TOUR_DRIFT=m   during a burst, slide the camera sideways m metres per frame.
+//!   VIVAD_TOUR_SETTLE=n  frames to hold each view before its shot (with VIVAD_PERF_LOG, to time it).
 //! VIVAD_SHOTS=<dir>     with VIVAD_AUTOPILOT=1: screenshot the match at set times, then exit.
 //! VIVAD_ARMOURY=<dir>   stand the player on open ground and screenshot every item in hand, carried
 //!   and in use (aiming, drawing, swinging, drinking), from the front and the side, then exit.
@@ -119,8 +120,10 @@ impl Plugin for AutoshotPlugin {
                     ("01_overview", v(-60.0, 260.0, 300.0), v(0.0, 0.0, 0.0)),
                     ("02_bazaar_street", v(-45.0, 4.5, 2.0), v(20.0, 3.0, 0.0)),
                     ("03_bazaar_roofs", v(-30.0, 26.0, 40.0), v(5.0, 2.0, 0.0)),
-                    ("04_stepwell", v(-80.0, 16.0, 108.0), v(-112.0, -6.0, 95.0)),
-                    ("05_stepwell_inside", v(-92.0, -1.5, 95.0), v(-130.0, -9.0, 95.0)),
+                    ("04_stepwell", v(-66.0, 22.0, 112.0), v(-112.0, -12.0, 95.0)),
+                    ("05_stepwell_inside", v(-83.0, 1.2, 95.0), v(-112.0, -12.0, 95.0)),
+                    ("05b_stepwell_bottom", v(-131.5, -19.3, 99.0), v(-95.0, -4.0, 94.0)),
+                    ("05c_stepwell_mid", v(-104.0, -10.3, 98.5), v(-125.0, -16.0, 92.0)),
                     ("06_hampi", v(-95.0, 22.0, -95.0), v(-140.0, 2.0, -130.0)),
                     ("07_fort", v(70.0, 40.0, -60.0), v(125.0, 15.0, -135.0)),
                     ("08_ghats", v(200.0, 10.0, 60.0), v(160.0, 0.0, 30.0)),
@@ -143,7 +146,7 @@ impl Plugin for AutoshotPlugin {
                     ("25_haveli_front", v(-41.0, 3.0, 0.5), v(-50.0, 4.5, 8.0)),
                     ("26_haveli_court", v(-47.6, 5.3, 12.6), v(-52.5, 1.2, 17.5)),
                     ("27_haveli_air", v(-22.0, 24.0, 34.0), v(-42.0, 2.0, 14.0)),
-                    ("28_stepwell_niches", v(-100.0, -3.0, 92.0), v(-112.0, -5.0, 86.6)),
+                    ("28_stepwell_niches", v(-100.0, -9.0, 92.0), v(-112.0, -11.0, 85.6)),
                     ("29_shrine_buddha", v(-205.0, 2.0, -16.0), v(-212.0, 2.2, -16.0)),
                 ],
                 index: 0,
@@ -225,7 +228,7 @@ fn run_tour(
             look = pos + inward * 5.0 + Vec3::Y * 0.5;
         }
     }
-    let settle = if tour.index == 0 { 150 } else { 45 };
+    let settle = std::env::var("VIVAD_TOUR_SETTLE").ok().and_then(|s| s.parse().ok()).unwrap_or(if tour.index == 0 { 150 } else { 45 });
     let drift: f32 = std::env::var("VIVAD_TOUR_DRIFT").ok().and_then(|s| s.parse().ok()).unwrap_or(0.0);
     let side = (look - pos).cross(Vec3::Y).normalize_or_zero() * drift * tour.frames.saturating_sub(settle - 1) as f32;
     *ct = Transform::from_translation(pos + side).looking_at(look + side, Vec3::Y);

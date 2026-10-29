@@ -2,8 +2,10 @@
 pilasters and cornices on the two long walls and the west wall, carved pillars for the two
 pavilions, and moulded fascias on the pavilion roofs (the bridges across the well).
 
-Matches `india.rs::stepwell()` (frame at STEPWELL_C, yaw 0): pit 46 x 18, 9 m deep, three
-levels 3 m apart, flights descending west from x = +23. Blender X = game X, Blender Y = -game Z.
+Matches `india.rs::stepwell()` (frame at STEPWELL_C, yaw 0): pit 62 x 20, seven levels 3 m apart
+(21 m deep), flights descending west from x = +31 with a pillared pavilion over each landing,
+rising storey by storey to the bridge at ground level, and a well head on the bottom floor.
+Blender X = game X, Blender Y = -game Z.
 
 blender -b --factory-startup -P tools/blender/architecture/stepwell.py
 """
@@ -26,8 +28,10 @@ import texgen  # noqa: E402
 from vernacular import cylinder_between  # noqa: E402
 
 OUT = os.path.join(T.ROOT, "assets", "models", "props")
-HL, HW, DEPTH, LVL = 23.0, 9.0, 9.0, 3.0
-FLIGHT, LANDING = 9.0, 4.0
+HL, HW, LEVELS, LVL = 31.0, 10.0, 7, 3.0
+DEPTH = LEVELS * LVL
+FLIGHT, LANDING, STAIR_W = 4.5, 3.2, 9.0
+WELL_X, WELL_R = -26.0, 3.2
 
 
 def vishnu(kit, mat_world, s=1.0):
@@ -59,7 +63,7 @@ def lined_wall(kit, M, length, x_skip=()):
     bay = 2.3
     n = int(length / bay)
     x0 = -n * bay / 2
-    for t in range(3):
+    for t in range(LEVELS):
         z_hi = -t * LVL
         z_lo = z_hi - LVL
         # Cornice ledge at the top of the tier and a carved band under it.
@@ -87,27 +91,42 @@ def lined_wall(kit, M, length, x_skip=()):
 
 def stepwell():
     kit = T.Kit()
-    # Long walls: the north one (game z = -9, Blender Y = +9) faces -Y already.
+    # Long walls: the north one (game z = -10, Blender Y = +10) faces -Y already.
     lined_wall(kit, Matrix.Translation((0.0, HW, 0.0)), 2 * HL)
     lined_wall(kit, Matrix.Translation((0.0, -HW, 0.0)) @ Matrix.Rotation(math.pi, 4, "Z"), 2 * HL)
-    lined_wall(kit, Matrix.Translation((-HL, 0.0, 0.0)) @ Matrix.Rotation(math.pi / 2, 4, "Z"), 2 * HW, x_skip=((-1.5, 1.5),))
-    # Pavilions over the first two landings: carved pillars and a moulded roof-bridge fascia.
+    lined_wall(kit, Matrix.Translation((-HL, 0.0, 0.0)) @ Matrix.Rotation(math.pi / 2, 4, "Z"), 2 * HW)
+    # Pavilions over the landings: storeys of carved pillars, a moulded beam across the well at
+    # each storey's top, and a moulded fascia on the roof-bridge at ground level.
     x = HL
-    for i in range(2):
+    for i in range(LEVELS - 1):
         bottom = -(i + 1) * LVL
         x -= FLIGHT
-        for px in (x - LANDING + 0.6, x - 0.6):
-            for pz in (-HW + 0.8, -3.0, 3.0, HW - 0.8):
-                T.pillar(kit, px, -pz, bottom, -bottom - 0.5)
+        rows = (x - LANDING + 0.6, x - 0.6)
+        for px in rows:
+            for pz in (-HW + 0.9, -STAIR_W / 2 - 0.4, STAIR_W / 2 + 0.4, HW - 0.9):
+                for s in range(i + 1):
+                    z0 = bottom + s * LVL
+                    # The top storey's pillar reaches the bridge; lower ones stop under a beam.
+                    h = (-0.5 - z0) if s == i else LVL - 0.45
+                    T.pillar(kit, px, -pz, z0, h)
+            for s in range(1, i + 1):
+                zt = bottom + s * LVL
+                kit.add(T.molded("beam", [(zt - 0.45, T.rect(0.28, HW, px, 0.0), "lata"), (zt, T.rect(0.28, HW, px, 0.0), None)]))
         cx = x - LANDING / 2
         kit.add(T.molded("bridge", [(-0.55, T.rect(LANDING / 2 + 0.08, HW, cx, 0.0), "dentil"),
                                     (-0.3, T.rect(LANDING / 2 + 0.08, HW, cx, 0.0), "lata"),
                                     (0.0, T.rect(LANDING / 2 + 0.08, HW, cx, 0.0), None)]))
-        # Kirtimukha brackets under the bridge edges.
-        for px in (x - LANDING + 0.6, x - 0.6):
-            for pz in (-6.0, 0.0, 6.0):
+        # Kirtimukha brackets under the bridge edges, between the pillars.
+        for px in rows:
+            for pz in (-7.0, 0.0, 7.0):
                 kit.add(T.box("brk", (px - 0.15, -pz - 0.5, -0.9), (px + 0.15, -pz + 0.5, -0.55), "trim"))
         x -= LANDING
+    # Well head on the bottom floor: a moulded parapet ring round the pool.
+    b = -DEPTH
+    kit.add(T.lathe("wellhead", [(WELL_R - 0.05, b), (WELL_R - 0.05, b + 0.72), (WELL_R + 0.05, b + 0.78), (WELL_R + 0.05, b + 0.9),
+                                 (WELL_R - 0.55, b + 0.9), (WELL_R - 0.55, b + 0.3)], 40, (WELL_X, 0.0)))
+    kit.add(T.lathe("wellband", [(WELL_R - 0.04, b + 0.25), (WELL_R + 0.02, b + 0.3), (WELL_R + 0.02, b + 0.6), (WELL_R - 0.04, b + 0.65)],
+                    40, (WELL_X, 0.0), uv_strip="padma"))
     return B.finish("stepwell", kit, lods=(0.3,))
 
 

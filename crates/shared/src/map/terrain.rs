@@ -155,7 +155,8 @@ pub struct TerrainSpec {
     pub roads: Vec<(Vec2, Vec2)>,
     /// River channel (x0, x1, bed height): flat banks around it, a sunken bed inside.
     pub river: (f32, f32, f32),
-    /// Rectangular pits (min, max, floor height): the stepwell.
+    /// Rectangular pits (outline min, max, floor height): the stepwell, outline at its walls' outer
+    /// faces.
     pub pits: Vec<(Vec2, Vec2, f32)>,
     /// Hills with flat summits: (center, plateau half extents, summit height, skirt width).
     pub mesas: Vec<(Vec2, Vec2, f32, f32)>,
@@ -209,8 +210,11 @@ pub fn generate(spec: &TerrainSpec) -> Terrain {
             if x > rx0 && x < rx1 {
                 h = bed;
             }
+            // Only samples a whole cell inside the pit's outline drop, so the slope down to the
+            // floor stays within one cell of the outline (the stepwell's walls hide it).
+            let e = spec.size / (n - 1) as f32;
             for (mn, mx, floor) in &spec.pits {
-                if x > mn.x && x < mx.x && z > mn.y && z < mx.y {
+                if x > mn.x + e && x < mx.x - e && z > mn.y + e && z < mx.y - e {
                     h = *floor;
                 }
             }

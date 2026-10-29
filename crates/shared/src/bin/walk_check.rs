@@ -69,6 +69,25 @@ fn main() {
             track: everywhere(),
         },
         Case {
+            // From the entrance on the east rim down all seven flights (pillars flank the lane).
+            name: "stepwell down to the well".into(),
+            start: ground(-72.0, 95.0),
+            dir: Vec3::NEG_X,
+            seconds: 14.0,
+            pass: Box::new(|p, _, _| p.y < -20.0 + HALF_HEIGHT + 0.5 && p.x < -129.0),
+            want: "on the bottom floor by the well (y ~ -21, x < -129)".into(),
+            track: everywhere(),
+        },
+        Case {
+            name: "stepwell back up".into(),
+            start: Vec3::new(-131.0, -21.0 + HALF_HEIGHT + 0.2, 95.0),
+            dir: Vec3::X,
+            seconds: 16.0,
+            pass: Box::new(|p, _, _| p.y > 0.5 && p.x > -80.0),
+            want: "out at the entrance (x > -80, y > 0.5)".into(),
+            track: everywhere(),
+        },
+        Case {
             name: "stupa stair to the medhi".into(),
             start: ground(-178.0, 8.0),
             dir: Vec3::X,

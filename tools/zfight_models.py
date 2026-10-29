@@ -46,6 +46,22 @@ def quat_mat(q):
                      [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
 
 
+def hidden_by_boxes(boxes, P):
+    """Which points lie inside a map box (a face whose front is pressed into a wall can't be seen)."""
+    out = np.zeros(len(P), bool)
+    if not len(P):
+        return out
+    lo, hi = P.min(0), P.max(0)
+    for pos, rot, size in boxes:
+        r = np.linalg.norm(size) / 2
+        if (np.array(pos) + r < lo).any() or (np.array(pos) - r > hi).any():
+            continue
+        R = quat_mat(rot)
+        L = (P - np.array(pos)) @ R
+        out |= (np.abs(L) < np.array(size) / 2).all(1)
+    return out
+
+
 def main():
     d = json.load(open(sys.argv[1]))
     faces = d["faces"]
@@ -87,6 +103,9 @@ def main():
         ok = area > 1e-5
         W, nrm, area = W[ok], nrm[ok] / (2 * area[ok])[:, None], area[ok]
         cen = W.mean(axis=1)
+        # Faces whose front (4 cm out) is inside a map box are pressed against it: never seen.
+        seen = ~hidden_by_boxes(d.get("boxes", []), cen + nrm * 0.04)
+        W, nrm, area, cen = W[seen], nrm[seen], area[seen], cen[seen]
         hit = 0.0
         # Against the terrain: upward faces whose corners all sit within TOL of the ground.
         up = nrm[:, 1] > 0.95

@@ -16,27 +16,11 @@ from collections import defaultdict
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from zfight_models import load_model, quat_mat  # noqa: E402
+from zfight_models import hidden_by_boxes, load_model, quat_mat  # noqa: E402
 
 SKIP = ("tree_", "bush_")
 PLANE_TOL = 0.001      # metres: planes closer than this count as the same (see zfight_check.rs)
 SAMPLES = np.array([(a, b) for a in np.linspace(0.08, 0.84, 6) for b in np.linspace(0.08, 0.84, 6) if a + b < 0.92])
-
-
-def hidden_by_boxes(boxes, P):
-    """Which points lie inside a map box (a face whose front is pressed into a wall can't be seen)."""
-    out = np.zeros(len(P), bool)
-    if not len(P):
-        return out
-    lo, hi = P.min(0), P.max(0)
-    for pos, rot, size in boxes:
-        r = np.linalg.norm(size) / 2
-        if (np.array(pos) + r < lo).any() or (np.array(pos) - r > hi).any():
-            continue
-        R = quat_mat(rot)
-        L = (P - np.array(pos)) @ R
-        out |= (np.abs(L) < np.array(size) / 2).all(1)
-    return out
 
 
 def inside_solid(W, P, chunk=256):
