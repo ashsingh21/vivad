@@ -4,12 +4,17 @@ with the game_engine rig, fused into one stone-smooth mesh by voxel remeshing, a
   buddha_seated   seated in padmasana, hands in dhyana mudra, with an ushnisha
   vishnu          standing, four-armed: lower right in abhaya, lower left resting on the mace,
                   the upper pair raised to hold the discus and conch
+  darpana         an apsara in tribhanga looking into a mirror held up in her right hand, the
+                  left on her hip
+  nartaki         an apsara dancing: one arm curved overhead, the other across, a foot crossed
+  anjali          a devotee standing with palms joined at the chest
+  venugopala      Krishna playing the flute, legs crossed at the ankle
 
 Writes tools/blender/architecture/figures/<name>_{hi,lo}.ply (unit height, base at z 0, facing
 -Y) and <name>.json (where the kit hangs attributes: hands, head top). The kit scripts
 (buddhist.py, stepwell.py) import these; they run with --factory-startup, this one needs MPFB:
 
-blender -b -P tools/blender/architecture/figures.py
+blender -b -P tools/blender/architecture/figures.py [-- name ...]
 """
 
 import json
@@ -24,6 +29,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "figures")
 MPFB_DATA = os.path.expanduser("~/.config/blender/5.2/mpfb/data")
 
+FEMALE = {"gender": 0.0, "age": 0.4, "muscle": 0.35, "weight": 0.55, "proportions": 0.9, "height": 0.45,
+          "cupsize": 0.65, "firmness": 0.6, "race": {"asian": 0.4, "caucasian": 0.3, "african": 0.3}}
 MACRO = {"gender": 1.0, "age": 0.45, "muscle": 0.42, "weight": 0.6, "proportions": 0.9, "height": 0.5,
          "cupsize": 0.5, "firmness": 0.5, "race": {"asian": 0.4, "caucasian": 0.3, "african": 0.3}}
 
@@ -31,12 +38,13 @@ MACRO = {"gender": 1.0, "age": 0.45, "muscle": 0.42, "weight": 0.6, "proportions
 BUDGET = {"hi": 7000, "lo": 1400}
 
 
-def build():
+def build(female=False):
     from bl_ext.blender_org.mpfb.services.humanservice import HumanService as hs
     bpy.ops.wm.read_homefile(use_empty=True)
-    body = hs.create_human(macro_detail_dict=MACRO)
+    body = hs.create_human(macro_detail_dict=FEMALE if female else MACRO)
     rig = hs.add_builtin_rig(body, "game_engine")
-    proxy = hs.add_mhclo_asset(os.path.join(MPFB_DATA, "proxymeshes/male_generic/male_generic.proxy"), body,
+    kind = "female_generic" if female else "male_generic"
+    proxy = hs.add_mhclo_asset(os.path.join(MPFB_DATA, f"proxymeshes/{kind}/{kind}.proxy"), body,
                                asset_type="Proxymeshes", subdiv_levels=0)
     for m in list(proxy.modifiers):
         if m.type != "ARMATURE":
@@ -67,6 +75,22 @@ def aim(rig, name, direction, twist=0.0):
     bpy.context.view_layer.update()
 
 
+def reach(rig, side, target, pole):
+    """Two-bone IK: bend the arm so the wrist lands on world `target`, the elbow toward `pole`."""
+    S = bone_head(rig, f"upperarm_{side}")
+    a = (bone_tail(rig, f"upperarm_{side}") - S).length
+    b = (bone_tail(rig, f"lowerarm_{side}") - bone_head(rig, f"lowerarm_{side}")).length
+    W = Vector(target)
+    d = min((W - S).length, a + b - 1e-3)
+    u = (W - S).normalized()
+    p = Vector(pole) - u * u.dot(Vector(pole))
+    p.normalize()
+    ca = (a * a + d * d - b * b) / (2 * a * d)
+    elbow = S + a * (ca * u + math.sqrt(max(0.0, 1 - ca * ca)) * p)
+    aim(rig, f"upperarm_{side}", elbow - S)
+    aim(rig, f"lowerarm_{side}", W - bone_head(rig, f"lowerarm_{side}"))
+
+
 def fingers(rig, side, direction):
     """Lay the four fingers straight and together along `direction` (carved hands, not splayed)."""
     for finger in ("index", "middle", "ring", "pinky"):
@@ -74,12 +98,14 @@ def fingers(rig, side, direction):
             aim(rig, f"{finger}_0{k}_{side}", direction)
 
 
-def dhoti(rig):
-    """The draped lower garment: a skirt of cloth from the waist to mid-shin, wider at the hips,
-    with a pleated fall down the front. Remeshed into the legs it reads as carved drapery."""
+def dhoti(rig, hem_drop=0.16):
+    """The draped lower garment: a skirt of cloth from the waist to mid-shin (lower with a
+    bigger `hem_drop`), wider at the hips, with a pleated fall down the front. Remeshed into the
+    legs it reads as carved drapery."""
     waist = bone_head(rig, "spine_01").z
     knee = bone_head(rig, "calf_l").z
-    hem = knee - 0.16
+    hem = knee - hem_drop
+    cx, cy = bone_head(rig, "pelvis").x, bone_head(rig, "pelvis").y
     bm = bmesh.new()
     seg = 32
     rings = []
@@ -90,7 +116,7 @@ def dhoti(rig):
             a = 2 * math.pi * k / seg
             # Folds: shallow ripples round the hem growing toward the bottom.
             f = 1.0 + 0.04 * math.sin(a * 9) * (1.0 - (z - hem) / (waist - hem))
-            ring.append(bm.verts.new((rx * f * math.cos(a), ry * f * math.sin(a), z)))
+            ring.append(bm.verts.new((cx + rx * f * math.cos(a), cy + ry * f * math.sin(a), z)))
         rings.append(ring)
     for r0, r1 in zip(rings, rings[1:]):
         for k in range(seg):
@@ -98,9 +124,9 @@ def dhoti(rig):
     bm.faces.new(rings[0])
     bm.faces.new(list(reversed(rings[-1])))
     # The pleated front fall, and a sash knotted at the hip.
-    bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Translation((0, -0.12, (waist + hem) / 2 - 0.03))
+    bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Translation((cx, cy - 0.12, (waist + hem) / 2 - 0.03))
                           @ Matrix.Diagonal((0.09, 0.05, waist - hem + 0.06, 1)))
-    bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Translation((0, 0, waist - 0.06))
+    bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Translation((cx, cy, waist - 0.06))
                           @ Matrix.Diagonal((0.42, 0.3, 0.05, 1)))
     me = bpy.data.meshes.new("dhoti")
     bm.to_mesh(me)
@@ -143,6 +169,19 @@ def add_sphere(name, center, radius, squash=(1, 1, 1)):
     bmesh.ops.create_uvsphere(bm, u_segments=16, v_segments=10, radius=radius)
     for v in bm.verts:
         v.co = Vector((v.co.x * squash[0], v.co.y * squash[1], v.co.z * squash[2])) + Vector(center)
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    o = bpy.data.objects.new(name, me)
+    bpy.context.scene.collection.objects.link(o)
+    return o
+
+
+def add_cylinder(name, a, b, radius, seg=12):
+    a, b = Vector(a), Vector(b)
+    bm = bmesh.new()
+    bmesh.ops.create_cone(bm, cap_ends=True, segments=seg, radius1=radius, radius2=radius, depth=(b - a).length)
+    R = (b - a).to_track_quat("Z", "Y").to_matrix().to_4x4()
+    bm.transform(Matrix.Translation((a + b) / 2) @ R)
     me = bpy.data.meshes.new(name)
     bm.to_mesh(me)
     o = bpy.data.objects.new(name, me)
@@ -291,10 +330,138 @@ def vishnu(rig, proxy):
     export_lods(fig, "vishnu", meta)
 
 
+def tribhanga(rig, weight="r"):
+    """The thrice-bent stance: the weight on one straight leg pushes the hips that way, the
+    other knee eases forward, the torso leans back over the hips and the head tilts again."""
+    sx = -1 if weight == "r" else 1          # +X is the figure's left
+    free = "l" if weight == "r" else "r"
+    aim(rig, f"thigh_{weight}", (-sx * 0.07, 0.0, -1.0))
+    aim(rig, f"calf_{weight}", (-sx * 0.03, 0.02, -1.0))
+    aim(rig, f"thigh_{free}", (-sx * 0.1, -0.2, -0.97))
+    aim(rig, f"calf_{free}", (-sx * 0.12, 0.14, -0.98))
+    aim(rig, "spine_01", (-sx * 0.16, 0.0, 1.0))
+    aim(rig, "spine_03", (-sx * 0.08, 0.02, 1.0))
+    aim(rig, "neck_01", (sx * 0.05, -0.05, 1.0))
+    aim(rig, "head", (sx * 0.16, -0.08, 1.0))
+
+
+def ornaments(rig, female):
+    """Hair (a bun at the nape for the women) and a necklace hanging on the chest."""
+    head, top = bone_head(rig, "head"), bone_tail(rig, "head")
+    up = (top - head).normalized()
+    parts = []
+    if female:
+        parts.append(add_sphere("bun", head + up * 0.06 + Vector((0, 0.1, 0)), 0.065, (1.1, 0.9, 0.9)))
+    neck = bone_head(rig, "neck_01")
+    for k in range(9):
+        a = (k - 4) / 4 * 1.1
+        parts.append(add_sphere("bead", neck + Vector((math.sin(a) * 0.085, -0.075 - 0.02 * math.cos(a), -0.09 - 0.05 * math.cos(a))), 0.016))
+    return parts
+
+
+def finish_figure(rig, name, parts, meta_world):
+    fig = join(parts, name)
+    stone(fig, 0.007)
+    T = normalise(fig, (0.0, 0.0))
+    meta = {k: to_list(T, v) for k, v in meta_world.items()}
+    meta["head_top"] = to_list(T, bone_tail(rig, "head"))
+    export_lods(fig, name, meta)
+
+
+def darpana(rig, proxy):
+    rest(rig)
+    tribhanga(rig, "r")
+    # Right forearm raised before the face, the hand holding the mirror up; left hand on the hip.
+    aim(rig, "upperarm_r", (-0.6, -0.35, -0.2))
+    aim(rig, "lowerarm_r", (0.25, -0.55, 0.8))
+    aim(rig, "hand_r", (0.25, -0.2, 0.95), twist=-1.0)
+    fingers(rig, "r", (0.25, -0.2, 0.95))
+    aim(rig, "upperarm_l", (0.55, 0.12, -0.83))
+    aim(rig, "lowerarm_l", (-0.55, -0.25, -0.5))
+    aim(rig, "hand_l", (-0.5, -0.2, -0.8))
+    fingers(rig, "l", (-0.5, -0.2, -0.8))
+    body = posed_mesh(proxy, "darpana")
+    h = bone_tail(rig, "hand_r")
+    face = bone_head(rig, "head") + Vector((0, -0.1, 0.05))
+    n = (face - h).normalized()
+    mirror = add_cylinder("mirror", h + n * 0.005, h - n * 0.02, 0.085, 20)
+    finish_figure(rig, "darpana", [body, mirror, dhoti(rig, 0.06)] + ornaments(rig, True), {"mirror": h})
+
+
+def nartaki(rig, proxy):
+    rest(rig)
+    # Weight on the left leg; the right crossed in front, its toe pointed down.
+    aim(rig, "thigh_l", (-0.05, 0.0, -1.0))
+    aim(rig, "calf_l", (-0.02, 0.02, -1.0))
+    aim(rig, "thigh_r", (0.12, -0.3, -0.95))
+    aim(rig, "calf_r", (0.14, 0.22, -0.97))
+    aim(rig, "foot_r", (0.0, -0.5, -0.86))
+    aim(rig, "spine_01", (0.12, 0.0, 1.0))
+    aim(rig, "spine_03", (0.04, 0.02, 1.0))
+    aim(rig, "head", (-0.15, -0.06, 1.0))
+    # Left arm curved overhead, right arm out and the forearm swung across (gaja hasta).
+    aim(rig, "upperarm_l", (0.45, -0.05, 0.89))
+    aim(rig, "lowerarm_l", (-0.65, -0.1, 0.75))
+    aim(rig, "hand_l", (-0.95, -0.1, 0.1), twist=1.2)
+    fingers(rig, "l", (-0.95, -0.1, 0.1))
+    aim(rig, "upperarm_r", (-0.88, -0.2, -0.3))
+    aim(rig, "lowerarm_r", (0.55, -0.7, -0.1))
+    aim(rig, "hand_r", (0.6, -0.4, -0.65))
+    fingers(rig, "r", (0.6, -0.4, -0.65))
+    body = posed_mesh(proxy, "nartaki")
+    finish_figure(rig, "nartaki", [body, dhoti(rig, 0.06)] + ornaments(rig, True), {})
+
+
+def anjali(rig, proxy):
+    rest(rig)
+    # Palms pressed together before the chest, fingers up, elbows out.
+    aim(rig, "head", (0.0, -0.12, 1.0))
+    chest = bone_head(rig, "neck_01") + Vector((0, -0.17, -0.24))
+    for sx, side in ((1, "l"), (-1, "r")):
+        reach(rig, side, chest + Vector((sx * 0.03, 0, 0)), (sx, 0.4, -0.8))
+        aim(rig, f"hand_{side}", (-sx * 0.1, -0.15, 1.0), twist=sx * 1.5)
+        fingers(rig, side, (-sx * 0.05, -0.12, 1.0))
+    body = posed_mesh(proxy, "anjali")
+    finish_figure(rig, "anjali", [body, dhoti(rig)] + ornaments(rig, False), {})
+
+
+def venugopala(rig, proxy):
+    rest(rig)
+    # Weight on the left leg, the right crossed over in front with the toe down.
+    aim(rig, "thigh_l", (-0.06, 0.0, -1.0))
+    aim(rig, "calf_l", (-0.02, 0.02, -1.0))
+    aim(rig, "thigh_r", (0.14, -0.22, -0.96))
+    aim(rig, "calf_r", (0.12, 0.2, -0.97))
+    aim(rig, "foot_r", (0.0, -0.45, -0.89))
+    aim(rig, "spine_01", (0.1, 0.0, 1.0))
+    aim(rig, "head", (-0.2, -0.05, 1.0))
+    # The flute held level out to his right from the lips, both hands under it, the right
+    # farther along.
+    head = bone_head(rig, "head")
+    mouth = head + Vector((-0.01, -0.1, 0.0))
+    d = Vector((-0.88, -0.38, -0.12)).normalized()
+    for side, along, pole in (("r", 0.36, (-0.6, 0.3, -1.0)), ("l", 0.15, (0.8, 0.2, -1.0))):
+        reach(rig, side, mouth + d * along + Vector((0, 0, -0.07)), pole)
+        aim(rig, f"hand_{side}", d + Vector((0, 0, 0.3)), twist=1.4 if side == "l" else -1.4)
+        fingers(rig, side, d)
+    body = posed_mesh(proxy, "venugopala")
+    flute = add_cylinder("flute", mouth - d * 0.03, mouth + d * 0.55, 0.013)
+    finish_figure(rig, "venugopala", [body, flute, dhoti(rig)] + ornaments(rig, False), {})
+
+
+MALE_FIGS = {"buddha_seated": buddha_seated, "vishnu": vishnu, "anjali": anjali, "venugopala": venugopala}
+FEMALE_FIGS = {"darpana": darpana, "nartaki": nartaki}
+
+
 def main():
-    rig, proxy = build()
-    buddha_seated(rig, proxy)
-    vishnu(rig, proxy)
+    import sys
+    want = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else list(MALE_FIGS) + list(FEMALE_FIGS)
+    for figs, female in ((MALE_FIGS, False), (FEMALE_FIGS, True)):
+        names = [n for n in figs if n in want]
+        if names:
+            rig, proxy = build(female)
+            for n in names:
+                figs[n](rig, proxy)
 
 
 if __name__ == "__main__":

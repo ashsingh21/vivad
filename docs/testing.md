@@ -6,6 +6,9 @@ pixels only when the numbers point somewhere.
 
 1. **Behaviour: text only.** `just walk` (stairs, roofs, doorways, courtyards), `just sim 3`
    (whole matches with bots). Add a `walk_check` case for every new climbable or enterable thing.
+   Walks also report fall damage: every walk must end unhurt except those marked `hurts` (the
+   jump into the stepwell). Drops of up to 6.5 m are free; `sim` lists "fell to their death"
+   in the feed if bots start walking off edges again.
 2. **Models: text only.** `just mesh assets/models/props/x.gltf` prints triangles per LOD, size
    and height range, open edges, loose pieces and materials: enough to catch a broken export,
    a missing LOD, a model floating or sunk, or a mesh that lost its closure.

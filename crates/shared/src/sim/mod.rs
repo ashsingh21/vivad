@@ -148,6 +148,9 @@ pub struct Kinematic {
     /// Surface normal under the feet while grounded.
     pub ground_normal: Vec3,
     pub mode: MoveMode,
+    /// Highest point since last on the ground on foot (fall damage is by height dropped).
+    /// None while airborne untracked: thrown by a wind astra, which lands harmlessly.
+    pub fall_from: Option<f32>,
 }
 
 /// Previous and current fixed-tick positions so clients can interpolate between ticks.
@@ -232,6 +235,7 @@ pub struct DamageMsg {
 pub enum DamageCause {
     Weapon(String),
     Pralaya,
+    Fall,
 }
 
 /// A feed of eliminations and notable events, consumed by clients.

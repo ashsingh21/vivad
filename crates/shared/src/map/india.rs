@@ -743,6 +743,7 @@ fn stepwell(b: &mut Builder, rng: &mut SmallRng) {
     // each storey and the roof a bridge. The pillar rows flank the stairs, leaving the middle
     // lane clear.
     let mut x = hl;
+    let mut bridges = Vec::new();
     for i in 0..STEPWELL_LEVELS {
         let top = -(i as f32) * lvl;
         let bottom = top - lvl;
@@ -768,17 +769,52 @@ fn stepwell(b: &mut Builder, rng: &mut SmallRng) {
                 }
             }
             b.span(f, Vec3::new(x - landing, -0.5, -hw), Vec3::new(x, 0.0, hw), Mat::Sandstone);
+            // The railings along the bridge's edges (stepwell.py `railing`).
+            for ex in [x - landing + 0.14, x - 0.14] {
+                b.span(f, Vec3::new(ex - 0.12, 0.0, -hw + 2.5), Vec3::new(ex + 0.12, 0.7, hw - 2.5), Mat::Sandstone);
+            }
         });
+        // Kiosks at the bridge's ends, where it meets the rims.
+        for s in [-1.0, 1.0] {
+            // 2.6 m: big enough that the dome clears a standing warrior, small enough that the
+            // pillars stay inside the railings.
+            b.chhatri(f, Vec3::new(x - landing / 2.0, 0.0, s * (hw - 1.4)), 2.6, Mat::Sandstone);
+        }
+        bridges.push((x - landing - 0.1, x + 0.1));
         if i % 2 == 0 {
             b.chest(f, Vec3::new(x - landing / 2.0, bottom, if i % 4 == 0 { hw - 1.6 } else { -hw + 1.6 }), PI, ChestKind::Peti);
         }
+        // Daylight bounced off the sunlit walls into the shaft, stronger the deeper it goes.
+        if i >= 1 {
+            stepwell_fill(b, f.p(Vec3::new(x - landing / 2.0, bottom + 2.4, 0.0)), 1.0 + 0.25 * i as f32);
+        }
         x -= landing;
     }
+    stepwell_fill(b, f.p(Vec3::new(-hl + 4.0, -dp + 2.6, 0.0)), 2.6);
+    // Railings on the coping along the long rims, broken where the bridges meet them.
+    bridges.sort_by(|a: &(f32, f32), b2| a.0.total_cmp(&b2.0));
+    let mut edges = vec![-hl + 0.4];
+    edges.extend(bridges.iter().flat_map(|&(a, c)| [a, c]));
+    edges.push(hl - 0.4);
+    hidden(b, |b| {
+        for seg in edges.chunks(2) {
+            let (a, c) = (seg[0], seg[1]);
+            if c - a > 1.5 {
+                for s in [-1.0, 1.0] {
+                    let z = s * (hw - 0.35);
+                    b.span(f, Vec3::new(a + 0.2, 0.0, z - 0.12), Vec3::new(c - 0.2, 1.09, z + 0.12), Mat::Sandstone);
+                }
+            }
+        }
+    });
     // The well head on the bottom floor: a parapet ring (the model) round a pool.
     let (wx, wr) = STEPWELL_WELL;
     hidden(b, |b| b.cyl(f, Vec3::new(wx, -dp, 0.0), wr, 0.9, Mat::Sandstone));
     b.push(f.p(Vec3::new(wx, -dp + 0.6, 0.0)), Quat::IDENTITY, super::Shape::Cylinder { radius: wr - 0.55, height: 0.05 }, Mat::Water, false, true);
     b.chest(f, Vec3::new(wx + 5.5, -dp, -hw + 1.5), 0.0, ChestKind::Kalash);
+    for s in [-1.0, 1.0] {
+        samai(b, f, Vec3::new(wx + 1.0, -dp, s * (wr + 1.3)));
+    }
     for _ in 0..4 {
         b.loot(f, Vec3::new(rng.random_range(-hl + 3.0..hl - 3.0), 0.3, rng.random_range(-hw - 6.0..-hw - 2.0)));
     }
@@ -793,6 +829,11 @@ fn stepwell(b: &mut Builder, rng: &mut SmallRng) {
     for (cx, cz) in [(hl + 5.0, hw + 5.0), (hl + 5.0, -hw - 5.0), (-hl - 5.0, hw + 5.0), (-hl - 5.0, -hw - 5.0)] {
         b.chhatri(f, Vec3::new(cx, 0.0, cz), 3.5, Mat::Sandstone);
     }
+}
+
+/// Unseen warm fill in the stepwell shaft (`k` scales it).
+fn stepwell_fill(b: &mut Builder, pos: Vec3, k: f32) {
+    b.map.lamps.push(Lamp { pos, color: Vec3::new(1.0, 0.84, 0.62), lumens: 260_000.0 * k, range: 15.0, flames: None });
 }
 
 /// A pavilion's two pillar rows (local x), inset from its landing's ends.

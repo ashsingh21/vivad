@@ -8,7 +8,7 @@ use super::flow::Match;
 use super::loot::{Chest, INTERACT_RANGE, Pickup};
 use super::zone::Zone;
 use super::{
-    EYE_OFFSET, Eliminated, Health, HitMsg, Inventory, Kinematic, MoveMode, PlayerIntent, SimSet, Warrior, btn, solid_mask,
+    EYE_OFFSET, Eliminated, HALF_HEIGHT, Health, HitMsg, Inventory, Kinematic, MoveMode, PlayerIntent, SimSet, Warrior, btn, solid_mask,
 };
 use crate::items::{AstraEffect, ItemDb, ItemKind};
 
@@ -59,7 +59,23 @@ pub struct BotPlugin;
 
 impl Plugin for BotPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(FixedUpdate, drive_bots.in_set(SimSet::Brains));
+        app.add_systems(FixedUpdate, (drive_bots, mind_the_drop).chain().in_set(SimSet::Brains));
+    }
+}
+
+/// Bots on foot don't walk off a drop that would hurt (cliff tops, roofs, the stepwell's rim):
+/// with no ground within 6 m below the next step (on foot or mid-jump), they stop.
+fn mind_the_drop(mut bots: Query<(Entity, &Transform, &mut PlayerIntent, &Kinematic), (With<BotBrain>, Without<Eliminated>)>, spatial: SpatialQuery) {
+    for (me, tf, mut intent, kin) in &mut bots {
+        let wish = super::movement::wish_dir(&intent);
+        if kin.mode != MoveMode::Ground || wish == Vec3::ZERO {
+            continue;
+        }
+        let ahead = tf.translation + wish * 1.2;
+        let filter = SpatialQueryFilter::from_mask(solid_mask()).with_excluded_entities([me]);
+        if spatial.cast_ray(ahead, Dir3::NEG_Y, HALF_HEIGHT + 6.0, true, &filter).is_none() {
+            intent.move_axis = Vec2::ZERO;
+        }
     }
 }
 

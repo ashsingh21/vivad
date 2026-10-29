@@ -3,7 +3,7 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-use super::{CAPSULE_LENGTH, CAPSULE_RADIUS, Eliminated, Kinematic, MoveMode, PlayerIntent, SimSet, btn, solid_mask};
+use super::{CAPSULE_LENGTH, CAPSULE_RADIUS, DamageCause, DamageMsg, Eliminated, Kinematic, MoveMode, PlayerIntent, SimSet, btn, solid_mask};
 
 pub const GRAVITY: f32 = 22.0;
 pub const JUMP_SPEED: f32 = 7.6;
@@ -18,6 +18,11 @@ pub const GLIDE_FALL: f32 = 6.5;
 pub const GLIDE_HORIZ: f32 = 14.0;
 /// Glider opens automatically at this height above ground.
 pub const AUTO_GLIDE_HEIGHT: f32 = 40.0;
+/// Landing faster than this hurts: a drop of 6.5 m (two storeys) is safe.
+pub const SAFE_LANDING: f32 = 17.0;
+/// Damage per m/s of landing speed over SAFE_LANDING: off a haveli's top roof (11 m) ~30, into
+/// the stepwell from its rim (21 m) ~80, off the Ajanta cliff (24 m) ~95.
+pub const FALL_DAMAGE: f32 = 6.0;
 /// Steepest walkable slope (cosine of ~48 degrees).
 const MIN_GROUND_NORMAL_Y: f32 = 0.66;
 
@@ -70,6 +75,7 @@ fn move_warriors(
     move_and_slide: MoveAndSlide,
     spatial: SpatialQuery,
     time: Res<Time>,
+    mut damage: MessageWriter<DamageMsg>,
 ) {
     let dt = time.delta_secs();
     let config = MoveAndSlideConfig::default();
@@ -149,6 +155,17 @@ fn move_warriors(
                 kin.velocity.y = 0.0;
             }
         }
+        // Fall damage by the height actually dropped (a warrior wedged on a ledge can build up
+        // speed without moving), as the speed that drop would give. Gliding lands softly.
+        let y = tf.translation.y;
+        let peak = kin.fall_from.map(|f| f.max(y));
+        if let (true, Some(peak)) = (kin.grounded, peak) {
+            let landing = (2.0 * GRAVITY * (peak - y)).sqrt();
+            if !was_grounded && landing > SAFE_LANDING {
+                damage.write(DamageMsg { target: entity, amount: (landing - SAFE_LANDING) * FALL_DAMAGE, source: None, headshot: false, cause: DamageCause::Fall });
+            }
+        }
+        kin.fall_from = if kin.grounded || kin.mode != MoveMode::Ground { Some(y) } else { peak };
         if kin.grounded && matches!(kin.mode, MoveMode::Freefall | MoveMode::Gliding) {
             kin.mode = MoveMode::Ground;
         }

@@ -354,9 +354,8 @@ fn astra_burst(
                     let out = d.with_y(0.0).normalize_or(Vec3::X);
                     k.velocity = out * impulse * 0.45 + Vec3::Y * impulse;
                     k.grounded = false;
-                    if k.mode == MoveMode::Ground && d.y > -3.0 {
-                        // Lands as a normal jump; stays in Ground mode with gravity.
-                    }
+                    // Lands as a normal jump, without fall damage.
+                    k.fall_from = None;
                 }
             }
         }
@@ -450,6 +449,7 @@ fn apply_damage(
             }
             let how = match &msg.cause {
                 DamageCause::Pralaya => "was consumed by the Pralaya".to_string(),
+                DamageCause::Fall => "fell to their death".to_string(),
                 DamageCause::Weapon(id) => {
                     let killer = msg.source.and_then(|s| names.get(s).ok()).map(|k| k.name.clone()).unwrap_or_default();
                     format!("was felled by {killer} ({})", db.get(id).name)

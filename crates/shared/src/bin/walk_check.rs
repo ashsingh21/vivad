@@ -10,10 +10,22 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use shared::map::MapLayout;
-use shared::sim::{CAPSULE_LENGTH, CAPSULE_RADIUS, HALF_HEIGHT, Kinematic, Layer, MatchConfig, MoveMode, PlayerIntent, SimPlugin};
+use shared::sim::{CAPSULE_LENGTH, CAPSULE_RADIUS, DamageCause, DamageMsg, HALF_HEIGHT, Health, Inventory, Kinematic, Layer, MatchConfig, MoveMode, PlayerIntent, SimPlugin};
 
 #[derive(Component)]
 struct Walker;
+
+/// Fall damage the walkers took (other damage, like the closing zone, doesn't count).
+#[derive(Resource, Default)]
+struct Falls(f32);
+
+fn record_falls(mut msgs: MessageReader<DamageMsg>, walkers: Query<(), With<Walker>>, mut falls: ResMut<Falls>) {
+    for m in msgs.read() {
+        if m.cause == DamageCause::Fall && walkers.contains(m.target) {
+            falls.0 += m.amount;
+        }
+    }
+}
 
 struct Case {
     name: String,
@@ -26,6 +38,8 @@ struct Case {
     /// Only count feet heights where this holds (default: everywhere).
     track: Box<dyn Fn(Vec3) -> bool>,
     want: String,
+    /// Whether the walk should end hurt (a fall); every other walk must end unhurt.
+    hurts: bool,
 }
 
 fn yaw_for(dir: Vec3) -> f32 {
@@ -39,6 +53,8 @@ fn main() {
         .add_plugins((MinimalPlugins, TransformPlugin, AssetPlugin::default(), bevy::mesh::MeshPlugin, bevy::diagnostic::DiagnosticsPlugin))
         .add_plugins(PhysicsPlugins::default())
         .add_plugins(SimPlugin { items_ron: items })
+        .init_resource::<Falls>()
+        .add_systems(Update, record_falls)
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)));
     app.finish();
     app.cleanup();
@@ -58,6 +74,7 @@ fn main() {
             pass: Box::new(|p, _, _| p.y > 24.5 && p.x < -194.0),
             want: "on the cliff top (y > 24.5, x < -194)".into(),
             track: everywhere(),
+            hurts: false,
         },
         Case {
             name: "ajanta stair down".into(),
@@ -67,6 +84,7 @@ fn main() {
             pass: Box::new(|p, _, _| p.x > -162.0),
             want: "back past the foot (x > -162)".into(),
             track: everywhere(),
+            hurts: false,
         },
         Case {
             // From the entrance on the east rim down all seven flights (pillars flank the lane).
@@ -77,6 +95,7 @@ fn main() {
             pass: Box::new(|p, _, _| p.y < -20.0 + HALF_HEIGHT + 0.5 && p.x < -129.0),
             want: "on the bottom floor by the well (y ~ -21, x < -129)".into(),
             track: everywhere(),
+            hurts: false,
         },
         Case {
             name: "stepwell back up".into(),
@@ -86,6 +105,30 @@ fn main() {
             pass: Box::new(|p, _, _| p.y > 0.5 && p.x > -80.0),
             want: "out at the entrance (x > -80, y > 0.5)".into(),
             track: everywhere(),
+            hurts: false,
+        },
+        Case {
+            // Across the first pavilion's roof, rim to rim, between its railings and through
+            // the kiosks at both ends.
+            name: "stepwell bridge crossing".into(),
+            start: ground(-85.1, 81.0),
+            dir: Vec3::Z,
+            seconds: 5.5,
+            pass: Box::new(|p, lo, _| p.z > 108.0 && lo > -0.2),
+            want: "over on the south rim, never dropping (z > 108)".into(),
+            track: everywhere(),
+            hurts: false,
+        },
+        Case {
+            // Over the west rim: a 21 m drop to the bottom floor (the stairs above must not hurt).
+            name: "stepwell jump from the rim".into(),
+            start: ground(-147.0, 101.0),
+            dir: Vec3::X,
+            seconds: 3.0,
+            pass: Box::new(|p, _, _| p.y < -20.0 + HALF_HEIGHT + 0.5),
+            want: "on the bottom floor, hurt".into(),
+            track: everywhere(),
+            hurts: true,
         },
         Case {
             name: "stupa stair to the medhi".into(),
@@ -95,6 +138,7 @@ fn main() {
             pass: Box::new(|p, _, _| p.y > 3.5 && p.x > -168.5),
             want: "up on the drum terrace (y > 3.5)".into(),
             track: everywhere(),
+            hurts: false,
         },
     ];
     for (i, hz) in [-48.0, -16.0, 16.0, 48.0].iter().enumerate() {
@@ -106,6 +150,7 @@ fn main() {
             pass: Box::new(|p, _, _| p.x < -203.0),
             want: "deep inside the hall (x < -203)".into(),
             track: everywhere(),
+            hurts: false,
         });
     }
     // Hut roofs: land on the front slope, walk over the ridge and off the back eave.
@@ -128,6 +173,7 @@ fn main() {
                 let l = inv * (p - pos);
                 l.x.abs() < hw - 0.3 && l.z.abs() < hd - 0.3
             }),
+            hurts: false,
         });
     }
 
@@ -150,6 +196,7 @@ fn main() {
             pass: Box::new(move |p, _, _| p.with_y(0.0).distance(center) < 2.2),
             want: "at the tulsi platform".into(),
             track: everywhere(),
+            hurts: false,
         });
         // The stair flights in the back-left (see `haveli`): the jharokhas sit at +-0.3 w.
         let Some(jh) = layout.ornaments.iter().filter(|o| o.model.contains("jharokha") && o.pos.distance(gate.pos) < 12.0).map(|o| o.pos.with_y(0.0).distance(gate.pos.with_y(0.0))).reduce(f32::max) else { continue };
@@ -167,6 +214,7 @@ fn main() {
             pass: Box::new(|_, _, hi| hi > 3.3),
             want: "up on the first floor (feet > 3.3)".into(),
             track: everywhere(),
+            hurts: false,
         });
         let second = local(Vec3::new(sx + run + 0.7, 3.4 + 1.2, lane_z(1.0)));
         cases.push(Case {
@@ -177,6 +225,7 @@ fn main() {
             pass: Box::new(|_, _, hi| hi > 6.7),
             want: "up in the barsati on the roof (feet > 6.7)".into(),
             track: everywhere(),
+            hurts: false,
         });
     }
 
@@ -197,6 +246,9 @@ fn main() {
                 Transform::from_translation(c.start),
                 RigidBody::Kinematic,
                 Collider::capsule(CAPSULE_RADIUS, CAPSULE_LENGTH),
+                Health::default(),
+                Inventory::new("khadga"),
+                shared::sim::Warrior { name: "walker".into(), is_bot: false, look: 0, kills: 0 },
                 CollisionLayers::new(Layer::Character, [Layer::World, Layer::Door]),
             ))
             .id();
@@ -219,11 +271,12 @@ fn main() {
             }
         }
         let p = app.world().get::<Transform>(id).unwrap().translation;
-        let ok = (c.pass)(p, lo, hi);
+        let fall = std::mem::take(&mut app.world_mut().resource_mut::<Falls>().0);
+        let ok = (c.pass)(p, lo, hi) && (fall > 0.0) == c.hurts;
         failed += (!ok) as u32;
         println!(
-            "{} {:<32} start ({:.1},{:.1},{:.1}) end ({:.1},{:.1},{:.1}) feet {:.2}..{:.2}  want {}",
-            if ok { "PASS" } else { "FAIL" }, c.name, c.start.x, c.start.y, c.start.z, p.x, p.y, p.z, lo, hi, c.want
+            "{} {:<32} start ({:.1},{:.1},{:.1}) end ({:.1},{:.1},{:.1}) feet {:.2}..{:.2} fall {:.0}  want {}",
+            if ok { "PASS" } else { "FAIL" }, c.name, c.start.x, c.start.y, c.start.z, p.x, p.y, p.z, lo, hi, fall, c.want
         );
         app.world_mut().despawn(id);
     }
