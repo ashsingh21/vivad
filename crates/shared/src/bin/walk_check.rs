@@ -120,6 +120,49 @@ fn main() {
             hurts: false,
         },
         Case {
+            // Garh Qila: up the hill and through the gate into the court.
+            name: "fort gate into the court".into(),
+            start: ground(125.0, -103.0),
+            dir: Vec3::NEG_Z,
+            seconds: 5.0,
+            pass: Box::new(|p, _, _| p.z < -125.0 && p.y > 18.5),
+            want: "in the court (z < -125, on the summit)".into(),
+            track: everywhere(),
+            hurts: false,
+        },
+        Case {
+            name: "fort stair to the wall walk".into(),
+            start: Vec3::new(136.0, 18.0 + HALF_HEIGHT + 0.3, -153.5),
+            dir: Vec3::X,
+            seconds: 3.0,
+            pass: Box::new(|_, _, hi| hi > 25.7),
+            want: "up on the wall walk (feet > 25.7)".into(),
+            track: everywhere(),
+            hurts: false,
+        },
+        Case {
+            // Along the back wall's walk, past a mid-wall bastion, into the corner bastion
+            // (between its pavilion's pillars).
+            name: "fort wall walk to a bastion".into(),
+            start: Vec3::new(112.0, 26.0 + HALF_HEIGHT + 0.3, -156.0),
+            dir: Vec3::X,
+            seconds: 8.0,
+            pass: Box::new(|p, lo, _| p.x > 150.5 && lo > 25.7),
+            want: "in the corner bastion, never off the walk (x > 150.5)".into(),
+            track: everywhere(),
+            hurts: false,
+        },
+        Case {
+            name: "fort stair to the diwan roof".into(),
+            start: Vec3::new(106.7, 18.0 + HALF_HEIGHT + 0.3, -149.6),
+            dir: Vec3::X,
+            seconds: 3.5,
+            pass: Box::new(|_, _, hi| hi > 23.8),
+            want: "up on the Diwan-i-Aam roof (feet > 23.8)".into(),
+            track: everywhere(),
+            hurts: false,
+        },
+        Case {
             // Over the west rim: a 21 m drop to the bottom floor (the stairs above must not hurt).
             name: "stepwell jump from the rim".into(),
             start: ground(-147.0, 101.0),

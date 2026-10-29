@@ -17,7 +17,7 @@ assets:
 # Buildings and landmarks: temple, arches/jharokha/chhatri, Hampi, huts and stalls, stupa and
 # Ajanta caves, stepwell (each script bakes, decimates a LOD1 and exports GLBs to assets/models/props)
 architecture:
-    for s in temple ornaments hampi vernacular buddhist stepwell; do {{blender}} -b --factory-startup -P tools/blender/architecture/$s.py 2>&1 | grep -E '^\[|Error|Traceback' || true; done
+    for s in temple ornaments hampi vernacular buddhist stepwell fort; do {{blender}} -b --factory-startup -P tools/blender/architecture/$s.py 2>&1 | grep -E '^\[|Error|Traceback' || true; done
 
 # Carved figures for the kit (needs MPFB; writes tools/blender/architecture/figures/, which the
 # architecture scripts read, so run this first when a figure changes)

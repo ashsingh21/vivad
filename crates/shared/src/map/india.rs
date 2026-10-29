@@ -931,52 +931,210 @@ const MANDAPA_RUIN_PILLARS: [[Option<f32>; 4]; 6] = [
 
 // ------------------------------------------------------------------ Garh Qila
 
+pub const FORT: &str = "models/props/fort.gltf";
+// The fort's plan, shared with tools/blender/architecture/fort.py (keep them in step). Local
+// frame at FORT_C: the gate in the +Z wall, the Diwan-i-Aam against the -Z wall.
+const FORT_HW: f32 = 27.0;
+const FORT_HD: f32 = 21.0;
+/// Curtain wall: the wall walk's height above the summit, and the wall's thickness.
+const FORT_WALL_H: f32 = 8.0;
+const FORT_WALL_T: f32 = 2.4;
+/// The outer face leans in by this much from foot to wall walk.
+const FORT_BATTER: f32 = 0.4;
+const FORT_MERLON_STEP: f32 = 2.2;
+const FORT_GATE: (f32, f32) = (4.4, 5.5);
+const FORT_POSTERN: (f32, f32) = (3.0, 3.6);
+
+/// Towers on the curtain, (centre (x, z), radius): corner bastions, mid-wall bastions standing
+/// out from the outer face, and the two octagonal towers flanking the gate.
+fn fort_towers() -> Vec<(Vec2, f32)> {
+    let (hw, hd, t) = (FORT_HW, FORT_HD, FORT_WALL_T / 2.0);
+    let mut v: Vec<(Vec2, f32)> = [(-hw, -hd), (hw, -hd), (hw, hd), (-hw, hd)].iter().map(|&(x, z)| (Vec2::new(x, z), 4.2)).collect();
+    for c in [Vec2::new(-6.0, -hd - t), Vec2::new(6.0, -hd - t), Vec2::new(hw + t, 0.0), Vec2::new(-hw - t, -10.5), Vec2::new(-hw - t, 10.5)] {
+        v.push((c, 3.2));
+    }
+    for x in [-5.0, 5.0] {
+        v.push((Vec2::new(x, hd), 2.4));
+    }
+    v
+}
+
+/// The four curtain walls, clockwise so each wall's local +Z faces out, with their openings.
+fn fort_sides() -> [(Vec2, Vec2, Vec<Opening>); 4] {
+    let (hw, hd) = (FORT_HW, FORT_HD);
+    [
+        (Vec2::new(-hw, hd), Vec2::new(hw, hd), vec![Opening::arch(hw, FORT_GATE.0, FORT_GATE.1)]),
+        (Vec2::new(hw, hd), Vec2::new(hw, -hd), vec![]),
+        (Vec2::new(hw, -hd), Vec2::new(-hw, -hd), vec![]),
+        (Vec2::new(-hw, -hd), Vec2::new(-hw, hd), vec![Opening::arch(hd, FORT_POSTERN.0, FORT_POSTERN.1)]),
+    ]
+}
+
+/// Stretches of a wall's parapet (distance along it): broken where a tower stands on the wall.
+fn fort_parapet_runs(a: Vec2, c: Vec2) -> Vec<(f32, f32)> {
+    let len = a.distance(c);
+    let dir = (c - a) / len;
+    let mut cuts: Vec<(f32, f32)> = fort_towers()
+        .into_iter()
+        .filter(|(p, r)| {
+            let along = (*p - a).dot(dir);
+            let off = (*p - a).perp_dot(dir).abs();
+            off < r + FORT_WALL_T && along > -r && along < len + r
+        })
+        .map(|(p, r)| {
+            let along = (p - a).dot(dir);
+            (along - r + 0.3, along + r - 0.3)
+        })
+        .collect();
+    cuts.sort_by(|p, q| p.0.total_cmp(&q.0));
+    let mut runs = vec![];
+    let mut s = 0.0;
+    for (c0, c1) in cuts {
+        if c0 > s + 0.5 {
+            runs.push((s, c0));
+        }
+        s = s.max(c1);
+    }
+    if len > s + 0.5 {
+        runs.push((s, len));
+    }
+    runs
+}
+
+/// Merlon centres along a parapet run, evenly spaced and centred.
+fn fort_merlons(s: f32, e: f32) -> Vec<f32> {
+    let n = ((e - s) / FORT_MERLON_STEP).floor() as i32;
+    let off = (e - s - (n - 1) as f32 * FORT_MERLON_STEP) / 2.0;
+    (0..n.max(0)).map(|i| s + off + i as f32 * FORT_MERLON_STEP).collect()
+}
+
+/// Parapet pieces round a tower's top: (angle, chord) for the ones on its outer side.
+fn fort_ring(c: Vec2, r: f32) -> Vec<(f32, f32)> {
+    let n = ((std::f32::consts::TAU * r / FORT_MERLON_STEP).round() as i32).max(6);
+    let rr = r - 0.4;
+    let grow = Vec2::new(FORT_HW, FORT_HD) + FORT_WALL_T / 2.0;
+    (0..n)
+        .map(|k| (k as f32 + 0.5) * std::f32::consts::TAU / n as f32)
+        .filter(|&a| {
+            let p = c + Vec2::new(a.cos(), a.sin()) * rr;
+            !(p.x.abs() < grow.x && p.y.abs() < grow.y)
+        })
+        .map(|a| (a, 2.0 * rr * (std::f32::consts::PI / n as f32).sin() + 0.06))
+        .collect()
+}
+
 fn fort(b: &mut Builder, rng: &mut SmallRng) {
     let f = Frame::new(Vec3::new(FORT_C.x, 0.0, FORT_C.y), 0.0);
-    // The fort crowns a natural hill (a terrain mesa); its summit is flat at FORT_TOP.
+    // The fort crowns a natural hill (a terrain mesa); its summit is flat at FORT_TOP. Its
+    // walls, towers, gate and the Diwan-i-Aam are the fort model (fort.py) over hidden colliders.
     let top = FORT_TOP;
-    let (w, d) = (56.0, 44.0);
-    // Curtain walls with a gate on the south side, corner bastions.
-    let hw = w / 2.0 - 1.0;
-    let hd = d / 2.0 - 1.0;
-    let wall_h = 7.0;
-    b.wall(f, Vec2::new(-hw, hd), Vec2::new(hw, hd), top, wall_h, 2.0, Mat::RedSandstone, &[Opening::arch(hw - 8.0, 5.0, 5.0)]);
-    b.arch_openings(f, Vec2::new(-hw, hd), Vec2::new(hw, hd), top, 2.0, &[Opening::arch(hw - 8.0, 5.0, 5.0)]);
-    b.arch_openings(f, Vec2::new(-hw, -hd), Vec2::new(-hw, hd), top, 2.0, &[Opening::arch(hd, 4.0, 4.0)]);
-    b.wall(f, Vec2::new(hw, hd), Vec2::new(hw, -hd), top, wall_h, 2.0, Mat::RedSandstone, &[]);
-    b.wall(f, Vec2::new(hw, -hd), Vec2::new(-hw, -hd), top, wall_h, 2.0, Mat::RedSandstone, &[]);
-    b.wall(f, Vec2::new(-hw, -hd), Vec2::new(-hw, hd), top, wall_h, 2.0, Mat::RedSandstone, &[Opening::arch(hd, 4.0, 4.0)]);
-    for (a, c) in [(Vec2::new(-hw, hd), Vec2::new(hw, hd)), (Vec2::new(hw, hd), Vec2::new(hw, -hd)),
-                   (Vec2::new(hw, -hd), Vec2::new(-hw, -hd)), (Vec2::new(-hw, -hd), Vec2::new(-hw, hd))] {
-        b.merlons(f, a, c, top + wall_h, 2.0, 2.2, Vec2::new(1.1, 1.0), Mat::RedSandstone);
-        band(b, f, a, c, top + wall_h - 0.5, 0.3, 2.5, Mat::Sandstone);
-        band(b, f, a, c, top, 0.8, 2.4, Mat::Sandstone);
+    let (hw, hd, h, t) = (FORT_HW, FORT_HD, FORT_WALL_H, FORT_WALL_T);
+    let walk = top + h;
+    b.map.props.push(Prop { model: FORT, pos: f.p(Vec3::Y * top), yaw: f.yaw, scale: 1.0, trunk: None });
+    hidden(b, |b| {
+        for (a, c, ops) in fort_sides() {
+            b.wall(f, a, c, top, h, t, Mat::RedSandstone, &ops);
+            // Parapet on the outer edge of the wall walk, merlons on it.
+            let dir = c - a;
+            let wf = f.child(Vec3::new(a.x, walk, a.y), (-dir.y).atan2(dir.x));
+            let (z0, z1) = (t / 2.0 - FORT_BATTER - 0.6, t / 2.0 - FORT_BATTER);
+            for (s, e) in fort_parapet_runs(a, c) {
+                b.span(wf, Vec3::new(s, 0.0, z0), Vec3::new(e, 1.0, z1), Mat::RedSandstone);
+                for x in fort_merlons(s, e) {
+                    b.span(wf, Vec3::new(x - 0.55, 1.0, z0), Vec3::new(x + 0.55, 1.9, z1), Mat::RedSandstone);
+                }
+            }
+        }
+        // Towers: solid to the wall walk, a ring of parapet and merlons round the outer side.
+        for (c, r) in fort_towers() {
+            b.cyl(f, Vec3::new(c.x, top, c.y), r, h, Mat::RedSandstone);
+            for (a, chord) in fort_ring(c, r) {
+                let p = c + Vec2::new(a.cos(), a.sin()) * (r - 0.4);
+                // Local X along the tangent, Z outward.
+                let rf = f.child(Vec3::new(p.x, walk, p.y), FRAC_PI_2 - a);
+                b.span(rf, Vec3::new(-chord / 2.0, 0.0, -0.3), Vec3::new(chord / 2.0, 1.0, 0.3), Mat::RedSandstone);
+                b.span(rf, Vec3::new(-0.55, 1.0, -0.3), Vec3::new(0.55, 1.9, 0.3), Mat::RedSandstone);
+            }
+        }
+    });
+    // Pavilions on the corner bastions and the gate towers (2.6 m and up clear a warrior).
+    for (c, r) in fort_towers() {
+        if r > 4.0 {
+            b.chhatri(f, Vec3::new(c.x, walk, c.y), 3.2, Mat::RedSandstone);
+        } else if r < 3.0 {
+            b.chhatri(f, Vec3::new(c.x, walk, c.y), 2.6, Mat::RedSandstone);
+        }
     }
-    for (x, z) in [(-hw, -hd), (hw, -hd), (hw, hd), (-hw, hd)] {
-        b.deco_cyl(f, Vec3::new(x, top + wall_h + 2.6, z), 4.4, 0.4, Mat::Sandstone);
-        b.deco_cyl(f, Vec3::new(x, top, z), 4.3, 1.0, Mat::Sandstone);
-        b.cyl(f, Vec3::new(x, top, z), 4.0, wall_h + 3.0, Mat::RedSandstone);
-        b.chhatri(f, Vec3::new(x, top + wall_h + 3.0, z), 4.5, Mat::RedSandstone);
+    // Jharokhas (covered balconies) on the outer faces between the towers, below the parapet.
+    let jz = 5.6;
+    for (a, c, _) in fort_sides() {
+        let dir = c - a;
+        let wf = f.child(Vec3::new(a.x, top, a.y), (-dir.y).atan2(dir.x));
+        let out = t / 2.0 - FORT_BATTER * jz / h;
+        for (s, e) in fort_parapet_runs(a, c) {
+            if e - s > 9.0 {
+                b.ornament(wf, Vec3::new((s + e) / 2.0, jz, out), 0.0, JHAROKHA, Vec3::ONE);
+            }
+        }
     }
-    // Wall walk: stairs up inside the north-east corner.
-    b.stairs(f.child(Vec3::new(hw - 14.0, top, -hd + 2.5), 0.0), Vec3::ZERO, 10.0, wall_h, 2.0, Mat::RedSandstone);
-    b.span(f, Vec3::new(hw - 4.0, top + wall_h - 0.3, -hd + 1.0), Vec3::new(hw - 1.0, top + wall_h, -hd + 4.0), Mat::RedSandstone);
-    // Palace (mahal) around a courtyard: four houses facing inward.
-    let pf = f.child(Vec3::new(0.0, top, -4.0), 0.0);
-    for (pos, yaw) in [
-        (Vec3::new(0.0, 0.0, -11.0), 0.0),
-        (Vec3::new(0.0, 0.0, 11.0), PI),
-        (Vec3::new(-13.0, 0.0, 0.0), FRAC_PI_2),
-        (Vec3::new(13.0, 0.0, 0.0), -FRAC_PI_2),
+    // Stairs up to the wall walk: inside the north-east and south-west corners.
+    for (start, yaw, land) in [
+        (Vec3::new(hw - 14.0, top, -hd + 2.5), 0.0, (Vec3::new(hw - 4.0, walk - 0.3, -hd + t / 2.0), Vec3::new(hw - t / 2.0, walk, -hd + 3.5))),
+        (Vec3::new(-hw + 14.0, top, hd - 2.5), PI, (Vec3::new(-hw + t / 2.0, walk - 0.3, hd - 3.5), Vec3::new(-hw + 4.0, walk, hd - t / 2.0))),
     ] {
+        b.stairs(f.child(start, yaw), Vec3::ZERO, 10.0, h, 2.0, Mat::RedSandstone);
+        b.span(f, land.0, land.1, Mat::RedSandstone);
+    }
+    // Diwan-i-Aam: a pillared hall of audience on a plinth against the -Z wall, roof walkable.
+    hidden(b, |b| {
+        b.span(f, Vec3::new(-9.0, top, -18.4), Vec3::new(9.0, top + 1.0, -10.8), Mat::RedSandstone);
+        for x in DIWAN_COLS {
+            for z in DIWAN_ROWS {
+                b.cyl(f, Vec3::new(x, top + 1.0, z), 0.3, 4.2, Mat::RedSandstone);
+            }
+        }
+        b.span(f, Vec3::new(-9.3, top + 5.2, -18.7), Vec3::new(9.3, top + 6.0, -10.5), Mat::RedSandstone);
+        // Roof parapet, open on the west where the stair arrives.
+        let (y0, y1) = (top + 6.0, top + 6.8);
+        b.span(f, Vec3::new(-9.3, y0, -10.8), Vec3::new(9.3, y1, -10.5), Mat::RedSandstone);
+        b.span(f, Vec3::new(-9.3, y0, -18.7), Vec3::new(9.3, y1, -18.4), Mat::RedSandstone);
+        b.span(f, Vec3::new(9.0, y0, -18.4), Vec3::new(9.3, y1, -10.8), Mat::RedSandstone);
+        b.span(f, Vec3::new(-9.3, y0, -18.4), Vec3::new(-9.0, y1, -15.7), Mat::RedSandstone);
+        b.span(f, Vec3::new(-9.3, y0, -13.5), Vec3::new(-9.0, y1, -10.8), Mat::RedSandstone);
+    });
+    b.stairs(f.child(Vec3::new(0.0, top, -9.2), FRAC_PI_2), Vec3::ZERO, 1.6, 1.0, 8.0, Mat::RedSandstone);
+    b.stairs(f.child(Vec3::new(-17.3, top, -14.6), 0.0), Vec3::ZERO, 8.0, 6.0, 2.0, Mat::RedSandstone);
+    for (x, z) in [(-7.9, -11.9), (7.9, -11.9), (7.9, -17.3)] {
+        b.chhatri(f, Vec3::new(x, top + 6.0, z), 2.0, Mat::RedSandstone);
+    }
+    b.chest(f, Vec3::new(0.0, top + 1.0, -16.6), 0.0, ChestKind::Peti);
+    b.loot(f, Vec3::new(3.0, top + 6.3, -14.6));
+    // Palace wings either side of the court.
+    let pf = f.child(Vec3::new(0.0, top, -4.0), 0.0);
+    for (pos, yaw) in [(Vec3::new(-13.0, 0.0, 0.0), FRAC_PI_2), (Vec3::new(13.0, 0.0, 0.0), -FRAC_PI_2)] {
         house(b, rng, pf.child(pos, yaw), 12.0, 7.0, 2, Mat::RedSandstone);
     }
-    b.chest(pf, Vec3::ZERO, 0.0, ChestKind::Kalash);
-    b.cyl(pf, Vec3::new(0.0, 0.0, 3.0), 2.0, 0.6, Mat::Marble);
+    // Char-bagh: a marble platform with the treasure, water channels running out in a cross.
+    b.cyl(pf, Vec3::ZERO, 2.2, 0.5, Mat::Marble);
+    b.chest(pf, Vec3::new(0.0, 0.5, 0.0), 0.0, ChestKind::Kalash);
+    // Visual only, ankle high: kerbs that collided would stop anyone crossing the court.
+    for (dir, len) in [(Vec2::X, 7.5), (Vec2::NEG_X, 7.5), (Vec2::NEG_Y, 5.1), (Vec2::Y, 14.0)] {
+        let cf = pf.child(Vec3::ZERO, (-dir.y).atan2(dir.x));
+        let deco = |b: &mut Builder, lo: Vec3, hi: Vec3, mat| b.deco(cf, (lo + hi) / 2.0, hi - lo, mat);
+        deco(b, Vec3::new(2.0, -0.2, -0.4), Vec3::new(len, 0.06, 0.4), Mat::Water);
+        for s in [-1.0, 1.0] {
+            deco(b, Vec3::new(2.0, -0.2, s * 0.4), Vec3::new(len + 0.2, 0.12, s * 0.6), Mat::Marble);
+        }
+        deco(b, Vec3::new(len, -0.2, -0.4), Vec3::new(len + 0.2, 0.12, 0.4), Mat::Marble);
+    }
     for _ in 0..5 {
-        b.loot(f, Vec3::new(rng.random_range(-20.0..20.0), top + 0.3, rng.random_range(10.0..18.0)));
+        b.loot(f, Vec3::new(rng.random_range(-7.0..7.0), top + 0.3, rng.random_range(3.0..16.0)));
     }
 }
+
+/// The Diwan-i-Aam's pillar grid (local x, z).
+const DIWAN_COLS: [f32; 6] = [-8.4, -5.04, -1.68, 1.68, 5.04, 8.4];
+const DIWAN_ROWS: [f32; 3] = [-11.4, -14.6, -17.8];
 
 // ------------------------------------------------------------------ Bargad Van
 

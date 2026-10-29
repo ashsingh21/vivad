@@ -117,8 +117,8 @@ def main():
         near = np.where(((C > lo - np.maximum(HU, HV)[:, None]) & (C < hi + np.maximum(HU, HV)[:, None])).all(1))[0]
         for k in near:
             nk = N[k] / (np.linalg.norm(N[k]) + 1e-9)
-            if nk[1] < -0.9 and C[k][1] < 0.1:
-                continue  # undersides resting on the ground are never seen
+            if nk[1] < -0.9 and C[k][1] < terrain_h(C[k][0], C[k][2]) + 0.1:
+                continue  # undersides resting on the ground (a hilltop too) are never seen
             par = (nrm @ nk) > 0.999  # same facing: back-to-back faces are hidden, not fighting
             if not par.any():
                 continue

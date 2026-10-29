@@ -53,7 +53,7 @@ def cavity(hgt, radius=6):
     return np.clip((blur - hgt) * 6.0, 0, 1)
 
 
-def sandstone(out_dir, size=1024, seed=2, tint=(0.80, 0.62, 0.43)):
+def sandstone(out_dir, size=1024, seed=2, tint=(0.80, 0.62, 0.43), name="sandstone"):
     """Ashlar masonry: 0.5 m courses of 1 m blocks in running bond (tile = 2 m), per-block tone,
     recessed mortar joints, fine grain and faint bedding inside each block."""
     rng = np.random.default_rng(seed)
@@ -82,7 +82,7 @@ def sandstone(out_dir, size=1024, seed=2, tint=(0.80, 0.62, 0.43)):
     col = col * (1 - 0.12 * blush[..., None]) + np.array([0.70, 0.42, 0.28]) * 0.12 * blush[..., None]
     rough = 0.8 + 0.12 * fine + 0.08 * joint
     ao = 1 - 0.5 * joint
-    write_set(out_dir, "sandstone", np.clip(col, 0, 1), normal_from_height(hgt, 4.0), ao, rough)
+    write_set(out_dir, name, np.clip(col, 0, 1), normal_from_height(hgt, 4.0), ao, rough)
 
 
 def _strip_heights(name, w, h, rng):
