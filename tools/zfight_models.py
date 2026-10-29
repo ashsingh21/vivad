@@ -13,7 +13,7 @@ import sys
 import numpy as np
 
 ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets")
-TOL = 0.025
+TOL = 0.005   # closer than this (5 mm), the depth buffer can't keep two surfaces apart
 
 
 def load_model(rel):
@@ -112,6 +112,21 @@ def main():
             results.setdefault(key, [0.0, 0, pl["pos"]])
             results[key][0] += hit
             results[key][1] += 1
+    # Map blocks against the terrain: upward box faces and cylinder tops lying in the ground.
+    ground = {}
+    g = np.linspace(-1, 1, 9)
+    for k in np.where(N[:, 1] > 0.95)[0]:
+        P = C[k] + g[:, None, None] * U[k] * HU[k] + g[None, :, None] * V[k] * HV[k]
+        near = np.abs(P[..., 1] - terrain_h(P[..., 0], P[..., 2])) < TOL
+        a = near.mean() * 4 * HU[k] * HV[k]
+        if a > 0.05:
+            e = ground.setdefault(faces[k][5], [0.0, 0, C[k]])
+            e[0] += a
+            e[1] += 1
+    print(f"{'block material':<26} {'m2':>8} {'faces':>10}  e.g. at   (block tops in the ground)")
+    for k, (a, c, p) in sorted(ground.items(), key=lambda kv: -kv[1][0]):
+        print(f"{k:<26} {a:8.1f} {c:10d}  ({p[0]:.0f}, {p[1]:.1f}, {p[2]:.0f})")
+    print()
     print(f"{'model':<26} {'m2':>8} {'placements':>10}  e.g. at")
     for k, (a, c, p) in sorted(results.items(), key=lambda kv: -kv[1][0]):
         print(f"{k:<26} {a:8.1f} {c:10d}  ({p[0]:.0f}, {p[1]:.1f}, {p[2]:.0f})")

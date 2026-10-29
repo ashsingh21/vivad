@@ -24,7 +24,8 @@ The HUD (minimap, status, hotbar) is masked out of every measurement.
 
 Render switches for comparisons: `VIVAD_EV=9.7` (camera exposure, default 10.6), `VIVAD_GRADE=1,1,1` (saturation, contrast, highlight gain; default 1.1,1.06,0.85),
 `VIVAD_NO_GRASS=1`, `VIVAD_AA=none|smaa`, `VIVAD_NO_SSAO=1`, `VIVAD_NO_SHADOWS=1`; with
-`VIVAD_PERF_LOG=1` the game logs FPS every 10 s.
+`VIVAD_PERF_LOG=1` the game logs FPS every 10 s; `VIVAD_NO_VSYNC=1` uncaps the frame rate so
+the numbers mean something (with vsync they stop at the display's 60).
 
 **Weapons in the hand.** `just armoury` stands the player on open ground and captures every item
 carried and in use (aiming, drawing, swinging, drinking) from the front, side and back, then
@@ -37,9 +38,19 @@ ones before looking.
 **Flicker and shimmer.** `just flicker` captures 8-frame bursts while the camera drifts a few
 millimetres per frame and scores each view by how many pixels fail to move smoothly. Without
 anti-aliasing the carved, normal-mapped surfaces scored 5-16 % (they crawl and sparkle); with
-TAA plus sharpening, now the default, 1-4 %. `just zfight` lists coplanar overlapping faces of
-different materials in the map blocks, then checks every placed model's faces against the blocks
-and the terrain (`tools/zfight_models.py`). What remains is faces pressed together inside walls.
+TAA plus sharpening, now the default, 1-4 %. Up close the score also counts edges and carving
+shimmering as the camera drifts, so look at where it is before calling it z-fighting.
+
+**Z-fighting.** `just zfight` runs three checks: coplanar overlapping faces of different materials
+among the map blocks (`zfight_check`); block tops lying in the ground and every placed model's faces
+against the blocks and the terrain (`tools/zfight_models.py`); and the models against themselves
+and each other (`tools/zfight_meshes.py`, about two minutes; `--model stepwell --where` lists the
+spots for one model). Faces that can't be seen are left out: undersides on or in the ground, faces
+wholly buried, and faces whose front is pressed into a map block or enclosed by other geometry. The
+map generator lowers the ground a few centimetres under any block whose top lies at ground level
+(`Terrain::settle_under`). What remains: the stepwell lining's back against its retaining walls and
+door frames resting on floor slabs (hidden), and patches under 0.2 m2 on the stupa, Ajanta and the
+jharokhas.
 
 **Sound** can't be judged by ear here: `just sfx` prints peak / RMS level, length, spectral
 centroid and loop-seam size per sound, and `VIVAD_AUDIO_LOG=1` makes the game log how often each

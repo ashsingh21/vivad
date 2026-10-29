@@ -78,8 +78,11 @@ def lined_wall(kit, M, length, x_skip=()):
                 # Carved jali panel: a lattice of small horseshoe arches.
                 B.frieze(kit, M, xc - 0.85, xc + 0.85, z_lo + 0.6, z_lo + 1.9, 0.08, "gavaksha")
                 B.frieze(kit, M, xc - 0.85, xc + 0.85, z_lo + 0.3, z_lo + 0.6, 0.12, "padma")
-    # Coping at ground level.
-    B.frieze(kit, M, x0 - 0.3, -x0 + 0.3, -0.05, 0.25, 0.6, "padma")
+    # Coping at ground level, tall enough to cap the top tier's niche heads (to z = +0.30) and
+    # set 2 cm behind the wall plane so their backs, flush with that plane, sit inside it.
+    xm, half = 0.0, -x0 + 0.3
+    kit.add(B.transform(T.molded("coping", [(-0.05, T.rect(half, 0.31, xm, -0.29), "padma"),
+                                            (0.39, T.rect(half, 0.31, xm, -0.29), None)]), M))
 
 
 def stepwell():

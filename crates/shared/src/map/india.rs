@@ -183,6 +183,7 @@ pub fn generate(seed: u64) -> MapLayout {
         village(&mut b, &mut rng, c, n);
     }
     scatter_trees(&mut b, &mut rng, 230);
+    map.terrain.settle_under(&map.blocks);
 
     map.pois = vec![
         poi("Chandni Bazaar", 0.0, 0.0, 55.0),
@@ -541,7 +542,8 @@ fn haveli(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, mat: Ma
             let (a, c) = (inner[i], inner[(i + 1) % 4]);
             let len = a.distance(c);
             let ops = if k == 0 {
-                spaced(len, 3, &|at| Opening::arch(at, 1.8, 2.8))
+                // 1.5 m arches: their carved surrounds (1.31 x the opening) clear each other.
+                spaced(len, 3, &|at| Opening::arch(at, 1.5, 2.8))
             } else {
                 vec![Opening::window(len * 0.2), Opening::door(len * 0.5), Opening::window(len * 0.8)]
             };
@@ -1133,28 +1135,59 @@ fn hut(b: &mut Builder, rng: &mut SmallRng, f: Frame) {
     }
 }
 
+/// Footprints already placed in a village (centre, radius), so nothing lands on anything else.
+struct Spots(Vec<(Vec2, f32)>);
+
+impl Spots {
+    /// A random point within `half` of `c` whose circle of radius `r` clears every footprint by a
+    /// metre; None if 60 tries find nowhere.
+    fn find(&mut self, rng: &mut SmallRng, c: Vec2, half: Vec2, r: f32) -> Option<Vec2> {
+        for _ in 0..60 {
+            let p = c + Vec2::new(rng.random_range(-half.x..half.x), rng.random_range(-half.y..half.y));
+            if self.0.iter().all(|(q, rq)| p.distance(*q) >= r + rq + 1.0) {
+                self.0.push((p, r));
+                return Some(p);
+            }
+        }
+        None
+    }
+}
+
+/// Hut footprint radius with the roof's eaves (hut(): up to 5.6 x 4.8 m, 0.6 m eaves).
+const HUT_R: f32 = 4.4;
+
 fn village(b: &mut Builder, rng: &mut SmallRng, c: Vec3, n: u32) {
+    // The field patch first (south of the huts), as a row of footprints.
+    let field = (Vec2::new(c.x, c.z - 30.0), Vec2::new(18.0, 7.0));
+    let mut spots = Spots((0..5).map(|i| (field.0 + Vec2::new(-14.4 + 7.2 * i as f32, 0.0), 7.0)).collect());
     for _ in 0..n {
-        let p = c + Vec3::new(rng.random_range(-26.0..26.0), 0.0, rng.random_range(-22.0..22.0));
+        let Some(p) = spots.find(rng, c.xz(), Vec2::new(26.0, 22.0), HUT_R) else { continue };
         let yaw = rng.random_range(0.0..std::f32::consts::TAU);
-        hut(b, rng, Frame::new(p, yaw));
+        hut(b, rng, Frame::new(Vec3::new(p.x, c.y, p.y), yaw));
     }
     // Haystacks, a cart, low walls, a field patch.
     for _ in 0..5 {
-        let p = c + Vec3::new(rng.random_range(-35.0..35.0), 0.0, rng.random_range(-30.0..30.0));
-        b.cyl(world(), p, rng.random_range(1.2..1.8), rng.random_range(1.6..2.4), Mat::Thatch);
+        let r = rng.random_range(1.2..1.8);
+        let Some(p) = spots.find(rng, c.xz(), Vec2::new(35.0, 30.0), r) else { continue };
+        b.cyl(world(), Vec3::new(p.x, c.y, p.y), r, rng.random_range(1.6..2.4), Mat::Thatch);
     }
-    let cf = Frame::new(c + Vec3::new(rng.random_range(-15.0..15.0), 0.0, 28.0), rng.random_range(0.0..PI));
-    b.bx(cf, Vec3::new(0.0, 1.0, 0.0), Vec3::new(3.2, 0.6, 1.8), Mat::Wood);
-    for s in [-1.0, 1.0] {
-        b.push(cf.p(Vec3::new(0.0, 0.75, s * 1.0)), cf.rot() * Quat::from_rotation_x(FRAC_PI_2),
-               super::Shape::Cylinder { radius: 0.75, height: 0.15 }, Mat::Wood, true, true);
+    if let Some(p) = spots.find(rng, c.xz() + Vec2::new(0.0, 28.0), Vec2::new(15.0, 4.0), 2.0) {
+        let cf = Frame::new(Vec3::new(p.x, c.y, p.y), rng.random_range(0.0..PI));
+        b.bx(cf, Vec3::new(0.0, 1.0, 0.0), Vec3::new(3.2, 0.6, 1.8), Mat::Wood);
+        for s in [-1.0, 1.0] {
+            b.push(cf.p(Vec3::new(0.0, 0.75, s * 1.0)), cf.rot() * Quat::from_rotation_x(FRAC_PI_2),
+                   super::Shape::Cylinder { radius: 0.75, height: 0.15 }, Mat::Wood, true, true);
+        }
     }
     for _ in 0..3 {
-        let wf = Frame::new(c + Vec3::new(rng.random_range(-40.0..40.0), 0.0, rng.random_range(-35.0..35.0)), rng.random_range(0.0..PI));
-        b.bx(wf, Vec3::new(0.0, 0.55, 0.0), Vec3::new(rng.random_range(6.0..14.0), 1.1, 0.6), Mat::Granite);
+        let len = rng.random_range(6.0..14.0);
+        let Some(p) = spots.find(rng, c.xz(), Vec2::new(40.0, 35.0), len / 2.0) else { continue };
+        let wf = Frame::new(Vec3::new(p.x, c.y, p.y), rng.random_range(0.0..PI));
+        b.bx(wf, Vec3::new(0.0, 0.55, 0.0), Vec3::new(len, 1.1, 0.6), Mat::Granite);
     }
-    b.push(c + Vec3::new(0.0, 0.015, -38.0), Quat::IDENTITY, super::Shape::Box(Vec3::new(40.0, 0.03, 18.0)), Mat::Thatch, false, true);
+    // Inside the village pad (flat ground), top 3 cm above it; deep enough that the ground
+    // settled under it stays hidden.
+    b.push(Vec3::new(field.0.x, c.y - 0.07, field.0.y), Quat::IDENTITY, super::Shape::Box(Vec3::new(2.0 * field.1.x, 0.2, 2.0 * field.1.y)), Mat::Thatch, false, true);
 }
 
 fn scatter_trees(b: &mut Builder, rng: &mut SmallRng, n: u32) {

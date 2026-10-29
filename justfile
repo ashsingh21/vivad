@@ -120,6 +120,7 @@ flicker views="haveli_front,bazaar_street,hampi_temple,village_close,stupa":
 zfight:
     cargo run --release -p shared --bin zfight_check -- --dump build/zfight.json
     python3 tools/zfight_models.py build/zfight.json
+    python3 tools/zfight_meshes.py build/zfight.json
 
 # Geometry report for exported models (tris per LOD, size, open edges, pieces, materials).
 mesh +models:

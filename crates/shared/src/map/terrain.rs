@@ -46,6 +46,46 @@ impl Terrain {
         Vec3::new(-dx, 2.0 * e, -dz).normalize()
     }
 
+    /// Drop the ground a little under every visible flat-topped block whose top lies at ground
+    /// level (a slab, a wall's coping, a platform), so the two surfaces can't z-fight. Only samples
+    /// within a few centimetres of the top move; ground well above (a block buried in a slope) or
+    /// below is left alone. Returns how many samples moved.
+    pub fn settle_under(&mut self, blocks: &[super::Block]) -> usize {
+        const SINK: f32 = 0.06;
+        let step = self.step();
+        let mut moved = 0;
+        for b in blocks.iter().filter(|b| b.visible) {
+            let up = b.rot * Vec3::Y;
+            if up.y < 0.99 {
+                continue;
+            }
+            let (half_y, reach) = match b.shape {
+                super::Shape::Box(s) => (s.y / 2.0, Vec2::new(s.x / 2.0, s.z / 2.0)),
+                super::Shape::Cylinder { radius, height } => (height / 2.0, Vec2::splat(radius)),
+                super::Shape::Sphere(_) => continue,
+            };
+            let top = b.pos.y + half_y;
+            let (u, v) = (b.rot * Vec3::X, b.rot * Vec3::Z);
+            let r = reach.length() + step;
+            let idx = |c: f32| (((c + self.size * 0.5) / step).max(0.0) as usize).min(self.n - 1);
+            for i in idx(b.pos.x - r)..=idx(b.pos.x + r) {
+                for j in idx(b.pos.z - r)..=idx(b.pos.z + r) {
+                    let d = Vec3::new(self.coord(i) - b.pos.x, 0.0, self.coord(j) - b.pos.z);
+                    let inside = match b.shape {
+                        super::Shape::Cylinder { .. } => d.length() <= reach.x + step,
+                        _ => d.dot(u).abs() <= reach.x + step && d.dot(v).abs() <= reach.y + step,
+                    };
+                    let h = &mut self.h[i * self.n + j];
+                    if inside && *h > top - SINK && *h < top + 0.05 {
+                        *h = top - SINK;
+                        moved += 1;
+                    }
+                }
+            }
+        }
+        moved
+    }
+
     /// Rows for `Collider::heightfield` (outer = X, inner = Z).
     pub fn rows(&self) -> Vec<Vec<f32>> {
         (0..self.n).map(|i| self.h[i * self.n..(i + 1) * self.n].to_vec()).collect()

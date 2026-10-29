@@ -247,8 +247,10 @@ def dravida_temple():
     base = T.rect(7.0, 9.0)
     prof = [(0.0, 0.3, "padma"), (0.25, 0.22, "bead"), (0.45, 0.14, "chevron"), (0.75, 0.2, "dentil"), (1.0, 0.05, None), (T.PLINTH, 0.0, None)]
     kit.add(T.molded("djagati", [(z, T.offset_poly(base, d), s) for z, d, s in prof]))
+    # Steps as stacked slabs, each only its own rise tall: full-height blocks would overlap one
+    # another's sides in the same plane and z-fight.
     for i in range(6):
-        kit.add(T.box(f"dstep{i}", (-2.0, -12.0 + i * 0.5, 0.0), (2.0, -8.9, (i + 1) * T.PLINTH / 6)))
+        kit.add(T.box(f"dstep{i}", (-2.0, -12.0 + i * 0.5, i * T.PLINTH / 6), (2.0, -8.9, (i + 1) * T.PLINTH / 6)))
     # Mandapa on Vijayanagara pillars under a flat roof with a kapota eave and a hara parapet.
     z0 = T.PLINTH
     for x in (-4.5, -1.5, 1.5, 4.5):
@@ -396,7 +398,7 @@ def mandapa_ruin():
         for k in range(3):
             y_out = sy * (8.12 + 1.8 - k * 0.6)
             y_in = sy * 8.1
-            kit.add(T.box("rstep", (sx - 1.5, min(y_out, y_in), 0.0), (sx + 1.5, max(y_out, y_in), (k + 1) * 0.2)))
+            kit.add(T.box("rstep", (sx - 1.5, min(y_out, y_in), k * 0.2), (sx + 1.5, max(y_out, y_in), (k + 1) * 0.2)))
     z0 = RUIN_PLINTH
     for i, col in enumerate(RUIN):
         for j, st in enumerate(col):

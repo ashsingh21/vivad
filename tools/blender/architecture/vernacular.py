@@ -261,7 +261,8 @@ def hut(name, wall_mat):
     y_out, y_in = -hd - t / 2 - 0.04, -hd + t / 2 + 0.02
     for sx in (-1, 1):
         kit.add(T.box("jamb", (sx * 0.7 - 0.07, y_out, 0.1), (sx * 0.7 + 0.07, y_in, 2.45), "wood"))
-    lintel = T.box("lintel", (-0.95, y_out - 0.04, 2.4), (0.95, y_in, 2.62), "trim")
+    # The lintel hangs 2 cm into the opening (cut to 2.4) so its underside, not the cut's, shows.
+    lintel = T.box("lintel", (-0.95, y_out - 0.04, 2.38), (0.95, y_in, 2.62), "trim")
     kit.add(lintel)
     kit.add(T.box("sill", (-0.75, y_out - 0.08, 0.06), (0.75, y_in, 0.16), "wood"))
     for y in (-0.36, -0.12, 0.12, 0.36):

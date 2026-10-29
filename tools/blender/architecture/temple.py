@@ -246,7 +246,7 @@ def jagati(kit):
     for i in range(6):
         z0 = i * PLINTH / 6
         y0 = -9.0 - 3.0 + i * 0.5
-        kit.add(box(f"step{i}", (-2.0, y0, 0.0), (2.0, -8.9, z0 + PLINTH / 6)))
+        kit.add(box(f"step{i}", (-2.0, y0, z0), (2.0, -8.9, z0 + PLINTH / 6)))
     for sx in (-1, 1):
         bm = bmesh.new()
         pts = [(-12.3, 0.0), (-12.3, 0.55), (-9.0, PLINTH + 0.55), (-8.9, PLINTH + 0.55), (-8.9, 0.0)]
@@ -276,9 +276,10 @@ def pillar(kit, x, y, z0, h):
           (0.34, z0 + 3.45 * h / 4), (0.42, z0 + 3.55 * h / 4)]
     kit.add(lathe("p_ghata", gp, 16, c, ribs=16, rib_depth=0.06, uv_strip="padma"))
     kit.add(lathe("p_abacus", [(0.46, z0 + 3.55 * h / 4), (0.46, z0 + 3.7 * h / 4)], 4, c, square=True))
-    # Cruciform bracket capital.
+    # Cruciform bracket capital. The cross arm is 2 cm shorter top and bottom, so where the two
+    # cross only one arm's faces show (shared planes would z-fight, seen from below).
     kit.add(box("p_brk1", (x - 0.75, y - 0.2, z0 + 3.7 * h / 4), (x + 0.75, y + 0.2, z0 + h)))
-    kit.add(box("p_brk2", (x - 0.2, y - 0.75, z0 + 3.7 * h / 4), (x + 0.2, y + 0.75, z0 + h)))
+    kit.add(box("p_brk2", (x - 0.2, y - 0.75, z0 + 3.7 * h / 4 + 0.02), (x + 0.2, y + 0.75, z0 + h - 0.02)))
 
 
 def mandapa(kit):

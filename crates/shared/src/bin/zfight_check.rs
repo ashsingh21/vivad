@@ -79,8 +79,8 @@ fn main() {
                     if (dk == 0 && ib <= ia) || a.block == b.block || (a.d - b.d).abs() > 0.004 || a.n.dot(b.n) < 0.999 {
                         continue;
                     }
-                    // Undersides resting on the ground are never seen.
-                    if a.n.y < -0.9 && a.c.y < 0.1 {
+                    // Undersides resting on (or in) the ground are never seen.
+                    if a.n.y < -0.9 && a.c.y < map.terrain.height(a.c.x, a.c.z) + 0.1 {
                         continue;
                     }
                     let (ma, mb) = (blocks[a.block].mat, blocks[b.block].mat);
@@ -119,6 +119,23 @@ fn main() {
         for fs in buckets.values() {
             for f in fs {
                 out += &format!("{}[{},{},{},{:.4},{:.4},\"{:?}\",{}]", if first { "" } else { "," }, v3(f.c), v3(f.u), v3(f.v), f.hu, f.hv, blocks[f.block].mat, v3(f.n));
+                first = false;
+            }
+        }
+        // Visible cylinder tops (as the square inscribed in the disc), for the terrain check.
+        for b in &blocks {
+            if let (true, Shape::Cylinder { radius, height }) = (b.visible, b.shape) {
+                let c = b.pos + b.rot * Vec3::Y * (height / 2.0);
+                let r = radius * std::f32::consts::FRAC_1_SQRT_2;
+                out += &format!(",[{},{},{},{r:.4},{r:.4},\"{:?}\",{}]", v3(c), v3(b.rot * Vec3::X), v3(b.rot * Vec3::Z), b.mat, v3(b.rot * Vec3::Y));
+            }
+        }
+        // Solid boxes (visible or not), so a model face pressed against one counts as hidden.
+        out += "],\"boxes\":[";
+        let mut first = true;
+        for b in &blocks {
+            if let Shape::Box(size) = b.shape {
+                out += &format!("{}[{},{},{}]", if first { "" } else { "," }, v3(b.pos), q4(b.rot), v3(size));
                 first = false;
             }
         }
