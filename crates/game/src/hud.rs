@@ -1,4 +1,4 @@
-//! HUD: health/shield, hotbar, crosshair + hit markers, prompts, kill feed, minimap,
+//! HUD: health/shield, hotbar, reticle + hit markers, prompts, kill feed, minimap,
 //! Pralaya timer, match result screens and the performance overlay.
 
 use bevy::diagnostic::{DiagnosticsStore, EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin};
@@ -8,7 +8,7 @@ use shared::map::{ChestKind, MapLayout};
 use shared::sim::flow::{Match, MatchState};
 use shared::sim::loot::{Chest, INTERACT_RANGE, Pickup};
 use shared::sim::zone::Zone;
-use shared::sim::{Action, Eliminated, FeedMsg, Health, HitMsg, INVENTORY_SLOTS, Inventory, Kinematic, LocalPlayer, MoveMode, Warrior};
+use shared::sim::{Action, Eliminated, FeedMsg, Health, HitMsg, INVENTORY_SLOTS, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, Warrior, btn};
 
 use crate::input::{CYCLE, ShowPerf};
 
@@ -19,7 +19,7 @@ impl Plugin for HudPlugin {
         app.add_plugins((FrameTimeDiagnosticsPlugin::default(), EntityCountDiagnosticsPlugin::default()))
             .init_resource::<Feed>()
             .add_systems(Startup, build_hud)
-            .add_systems(Update, (vitals, hotbar, prompts, feed, hit_marker, top_right, minimap, overlay, perf))
+            .add_systems(Update, (vitals, hotbar, prompts, feed, reticle, hit_marker, top_right, minimap, overlay, perf))
             .add_systems(PostUpdate, (damage_numbers, hurt_markers).after(crate::camera::CameraSystems));
     }
 }
@@ -34,7 +34,10 @@ const MINIMAP: f32 = 190.0;
 #[derive(Component)] struct AmmoText;
 #[derive(Component)] struct Prompt;
 #[derive(Component)] struct FeedText;
-#[derive(Component)] struct Crosshair;
+/// One arm of the reticle, pointing along `0` (screen space, +y down) from the centre.
+#[derive(Component)] struct ReticleBar(Vec2);
+/// One diagonal tick of the hit marker.
+#[derive(Component)] struct HitTick;
 #[derive(Component)] struct TopRight;
 #[derive(Component)] struct MapZone;
 #[derive(Component)] struct MapSafe;
@@ -114,7 +117,27 @@ fn build_hud(mut commands: Commands) {
         .spawn(Node { position_type: PositionType::Absolute, width: percent(100.0), height: percent(100.0),
                       justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() })
         .with_children(|p| {
-            p.spawn((Crosshair, text("+", 26.0, Color::srgba(1.0, 1.0, 1.0, 0.85))));
+            // A zero-size anchor at the screen centre; the reticle's pieces hang off it.
+            p.spawn(Node { width: px(0.0), height: px(0.0), ..default() }).with_children(|c| {
+                let outline = Outline { width: px(1.0), offset: px(0.0), color: Color::srgba(0.0, 0.0, 0.0, 0.55) };
+                c.spawn((Node { position_type: PositionType::Absolute, left: px(-1.5), top: px(-1.5), width: px(3.0), height: px(3.0), ..default() },
+                         BackgroundColor(RETICLE), outline));
+                for d in [Vec2::X, Vec2::NEG_X, Vec2::Y, Vec2::NEG_Y] {
+                    c.spawn((ReticleBar(d), Node { position_type: PositionType::Absolute, ..default() }, BackgroundColor(RETICLE), outline));
+                }
+                for d in [Vec2::new(1.0, 1.0), Vec2::new(-1.0, 1.0), Vec2::new(1.0, -1.0), Vec2::new(-1.0, -1.0)] {
+                    let at = d.normalize() * (HIT_TICK_AT + HIT_TICK_LEN / 2.0);
+                    c.spawn((
+                        HitTick,
+                        Node { position_type: PositionType::Absolute, left: px(at.x - HIT_TICK_LEN / 2.0), top: px(at.y - 1.0),
+                               width: px(HIT_TICK_LEN), height: px(2.0), ..default() },
+                        UiTransform { rotation: Rot2::radians((d.y * d.x).signum() * std::f32::consts::FRAC_PI_4), ..default() },
+                        BackgroundColor(Color::WHITE),
+                        Outline { width: px(1.0), offset: px(0.0), color: Color::srgba(0.0, 0.0, 0.0, 0.5) },
+                        Visibility::Hidden,
+                    ));
+                }
+            });
         });
     // Prompt + use/reload progress, lower centre.
     commands
@@ -293,12 +316,49 @@ fn feed(
     }
 }
 
+const RETICLE: Color = Color::srgba(1.0, 1.0, 1.0, 0.9);
+const BAR_LEN: f32 = 7.0;
+const BAR_W: f32 = 2.0;
+/// Gap from the centre to each arm with no spread.
+const BASE_GAP: f32 = 5.0;
+const HIT_TICK_AT: f32 = 9.0;
+const HIT_TICK_LEN: f32 = 8.0;
+
+/// The reticle's arms sit as far out as the held bow's spread reaches on screen (wider for the
+/// seven-arrow bow, tighter when aiming down the sights), and kick out briefly after each shot.
+fn reticle(
+    q: Query<(&Inventory, &Action, &PlayerIntent), With<LocalPlayer>>,
+    db: Res<ItemDb>,
+    windows: Query<&Window>,
+    mut bars: Query<(&ReticleBar, &mut Node)>,
+) {
+    let Ok((inv, act, intent)) = q.single() else { return };
+    let h = windows.iter().next().map(|w| w.height()).unwrap_or(900.0);
+    let mut gap = BASE_GAP;
+    if let Some(ItemKind::Bow { spread_deg, .. }) = inv.current().map(|s| &db.get(&s.id).kind) {
+        let spread = spread_deg.to_radians() * if intent.held(btn::AIM) { 0.6 } else { 1.0 };
+        // Camera vertical field of view 70 degrees (camera.rs).
+        gap += spread.tan() / 35f32.to_radians().tan() * h / 2.0;
+    }
+    gap += 6.0 * (1.0 - act.since_attack / 0.15).clamp(0.0, 1.0);
+    for (bar, mut n) in &mut bars {
+        let d = bar.0;
+        let (w, l) = if d.x != 0.0 { (BAR_LEN, BAR_W) } else { (BAR_W, BAR_LEN) };
+        let c = d * (gap + BAR_LEN / 2.0);
+        n.left = px(c.x - w / 2.0);
+        n.top = px(c.y - l / 2.0);
+        n.width = px(w);
+        n.height = px(l);
+    }
+}
+
+/// Four diagonal ticks round the reticle when the local player's hit lands (gold for a headshot).
 fn hit_marker(
     mut hits: MessageReader<HitMsg>,
     local: Query<Entity, With<LocalPlayer>>,
     mut f: ResMut<Feed>,
     time: Res<Time>,
-    mut q: Query<(&mut TextColor, &mut Text), With<Crosshair>>,
+    mut q: Query<(&mut Visibility, &mut BackgroundColor), With<HitTick>>,
 ) {
     let Ok(me) = local.single() else { return };
     for h in hits.read() {
@@ -308,14 +368,9 @@ fn hit_marker(
         }
     }
     f.hit_flash = (f.hit_flash - time.delta_secs()).max(0.0);
-    for (mut c, mut t) in &mut q {
-        if f.hit_flash > 0.0 {
-            c.0 = if f.headshot { Color::srgb(1.0, 0.85, 0.2) } else { Color::WHITE };
-            **t = "X".into();
-        } else {
-            c.0 = Color::srgba(1.0, 1.0, 1.0, 0.85);
-            **t = "+".into();
-        }
+    for (mut v, mut c) in &mut q {
+        *v = if f.hit_flash > 0.0 { Visibility::Inherited } else { Visibility::Hidden };
+        c.0 = if f.headshot { Color::srgb(1.0, 0.85, 0.2) } else { Color::WHITE };
     }
 }
 

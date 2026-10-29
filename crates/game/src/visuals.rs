@@ -66,6 +66,8 @@ pub struct Palette {
     pub(crate) string: Handle<StandardMaterial>,
     fire: Handle<StandardMaterial>,
     wind: Handle<StandardMaterial>,
+    /// The bright point at a flying arrow's nock.
+    glint: Handle<StandardMaterial>,
     zone: Handle<StandardMaterial>,
     pub(crate) models: HashMap<&'static str, ModelHandles>,
     outfits: Vec<(Handle<StandardMaterial>, Handle<StandardMaterial>)>,
@@ -166,6 +168,12 @@ fn setup_assets(
         rarity_glow,
         wood: materials.add(StandardMaterial { base_color: Color::srgb(0.40, 0.24, 0.12), perceptual_roughness: 0.7, ..default() }),
         gold: materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.78, 0.34), metallic: 1.0, perceptual_roughness: 0.3, ..default() }),
+        glint: materials.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.95, 0.8),
+            emissive: LinearRgba::rgb(6.0, 5.0, 3.2),
+            unlit: true,
+            ..default()
+        }),
         fire: materials.add(StandardMaterial {
             base_color: Color::srgba(1.0, 0.45, 0.1, 0.7),
             emissive: LinearRgba::rgb(12.0, 3.5, 0.6),
@@ -529,6 +537,9 @@ fn animate_pickups(time: Res<Time>, mut q: Query<&mut Transform, With<PickupSpin
     }
 }
 
+/// Arrow model scale in flight: (fletching and shaft width, length, width).
+const FLIGHT_SCALE: Vec3 = Vec3::new(2.0, 1.2, 2.0);
+
 fn dress_projectiles(mut commands: Commands, q: Query<(Entity, &Projectile), Added<Projectile>>, palette: Res<Palette>) {
     for (e, p) in &q {
         commands.entity(e).insert(Visibility::default()).with_children(|c| {
@@ -542,9 +553,15 @@ fn dress_projectiles(mut commands: Commands, q: Query<(Entity, &Projectile), Add
                          bevy::light::NotShadowCaster));
             } else {
                 // The arrow model points +Y from its nock; the projectile's point is the arrowhead.
+                // In flight it's drawn thicker and a little longer than the nocked arrow (seen from
+                // behind, a true-size shaft and fletching vanish within a few metres), with a
+                // bright glint at the nock, the end the shooter sees.
                 let m = &palette.models["arrow"];
+                let len = crate::arms::ARROW_LEN * FLIGHT_SCALE.y;
                 c.spawn((Mesh3d(m.mesh.clone()), MeshMaterial3d(m.mat.clone()),
-                         Transform::from_xyz(0.0, 0.0, crate::arms::ARROW_LEN).with_rotation(Quat::from_rotation_x(-FRAC_PI_2))));
+                         Transform::from_xyz(0.0, 0.0, len).with_rotation(Quat::from_rotation_x(-FRAC_PI_2)).with_scale(FLIGHT_SCALE)));
+                c.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(palette.glint.clone()),
+                         Transform::from_xyz(0.0, 0.0, len).with_scale(Vec3::splat(0.035)), bevy::light::NotShadowCaster));
             }
         });
     }

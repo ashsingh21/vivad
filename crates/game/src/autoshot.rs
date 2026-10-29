@@ -179,6 +179,9 @@ impl Plugin for AutoshotPlugin {
                 range("khanda", View::Player, 1.7, 0.24),
                 range("gandiva", View::Range, 12.0, 0.05),
                 range("gandiva", View::Player, 12.0, 0.25),
+                // The arrow in flight, seen down the shot.
+                range("gandiva", View::Player, 30.0, 0.05),
+                range("gandiva", View::Player, 30.0, 0.12),
                 range("sharanga", View::Range, 9.0, 0.08),
                 range("sharanga", View::Player, 9.0, 0.3),
                 range("agneyastra", View::Range, 9.0, 0.25),

@@ -64,7 +64,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: Res
     commands.insert_resource(FxAssets {
         sphere: meshes.add(Sphere::new(1.0).mesh().ico(1).unwrap()),
         cylinder: meshes.add(Cylinder::new(0.5, 1.0).mesh().resolution(6)),
-        streak: glow(&mut mats, Color::srgb(1.0, 0.97, 0.9), LinearRgba::BLACK, 0.4),
+        streak: glow(&mut mats, Color::srgb(1.0, 0.93, 0.78), LinearRgba::rgb(0.6, 0.5, 0.3), 0.6),
         fire_streak: glow(&mut mats, Color::srgb(1.0, 0.5, 0.15), LinearRgba::rgb(4.0, 1.2, 0.2), 0.55),
         wind_streak: glow(&mut mats, Color::srgb(0.75, 0.9, 1.0), LinearRgba::rgb(0.6, 1.0, 1.4), 0.4),
         ribbon: mats.add(StandardMaterial {
@@ -102,7 +102,7 @@ struct Streak {
     trail: VecDeque<(f32, Vec3)>,
 }
 
-const STREAK_TIME: f32 = 0.09;
+const STREAK_TIME: f32 = 0.14;
 
 fn add_streaks(mut commands: Commands, q: Query<(Entity, &Projectile, &Transform), Added<Projectile>>, fx: Res<FxAssets>, time: Res<Time>) {
     let now = time.elapsed_secs();
@@ -110,7 +110,7 @@ fn add_streaks(mut commands: Commands, q: Query<(Entity, &Projectile, &Transform
         let (mat, width) = match p.astra.as_ref() {
             Some(_) if p.item == "agneyastra" => (fx.fire_streak.clone(), 0.09),
             Some(_) => (fx.wind_streak.clone(), 0.08),
-            None => (fx.streak.clone(), 0.035),
+            None => (fx.streak.clone(), 0.055),
         };
         commands.spawn((
             Streak { of: e, trail: VecDeque::from([(now, t.translation)]) },
