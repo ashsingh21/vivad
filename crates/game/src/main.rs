@@ -14,7 +14,13 @@ fn main() {
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
-                    primary_window: Some(Window { title: "Vivad".into(), resolution: (1600u32, 900u32).into(), ..default() }),
+                    primary_window: Some(Window {
+                        title: "Vivad".into(),
+                        resolution: (1600u32, 900u32).into(),
+                        // VIVAD_NO_VSYNC=1 uncaps the frame rate, for measuring.
+                        present_mode: if std::env::var("VIVAD_NO_VSYNC").is_ok() { bevy::window::PresentMode::AutoNoVsync } else { default() },
+                        ..default()
+                    }),
                     ..default()
                 })
                 .set(AssetPlugin { file_path: ASSET_DIR.into(), ..default() }),

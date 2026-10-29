@@ -12,8 +12,8 @@ import bevy_pbr::render::{
 // x: time, y: tip sway (m), z: last frame's time.
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> wind: vec4<f32>;
 
-// Full density out to NEAR; past it the highest-ranked blades go first, until FAR. Keep FAR
-// below grass.rs's BUILD.
+// Full density out to NEAR; past it the highest-ranked blades go first, linearly, until FAR.
+// Keep in step with grass.rs (NEAR, FAR; it leaves out of each chunk the blades this would sink).
 const NEAR: f32 = 13.0;
 const FAR: f32 = 40.0;
 
@@ -26,7 +26,7 @@ fn displace(p: vec3<f32>, f: f32, rank: f32, height: f32, t: f32, eye: vec3<f32>
     let k = f * f * wind.y * min(height / 0.35, 1.4);
     var q = p + vec3<f32>(push.x * k, -0.35 * k * length(push) * f, push.y * k);
     // Sink the blade into the ground as it passes its fade distance.
-    let reach = mix(FAR, NEAR, rank * rank);
+    let reach = mix(FAR, NEAR, rank);
     // Also clear blades out of the camera's face when it dips into them.
     let s = max(smoothstep(reach - 7.0, reach, distance(p.xz, eye.xz)), 1.0 - smoothstep(0.8, 1.6, distance(p, eye)));
     q.y -= s * (f * height + 0.04);

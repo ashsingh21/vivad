@@ -22,7 +22,7 @@ fn displace(p: vec3<f32>, f: f32, rank: f32, height: f32, t: f32, eye: vec3<f32>
     let push = dir * (0.15 + 0.85 * gust * gust + 0.25 * flutter) + vec2<f32>(-dir.y, dir.x) * (0.3 * flutter);
     let k = f * f * wind.y * min(height / 0.35, 1.4);
     var q = p + vec3<f32>(push.x * k, -0.35 * k * length(push) * f, push.y * k);
-    let reach = mix(FAR, NEAR, rank * rank);
+    let reach = mix(FAR, NEAR, rank);
     // Also clear blades out of the camera's face when it dips into them.
     let s = max(smoothstep(reach - 7.0, reach, distance(p.xz, eye.xz)), 1.0 - smoothstep(0.8, 1.6, distance(p, eye)));
     q.y -= s * (f * height + 0.04);
