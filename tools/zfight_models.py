@@ -13,7 +13,7 @@ import sys
 import numpy as np
 
 ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets")
-TOL = 0.005   # closer than this (5 mm), the depth buffer can't keep two surfaces apart
+TOL = 0.001   # planes closer than this count as the same (see zfight_check.rs)
 
 
 def load_model(rel):

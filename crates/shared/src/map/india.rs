@@ -43,6 +43,10 @@ fn terrain_spec(seed: u64) -> TerrainSpec {
         pad(-180.0, -62.0, 24.0, 20.0),
         pad(-158.0, 8.0, 24.0, 20.0),
         pad(138.0, 45.0, 42.0, 25.0), // Kashi: ghat town and its temples
+        // ... and the town's two ends (it runs z -40..135 along the river), or the map seed's
+        // hills bury its end houses.
+        pad(150.0, -25.0, 26.0, 20.0),
+        pad(150.0, 112.0, 30.0, 20.0),
     ];
     for (c, _) in VILLAGES {
         pads.push(pad(c.x, c.z, 42.0, 25.0));
@@ -224,8 +228,9 @@ fn ground(b: &mut Builder) {
 
 fn river_and_ghats(b: &mut Builder, rng: &mut SmallRng) {
     let (x0, x1) = RIVER_X;
+    // 2 cm short of the banks, so its edges tuck inside the ghat steps rather than lying flush.
     b.push(Vec3::new((x0 + x1) / 2.0, -0.55, 0.0), Quat::IDENTITY,
-           super::Shape::Box(Vec3::new(x1 - x0, 0.02, 2.0 * HALF + 60.0)), Mat::Water, false, true);
+           super::Shape::Box(Vec3::new(x1 - x0 - 0.04, 0.02, 2.0 * HALF + 60.0)), Mat::Water, false, true);
 
     // Ghats: broad stone steps down to the water on the west bank, with shrines on top.
     for zc in [-10.0, 30.0, 70.0, 110.0] {
@@ -906,9 +911,12 @@ fn fort(b: &mut Builder, rng: &mut SmallRng) {
 
 fn banyan_grove(b: &mut Builder, rng: &mut SmallRng) {
     let c = Vec3::new(95.0, 0.0, 170.0);
+    // Footprints claimed so far: the huts and bushes keep clear of the trees, machans and shrine.
+    let mut spots = Spots(vec![]);
     // Three hero banyans whose prop roots make a maze of cover.
     for (dx, dz, sc) in [(0.0, 0.0, 1.0), (30.0, -16.0, 0.8), (-26.0, 18.0, 0.85)] {
         prop(b, TREE_BANYAN, c + Vec3::new(dx, 0.0, dz), rng.random_range(0.0..std::f32::consts::TAU), sc);
+        spots.0.push((c.xz() + Vec2::new(dx, dz), 6.0 * sc));
     }
     // Machans: hunters' watch platforms on stilts under the canopy, reached by ladders.
     for (dx, dz) in [(7.0, 6.0), (24.0, -6.0), (-20.0, 10.0)] {
@@ -921,19 +929,23 @@ fn banyan_grove(b: &mut Builder, rng: &mut SmallRng) {
         b.wall(f, Vec2::new(2.0, -2.0), Vec2::new(-2.0, -2.0), 4.5, 0.8, 0.12, Mat::Wood, &[]);
         b.stairs(f.child(Vec3::new(-7.5, 0.0, 0.0), 0.0), Vec3::ZERO, 5.5, 4.5, 1.2, Mat::Wood);
         b.chest(f, Vec3::new(0.8, 4.5, 0.8), 0.0, ChestKind::Peti);
+        spots.0.push((f.p(Vec3::ZERO).xz(), 3.0));
+        spots.0.push((f.p(Vec3::new(-4.8, 0.0, 0.0)).xz(), 3.0));
     }
     // Shrine under the main tree with offerings.
     b.span(world(), c + Vec3::new(3.0, 0.0, -3.0), c + Vec3::new(6.0, 0.8, 0.0), Mat::Sandstone);
     b.loot(world(), c + Vec3::new(4.5, 1.0, -1.5));
+    spots.0.push((c.xz() + Vec2::new(4.5, -1.5), 2.2));
     for _ in 0..3 {
-        let p = c + Vec3::new(rng.random_range(-30.0..30.0), 0.0, rng.random_range(-25.0..30.0));
+        let Some(p) = spots.find(rng, c.xz() + Vec2::new(0.0, 2.5), Vec2::new(30.0, 27.5), HUT_R) else { continue };
         let yaw = rng.random_range(0.0..PI);
-        hut(b, rng, Frame::new(p, yaw));
+        hut(b, rng, Frame::new(Vec3::new(p.x, c.y, p.y), yaw));
     }
     for _ in 0..30 {
-        let p = c + Vec3::new(rng.random_range(-40.0..40.0), 0.0, rng.random_range(-35.0..40.0));
+        let sc = rng.random_range(0.7..1.2);
+        let Some(p) = spots.find(rng, c.xz() + Vec2::new(0.0, 2.5), Vec2::new(40.0, 37.5), 0.9 * sc) else { continue };
         let m = if rng.random_bool(0.7) { BUSH_LANTANA } else { BUSH_BOUGAINVILLEA };
-        prop(b, m, p, rng.random_range(0.0..std::f32::consts::TAU), rng.random_range(0.7..1.2));
+        prop(b, m, Vec3::new(p.x, c.y, p.y), rng.random_range(0.0..std::f32::consts::TAU), sc);
     }
 }
 
@@ -1140,11 +1152,12 @@ struct Spots(Vec<(Vec2, f32)>);
 
 impl Spots {
     /// A random point within `half` of `c` whose circle of radius `r` clears every footprint by a
-    /// metre; None if 60 tries find nowhere.
+    /// metre and the river by three; None if 60 tries find nowhere.
     fn find(&mut self, rng: &mut SmallRng, c: Vec2, half: Vec2, r: f32) -> Option<Vec2> {
         for _ in 0..60 {
             let p = c + Vec2::new(rng.random_range(-half.x..half.x), rng.random_range(-half.y..half.y));
-            if self.0.iter().all(|(q, rq)| p.distance(*q) >= r + rq + 1.0) {
+            let in_river = p.x + r > RIVER_X.0 - 3.0 && p.x - r < RIVER_X.1 + 3.0;
+            if !in_river && self.0.iter().all(|(q, rq)| p.distance(*q) >= r + rq + 1.0) {
                 self.0.push((p, r));
                 return Some(p);
             }
@@ -1190,6 +1203,19 @@ fn village(b: &mut Builder, rng: &mut SmallRng, c: Vec3, n: u32) {
     b.push(Vec3::new(field.0.x, c.y - 0.07, field.0.y), Quat::IDENTITY, super::Shape::Box(Vec3::new(2.0 * field.1.x, 0.2, 2.0 * field.1.y)), Mat::Thatch, false, true);
 }
 
+/// Whether a circle of radius `r` at ground point `p` touches the footprint of a block already in
+/// the map (a hut's walls, a wall, a field patch); the river's water doesn't count.
+fn blocked(map: &MapLayout, p: Vec2, r: f32) -> bool {
+    map.blocks.iter().filter(|b| (b.collide || b.visible) && b.mat != Mat::Water).any(|b| {
+        let l = b.rot.inverse() * (Vec3::new(p.x, b.pos.y, p.y) - b.pos);
+        match b.shape {
+            super::Shape::Box(s) => l.x.abs() < s.x / 2.0 + r && l.z.abs() < s.z / 2.0 + r,
+            super::Shape::Cylinder { radius, .. } => l.xz().length() < radius + r,
+            super::Shape::Sphere(rad) => l.xz().length() < rad + r,
+        }
+    })
+}
+
 fn scatter_trees(b: &mut Builder, rng: &mut SmallRng, n: u32) {
     let pois = [
         (Vec2::new(0.0, 0.0), 66.0),
@@ -1209,7 +1235,7 @@ fn scatter_trees(b: &mut Builder, rng: &mut SmallRng, n: u32) {
         let grove = rng.random_range(1..=4);
         for _ in 0..grove {
             let p = g + Vec2::new(rng.random_range(-9.0..9.0), rng.random_range(-9.0..9.0));
-            if !clear(p) {
+            if !clear(p) || blocked(b.map, p, 1.2) {
                 continue;
             }
             let m = if rng.random_bool(0.6) { TREE_NEEM } else { TREE_PEEPAL };
@@ -1221,8 +1247,8 @@ fn scatter_trees(b: &mut Builder, rng: &mut SmallRng, n: u32) {
     for _ in 0..70 {
         let z = rng.random_range(-HALF + 5.0..HALF - 5.0);
         let x = if rng.random_bool(0.6) { rng.random_range(RIVER_X.0 - 14.0..RIVER_X.0 - 3.0) } else { rng.random_range(RIVER_X.1 + 3.0..RIVER_X.1 + 16.0) };
-        if (x - 150.0).abs() < 12.0 && z > -45.0 && z < 135.0 {
-            continue; // keep the ghat town's houses clear
+        if (x - 150.0).abs() < 12.0 && z > -45.0 && z < 135.0 || blocked(b.map, Vec2::new(x, z), 1.0) {
+            continue; // keep the ghat town's houses (and the ghats) clear
         }
         prop(b, TREE_PALM, Vec3::new(x, 0.0, z), rng.random_range(0.0..tau), rng.random_range(0.85..1.15));
     }
@@ -1232,7 +1258,7 @@ fn scatter_trees(b: &mut Builder, rng: &mut SmallRng, n: u32) {
         let n = rng.random_range(2..=6);
         for _ in 0..n {
             let p = g + Vec2::new(rng.random_range(-4.0..4.0), rng.random_range(-4.0..4.0));
-            if !clear(p) {
+            if !clear(p) || blocked(b.map, p, 0.8) {
                 continue;
             }
             let m = if rng.random_bool(0.78) { BUSH_LANTANA } else { BUSH_BOUGAINVILLEA };
@@ -1243,6 +1269,10 @@ fn scatter_trees(b: &mut Builder, rng: &mut SmallRng, n: u32) {
     for c in [Vec2::new(-40.0, 195.0), Vec2::new(30.0, -190.0), Vec2::new(-205.0, 185.0), Vec2::new(222.0, -10.0), Vec2::new(-30.0, -95.0)] {
         for _ in 0..8 {
             let p = c + Vec2::new(rng.random_range(-30.0..30.0), rng.random_range(-28.0..28.0));
+            // Against a wall is fine; inside one, or a hut, isn't.
+            if blocked(b.map, p, 0.3) {
+                continue;
+            }
             prop(b, BUSH_BOUGAINVILLEA, Vec3::new(p.x, 0.0, p.y), rng.random_range(0.0..tau), rng.random_range(0.8..1.2));
         }
     }

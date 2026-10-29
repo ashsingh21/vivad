@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from zfight_models import load_model, quat_mat  # noqa: E402
 
 SKIP = ("tree_", "bush_")
-PLANE_TOL = 0.002      # metres: closer than this, depth precision can't separate the surfaces
+PLANE_TOL = 0.001      # metres: planes closer than this count as the same (see zfight_check.rs)
 SAMPLES = np.array([(a, b) for a in np.linspace(0.08, 0.84, 6) for b in np.linspace(0.08, 0.84, 6) if a + b < 0.92])
 
 

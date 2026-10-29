@@ -47,9 +47,9 @@ impl Terrain {
     }
 
     /// Drop the ground a little under every visible flat-topped block whose top lies at ground
-    /// level (a slab, a wall's coping, a platform), so the two surfaces can't z-fight. Only samples
-    /// within a few centimetres of the top move; ground well above (a block buried in a slope) or
-    /// below is left alone. Returns how many samples moved.
+    /// level (a slab, a wall's coping, a platform), so the two surfaces can't z-fight. Ground well
+    /// below is left alone, and so is ground well above a tall block (a wall buried in a slope);
+    /// under a thin one it is cut down level. Returns how many samples moved.
     pub fn settle_under(&mut self, blocks: &[super::Block]) -> usize {
         const SINK: f32 = 0.06;
         let step = self.step();
@@ -65,6 +65,10 @@ impl Terrain {
                 super::Shape::Sphere(_) => continue,
             };
             let top = b.pos.y + half_y;
+            // A thin block (plinth, slab, platform) set into a slope gets a terrace cut for it,
+            // or the rising ground would cross its top at a shallow angle; taller ones (walls)
+            // only get the ground that already lies at their top.
+            let cut = if half_y <= 0.5 { 2.0 } else { 0.05 };
             let (u, v) = (b.rot * Vec3::X, b.rot * Vec3::Z);
             let r = reach.length() + step;
             let idx = |c: f32| (((c + self.size * 0.5) / step).max(0.0) as usize).min(self.n - 1);
@@ -76,7 +80,7 @@ impl Terrain {
                         _ => d.dot(u).abs() <= reach.x + step && d.dot(v).abs() <= reach.y + step,
                     };
                     let h = &mut self.h[i * self.n + j];
-                    if inside && *h > top - SINK && *h < top + 0.05 {
+                    if inside && *h > top - SINK && *h < top + cut {
                         *h = top - SINK;
                         moved += 1;
                     }

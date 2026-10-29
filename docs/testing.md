@@ -41,6 +41,13 @@ anti-aliasing the carved, normal-mapped surfaces scored 5-16 % (they crawl and s
 TAA plus sharpening, now the default, 1-4 %. Up close the score also counts edges and carving
 shimmering as the camera drifts, so look at where it is before calling it z-fighting.
 
+**Map seeds.** `VIVAD_MAP_SEED` (or `just play <seed>`, `just play random`) picks the map; every
+check here takes it too, and seed 7 is the default. The seed changes the hills, groves, villages,
+the bazaar and Kashi houses and the loot; the landmarks stay put. `just seeds 40` sweeps the fast
+map checks over many seeds; run it after touching the generator. The layout code claims
+footprints (`Spots` in villages and Bargad Van, `blocked()` for scattered trees and bushes) so
+nothing is placed inside anything else, whatever the seed.
+
 **Z-fighting.** `just zfight` runs three checks: coplanar overlapping faces of different materials
 among the map blocks (`zfight_check`); block tops lying in the ground and every placed model's faces
 against the blocks and the terrain (`tools/zfight_models.py`); and the models against themselves

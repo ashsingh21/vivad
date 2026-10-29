@@ -76,9 +76,10 @@ view name:
     cargo run -p game --bin asset_check -- models/weapons/{{name}}.glb previews/{{name}}/bevy_{{name}}.png
 
 
-# Play the graybox (release build; first build takes a few minutes).
-play:
-    cargo run --release -p game --bin game
+# Play (release build; first build takes a few minutes). `just play random` for a new map (its
+# seed is printed), `just play 1234` to replay one.
+play seed="7":
+    VIVAD_MAP_SEED={{seed}} cargo run --release -p game --bin game
 
 # Headless matches to sanity-check the loop and bots: just sim 5
 sim matches="3" bots="15":
@@ -117,6 +118,11 @@ flicker views="haveli_front,bazaar_street,hampi_temple,village_close,stupa":
 
 # Z-fighting: coplanar overlapping faces between map blocks, and between the art models and the
 # blocks / terrain.
+# The map checks over many seeds: block z-fighting and block tops in the ground, per seed.
+seeds n="40":
+    cargo build --release -q -p shared --bin zfight_check
+    for s in $(seq 1 {{n}}); do VIVAD_MAP_SEED=$s ./target/release/zfight_check --dump build/zfight_seed.json | sed -n 2p | sed "s/^/seed $s: /"; python3 tools/zfight_models.py build/zfight_seed.json | awk '/block material/{f=1;next} /^$/{f=0} f{a+=$2} END{printf "        block tops in the ground: %.1f m2\n", a}'; done
+
 zfight:
     cargo run --release -p shared --bin zfight_check -- --dump build/zfight.json
     python3 tools/zfight_models.py build/zfight.json

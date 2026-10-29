@@ -276,7 +276,23 @@ pub struct MatchConfig {
 
 impl Default for MatchConfig {
     fn default() -> Self {
-        Self { map_seed: 7, bots: 15, autopilot: false }
+        Self { map_seed: map_seed(), bots: 15, autopilot: false }
+    }
+}
+
+/// The map seed: VIVAD_MAP_SEED=<number>, or =random for a fresh map each launch (printed so it
+/// can be replayed); 7 when unset. The seed varies the hills, groves, village layouts and loot;
+/// the landmarks keep their places.
+pub fn map_seed() -> u64 {
+    match std::env::var("VIVAD_MAP_SEED").as_deref() {
+        Ok("random") => {
+            let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+            let seed = (t as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 44;
+            println!("map seed {seed} (VIVAD_MAP_SEED={seed} to play it again)");
+            seed
+        }
+        Ok(s) => s.trim().parse().unwrap_or_else(|_| panic!("VIVAD_MAP_SEED: expected a number or `random`, got {s:?}")),
+        Err(_) => 7,
     }
 }
 

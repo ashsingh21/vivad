@@ -2,7 +2,7 @@
 //! same way and overlap, with different materials (same-material overlaps shade identically, since
 //! building textures are mapped in world space, so they can't be seen to fight).
 //!
-//! cargo run --release -p shared --bin zfight_check [-- --all] [--dump <file.json>]
+//! cargo run --release -p shared --bin zfight_check [-- --all] [--dump <file.json>]   (VIVAD_MAP_SEED picks the map)
 //!
 //! `--dump` also writes model placements, visible box faces and the terrain heights for
 //! tools/zfight_models.py, which checks the models' own faces against both.
@@ -11,6 +11,10 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use shared::map::{Block, Mat, Shape};
+
+/// Planes closer than this (1 mm) count as the same: the layout's exact coincidences agree to far
+/// less, and reversed-Z depth keeps surfaces a few millimetres apart at game distances.
+const PLANE_TOL: f32 = 0.001;
 
 struct Face {
     block: usize,
@@ -51,11 +55,28 @@ fn overlap(a: &Face, b: &Face) -> f32 {
     ou * ov
 }
 
+/// Centre of the overlap of two coplanar rectangles (as `overlap`).
+fn overlap_centre(a: &Face, b: &Face) -> Vec3 {
+    let (bu, bv) = if b.u.dot(a.u).abs() > 0.99 { (b.hu, b.hv) } else { (b.hv, b.hu) };
+    let (du, dv) = ((b.c - a.c).dot(a.u), (b.c - a.c).dot(a.v));
+    let mid = |h: f32, d: f32, bh: f32| ((-h).max(d - bh) + h.min(d + bh)) / 2.0;
+    a.c + a.u * mid(a.hu, du, bu) + a.v * mid(a.hv, dv, bv)
+}
+
+fn inside(b: &Block, p: Vec3) -> bool {
+    let l = b.rot.inverse() * (p - b.pos);
+    match b.shape {
+        Shape::Box(s) => (l.abs() - s / 2.0).max_element() < 0.0,
+        Shape::Cylinder { radius, height } => l.xz().length() < radius && l.y.abs() < height / 2.0,
+        Shape::Sphere(r) => l.length() < r,
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let all = args.iter().any(|a| a == "--all");
     let dump = args.iter().position(|a| a == "--dump").and_then(|i| args.get(i + 1)).cloned();
-    let map = shared::map::india::generate(7);
+    let map = shared::map::india::generate(shared::sim::map_seed());
     let blocks: Vec<&Block> = map.blocks.iter().chain(map.doors.iter()).collect();
     let mut buckets: HashMap<(i32, i32, i32, i32), Vec<Face>> = HashMap::new();
     for (i, b) in blocks.iter().enumerate() {
@@ -76,7 +97,7 @@ fn main() {
             let Some(gs) = buckets.get(&other) else { continue };
             for (ia, a) in fs.iter().enumerate() {
                 for (ib, b) in gs.iter().enumerate() {
-                    if (dk == 0 && ib <= ia) || a.block == b.block || (a.d - b.d).abs() > 0.004 || a.n.dot(b.n) < 0.999 {
+                    if (dk == 0 && ib <= ia) || a.block == b.block || (a.d - b.d).abs() > PLANE_TOL || a.n.dot(b.n) < 0.999 {
                         continue;
                     }
                     // Undersides resting on (or in) the ground are never seen.
@@ -89,6 +110,12 @@ fn main() {
                     }
                     let area = overlap(a, b);
                     if area < 0.004 {
+                        continue;
+                    }
+                    // Both faces buried in a third block (say, a corbel's side and a pier's end
+                    // inside the lintel over an arch) can't be seen.
+                    let front = overlap_centre(a, b) + a.n * 0.005;
+                    if blocks.iter().enumerate().any(|(k, blk)| k != a.block && k != b.block && blk.visible && inside(blk, front)) {
                         continue;
                     }
                     total += 1;
