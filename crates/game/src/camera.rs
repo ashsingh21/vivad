@@ -33,12 +33,13 @@ fn spawn_camera(mut commands: Commands) {
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection { fov: 70f32.to_radians(), near: 0.05, ..default() }),
         Tonemapping::AgX,
-        // Two-thirds of a stop under Bevy's default (9.7): the afternoon sun and sky were washing
-        // out the ground and plaster. VIVAD_EV overrides for tuning.
-        bevy::camera::Exposure { ev100: std::env::var("VIVAD_EV").ok().and_then(|s| s.parse().ok()).unwrap_or(10.35) },
+        // Most of a stop under Bevy's default (9.7): the afternoon sun and sky were washing out the
+        // ground and plaster. VIVAD_EV overrides for tuning.
+        bevy::camera::Exposure { ev100: std::env::var("VIVAD_EV").ok().and_then(|s| s.parse().ok()).unwrap_or(10.6) },
         // Contact shadows in corners, under eaves and between blocks.
         bevy::pbr::ScreenSpaceAmbientOcclusion { radius: 0.6, ..default() },
         Msaa::Off,
+        grading(),
         AtmosphereSettings::default(),
         DistanceFog {
             color: Color::srgba(0.78, 0.74, 0.68, 1.0),
@@ -72,6 +73,22 @@ fn spawn_camera(mut commands: Commands) {
     if std::env::var("VIVAD_NO_SSAO").is_ok() {
         cam.remove::<bevy::pbr::ScreenSpaceAmbientOcclusion>();
     }
+}
+
+/// AgX alone leaves the sunlit ground chalky: a little more saturation, midtone and highlight
+/// contrast (not in the shadows, which would crush the characters' brown skin), and highlights
+/// pulled down. VIVAD_GRADE="saturation,contrast,highlight gain" overrides for tuning.
+fn grading() -> bevy::render::view::ColorGrading {
+    let v: Vec<f32> = std::env::var("VIVAD_GRADE").unwrap_or_default().split(',').filter_map(|s| s.parse().ok()).collect();
+    let (sat, con, hi) = (v.first().copied().unwrap_or(1.1), v.get(1).copied().unwrap_or(1.06), v.get(2).copied().unwrap_or(0.85));
+    let mut g = bevy::render::view::ColorGrading::default();
+    for s in [&mut g.shadows, &mut g.midtones, &mut g.highlights] {
+        s.saturation = sat;
+    }
+    g.midtones.contrast = con;
+    g.highlights.contrast = con;
+    g.highlights.gain = hi;
+    g
 }
 
 #[allow(clippy::type_complexity)]
