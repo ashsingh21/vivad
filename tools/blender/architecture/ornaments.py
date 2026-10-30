@@ -328,6 +328,51 @@ def jali(name="jali"):
     return obj
 
 
+def frieze(name):
+    """A painted frieze panel, 2 x 0.44 m (one repeat of its texture), facing -Y (outward in
+    the game), its bottom edge at z = 0: laid end to end under cornices."""
+    bm = bmesh.new()
+    uv = bm.loops.layers.uv.new("UVMap")
+    v = [bm.verts.new(p) for p in ((-1.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 0.0, 0.44), (-1.0, 0.0, 0.44))]
+    f = bm.faces.new(v)
+    for loop, (a, b) in zip(f.loops, ((0, 0), (1, 0), (1, 1), (0, 1))):
+        loop[uv].uv = (a, b)
+    f.normal_update()
+    if f.normal.y > 0:
+        f.normal_flip()
+    obj = T.new_obj(name, bm, (name,))
+    return finish_piece(name, _single(obj))
+
+
+def _single(obj):
+    kit = T.Kit()
+    kit.add(obj)
+    return kit
+
+
+def bunting(name="bunting"):
+    """A string of cloth pennants slung across a street: 14 m along X, sagging 0.9 m in the
+    middle, the ends at z = 0; pennants of four colours, cloth on both sides."""
+    kit = T.Kit()
+    L, sag, n = 14.0, 0.9, 30
+    zf = lambda x: -sag * (1 - (2 * x / L) ** 2)  # noqa: E731
+    pts = [(-L / 2 + L * i / 40, zf(-L / 2 + L * i / 40)) for i in range(41)]
+    for (xa, za), (xb, zb) in zip(pts, pts[1:]):
+        kit.add(T.box("rope", (xa, -0.008, min(za, zb) - 0.008), (xb, 0.008, max(za, zb) + 0.008), "rope"))
+    colours = ("pen_red", "pen_saffron", "pen_green", "pen_blue")
+    for i in range(n):
+        x = -L / 2 + L * (i + 0.5) / n
+        z = zf(x)
+        bm = bmesh.new()
+        bm.loops.layers.uv.new("UVMap")
+        # Front and back as separate faces (a face can't share its verts reversed).
+        for y, order in ((0.0, (0, 1, 2)), (0.004, (2, 1, 0))):
+            v = [bm.verts.new(p) for p in ((x - 0.16, y, z), (x + 0.16, y, z), (x, y + 0.02, z - 0.42))]
+            bm.faces.new([v[k] for k in order])
+        kit.add(T.new_obj("pennant", bm, (colours[i % 4],)))
+    return finish_piece(name, kit)
+
+
 def finish_piece(name, kit):
     obj = geo.join(kit.objs, f"{name}_LOD0")
     obj.data.set_sharp_from_angle(angle=math.radians(40))
@@ -342,11 +387,20 @@ def main():
     texgen.sandstone(T.TEX)
     texgen.trim_sheet(T.TEX)
     texgen.jali(T.TEX)
+    texgen.fresco(T.TEX, "fresco_a", ground=(0.86, 0.8, 0.66), ink=(0.25, 0.32, 0.44), accent=(0.66, 0.18, 0.12), leaf=(0.25, 0.45, 0.3))
+    texgen.fresco(T.TEX, "fresco_b", ground=(0.80, 0.56, 0.28), ink=(0.20, 0.22, 0.30), accent=(0.22, 0.32, 0.55), leaf=(0.75, 0.2, 0.15), seed=37)
     T.MATS.update({
         "stone": T.tex_material("sandstone", "sandstone"),
         "trim": T.tex_material("trim", "trim"),
         "gold": T.flat_material("gold", (1.0, 0.72, 0.30), 1.0, 0.3),
         "cloth": T.flat_material("dhvaja", (0.95, 0.45, 0.05), 0.0, 0.8),
+        "fresco_a": T.tex_material("fresco_a", "fresco_a"),
+        "fresco_b": T.tex_material("fresco_b", "fresco_b"),
+        "rope": T.flat_material("rope", (0.55, 0.45, 0.3), 0.0, 0.9),
+        "pen_red": T.flat_material("pen_red", (0.8, 0.1, 0.12), 0.0, 0.8),
+        "pen_saffron": T.flat_material("pen_saffron", (0.95, 0.5, 0.05), 0.0, 0.8),
+        "pen_green": T.flat_material("pen_green", (0.12, 0.5, 0.25), 0.0, 0.8),
+        "pen_blue": T.flat_material("pen_blue", (0.15, 0.3, 0.7), 0.0, 0.8),
     })
     pieces = {
         "arch_window": lambda: arch_opening("arch_window", 1.2, 1.2),
@@ -356,13 +410,19 @@ def main():
         "jharokha": jharokha,
         "chhatri": chhatri,
         "jali": jali,
+        "fresco_a": lambda: frieze("fresco_a"),
+        "fresco_b": lambda: frieze("fresco_b"),
+        "bunting": bunting,
     }
+    only = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else None
     for key, make in pieces.items():
+        if only and key not in only:
+            continue
         bpy.ops.object.select_all(action="DESELECT")
         for o in list(bpy.data.objects):
             bpy.data.objects.remove(o)
         obj = make()
-        if key != "jali":
+        if key not in ("jali", "fresco_a", "fresco_b", "bunting"):
             T.bake_weathering(obj)
         counts = export.export_glb([obj], os.path.join(OUT, f"{key}.gltf"))
         print(f"[ornament] {key}: {counts}")

@@ -229,6 +229,7 @@ fn run_tour(
     mut tour: ResMut<Tour>,
     mut cam: Query<&mut Transform, With<MainCamera>>,
     houses: Query<(&shared::sim::MapBlock, &Transform), Without<MainCamera>>,
+    chests: Query<(&shared::sim::loot::Chest, &Transform), Without<MainCamera>>,
     time: Res<Time<Real>>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -247,6 +248,20 @@ fn run_tour(
             let inward = t.rotation * Vec3::NEG_Z;
             pos = t.translation + inward * 1.5 + Vec3::Y * 0.6;
             look = pos + inward * 5.0 + Vec3::Y * 0.5;
+        }
+    }
+    if name.starts_with("2") && name.contains("haveli") {
+        // The bazaar's layout follows the map seed: find a courtyard haveli by its court's
+        // kalash chest (off the chowk), and frame it from the street, the gallery and the air.
+        if let Some((_, t)) = chests.iter().find(|(c, t)| c.kind == shared::map::ChestKind::Kalash && t.translation.x.abs() > 16.0 && t.translation.x.abs() < 60.0 && t.translation.z.abs() < 30.0) {
+            let chest = t.translation;
+            let side = chest.z.signum();
+            let court = chest + t.rotation * Vec3::Z * 2.5;
+            (pos, look) = match name {
+                "25_haveli_front" => (Vec3::new(court.x + 9.0, 3.0, side * 0.5), Vec3::new(court.x, 4.5, side * 8.0)),
+                "26_haveli_court" => (court + Vec3::new(2.0, 5.3, -side * 1.5), court + Vec3::new(-2.0, 1.2, side * 2.5)),
+                _ => (Vec3::new(court.x + 20.0, 24.0, side * 34.0), Vec3::new(court.x, 2.0, court.z)),
+            };
         }
     }
     let settle = std::env::var("VIVAD_TOUR_SETTLE").ok().and_then(|s| s.parse().ok()).unwrap_or(if tour.index == 0 { 150 } else { 45 });

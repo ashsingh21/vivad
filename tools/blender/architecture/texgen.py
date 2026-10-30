@@ -399,3 +399,77 @@ def building_set(out_dir):
 if __name__ == "__main__":
     import sys
     building_set(sys.argv[sys.argv.index("--") + 1] if "--" in sys.argv else "assets/textures/india")
+
+
+# ------------------------------------------------------------------ painted haveli frieze
+
+def fresco(out_dir, name, ground, ink, accent, leaf, w=1024, h=256, seed=31):
+    """A Shekhawati-style painted frieze, one repeat of 2 x 0.5 m: two elephants with saddle
+    cloths walking toward each other between lotus rosettes, under a border of ochre and ink
+    lines with a row of small arches, on lime plaster gone soft with age. Tiles along U."""
+    rng = np.random.default_rng(seed)
+    y, x = np.mgrid[0:h, 0:w].astype(np.float32)
+    col = np.ones((h, w, 3), np.float32) * np.array(ground, np.float32)
+    stain = periodic_noise(h, w, rng, 4, 3)
+    col *= (0.9 + 0.14 * stain)[..., None]
+
+    def paint(mask, c, k=1.0):
+        nonlocal col
+        m = np.clip(mask, 0, 1)[..., None] * k
+        col = col * (1 - m) + np.array(c, np.float32) * m
+
+    def ellipse(cx, cy, rx, ry):
+        return (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1.0).astype(np.float32)
+
+    def rect(x0, x1, y0, y1):
+        return ((x >= x0) & (x < x1) & (y >= y0) & (y < y1)).astype(np.float32)
+
+    # Borders: an ink line, an ochre band with a row of little arches, an ink line; mirrored below.
+    for top in (True, False):
+        yy = y if top else (h - 1 - y)
+        paint(((yy >= 4) & (yy < 8)).astype(np.float32), ink)
+        paint(((yy >= 8) & (yy < 24)).astype(np.float32), accent)
+        arch = ((yy >= 24) & (yy < 34)).astype(np.float32) * (((x % 32) - 16) ** 2 / 256.0 + (yy - 24) / 10.0 < 1.0)
+        paint(arch, accent)
+        paint(((yy >= 24) & (yy < 26)).astype(np.float32), ink)
+    # Two cells, each an elephant (the second mirrored) with a rosette at the cell edges.
+    for cell in range(2):
+        x0 = cell * 512
+        flip = cell == 1
+
+        def X(px):
+            return x0 + (512 - px if flip else px)
+        bx = lambda a, b: (min(X(a), X(b)), max(X(a), X(b)))  # noqa: E731
+        body = ellipse(X(250), 128, 112, 54)
+        head = ellipse(X(352), 104, 46, 44)
+        legs = sum(rect(*bx(p, p + 30), 150, 206) for p in (165, 205, 285, 318))
+        trunk = np.zeros_like(x)
+        for t in np.linspace(0, 1, 40):
+            tx, ty = 380 + 34 * t + 6 * np.sin(t * 3), 110 + 92 * t
+            trunk = np.maximum(trunk, ellipse(X(tx), ty, 10 - 3 * t, 10 - 3 * t))
+        tail = rect(*bx(134, 141), 120, 170)
+        paint(np.maximum.reduce([body, head, legs, trunk, tail]), ink)
+        paint(ellipse(X(330), 106, 24, 36), [c * 0.7 for c in ink])            # ear
+        paint(rect(*bx(200, 300), 78, 142), accent)                            # saddle cloth
+        paint(rect(*bx(200, 300), 78, 84) + rect(*bx(200, 300), 136, 142), [0.85, 0.66, 0.2])
+        paint(ellipse(X(250), 112, 14, 14), leaf)                              # cloth's medallion
+        paint(ellipse(X(368), 92, 4, 4), [0.95, 0.92, 0.85])                   # eye
+        tusk = np.zeros_like(x)
+        for t in np.linspace(0, 1, 16):
+            tusk = np.maximum(tusk, ellipse(X(386 + 16 * t), 130 + 6 * np.sin(t * 2.5), 4, 4))
+        paint(tusk, [0.95, 0.93, 0.86])
+        paint(ellipse(X(260), 64, 18, 16), [0.82, 0.38, 0.22])                 # howdah dome
+        paint(rect(*bx(240, 280), 64, 80), [0.82, 0.38, 0.22])
+    # Lotus rosettes on the cell edges (they wrap across the tile's ends).
+    for cx in (0, 512, 1024):
+        for k in range(8):
+            a = k * np.pi / 4
+            paint(ellipse(cx + 26 * np.cos(a), 128 + 26 * np.sin(a), 15, 15), leaf)
+        paint(ellipse(cx, 128, 16, 16), accent)
+        paint(ellipse(cx, 128, 7, 7), [0.85, 0.66, 0.2])
+    # Age: flaking and fading, a few pale patches where the paint has gone.
+    flake = periodic_noise(h, w, rng, 5, 10)
+    col = col * (1 - 0.25 * (flake > 0.78)[..., None]) + np.array(ground, np.float32) * 0.25 * (flake > 0.78)[..., None]
+    col = col * 0.92 + 0.08 * np.array(ground, np.float32)
+    nrm = normal_from_height(0.3 * stain + 0.1 * flake, 1.0)
+    write_set(out_dir, name, np.clip(col, 0, 1), nrm, np.ones((h, w), np.float32), 0.85 + 0.1 * stain)

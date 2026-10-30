@@ -101,6 +101,9 @@ pub fn paint(x: f32, z: f32, h: f32, n: Vec3, road_d: f32) -> (LinearRgba, f32) 
     let w_hampi = (1.0 - (Vec2::new(x, z).distance(hampi.xz()) - 55.0) / 30.0).clamp(0.0, 1.0)
         * (0.75 + 0.5 * fbm(x / 14.0, z / 14.0, 2, 61)).min(1.0);
     c = mix(c, mix(lin([0.58, 0.42, 0.30]), lin([0.66, 0.58, 0.44]), fbm(x / 7.0, z / 7.0, 2, 63) * 1.5 - 0.25), w_hampi);
+    // Chandni Bazaar: trodden dust between the houses, grass only at the town's edge.
+    let w_town = (1.0 - (Vec2::new(x, z).length() - 50.0) / 16.0).clamp(0.0, 1.0);
+    c = mix(c, mix(lin([0.63, 0.53, 0.40]), lin([0.55, 0.45, 0.33]), fbm(x / 6.0, z / 6.0, 2, 67) * 1.4 - 0.2), w_town);
     // Rock on steep slopes.
     let w_rock = ((0.86 - n.y) * 6.0).clamp(0.0, 1.0);
     c = mix(c, rock, w_rock);
@@ -112,7 +115,7 @@ pub fn paint(x: f32, z: f32, h: f32, n: Vec3, road_d: f32) -> (LinearRgba, f32) 
     let w_road = ((5.0 - road_d) / 2.5).clamp(0.0, 1.0);
     c = mix(c, dirt, w_road);
     let v = 0.92 + 0.16 * fbm(x / 3.0, z / 3.0, 2, 5);
-    let cover = (1.0 - w_hampi * 0.85) * (1.0 - w_dry * 1.4).max(0.0) * (1.0 - w_rock * 1.5).max(0.0) * (1.0 - w_sand * 1.3).max(0.0) * (1.0 - w_road * 1.2).max(0.0);
+    let cover = (1.0 - w_hampi * 0.85) * (1.0 - w_town * 0.92) * (1.0 - w_dry * 1.4).max(0.0) * (1.0 - w_rock * 1.5).max(0.0) * (1.0 - w_sand * 1.3).max(0.0) * (1.0 - w_road * 1.2).max(0.0);
     (LinearRgba::new(c.red * v, c.green * v, c.blue * v, 1.0), cover)
 }
 

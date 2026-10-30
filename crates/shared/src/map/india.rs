@@ -7,6 +7,39 @@ use rand::rngs::SmallRng;
 use rand::{RngExt, SeedableRng};
 
 use super::build::{Builder, Frame, Opening, FLOOR_H, JHAROKHA, WALL_T};
+
+pub const FRESCOES: [&str; 2] = ["models/props/fresco_a.gltf", "models/props/fresco_b.gltf"];
+pub const BUNTING: &str = "models/props/bunting.gltf";
+
+/// Painted frieze panels (2 m repeats, 0.44 m tall, bottom at `y`) along wall a -> c, on its
+/// outer face (local +z) or, with `inner`, on the other; gaps of +-1.4 m round each of `skip`
+/// (distances along the wall: balconies, doors).
+fn frieze(b: &mut Builder, f: Frame, a: Vec2, c: Vec2, y: f32, thick: f32, inner: bool, skip: &[f32], model: &'static str) {
+    let dir = c - a;
+    let len = dir.length();
+    let wf = f.child(Vec3::new(a.x, 0.0, a.y), (-dir.y).atan2(dir.x));
+    let mut cuts: Vec<f32> = skip.iter().copied().filter(|&s| s > -1.4 && s < len + 1.4).collect();
+    cuts.sort_by(f32::total_cmp);
+    let mut runs = vec![];
+    let mut s = 0.25;
+    for at in cuts {
+        runs.push((s, at - 1.4));
+        s = at + 1.4;
+    }
+    runs.push((s, len - 0.25));
+    let z = if inner { -(thick / 2.0 + 0.012) } else { thick / 2.0 + 0.012 };
+    let yaw = if inner { PI } else { 0.0 };
+    for (s, e) in runs {
+        if e - s < 1.2 {
+            continue;
+        }
+        let n = ((e - s) / 2.0).round().max(1.0);
+        let piece = (e - s) / n;
+        for i in 0..n as usize {
+            b.ornament(wf, Vec3::new(s + (i as f32 + 0.5) * piece, y, z), yaw, model, Vec3::new(piece / 2.0, 1.0, 1.0));
+        }
+    }
+}
 use super::terrain::{self, Pad, TerrainSpec};
 use super::{ChestKind, Lamp, MapLayout, Mat, Poi, Prop};
 
@@ -481,6 +514,11 @@ fn bazaar(b: &mut Builder, rng: &mut SmallRng) {
             b.loot(world(), Vec3::new(x, 0.3, z * 0.6));
         }
     }
+    // The street paved in stone between the house fronts, and bunting strung across it.
+    b.deco(world(), Vec3::new(0.0, 0.02, 0.0), Vec3::new(120.0, 0.04, 13.9), Mat::Sandstone);
+    for x in [-50.0, -37.0, -24.0, 24.0, 37.0, 50.0] {
+        b.ornament(world(), Vec3::new(x + rng.random_range(-2.0..2.0), 6.3, 0.0), FRAC_PI_2, BUNTING, Vec3::ONE);
+    }
     // Chowk: raised platform, small temple, well.
     b.span(world(), Vec3::new(-10.0, 0.0, -10.0), Vec3::new(10.0, 0.4, 10.0), Mat::Sandstone);
     temple(b, rng, Frame::new(Vec3::new(0.0, 0.4, -2.0), 0.0), 0.65);
@@ -525,6 +563,7 @@ fn house_with(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, flo
 
     // Ground-floor paving (visual; the terrain below is the collider).
     b.push(f.p(Vec3::new(0.0, 0.03, 0.0)), f.rot(), super::Shape::Box(Vec3::new(w - 0.1, 0.06, d - 0.1)), Mat::Sandstone, false, true);
+    let mut top_balconies = vec![];
     for k in 0..floors {
         let y0 = k as f32 * FLOOR_H;
         let win = |len: f32| -> Vec<Opening> {
@@ -564,6 +603,9 @@ fn house_with(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, flo
         for &at in &balconies {
             // Balcony floor level with the window sill.
             b.ornament(f, Vec3::new(at - hw, y0 + 0.26, hd), 0.0, JHAROKHA, Vec3::ONE);
+        }
+        if k + 1 == floors {
+            top_balconies = balconies.clone();
         }
         // String course marking each floor.
         if k > 0 {
@@ -609,6 +651,11 @@ fn house_with(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, flo
         corbels(b, f, a, c, ry - 0.62, t, trim);
         b.merlons(f, a, c, ry + 1.0, t, 0.9, Vec2::new(0.34, 0.32), mat);
         band(b, f, a, c, 0.0, 0.42, t + 0.16, trim);
+    }
+    // A painted frieze under the front cornice (palaces always, most houses).
+    if palace || rng.random_bool(0.6) {
+        let model = FRESCOES[rng.random_range(0..FRESCOES.len())];
+        frieze(b, f, Vec2::new(-hw, hd), Vec2::new(hw, hd), ry - 1.16, t, false, &top_balconies, model);
     }
     // Barsati: a rooftop room over the stair head, opening onto the terrace. It breaks up the
     // box silhouette and roofs the last flight.
@@ -664,6 +711,7 @@ fn haveli(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, mat: Ma
     let t = WALL_T;
     let floors = 2;
     let ring = 4.6;
+    let fresco = FRESCOES[rng.random_range(0..FRESCOES.len())];
     let (cx, cz) = (hw - ring, hd - ring); // court half extents
     let gallery = 1.0;
     let trim = trim_for(mat);
@@ -764,6 +812,8 @@ fn haveli(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, mat: Ma
             for i in 0..4 {
                 let (a, c) = (rail[i], rail[(i + 1) % 4]);
                 b.wall(f, a, c, y0 + FLOOR_H, 0.95, 0.16, mat, &[]);
+                // The gallery's parapet painted on its court face.
+                frieze(b, f, a, c, y0 + FLOOR_H + 0.3, 0.16, true, &[], fresco);
                 band(b, f, a, c, y0 + FLOOR_H + 0.95, 0.08, 0.26, trim);
                 corbels(b, f, inner[i], inner[(i + 1) % 4], y0 + FLOOR_H - 0.62, t, trim);
             }
@@ -775,6 +825,10 @@ fn haveli(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, mat: Ma
         }
         b.loot(f, Vec3::new(rng.random_range(-cx..cx), y0 + 0.3, hd - ring / 2.0));
     }
+    // Fill light in the court (the ranges' shade otherwise leaves it black), and the frieze
+    // under the street front's cornice, between the jharokhas.
+    stepwell_fill(b, f.p(Vec3::new(0.0, FLOOR_H + 0.4, 0.0)), 0.7);
+    frieze(b, f, outer[0], outer[1], floors as f32 * FLOOR_H - 1.16, t, false, &[w * 0.2, w * 0.8], fresco);
     // The court: a raised tulsi platform and the household's best chest.
     b.span(f, Vec3::new(-0.6, 0.0, -0.6), Vec3::new(0.6, 0.8, 0.6), trim);
     b.deco(f, Vec3::new(0.0, 0.85, 0.0), Vec3::new(1.4, 0.1, 1.4), trim);
