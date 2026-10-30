@@ -163,6 +163,8 @@ impl Plugin for AutoshotPlugin {
                     ("24_stalls", v(-30.0, 2.2, -1.0), v(-48.0, 1.5, -4.0)),
                     ("25_haveli_front", v(-41.0, 3.0, 0.5), v(-50.0, 4.5, 8.0)),
                     ("26_haveli_court", v(-47.6, 5.3, 12.6), v(-52.5, 1.2, 17.5)),
+                    ("31_pickup_sword", v(0.0, 2.0, 0.0), v(1.0, 0.0, 0.0)),
+                    ("31_pickup_bow", v(0.0, 2.0, 0.0), v(1.0, 0.0, 0.0)),
                     ("27_haveli_air", v(-22.0, 24.0, 34.0), v(-42.0, 2.0, 14.0)),
                     ("28_stepwell_niches", v(-100.0, -9.0, 92.0), v(-112.0, -11.0, 85.6)),
                     ("28b_stepwell_figures", v(-112.0, -9.5, 91.0), v(-118.0, -10.5, 85.6)),
@@ -230,6 +232,7 @@ fn run_tour(
     mut cam: Query<&mut Transform, With<MainCamera>>,
     houses: Query<(&shared::sim::MapBlock, &Transform), Without<MainCamera>>,
     chests: Query<(&shared::sim::loot::Chest, &Transform), Without<MainCamera>>,
+    pickups: Query<(&shared::sim::loot::Pickup, &Transform), Without<MainCamera>>,
     time: Res<Time<Real>>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -262,6 +265,15 @@ fn run_tour(
                 "26_haveli_court" => (court + Vec3::new(2.0, 5.3, -side * 1.5), court + Vec3::new(-2.0, 1.2, side * 2.5)),
                 _ => (Vec3::new(court.x + 20.0, 24.0, side * 34.0), Vec3::new(court.x, 2.0, court.z)),
             };
+        }
+    }
+    if name.starts_with("31_pickup") {
+        // Frame a weapon lying in the open (a bow or a sword), from standing height and 3 m off.
+        let want = if name.ends_with("bow") { "gandiva" } else { "khanda" };
+        let found = pickups.iter().find(|(p, t)| p.stack.id == want && t.translation.y < 3.0).or_else(|| pickups.iter().next());
+        if let Some((_, t)) = found {
+            let at = t.translation;
+            (pos, look) = (at + Vec3::new(2.4, 1.3, 1.6), at + Vec3::Y * 0.3);
         }
     }
     let settle = std::env::var("VIVAD_TOUR_SETTLE").ok().and_then(|s| s.parse().ok()).unwrap_or(if tour.index == 0 { 150 } else { 45 });

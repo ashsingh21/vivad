@@ -35,7 +35,7 @@ fn spawn_camera(mut commands: Commands) {
         Tonemapping::AgX,
         // Most of a stop under Bevy's default (9.7): the afternoon sun and sky were washing out the
         // ground and plaster. VIVAD_EV overrides for tuning.
-        bevy::camera::Exposure { ev100: std::env::var("VIVAD_EV").ok().and_then(|s| s.parse().ok()).unwrap_or(10.6) },
+        bevy::camera::Exposure { ev100: std::env::var("VIVAD_EV").ok().and_then(|s| s.parse().ok()).unwrap_or(10.8) },
         // Contact shadows in corners, under eaves and between blocks.
         bevy::pbr::ScreenSpaceAmbientOcclusion { radius: 0.6, ..default() },
         Msaa::Off,

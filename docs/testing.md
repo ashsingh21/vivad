@@ -25,7 +25,7 @@ pixels only when the numbers point somewhere.
 
 The HUD (minimap, status, hotbar) is masked out of every measurement.
 
-Render switches for comparisons: `VIVAD_EV=9.7` (camera exposure, default 10.6), `VIVAD_GRADE=1,1,1` (saturation, contrast, highlight gain; default 1.1,1.06,0.85),
+Render switches for comparisons: `VIVAD_EV=9.7` (camera exposure, default 10.8), `VIVAD_GRADE=1,1,1` (saturation, contrast, highlight gain; default 1.1,1.06,0.85),
 `VIVAD_NO_GRASS=1`, `VIVAD_AA=none|smaa`, `VIVAD_NO_SSAO=1`, `VIVAD_NO_SHADOWS=1`; with
 `VIVAD_PERF_LOG=1` the game logs FPS every 10 s; `VIVAD_NO_VSYNC=1` uncaps the frame rate so
 the numbers mean something (with vsync they stop at the display's 60).

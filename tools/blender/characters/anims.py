@@ -145,10 +145,11 @@ def arm_swing(rig, s, swing, elbow, out=0.12):
     """Arms from the shoulders: `swing` radians forward (+) / back, forearm bent `elbow` radians."""
     sx = 1 if s == "l" else -1
     down = Vector((sx * out, 0, -1)).normalized()
-    ua = Matrix.Rotation(swing, 3, LEFT) @ down
-    # Rotating about +X tips the down vector toward -Y (forward) for positive angles.
+    # A positive angle about +X tips the down vector toward +Y, which is backward (FWD is -Y):
+    # turn the other way, so `swing` and the elbow's bend both carry the hand forward.
+    ua = Matrix.Rotation(-swing, 3, LEFT) @ down
     rig.aim(f"upperarm_{s}", ua)
-    fa = Matrix.Rotation(swing + elbow, 3, LEFT) @ down
+    fa = Matrix.Rotation(-(swing + elbow), 3, LEFT) @ down
     fa = (fa + Vector((-sx * 0.12 * math.sin(elbow), 0, 0))).normalized()
     rig.aim(f"lowerarm_{s}", fa)
     rig.aim(f"hand_{s}", fa)
@@ -265,9 +266,10 @@ def locomotion(rig, name, speed, direction, cadence, duty, lift, crouch, bob, le
                 pitch = lerp(-0.5, 0.15, smooth((k - 0.1) / 0.8))
             rig.leg_ik(s, base + g + Vector((0, 0, z)), FWD + UP * 0.1)
             rig.foot_pitch(s, pitch)
-        # Arms swing against the legs (left arm forward with the right leg).
+        # Arms swing against the legs: the left arm furthest back as the left foot lands in front
+        # (t = 0), furthest forward as the right one does (t = 0.5).
         for s, sign in (("l", 1), ("r", -1)):
-            a = arm * math.sin(2 * math.pi * t) * sign * (-1 if d.y > 0.5 else 1)
+            a = -arm * math.cos(2 * math.pi * t) * sign * (-1 if d.y > 0.5 else 1)
             arm_swing(rig, s, a if not sideways else 0.25 * a, elbow)
             relax_fingers(rig, s)
         # Keep the head level and looking ahead.

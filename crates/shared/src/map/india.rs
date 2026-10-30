@@ -374,7 +374,8 @@ fn river_and_ghats(b: &mut Builder, rng: &mut SmallRng) {
                 ghat_umbrella(b, Vec3::new(l2 + 0.1, GHAT_FLIGHTS[1].3, z), rng.random_range(-0.4..0.4));
             }
         }
-        b.loot(w, Vec3::new(l2, GHAT_FLIGHTS[1].3 + 0.3, (z0 + z1) / 2.0));
+        // Between two umbrella slots, never on a chowki.
+        b.loot(w, Vec3::new(l2, GHAT_FLIGHTS[1].3 + 0.3, (slots[1] + slots[2]) / 2.0));
         b.loot(w, Vec3::new(GHAT_FRONT + 2.0, GHAT_DECK + 0.3, rng.random_range(z0 + 2.0..z1 - 2.0)));
     }
     // East bank ghats so the river is never a trap.

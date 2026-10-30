@@ -61,6 +61,11 @@ pub struct Palette {
     sphere: Handle<Mesh>,
     mats: HashMap<(Mat, u8), Handle<StandardMaterial>>,
     rarity_glow: HashMap<Rarity, Handle<StandardMaterial>>,
+    /// Under a pickup: a soft pool of its rarity's light on the ground, and a faint beam rising.
+    rarity_pool: HashMap<Rarity, Handle<StandardMaterial>>,
+    rarity_beam: HashMap<Rarity, Handle<StandardMaterial>>,
+    pool_mesh: Handle<Mesh>,
+    beam_mesh: Handle<Mesh>,
     wood: Handle<StandardMaterial>,
     gold: Handle<StandardMaterial>,
     pub(crate) string: Handle<StandardMaterial>,
@@ -102,6 +107,7 @@ fn setup_assets(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
     assets: Res<AssetServer>,
 ) {
     let mut mats = HashMap::new();
@@ -141,6 +147,66 @@ fn setup_assets(
             ..default()
         }));
     }
+    // Loot light: a radial pool and a vertical fade, as alpha masks tinted per rarity, added
+    // onto what's behind (light, not paint).
+    let mask = |images: &mut Assets<Image>, f: &dyn Fn(f32, f32) -> f32| {
+        use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+        let n = 128usize;
+        let mut data = Vec::with_capacity(n * n * 4);
+        for y in 0..n {
+            for x in 0..n {
+                let a = f((x as f32 + 0.5) / n as f32, (y as f32 + 0.5) / n as f32).clamp(0.0, 1.0);
+                data.extend_from_slice(&[255, 255, 255, (a * 255.0) as u8]);
+            }
+        }
+        images.add(Image::new(Extent3d { width: n as u32, height: n as u32, depth_or_array_layers: 1 }, TextureDimension::D2, data,
+                              TextureFormat::Rgba8UnormSrgb, bevy::asset::RenderAssetUsages::RENDER_WORLD))
+    };
+    let pool_tex = mask(&mut images, &|u, v| {
+        let r = ((u - 0.5).powi(2) + (v - 0.5).powi(2)).sqrt() * 2.0;
+        // A soft core fading out, and a faint ring at its rim.
+        0.55 * (-(r * r) * 5.0).exp() + 0.28 * (-((r - 0.78) / 0.07).powi(2)).exp()
+    });
+    let beam_tex = mask(&mut images, &|u, v| {
+        // v = 0 at the beam's foot; brighter down the middle of each card.
+        (1.0 - v).powf(1.6) * (1.0 - (u - 0.5).abs() * 2.0).powf(1.5) * 0.7
+    });
+    let mut rarity_pool = HashMap::new();
+    let mut rarity_beam = HashMap::new();
+    for r in Rarity::ALL {
+        let l = r.color().to_linear();
+        // Common loot gets a dim pool and barely a beam; rarer loot glows more.
+        let k = match r { Rarity::Common => 0.5, Rarity::Rare => 0.8, _ => 1.0 };
+        let tint = |a: f32| Color::linear_rgba(l.red * a, l.green * a, l.blue * a, 1.0);
+        let light = |tex: &Handle<Image>, a: f32, materials: &mut Assets<StandardMaterial>| materials.add(StandardMaterial {
+            base_color: tint(a),
+            base_color_texture: Some(tex.clone()),
+            alpha_mode: AlphaMode::Add,
+            unlit: true,
+            cull_mode: None,
+            ..default()
+        });
+        rarity_pool.insert(r, light(&pool_tex, 1.6 * k, &mut materials));
+        rarity_beam.insert(r, light(&beam_tex, 1.2 * k * k, &mut materials));
+    }
+    let beam_mesh = {
+        use bevy::mesh::{Indices, PrimitiveTopology};
+        // Two crossed vertical cards, 0.22 wide and 1.7 tall.
+        let (w, h) = (0.11, 1.7);
+        let mut pos = vec![];
+        let mut uv = vec![];
+        for d in [Vec3::X, Vec3::Z] {
+            for (s, t) in [(-1.0, 0.0), (1.0, 0.0), (1.0, 1.0), (-1.0, 1.0)] {
+                pos.push((d * w * s + Vec3::Y * h * t).to_array());
+                uv.push([(s + 1.0) / 2.0, t]);
+            }
+        }
+        Mesh::new(PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::RENDER_WORLD)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 0.0, 1.0]; 8])
+            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
+            .with_inserted_indices(Indices::U32(vec![0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]))
+    };
     let outfit_colors = [
         (Color::srgb(0.95, 0.55, 0.10), Color::srgb(0.95, 0.92, 0.85)), // local: saffron + white
         (Color::srgb(0.70, 0.15, 0.20), Color::srgb(0.90, 0.75, 0.30)),
@@ -166,6 +232,10 @@ fn setup_assets(
         sphere: meshes.add(Sphere::new(1.0).mesh().uv(24, 14)),
         mats,
         rarity_glow,
+        rarity_pool,
+        rarity_beam,
+        pool_mesh: meshes.add(Plane3d::default().mesh().size(1.3, 1.3)),
+        beam_mesh: meshes.add(beam_mesh),
         wood: materials.add(StandardMaterial { base_color: Color::srgb(0.40, 0.24, 0.12), perceptual_roughness: 0.7, ..default() }),
         gold: materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.78, 0.34), metallic: 1.0, perceptual_roughness: 0.3, ..default() }),
         glint: materials.add(StandardMaterial {
@@ -219,8 +289,10 @@ fn setup_sky(mut commands: Commands, mut media: ResMut<Assets<ScatteringMedium>>
     // Late-afternoon sun from the west-south-west: long shadows across the ghats.
     commands.spawn((
         Sun,
-        DirectionalLight { illuminance: 32_000.0, shadow_maps_enabled: std::env::var("VIVAD_NO_SHADOWS").is_err(), color: Color::srgb(1.0, 0.94, 0.84), ..default() },
-        Transform::from_xyz(-1.0, 0.75, 0.45).looking_at(Vec3::ZERO, Vec3::Y),
+        // Low (about 24 degrees) and warm: a softer, golden light than the hard white
+        // high sun the map had, which read as glaring over the pale stone and dust.
+        DirectionalLight { illuminance: 27_000.0, shadow_maps_enabled: std::env::var("VIVAD_NO_SHADOWS").is_err(), color: Color::srgb(1.0, 0.86, 0.68), ..default() },
+        Transform::from_xyz(-1.0, 0.5, 0.45).looking_at(Vec3::ZERO, Vec3::Y),
         // VIVAD_CASCADES / VIVAD_SHADOW_FAR for comparisons; the shadow pass is the frame's
         // largest GPU cost.
         CascadeShadowConfigBuilder {
@@ -232,7 +304,7 @@ fn setup_sky(mut commands: Commands, mut media: ResMut<Assets<ScatteringMedium>>
         .build(),
     ));
     commands.spawn(Atmosphere::earth(media.add(ScatteringMedium::default())));
-    commands.insert_resource(GlobalAmbientLight { color: Color::srgb(0.85, 0.88, 1.0), brightness: 450.0, ..default() });
+    commands.insert_resource(GlobalAmbientLight { color: Color::srgb(0.85, 0.88, 1.0), brightness: 560.0, ..default() });
     // The Pralaya wall.
     commands.spawn((
         ZoneWall,
@@ -523,10 +595,12 @@ fn dress_pickups(mut commands: Commands, q: Query<(Entity, &Pickup), Added<Picku
     for (e, p) in &q {
         let rarity = p.stack.rarity;
         commands.entity(e).insert(Visibility::default());
-        // Rarity-coloured glow disc under a spinning, bobbing model.
-        commands.spawn((Mesh3d(palette.cylinder.clone()), MeshMaterial3d(palette.rarity_glow[&rarity].clone()),
-                        Transform::from_xyz(0.0, -0.22, 0.0).with_scale(Vec3::new(0.9, 0.02, 0.9)),
-                        bevy::light::NotShadowCaster, ChildOf(e)));
+        // A pool of the rarity's light on the ground and a faint beam rising through the model,
+        // which hovers and turns slowly above.
+        commands.spawn((Mesh3d(palette.pool_mesh.clone()), MeshMaterial3d(palette.rarity_pool[&rarity].clone()),
+                        Transform::from_xyz(0.0, -0.27, 0.0), bevy::light::NotShadowCaster, ChildOf(e)));
+        commands.spawn((Mesh3d(palette.beam_mesh.clone()), MeshMaterial3d(palette.rarity_beam[&rarity].clone()),
+                        Transform::from_xyz(0.0, -0.27, 0.0), bevy::light::NotShadowCaster, ChildOf(e)));
         // Small things (vessels, herbs, astras) are shown larger so they read from a distance.
         let scale = match db.get(&p.stack.id).kind {
             ItemKind::Consumable { .. } => 2.2,
@@ -541,8 +615,9 @@ fn dress_pickups(mut commands: Commands, q: Query<(Entity, &Pickup), Added<Picku
 fn animate_pickups(time: Res<Time>, mut q: Query<&mut Transform, With<PickupSpin>>) {
     let t = time.elapsed_secs();
     for mut tf in &mut q {
-        tf.rotation = Quat::from_rotation_y(t * 1.6) * Quat::from_rotation_z(0.5);
-        tf.translation.y = 0.3 * tf.scale.y.max(1.0) + (t * 2.0).sin() * 0.08;
+        // Slow turn, a slight lean, a gentle breathing bob at waist height.
+        tf.rotation = Quat::from_rotation_y(t * 0.9) * Quat::from_rotation_z(0.3);
+        tf.translation.y = 0.42 * tf.scale.y.max(1.0) + (t * 1.5).sin() * 0.045;
     }
 }
 
