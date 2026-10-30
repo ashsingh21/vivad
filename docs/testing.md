@@ -59,8 +59,8 @@ spots for one model). Faces that can't be seen are left out: undersides on or in
 wholly buried, and faces whose front is pressed into a map block or enclosed by other geometry. The
 map generator lowers the ground a few centimetres under any block whose top lies at ground level
 (`Terrain::settle_under`). What remains: the stepwell lining's back against its retaining walls and
-door frames resting on floor slabs (hidden), and patches under 0.2 m2 on the stupa, Ajanta and the
-jharokhas.
+door frames resting on floor slabs (hidden), and patches under 0.2 m2 on the stupa and
+Ajanta.
 
 **Sound** can't be judged by ear here: `just sfx` prints peak / RMS level, length, spectral
 centroid and loop-seam size per sound, and `VIVAD_AUDIO_LOG=1` makes the game log how often each

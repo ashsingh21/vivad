@@ -1109,11 +1109,20 @@ fn fort(b: &mut Builder, rng: &mut SmallRng) {
     }
     b.chest(f, Vec3::new(0.0, top + 1.0, -16.6), 0.0, ChestKind::Peti);
     b.loot(f, Vec3::new(3.0, top + 6.3, -14.6));
-    // Palace wings either side of the court.
-    let pf = f.child(Vec3::new(0.0, top, -4.0), 0.0);
-    for (pos, yaw) in [(Vec3::new(-13.0, 0.0, 0.0), FRAC_PI_2), (Vec3::new(13.0, 0.0, 0.0), -FRAC_PI_2)] {
-        house(b, rng, pf.child(pos, yaw), 12.0, 7.0, 2, Mat::RedSandstone);
+    // Fill light under the roof (the hall is black with the sun behind it), lamps at the back.
+    for x in [-4.2, 4.2] {
+        stepwell_fill(b, f.p(Vec3::new(x, top + 4.4, -14.6)), 1.2);
     }
+    for x in [-0.9, 0.9] {
+        samai(b, f, Vec3::new(x, top + 1.0, -17.9));
+    }
+    // Palace wings either side of the court, and the court's flagstones (in the model; this
+    // keeps the grass off them).
+    for s in [1.0, -1.0] {
+        mahal(b, f, top, s);
+    }
+    hidden(b, |b| b.deco(f, Vec3::new(0.0, top - 0.04, 0.0), Vec3::new(2.0 * hw - t, 0.12, 2.0 * hd - t), Mat::Sandstone));
+    let pf = f.child(Vec3::new(0.0, top, -4.0), 0.0);
     // Char-bagh: a marble platform with the treasure, water channels running out in a cross.
     b.cyl(pf, Vec3::ZERO, 2.2, 0.5, Mat::Marble);
     b.chest(pf, Vec3::new(0.0, 0.5, 0.0), 0.0, ChestKind::Kalash);
@@ -1129,6 +1138,75 @@ fn fort(b: &mut Builder, rng: &mut SmallRng) {
     }
     for _ in 0..5 {
         b.loot(f, Vec3::new(rng.random_range(-7.0..7.0), top + 0.3, rng.random_range(3.0..16.0)));
+    }
+}
+
+// Palace wing plan (fort.py `MAHAL_*`): |x| from the court axis, z in the fort frame.
+const MAHAL_X: (f32, f32) = (9.5, 16.5);
+const MAHAL_Z: (f32, f32) = (-10.0, 2.0);
+const MAHAL_ROWS: [f32; 2] = [9.9, 12.9];
+const MAHAL_COLS: [f32; 6] = [-9.2, -7.12, -5.04, -2.96, -0.88, 1.2];
+const MAHAL_FLOOR: f32 = 0.6;
+const MAHAL_ROOF: f32 = 4.2;
+const MAHAL_TOP: f32 = 4.9;
+const MAHAL_GAP: (f32, f32) = (-8.2, -6.0);
+const PAV_ROWS: [f32; 2] = [11.4, 14.6];
+const PAV_COLS: [f32; 3] = [-6.2, -4.0, -1.8];
+const PAV_TOP: f32 = 7.5;
+
+/// A palace wing facing the court (s = 1 east, -1 west): an arcaded hall on a plinth, a roof
+/// terrace reached by a stair outside the back wall, a pavilion and two chhatris on the roof.
+fn mahal(b: &mut Builder, f: Frame, top: f32, s: f32) {
+    let (xf, xb) = MAHAL_X;
+    let (z0, z1) = MAHAL_Z;
+    let (fl, rf, tp) = (top + MAHAL_FLOOR, top + MAHAL_ROOF, top + MAHAL_TOP);
+    // Box from |x| xl0..xl1, z0..z1, y0..y1, mirrored for the west wing.
+    let bx = |b: &mut Builder, xl: (f32, f32), z: (f32, f32), y: (f32, f32)| {
+        let (xa, xc) = (s * xl.0, s * xl.1);
+        b.span(f, Vec3::new(xa.min(xc), y.0, z.0), Vec3::new(xa.max(xc), y.1, z.1), Mat::RedSandstone);
+    };
+    let (c0, c1) = (MAHAL_COLS[0], MAHAL_COLS[5]);
+    hidden(b, |b| {
+        bx(b, (xf, xb), (z0, z1), (top, fl));
+        bx(b, (xf, xb), (z0, c0), (fl, rf));
+        bx(b, (xf, xb), (c1, z1), (fl, rf));
+        bx(b, (xb - 0.4, xb), (c0, c1), (fl, rf));
+        for xl in MAHAL_ROWS {
+            for z in MAHAL_COLS {
+                b.cyl(f, Vec3::new(s * xl, fl, z), 0.25, rf - fl, Mat::RedSandstone);
+            }
+        }
+        bx(b, (xf + 0.1, xb), (z0, z1), (rf, tp));
+        let xi = xf + 0.1;
+        let py = (tp, tp + 0.7);
+        bx(b, (xi, xi + 0.3), (z0, z1), py);
+        bx(b, (xi + 0.3, xb), (z0, z0 + 0.3), py);
+        bx(b, (xi + 0.3, xb), (z1 - 0.3, z1), py);
+        bx(b, (xb - 0.3, xb), (z0 + 0.3, MAHAL_GAP.0), py);
+        bx(b, (xb - 0.3, xb), (MAHAL_GAP.1, z1 - 0.3), py);
+        for xl in PAV_ROWS {
+            for z in PAV_COLS {
+                b.cyl(f, Vec3::new(s * xl, tp, z), 0.25, PAV_TOP - MAHAL_TOP, Mat::RedSandstone);
+            }
+        }
+        bx(b, (PAV_ROWS[0] - 0.6, PAV_ROWS[1] + 0.6), (PAV_COLS[0] - 0.6, PAV_COLS[2] + 0.6), (top + PAV_TOP, top + PAV_TOP + 1.1));
+    });
+    // Steps up the plinth from the court, on the char-bagh's axis.
+    let mid = (MAHAL_COLS[2] + MAHAL_COLS[3]) / 2.0;
+    let toward = if s > 0.0 { 0.0 } else { PI };
+    b.stairs(f.child(Vec3::new(s * (xf - 1.5), top, mid), toward), Vec3::ZERO, 1.5, MAHAL_FLOOR, 3.6, Mat::RedSandstone);
+    // Outside the back wall: a stair up to a landing tower at the parapet's gap.
+    let (g0, g1) = MAHAL_GAP;
+    b.stairs(f.child(Vec3::new(s * (xb + 1.0), top, z1 - 1.0), FRAC_PI_2), Vec3::ZERO, z1 - 1.0 - g1, MAHAL_TOP, 2.0, Mat::RedSandstone);
+    bx(b, (xb, xb + 2.0), (g0, g1), (top, tp));
+    for z in [z0 + 1.25, z1 - 1.25] {
+        b.chhatri(f, Vec3::new(s * (xf + 1.4), tp, z), 1.8, Mat::RedSandstone);
+    }
+    stepwell_fill(b, f.p(Vec3::new(s * 12.0, top + 3.4, mid)), 1.0);
+    b.loot(f, Vec3::new(s * 14.5, fl + 0.3, mid));
+    b.loot(f, Vec3::new(s * 13.0, tp + 0.3, mid));
+    if s > 0.0 {
+        b.chest(f, Vec3::new(s * 15.3, fl, z0 + 2.0), -FRAC_PI_2, ChestKind::Peti);
     }
 }
 

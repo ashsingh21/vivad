@@ -4,7 +4,9 @@ parapet of kangura merlons with loopholes; round corner bastions, half-round bas
 out from the walls and two octagonal towers flanking the gate (Pol), which has a cusped pointed
 arch in a framed portal and studded doors standing open; a postern on the west; and the
 Diwan-i-Aam, a hall of audience: a plinth, three rows of fluted pillars carrying cusped arches,
-a flat roof with a drip-shade eave and a kangura parapet.
+a flat roof with a drip-shade eave and a kangura parapet; two palace wings (mahal) facing each
+other across the court, arcaded halls with a bangaldar-roofed pavilion on the roof; and the
+court's flagstones.
 
 The plan constants and the tower / parapet / merlon layout repeat india.rs (`FORT_*`,
 `fort_towers`, `fort_parapet_runs`, `fort_merlons`, `fort_ring`): keep the two in step.
@@ -235,10 +237,12 @@ def portal(kit, M, x, half, top, spring, doors):
                 kit.add(B.transform(cone, M @ Matrix.Translation((face, y, z)) @ R))
 
 
-def eave(kit, x0, x1, y0, y1, z, depth):
-    """Chhajja: a thin sloping drip-shade round a roof, its inner edge at z."""
+def eave(kit, x0, x1, y0, y1, z, depth, skip=None):
+    """Chhajja: a thin sloping drip-shade round a roof, its inner edge at z. `skip`: a side left
+    bare (0 = -Y, 1 = +X, 2 = +Y, 3 = -X)."""
     import bmesh
-    for (ax, ay, bx, by, ox, oy) in ((x0, y0, x1, y0, 0, -1), (x1, y0, x1, y1, 1, 0), (x1, y1, x0, y1, 0, 1), (x0, y1, x0, y0, -1, 0)):
+    sides = ((x0, y0, x1, y0, 0, -1), (x1, y0, x1, y1, 1, 0), (x1, y1, x0, y1, 0, 1), (x0, y1, x0, y0, -1, 0))
+    for (ax, ay, bx, by, ox, oy) in (sd for k, sd in enumerate(sides) if k != skip):
         bm = bmesh.new()
         bm.loops.layers.uv.new("UVMap")
         ext = depth
@@ -264,6 +268,17 @@ def eave(kit, x0, x1, y0, y1, z, depth):
         kit.add(o)
 
 
+def arch_panel(kit, xm, ym, a, along_y, spring, apex, top):
+    """A cusped arch panel between two pillars' brackets, centred at (xm, ym)."""
+    inner = O.cusped_arch(a, spring, apex, lobes=7, cusp=0.07)
+    R = Matrix.Rotation(math.pi / 2, 4, "Z") if along_y else Matrix.Identity(4)
+    M = Matrix.Translation((xm, ym, 0)) @ R
+    # 3 cm inside the pillar brackets (±0.2), so their faces never share a plane.
+    kit.add(B.transform(O.solid_from_outline("arch", inner + [(a, top), (-a, top)], -0.17, 0.17, "trim", strip="lata", u_scale=1.2), M))
+    for y in (-0.19, 0.19):
+        kit.add(B.transform(O.rim_sweep("arim", inner, y, 0.04), M))
+
+
 def diwan(kit):
     Y = lambda z: -z  # noqa: E731
     cy = 14.6
@@ -276,13 +291,7 @@ def diwan(kit):
     spring, apex, top = 3.9, 4.75, 5.22
 
     def arch(xm, ym, a, along_y):
-        inner = O.cusped_arch(a, spring, apex, lobes=7, cusp=0.07)
-        R = Matrix.Rotation(math.pi / 2, 4, "Z") if along_y else Matrix.Identity(4)
-        M = Matrix.Translation((xm, ym, 0)) @ R
-        # 3 cm inside the pillar brackets (±0.2), so their faces never share a plane.
-        kit.add(B.transform(O.solid_from_outline("arch", inner + [(a, top), (-a, top)], -0.17, 0.17, "trim", strip="lata", u_scale=1.2), M))
-        for y in (-0.19, 0.19):
-            kit.add(B.transform(O.rim_sweep("arim", inner, y, 0.04), M))
+        arch_panel(kit, xm, ym, a, along_y, spring, apex, top)
 
     for z in DIWAN_ROWS:
         for x0, x1 in zip(DIWAN_COLS, DIWAN_COLS[1:]):
@@ -307,6 +316,128 @@ def diwan(kit):
                 kangura(kit, Rz @ Matrix.Translation((y, 0, 0)), 0.0, 6.4, -0.15, 0.15, 0.6)
 
 
+def bangla(kit, cx, cy, L, wd, z0, rise, over=0.3):
+    """Bangaldar roof: a curved vault along Y whose ridge droops toward both ends, its eaves
+    curling down past the corners."""
+    import bmesh
+    bm = bmesh.new()
+    uv = bm.loops.layers.uv.new("UVMap")
+    nu, nk = 28, 14
+    half = L / 2 + over
+    grid = []
+    for i in range(nu + 1):
+        u = -half + 2 * half * i / nu
+        f = 1 - 0.4 * (u / half) ** 2
+        row = []
+        for k in range(nk + 1):
+            ang = math.pi * k / nk
+            row.append(bm.verts.new((cx - (wd / 2 + over) * math.cos(ang), cy + u, z0 + rise * f * math.sin(ang) - 0.25 * (1 - f))))
+        grid.append(row)
+    for i in range(nu):
+        for k in range(nk):
+            fc = bm.faces.new((grid[i][k], grid[i][k + 1], grid[i + 1][k + 1], grid[i + 1][k]))
+            for loop in fc.loops:
+                co = loop.vert.co
+                loop[uv].uv = (co.y / T.TILE, (co.x + co.z) / T.TILE)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    for fc in bm.faces:
+        if fc.normal.z < 0:
+            fc.normal_flip()
+    roof = T.new_obj("bangaldar", bm, ("stone",))
+    sol = roof.modifiers.new("s", "SOLIDIFY")
+    sol.thickness = 0.1
+    bpy.context.view_layer.objects.active = roof
+    bpy.ops.object.modifier_apply(modifier="s")
+    kit.add(roof)
+    T.kalasha(kit, (cx, cy), z0 + rise - 0.04, 0.3)
+
+
+# Palace wing (mahal) plan, as india.rs `MAHAL_*`: |x| from the court axis, game z.
+MAHAL_X = (9.5, 16.5)           # plinth: court face, back
+MAHAL_Z = (-10.0, 2.0)
+MAHAL_ROWS = (9.9, 12.9)        # pillar rows (|x|)
+MAHAL_COLS = (-9.2, -7.12, -5.04, -2.96, -0.88, 1.2)    # the end ones engaged in the end walls (0.8 thick)
+MAHAL_FLOOR, MAHAL_ROOF, MAHAL_TOP = 0.6, 4.2, 4.9
+MAHAL_GAP = (-8.2, -6.0)        # back parapet open where the outside stair lands
+PAV_ROWS = (11.4, 14.6)
+PAV_COLS = (-6.2, -4.0, -1.8)
+PAV_TOP = 7.5
+
+
+def mahal(kit, s):
+    """A palace wing facing the court: an arcaded hall (dalan) of two pillar rows on a plinth,
+    a roof terrace with a kangura parapet, and a bangaldar-roofed pavilion on the terrace.
+    s = +1 east wing, -1 west wing."""
+    def box(name, xl0, xl1, z0, z1, h0, h1, mat="stone"):
+        xa, xb = sorted((s * xl0, s * xl1))
+        return kit.add(T.box(name, (xa, -z1, h0), (xb, -z0, h1), mat))
+    (xf, xb), (z0, z1) = MAHAL_X, MAHAL_Z
+    cx, cy = s * (xf + xb) / 2, -(z0 + z1) / 2
+    hx, hy = (xb - xf) / 2, (z1 - z0) / 2
+    fl, rf, tp = MAHAL_FLOOR, MAHAL_ROOF, MAHAL_TOP
+    box("mplinth", xf, xb, z0, z1, 0.0, fl)
+    kit.add(T.molded("mpband", [(0.0, T.rect(hx + 0.12, hy + 0.12, cx, cy), "padma"), (0.3, T.rect(hx + 0.12, hy + 0.12, cx, cy), None)]))
+    # End walls (whole depth) and the back wall between them.
+    box("mwall", xf, xb, z0, MAHAL_COLS[0], fl, rf)
+    box("mwall", xf, xb, MAHAL_COLS[-1], z1, fl, rf)
+    box("mwall", xb - 0.4, xb, MAHAL_COLS[0], MAHAL_COLS[-1], fl, rf)
+    for xl in MAHAL_ROWS:
+        for z in MAHAL_COLS:
+            S.pillar_fluted(kit, s * xl, -z, fl, rf - fl)
+    spring, apex, top = rf - 1.3, rf - 0.45, rf + 0.02
+    for xl in MAHAL_ROWS:
+        for za, zb in zip(MAHAL_COLS, MAHAL_COLS[1:]):
+            arch_panel(kit, s * xl, -(za + zb) / 2, (zb - za) / 2 - 0.2, True, spring, apex, top)
+    xa, xb2 = MAHAL_ROWS
+    for z in MAHAL_COLS[1:-1]:
+        arch_panel(kit, s * (xa + xb2) / 2, -z, (xb2 - xa) / 2 - 0.2, False, spring, apex, top)
+    # Roof slab, cornice band and the drip-shade (none at the back, over the stair).
+    box("mroof", xf + 0.1, xb, z0, z1, rf, tp)
+    rhx, rcx = (xb - xf - 0.1) / 2, s * (xf + 0.1 + xb) / 2
+    kit.add(T.molded("mrband", [(rf + 0.4, T.rect(rhx + 0.12, hy + 0.12, rcx, cy), "lata"), (rf + 0.65, T.rect(rhx + 0.12, hy + 0.12, rcx, cy), None)]))
+    ex0, ex1 = sorted((s * (xf + 0.1), s * xb))
+    eave(kit, ex0 - 0.12, ex1 + 0.12, -z1 - 0.12, -z0 + 0.12, rf + 0.32, 0.6, skip=1 if s > 0 else 3)
+    # Parapet with small kanguras, open at the back where the stair lands.
+    pz = tp + 0.7
+    xi = xf + 0.1
+    runs = [(xi, xi + 0.3, z0, z1, "z"), (xi + 0.3, xb, z0, z0 + 0.3, "x"), (xi + 0.3, xb, z1 - 0.3, z1, "x"),
+            (xb - 0.3, xb, z0 + 0.3, MAHAL_GAP[0], "z"), (xb - 0.3, xb, MAHAL_GAP[1], z1 - 0.3, "z")]
+    for (a0, a1, b0, b1, along) in runs:
+        box("mpar", a0, a1, b0, b1, tp, pz)
+        xa_, xb_ = sorted((s * a0, s * a1))
+        if along == "x":
+            for x in merlons_n(xa_, xb_, 1.1):
+                kangura(kit, Matrix.Identity(4), x, pz, -b1, -b0, 0.6)
+        else:
+            Rz = Matrix.Translation(((xa_ + xb_) / 2, 0, 0)) @ Matrix.Rotation(math.pi / 2, 4, "Z")
+            for y in merlons_n(-b1, -b0, 1.1):
+                kangura(kit, Rz @ Matrix.Translation((y, 0, 0)), 0.0, pz, -0.15, 0.15, 0.6)
+    # Rooftop pavilion: six pillars, an entablature, a bangaldar roof.
+    for xl in PAV_ROWS:
+        for z in PAV_COLS:
+            S.pillar_fluted(kit, s * xl, -z, tp, PAV_TOP - tp)
+    px = (PAV_ROWS[0] + PAV_ROWS[1]) / 2
+    box("pent", PAV_ROWS[0] - 0.4, PAV_ROWS[1] + 0.4, PAV_COLS[0] - 0.4, PAV_COLS[-1] + 0.4, PAV_TOP, PAV_TOP + 0.25)
+    kit.add(T.molded("pband", [(PAV_TOP + 0.08, T.rect((PAV_ROWS[1] - PAV_ROWS[0]) / 2 + 0.45, (PAV_COLS[-1] - PAV_COLS[0]) / 2 + 0.45, s * px,
+                                                         -(PAV_COLS[0] + PAV_COLS[-1]) / 2), "dentil"),
+                               (PAV_TOP + 0.22, T.rect((PAV_ROWS[1] - PAV_ROWS[0]) / 2 + 0.45, (PAV_COLS[-1] - PAV_COLS[0]) / 2 + 0.45, s * px,
+                                                       -(PAV_COLS[0] + PAV_COLS[-1]) / 2), None)]))
+    bangla(kit, s * px, -(PAV_COLS[0] + PAV_COLS[-1]) / 2, PAV_COLS[-1] - PAV_COLS[0] + 0.8, PAV_ROWS[1] - PAV_ROWS[0] + 0.8,
+           PAV_TOP + 0.25, 1.0)
+
+
+def paving(kit):
+    """Flagstones over the court and the gate passage, 2 cm proud of the summit."""
+    import bmesh
+    for (x0, x1, y0, y1) in ((-HW + WT / 2, HW - WT / 2, -HD + WT / 2, HD - WT / 2), (-GATE[0] / 2 + 0.03, GATE[0] / 2 - 0.03, -HD - WT / 2, -HD + WT / 2)):
+        o = T.box("paving", (x0, y0, -0.1), (x1, y1, 0.02), "paving")
+        uvl = o.data.uv_layers[0]
+        for loop, d in zip(o.data.loops, uvl.data):
+            c = o.data.vertices[loop.vertex_index].co
+            d.uv = (c.x / 3.0, c.y / 3.0)
+        kit.add(o)
+
+
 def merlons_n(s, e, step):
     n = math.floor((e - s) / step)
     off = (e - s - (n - 1) * step) / 2
@@ -323,6 +454,9 @@ def fort():
     for c, r in towers():
         tower(kit, c, r, 8 if r < 3.0 else 40)
     diwan(kit)
+    for side in (1, -1):
+        mahal(kit, side)
+    paving(kit)
     return B.finish("fort", kit, lods=(0.3,))
 
 
@@ -331,12 +465,15 @@ def main():
     red = (0.74, 0.42, 0.32)
     texgen.sandstone(T.TEX, seed=5, tint=red, name="redstone")
     texgen.trim_sheet(T.TEX, seed=6, tint=red, name="redtrim")
+    texgen.sandstone(T.TEX, seed=9, tint=(0.80, 0.66, 0.50), name="paving")
     T.MATS.update({
         "stone": T.tex_material("redstone", "redstone"),
         "trim": T.tex_material("redtrim", "redtrim"),
         "shadow": T.flat_material("shadow", (0.04, 0.025, 0.02), 0.0, 0.95),
         "wood": T.flat_material("wood", (0.22, 0.12, 0.06), 0.0, 0.8),
         "iron": T.flat_material("iron", (0.07, 0.07, 0.075), 0.8, 0.45),
+        "paving": T.tex_material("paving", "paving"),
+        "gold": T.flat_material("gold", (1.0, 0.72, 0.30), 1.0, 0.3),
     })
     for o in list(bpy.data.objects):
         bpy.data.objects.remove(o)

@@ -163,6 +163,37 @@ fn main() {
             hurts: false,
         },
         Case {
+            // From the char-bagh up the steps, through the arcade's middle bays to the back wall.
+            name: "fort palace wing hall".into(),
+            start: Vec3::new(131.0, 18.0 + HALF_HEIGHT + 0.3, -139.0),
+            dir: Vec3::X,
+            seconds: 3.0,
+            pass: Box::new(|p, _, _| p.x > 138.5 && p.y - HALF_HEIGHT > 18.55),
+            want: "in the east wing's hall (x > 138.5, on the plinth)".into(),
+            track: everywhere(),
+            hurts: false,
+        },
+        Case {
+            name: "fort palace wing back stair".into(),
+            start: Vec3::new(142.5, 18.0 + HALF_HEIGHT + 0.3, -133.5),
+            dir: Vec3::NEG_Z,
+            seconds: 1.7,
+            pass: Box::new(|p, _, _| p.y - HALF_HEIGHT > 22.8),
+            want: "up the back stair, on its landing (feet > 22.8)".into(),
+            track: everywhere(),
+            hurts: false,
+        },
+        Case {
+            name: "fort palace wing landing to the roof".into(),
+            start: Vec3::new(142.5, 22.9 + HALF_HEIGHT + 0.3, -142.1),
+            dir: Vec3::NEG_X,
+            seconds: 2.0,
+            pass: Box::new(|p, lo, _| p.x < 139.0 && lo > 22.8),
+            want: "through the parapet's gap onto the terrace (x < 139)".into(),
+            track: everywhere(),
+            hurts: false,
+        },
+        Case {
             // Over the west rim: a 21 m drop to the bottom floor (the stairs above must not hurt).
             name: "stepwell jump from the rim".into(),
             start: ground(-147.0, 101.0),

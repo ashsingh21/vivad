@@ -171,14 +171,16 @@ def jharokha(name="jharokha"):
     W, D = 2.0, 0.78
     # Corbels: stepped brackets with a curved profile under the base.
     for i, (wd, dz) in enumerate(((1.0, 0.0), (1.5, 0.18), (1.85, 0.34))):
-        kit.add(T.molded(f"jbase{i}", [(dz, T.rect(wd / 2, D * (0.5 + 0.25 * i) / 2, 0, -D * (0.5 + 0.25 * i) / 2), "padma"),
-                                       (dz + 0.18, T.rect(wd / 2, D * (0.5 + 0.25 * i) / 2, 0, -D * (0.5 + 0.25 * i) / 2), None)]))
+        # Backs stepped 1 cm apart: the upper two overlap in height and would share the wall plane.
+        dep = D * (0.5 + 0.25 * i)
+        ring = T.rect(wd / 2, dep / 2, 0, -dep / 2 - 0.01 * i)
+        kit.add(T.molded(f"jbase{i}", [(dz, ring, "padma"), (dz + 0.18, ring, None)]))
     zb = 0.52
     kit.add(T.molded("jfloor", [(zb, T.rect(W / 2 + 0.08, D / 2 + 0.04, 0, -D / 2), "bead"), (zb + 0.12, T.rect(W / 2 + 0.08, D / 2 + 0.04, 0, -D / 2), None)]))
     # Balustrade panels (carved, like stone jaali) on three sides.
     zp = zb + 0.12
-    for (mn, mx) in (((-W / 2, -D, zp), (W / 2, -D + 0.07, zp + 0.55)), ((-W / 2, -D, zp), (-W / 2 + 0.07, 0.0, zp + 0.55)),
-                     ((W / 2 - 0.07, -D, zp), (W / 2, 0.0, zp + 0.55))):
+    for (mn, mx) in (((-W / 2, -D, zp), (W / 2, -D + 0.07, zp + 0.55)), ((-W / 2, -D + 0.07, zp), (-W / 2 + 0.07, 0.0, zp + 0.55)),
+                     ((W / 2 - 0.07, -D + 0.07, zp), (W / 2, 0.0, zp + 0.55))):
         o = T.box("jaali", mn, mx, "trim")
         uvl = o.data.uv_layers[0]
         v0, v1 = texgen.strip_v("gavaksha")
