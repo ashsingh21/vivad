@@ -6,6 +6,7 @@
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use super::combat::{KillMsg, Projectile, feed_line};
 use super::flow::Match;
@@ -15,7 +16,7 @@ use super::{
 };
 use crate::items::{AstraEffect, ItemDb, ItemKind, ItemStack, Rarity};
 
-/// A peer's identity (later: derived from its iroh endpoint key).
+/// A peer's identity: the first eight bytes of its iroh endpoint key.
 pub type PeerId = u64;
 
 /// Who is in the match. `all` is sorted, so every peer derives the same roster from it.
@@ -23,12 +24,14 @@ pub type PeerId = u64;
 pub struct Peers {
     pub local: PeerId,
     pub all: Vec<PeerId>,
+    /// The players' chosen names (a peer without one plays as "Warrior N").
+    pub names: std::collections::BTreeMap<PeerId, String>,
 }
 
 impl Default for Peers {
     /// Single player: just us.
     fn default() -> Self {
-        Self { local: 0, all: vec![0] }
+        Self { local: 0, all: vec![0], names: default() }
     }
 }
 
@@ -37,7 +40,7 @@ impl Peers {
         all.sort();
         all.dedup();
         assert!(all.contains(&local), "the local peer must be in the match");
-        Self { local, all }
+        Self { local, all, names: default() }
     }
 
     /// Who runs bot `k` (counting bots from 0): dealt round the peers in turn.
@@ -47,7 +50,7 @@ impl Peers {
 }
 
 /// Names an entity the same way on every peer. Warriors: their roster index.
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct NetId(pub u32);
 
 /// The peer that simulates this warrior.
@@ -59,7 +62,7 @@ pub struct Owner(pub PeerId);
 pub struct Remote;
 
 /// What peers tell each other.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum NetMsg {
     /// A warrior's state after its owner's tick (sent every tick; a lost one is simply replaced).
     State(WarriorState),
@@ -81,7 +84,7 @@ pub enum NetMsg {
     Dropped { id: PickupId, at: Vec3, stack: ItemStack },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Shot {
     pub owner: NetId,
     pub from: Vec3,
@@ -93,7 +96,7 @@ pub struct Shot {
     pub astra: Option<AstraEffect>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WarriorState {
     pub id: NetId,
     /// The owner's tick count, so late or reordered updates are dropped.
@@ -312,9 +315,15 @@ fn apply_loot(
 fn send_state(
     mut tick: ResMut<NetTick>,
     mut outbox: ResMut<Outbox>,
+    peers: Res<Peers>,
     q: Query<(&NetId, &Transform, &Kinematic, &PlayerIntent, &Health, &Inventory, &Action), (With<Warrior>, Without<Remote>, Without<Eliminated>)>,
 ) {
     tick.0 += 1;
+    // Alone: nobody to tell, and no transport to empty the outbox.
+    if peers.all.len() == 1 {
+        outbox.0.clear();
+        return;
+    }
     for (id, tf, kin, intent, health, inv, act) in &q {
         outbox.0.push(NetMsg::State(WarriorState {
             id: *id,

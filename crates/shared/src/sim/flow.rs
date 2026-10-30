@@ -124,7 +124,7 @@ pub fn start_match(world: &mut World) {
         } else if local {
             "You".into()
         } else {
-            format!("Warrior {}", i + 1)
+            peers.names.get(&owner).cloned().unwrap_or_else(|| format!("Warrior {}", i + 1))
         };
         let mut e = world.spawn((
             NetId(i),

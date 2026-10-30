@@ -134,7 +134,7 @@ pub struct Eliminated {
     pub by: Option<Entity>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Reflect, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Reflect, Default, serde::Serialize, serde::Deserialize)]
 pub enum MoveMode {
     /// Riding the Pushpaka Vimana.
     #[default]
@@ -236,7 +236,7 @@ pub struct DamageMsg {
     pub cause: DamageCause,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DamageCause {
     Weapon(String),
     Pralaya,

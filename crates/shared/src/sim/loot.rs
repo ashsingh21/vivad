@@ -29,7 +29,7 @@ pub struct Pickup {
 }
 
 /// Names a pickup the same on every peer, from where it came from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct PickupId(pub u64);
 
 impl PickupId {

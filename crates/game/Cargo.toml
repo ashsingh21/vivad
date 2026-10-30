@@ -16,3 +16,7 @@ serde = { workspace = true }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.4", features = ["wasm_js"] }
 getrandom3 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+
+# Online play over iroh (not in the browser build yet).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+net = { path = "../net" }

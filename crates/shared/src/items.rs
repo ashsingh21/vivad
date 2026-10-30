@@ -3,9 +3,9 @@
 use std::collections::BTreeMap;
 
 use bevy::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord, Reflect)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash, PartialOrd, Ord, Reflect)]
 pub enum Rarity {
     Common,
     Rare,
@@ -64,7 +64,7 @@ pub enum ItemKind {
     Arrows { amount: u32 },
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum AstraEffect {
     /// Burning ground: damage per second inside the radius.
     Fire { radius: f32, dps: f32, duration: f32 },
@@ -99,7 +99,7 @@ impl ItemDb {
 }
 
 /// One concrete item instance in an inventory or on the ground.
-#[derive(Clone, Debug, PartialEq, Reflect)]
+#[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 pub struct ItemStack {
     pub id: String,
     pub rarity: Rarity,
