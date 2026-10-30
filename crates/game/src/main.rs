@@ -52,7 +52,7 @@ fn main() {
 }
 
 /// Online play: VIVAD_HOST=1 hosts a match (shows a join code; Enter starts it, or VIVAD_HOST=<n>
-/// starts at n players counting you); VIVAD_JOIN=<code> joins one. VIVAD_NAME is what others see
+/// starts at n players counting you), with no bots unless VIVAD_BOTS says; VIVAD_JOIN=<code> joins one. VIVAD_NAME is what others see
 /// you as, and VIVAD_LAN=1 skips iroh's relays (enough on one machine or a LAN; the code is then
 /// longer, carrying addresses). The window opens on a lobby screen meanwhile.
 #[cfg(not(target_arch = "wasm32"))]
@@ -74,7 +74,9 @@ fn online(config: &mut MatchConfig) -> Option<net::Lobby> {
         }
         None => {
             let players = host.and_then(|h| h.parse::<usize>().ok()).filter(|n| *n > 1);
-            net::Lobby::host(name, relay, players, config.bots, config.map_seed)
+            // Online, players fight each other: no bots unless the host asks (VIVAD_BOTS=<n>).
+            let bots = std::env::var("VIVAD_BOTS").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+            net::Lobby::host(name, relay, players, bots, config.map_seed)
         }
     })
 }
