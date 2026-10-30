@@ -2,9 +2,9 @@
 //! lobby, the rest join with its code, and the match is fought out by bots (players on autopilot)
 //! over real connections. Checks that the lobby links everyone to everyone, that they build the
 //! same roster with the players' names, that remote warriors follow their owners, and that every
-//! peer agrees on who fell, the kills, the winner and the loot. Partway through, the last peer
-//! quits (closing its connections) and the rest fight on without it; then two players ask for a
-//! rematch at once.
+//! peer agrees on who fell, the kills, the winner and the loot. In the lobby one player joins and
+//! leaves again and another crashes as the match is set; partway through, a peer crashes and the
+//! rest fight on without it; then two players ask for a rematch at once.
 //!
 //! cargo run --release -p net --bin mesh_check -- [peers] [bots] [max seconds] [speed] [leave at seconds, 0 = never] [rematch seconds]
 //! (VIVAD_RELAY=1 to go through iroh's relays)
@@ -18,7 +18,7 @@ use bevy::time::TimeUpdateStrategy;
 use net::{Node, Session, Transport, TransportPlugin};
 use shared::sim::flow::{Match, MatchState};
 use shared::sim::loot::{Chest, Pickup};
-use shared::sim::net::{NetId, Owner, PeerId, Remote};
+use shared::sim::net::{NetId, Owner, PeerId, Peers, Remote};
 use shared::sim::{Hold, Eliminated, Kinematic, MatchConfig, RestartMatch, SimPlugin, Warrior};
 
 fn main() {
@@ -33,34 +33,52 @@ fn main() {
     let rematch: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(90.0);
     let items = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/data/items.ron")).unwrap();
 
-    let started = Instant::now();
-    // VIVAD_RELAY=1: go through iroh's relays and address lookup, as players across the internet would.
-    let relay = std::env::var("VIVAD_RELAY").is_ok();
-    let nodes: Vec<Node> = (0..n).map(|i| Node::bind(&format!("Player{}", i + 1), relay).expect("bind")).collect();
-    let code = nodes[0].code(7);
-    println!("join code: {code} ({} chars)", code.len());
-    let threads: Vec<_> = nodes
-        .into_iter()
-        .enumerate()
-        .map(|(i, node)| {
-            let code = code.clone();
-            std::thread::spawn(move || if i == 0 { node.host(n, bots, 7) } else { node.join(&code) })
-        })
-        .collect();
-    let sessions: Vec<Session> = threads.into_iter().map(|t| t.join().unwrap().expect("lobby")).collect();
-    println!("lobby filled and meshed in {:.2}s", started.elapsed().as_secs_f32());
-
     let mut failed = 0;
     let mut check = |ok: bool, what: String| {
         println!("{} {what}", if ok { "PASS" } else { "FAIL" });
         failed += !ok as u32;
     };
+    let started = Instant::now();
+    // VIVAD_RELAY=1: go through iroh's relays and address lookup, as players across the internet would.
+    let relay = std::env::var("VIVAD_RELAY").is_ok();
+    let mut nodes: Vec<Node> = (0..n).map(|i| Node::bind(&format!("Player{}", i + 1), relay).expect("bind")).collect();
+    let code = nodes[0].code(7);
+    println!("join code: {code} ({} chars)", code.len());
+    let host = nodes.remove(0);
+    // The host waits for one more than will play: a player who crashes as the match is set.
+    let hosting = std::thread::spawn(move || host.host(n + 1, bots, 7));
+
+    // Someone joins and leaves again before the start: the lobby must forget them.
+    let quitter = Node::bind("Quitter", relay).expect("bind");
+    let quitter_id = quitter.peer();
+    let joined = std::sync::atomic::AtomicBool::new(false);
+    let left = quitter.join_reporting(&code, &mut |_| joined.store(true, std::sync::atomic::Ordering::Relaxed), &mut || {
+        !joined.load(std::sync::atomic::Ordering::Relaxed)
+    });
+    check(left.is_err() && joined.into_inner(), "a player can join the lobby and leave again".into());
+
+    let crasher = Node::bind("Crasher", relay).expect("bind");
+    let crasher_id = crasher.peer();
+    let joining: Vec<_> = nodes
+        .into_iter()
+        .chain([crasher])
+        .map(|node| {
+            let code = code.clone();
+            std::thread::spawn(move || node.join(&code))
+        })
+        .collect();
+    let mut sessions: Vec<Session> = std::iter::once(hosting).chain(joining).map(|t| t.join().unwrap().expect("lobby")).collect();
+    println!("lobby filled and meshed in {:.2}s", started.elapsed().as_secs_f32());
+    check(sessions.iter().all(|s| !s.peers.all.contains(&quitter_id)), "the player who left the lobby is not in the match".into());
+    // Gone before loading the match: the rest must start without waiting on them.
+    sessions.pop().unwrap().transport.crash();
+
     let seed = sessions[0].seed;
     check(
         sessions.iter().all(|s| s.seed == seed && s.map_seed == 7 && s.bots == bots && s.peers.all == sessions[0].peers.all),
         "every peer got the same seeds, bots and players".into(),
     );
-    check(sessions.iter().all(|s| s.transport.linked() == n - 1), format!("every peer is linked to the {} others", n - 1));
+    check(sessions.iter().all(|s| s.transport.linked() == n), format!("every peer is linked to the {} others", n));
 
     let mut ids: Vec<PeerId> = sessions.iter().map(|s| s.peers.local).collect();
     let mut apps: Vec<App> = sessions.into_iter().map(|s| peer(s, &items)).collect();
@@ -69,7 +87,8 @@ fn main() {
     let mut tick = 0u32;
     let mut lag = (0.0f32, 0u32, 0usize);
     let mut ended_at = None;
-    let mut gone = None;
+    let mut gone: Option<(PeerId, Instant)> = None;
+    let mut noticed = None;
     let mut begun: Vec<Option<u32>> = vec![None; apps.len()];
     let mut jerk = Jerk::default();
     // VIVAD_NET_SIM's latency and jitter, in sim seconds, which remote copies may trail by.
@@ -89,10 +108,18 @@ fn main() {
             check(apps.iter().all(|a| a.world().resource::<Hold>().0), "the match waits for everyone to load".into());
         }
         if leave_at > 0.0 && tick == (leave_at * 60.0) as u32 && apps.len() > 2 {
-            // Quitting drops the app, and with it the transport, which closes its connections.
-            drop(apps.pop());
-            gone = ids.pop();
+            // The last peer crashes: no goodbye, the rest must notice it has gone silent.
+            let mut app = apps.pop().unwrap();
+            app.world_mut().remove_resource::<Transport>().unwrap().crash();
+            gone = ids.pop().map(|id| (id, Instant::now()));
         }
+        if let Some((id, at)) = gone
+            && noticed.is_none()
+            && apps.iter().all(|a| !a.world().resource::<Peers>().all.contains(&id))
+        {
+            noticed = Some(at.elapsed().as_secs_f32());
+        }
+
         pace(started, tick, speed);
         if tick >= 60 * 60 {
             jerk.sample(&mut apps);
@@ -110,9 +137,15 @@ fn main() {
         }
     }
     let begun: Vec<u32> = begun.iter().map(|b| b.unwrap_or(u32::MAX)).collect();
+    // The word to begin takes a message's flight (with VIVAD_NET_SIM, its latency and jitter).
+    let flight = 2 + (lag_allowed * 60.0).ceil() as u32;
     check(
-        begun.iter().max().unwrap() - begun.iter().min().unwrap() <= 2,
-        format!("every peer's match began within two ticks of the others (ticks {begun:?})"),
+        begun.iter().max().unwrap() - begun.iter().min().unwrap() <= flight,
+        format!("every peer's match began within {flight} ticks of the others (ticks {begun:?})"),
+    );
+    check(
+        begun.iter().all(|b| *b < u32::MAX) && apps.iter().all(|a| !a.world().resource::<Peers>().all.contains(&crasher_id)),
+        "the player who crashed before loading was dropped, and the match went on without them".into(),
     );
     let (owned_jerk, remote_jerk, pops) = jerk.report();
     println!("movement per tick, second difference: owners {owned_jerk:.1} mm, remote copies {remote_jerk:.1} mm; {pops} jumps of over a metre");
@@ -138,9 +171,11 @@ fn main() {
     check(players.iter().filter(|p| p.starts_with("Player")).count() == n - 1, format!("players carry their names ({players:?} on peer 2)"));
     check(lag.2 > 0 && lag.1 == 0, format!("remote copies follow their owners ({} samples, worst {:.2} m, {} too far behind)", lag.2, lag.0, lag.1));
 
-    if let Some(gone) = gone {
-        let peers_left: Vec<bool> = apps.iter().map(|a| !a.world().resource::<shared::sim::net::Peers>().all.contains(&gone)).collect();
-        check(peers_left.iter().all(|l| *l), format!("every peer saw {gone:016x} leave"));
+    if gone.is_some() {
+        check(
+            noticed.is_some_and(|s| s < 4.0),
+            format!("every peer noticed the crashed peer had gone ({:.1} s after it went silent)", noticed.unwrap_or(f32::NAN)),
+        );
     }
     let outcomes: Vec<_> = apps.iter_mut().map(|app| outcome(app.world_mut())).collect();
     let o = &outcomes[0];
@@ -229,7 +264,9 @@ fn follow(apps: &mut [App], speed: f32, lag_allowed: f32) -> (f32, u32, usize) {
         // Over a slow link a warrior that has just turned or stopped is honestly a latency
         // behind at running pace.
         let pace = if lag_allowed > 0.0 { vel.length().max(7.0) } else { vel.length() };
-        behind += (err > pace * ((2.0 + speed) / 60.0 + lag_allowed) + 0.05) as u32;
+        // A correction (a push out of a wall, a knock) is eased in over a few ticks, not snapped.
+        const EASING: f32 = 0.25;
+        behind += (err > pace * ((2.0 + speed) / 60.0 + lag_allowed) + EASING) as u32;
     }
     (worst, behind, count)
 }

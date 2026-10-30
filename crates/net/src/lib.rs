@@ -29,7 +29,10 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
 /// How long a joining peer waits to reach everyone in the match once it starts.
 const MESH_TIMEOUT: Duration = Duration::from_secs(20);
-const IDLE_TIMEOUT: Duration = Duration::from_secs(6);
+/// A peer silent this long has gone (crashed, or its network has). Keep-alives come from the
+/// network thread, not the game loop, so a long frame never trips it.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(3);
+const KEEP_ALIVE: Duration = Duration::from_millis(500);
 
 pub fn peer_id(id: &EndpointId) -> PeerId {
     u64::from_le_bytes(id.as_bytes()[..8].try_into().unwrap())
@@ -60,6 +63,8 @@ enum Wire {
     Game(u32, NetMsg),
     /// The sender has loaded the match and is waiting for the rest.
     Ready,
+    /// Everyone has loaded: begin (from the present peer with the lowest key).
+    Go,
     /// Not sent: the link to this peer is gone.
     Left,
 }
@@ -187,8 +192,7 @@ impl Node {
         let runtime = Arc::new(tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?);
         let (events_tx, events) = unbounded_channel();
         let (router, mesh) = runtime.block_on(async {
-            // A peer silent this long has left (keep-alives go every few seconds).
-            let quic = QuicTransportConfig::builder().max_idle_timeout(Some(IDLE_TIMEOUT.try_into()?)).build();
+            let quic = QuicTransportConfig::builder().keep_alive_interval(KEEP_ALIVE).max_idle_timeout(Some(IDLE_TIMEOUT.try_into()?)).build();
             let endpoint = if relay {
                 Endpoint::builder(presets::N0).transport_config(quic).bind().await?
             } else {
@@ -293,10 +297,12 @@ impl Node {
 
     /// Join the match whose code another player shared, and wait for it to start.
     pub fn join(self, code: &str) -> Result<Session, Error> {
-        self.join_reporting(code, &mut |_| {})
+        self.join_reporting(code, &mut |_| {}, &mut || true)
     }
 
-    pub fn join_reporting(mut self, code: &str, report: &mut dyn FnMut(Vec<String>)) -> Result<Session, Error> {
+    /// Join, telling `report` who is in, for as long as `stay` says so (leaving closes our links,
+    /// and the host drops us from the lobby).
+    pub fn join_reporting(mut self, code: &str, report: &mut dyn FnMut(Vec<String>), stay: &mut dyn FnMut() -> bool) -> Result<Session, Error> {
         let (addr, _) = read_code(code)?;
         let host = peer_id(&addr.id);
         self.dial(addr);
@@ -305,16 +311,29 @@ impl Node {
         let mut ready = BTreeSet::new();
         let mut start: Option<(u64, u64, u32, Vec<Member>)> = None;
         let mut deadline = std::time::Instant::now() + MESH_TIMEOUT;
+        // Players who left after the match was set (or never answered): it starts without them.
+        let mut gone = vec![];
         loop {
-            let linked = self.mesh.peers.lock().unwrap().keys().copied().collect::<Vec<_>>();
-            if let Some((seed, map_seed, bots, members)) = &start
-                && members.iter().all(|m| m.peer() == me || linked.contains(&m.peer()))
-            {
-                return Ok(self.session(*seed, *map_seed, *bots, &members.clone(), ready));
+            if !stay() {
+                self.close();
+                return Err("left the lobby".into());
             }
-            // Reaching the host, and later everyone in the match, has a deadline; the lobby filling up does not.
-            if (start.is_some() || !linked.contains(&host)) && std::time::Instant::now() > deadline {
-                return Err(if start.is_some() { "could not reach every player in the match" } else { "could not reach the host" }.into());
+            let linked = self.mesh.peers.lock().unwrap().keys().copied().collect::<Vec<_>>();
+            if let Some((seed, map_seed, bots, members)) = &start {
+                let missing: Vec<PeerId> = members.iter().map(Member::peer).filter(|p| *p != me && !linked.contains(p) && !gone.contains(p)).collect();
+                if !missing.is_empty() && std::time::Instant::now() > deadline {
+                    warn!("starting without {} player(s) we could not reach", missing.len());
+                    gone.extend(missing);
+                    continue;
+                }
+                if missing.is_empty() {
+                    let mut session = self.session(*seed, *map_seed, *bots, &members.clone(), ready);
+                    session.gone = gone;
+                    return Ok(session);
+                }
+            } else if !linked.contains(&host) && std::time::Instant::now() > deadline {
+                // Reaching the host has a deadline; the lobby filling up does not.
+                return Err("could not reach the host".into());
             }
             let Some((from, wire)) = self.next(Duration::from_millis(200), &mut ready)? else { continue };
             match wire {
@@ -334,26 +353,33 @@ impl Node {
                     deadline = std::time::Instant::now() + MESH_TIMEOUT;
                 }
                 Wire::Left if from == host && start.is_none() => return Err("the host left".into()),
+                Wire::Left if start.is_some() => gone.push(from),
                 _ => {}
             }
         }
+    }
+
+    /// Close our links, so the others see us go at once.
+    fn close(self) {
+        let router = self.router.clone();
+        let _ = self.runtime.block_on(async { tokio::time::timeout(Duration::from_secs(1), router.shutdown()).await });
     }
 
     fn session(self, seed: u64, map_seed: u64, bots: u32, members: &[Member], ready: BTreeSet<PeerId>) -> Session {
         let mut peers = Peers::new(self.peer(), members.iter().map(Member::peer).collect());
         peers.names = members.iter().map(|m| (m.peer(), m.name.clone())).collect();
         let transport = Transport {
-            _runtime: self.runtime,
-            _router: self.router,
+            net: Some((self.runtime, self.router)),
             mesh: self.mesh,
             events: Mutex::new(self.events),
             held: default(),
             ready: Mutex::new(ready),
             steady: 0,
             said_ready: false,
+            go: default(),
             conditions: Conditions::from_env(),
         };
-        Session { peers, seed, map_seed, bots, transport }
+        Session { peers, seed, map_seed, bots, transport, gone: vec![] }
     }
 }
 
@@ -381,14 +407,16 @@ pub struct Session {
     pub map_seed: u64,
     pub bots: u32,
     pub transport: Transport,
+    /// Players in the match who left before it began here.
+    pub gone: Vec<PeerId>,
 }
 
 /// The running network, as a Bevy resource: drains the `Outbox` onto the wire and fills the
 /// `Inbox` from it.
 #[derive(Resource)]
 pub struct Transport {
-    _runtime: Arc<Runtime>,
-    _router: Router,
+    /// The network thread and our endpoint (taken by `crash`).
+    net: Option<(Arc<Runtime>, Router)>,
     mesh: Arc<Mesh>,
     events: Mutex<UnboundedReceiver<(PeerId, Wire)>>,
     /// Messages for a match we haven't reached yet.
@@ -398,6 +426,7 @@ pub struct Transport {
     /// Smooth frames in a row since the match was built (loading makes long ones).
     steady: u32,
     said_ready: bool,
+    go: std::sync::atomic::AtomicBool,
     /// Simulated bad network on what arrives (VIVAD_NET_SIM), for testing.
     conditions: Option<Conditions>,
 }
@@ -450,8 +479,21 @@ impl Conditions {
 impl Drop for Transport {
     /// Close our connections, so the others see us leave at once rather than after a timeout.
     fn drop(&mut self) {
-        let router = self._router.clone();
-        let _ = self._runtime.block_on(async { tokio::time::timeout(Duration::from_secs(1), router.shutdown()).await });
+        if let Some((runtime, router)) = self.net.take() {
+            let _ = runtime.block_on(async { tokio::time::timeout(Duration::from_secs(1), router.shutdown()).await });
+        }
+    }
+}
+
+impl Transport {
+    /// Stop dead, as a crashed game would: no goodbye, so the others only find out when we go
+    /// silent. For testing.
+    pub fn crash(mut self) {
+        let Some((runtime, router)) = self.net.take() else { return };
+        std::mem::forget(router);
+        if let Ok(runtime) = Arc::try_unwrap(runtime) {
+            runtime.shutdown_background();
+        }
     }
 }
 
@@ -495,6 +537,7 @@ pub fn begin(world: &mut World, session: Session) {
     world.insert_resource(session.transport);
     world.resource_mut::<Hold>().0 = true;
     start_match(world);
+    world.resource_mut::<Departures>().0.extend(session.gone);
 }
 
 /// Once our frames run smoothly (the match is loaded), say so; once everyone linked has, go.
@@ -511,9 +554,24 @@ fn wait_for_everyone(mut transport: ResMut<Transport>, mut hold: ResMut<Hold>, t
             let _ = link.frames.send(bytes.clone());
         }
     }
+    // One peer gives the word, so all begin within a message's flight of each other (each
+    // judging for itself would differ by however late it saw the last of a missing peer).
     let linked: Vec<PeerId> = t.mesh.peers.lock().unwrap().keys().copied().collect();
+    let present = || peers.all.iter().copied().filter(|p| *p == peers.local || linked.contains(p));
+    let leads = present().min() == Some(peers.local);
     let ready = t.ready.lock().unwrap();
-    if t.said_ready && peers.all.iter().all(|p| *p == peers.local || ready.contains(p) || !linked.contains(p)) {
+    let go = if leads {
+        t.said_ready && present().all(|p| p == peers.local || ready.contains(&p))
+    } else {
+        t.said_ready && t.go.load(Ordering::Relaxed)
+    };
+    if go {
+        if leads {
+            let bytes = frame(&Wire::Go);
+            for link in t.mesh.peers.lock().unwrap().values() {
+                let _ = link.frames.send(bytes.clone());
+            }
+        }
         info!("everyone has loaded: the match begins");
         hold.0 = false;
     }
@@ -563,9 +621,12 @@ impl Lobby {
 
     pub fn join(name: String, relay: bool, code: String) -> Lobby {
         let (lobby, news) = Lobby::new(false);
+        // For a joiner, `go` means leave.
+        let go = lobby.go.clone();
         std::thread::spawn(move || {
             let tell = news.clone();
-            let result = Node::bind(&name, relay).and_then(|node| node.join_reporting(&code, &mut |p| drop(tell.send(News::Players(p)))));
+            let result = Node::bind(&name, relay)
+                .and_then(|node| node.join_reporting(&code, &mut |p| drop(tell.send(News::Players(p))), &mut || !go.load(Ordering::Relaxed)));
             let _ = news.send(match result {
                 Ok(session) => News::Started(Box::new(session)),
                 Err(e) => News::Failed(e.to_string()),
@@ -582,6 +643,15 @@ impl Lobby {
     fn new(hosting: bool) -> (Lobby, std::sync::mpsc::Sender<News>) {
         let (tx, rx) = std::sync::mpsc::channel();
         (Lobby { hosting, code: None, players: vec![], error: None, started: false, go: default(), news: Mutex::new(rx) }, tx)
+    }
+}
+
+impl Drop for Lobby {
+    /// A joiner closing the game before the start leaves the lobby (the host's is gone with it).
+    fn drop(&mut self) {
+        if !self.hosting {
+            self.go.store(true, Ordering::Relaxed);
+        }
     }
 }
 
@@ -629,6 +699,7 @@ fn receive(transport: Res<Transport>, m: Res<Match>, mut inbox: ResMut<Inbox>, m
             Wire::Ready => {
                 transport.ready.lock().unwrap().insert(from);
             }
+            Wire::Go => transport.go.store(true, Ordering::Relaxed),
             _ => {}
         }
     }

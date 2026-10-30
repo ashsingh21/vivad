@@ -157,7 +157,7 @@ const SNAP: f32 = 4.0;
 /// How long a copy keeps going on an old update's velocity before it waits for the next.
 const COAST: f32 = 0.25;
 /// Time constant of easing a copy onto where its owner has it, seconds.
-const EASE: f32 = 0.1;
+const EASE: f32 = 0.05;
 
 pub struct NetPlugin;
 
