@@ -15,3 +15,4 @@ pub mod visuals;
 
 /// Repo-level assets/ regardless of how the binary is launched.
 pub const ASSET_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets");
+pub mod water;

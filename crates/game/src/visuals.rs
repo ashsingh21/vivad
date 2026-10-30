@@ -330,7 +330,8 @@ fn variant(p: Vec3) -> u8 {
 fn dress_blocks(mut commands: Commands, q: Query<(Entity, &MapBlock, Has<shared::sim::Door>), Added<MapBlock>>, palette: Res<Palette>) {
     for (e, MapBlock(b), door) in &q {
         commands.entity(e).insert(Visibility::default());
-        if !b.visible || (!door && crate::buildings::is_static_visual(b)) {
+        // Water is drawn by `water`.
+        if !b.visible || b.mat == Mat::Water || (!door && crate::buildings::is_static_visual(b)) {
             continue;
         }
         let (mesh, scale) = match b.shape {

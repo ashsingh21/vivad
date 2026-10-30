@@ -2,7 +2,7 @@
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use game::{animation::WarriorAnimationPlugin, arms::ArmsPlugin, fx::FxPlugin, grass::GrassPlugin, audio::SoundPlugin, autoshot::AutoshotPlugin, buildings::BuildingsPlugin, camera::CameraPlugin, characters::CharacterArtPlugin, hud::HudPlugin, input::InputPlugin, lamps::LampsPlugin, visuals::VisualsPlugin, ASSET_DIR};
+use game::{animation::WarriorAnimationPlugin, arms::ArmsPlugin, fx::FxPlugin, grass::GrassPlugin, audio::SoundPlugin, autoshot::AutoshotPlugin, buildings::BuildingsPlugin, camera::CameraPlugin, characters::CharacterArtPlugin, hud::HudPlugin, input::InputPlugin, lamps::LampsPlugin, visuals::VisualsPlugin, water::WaterPlugin, ASSET_DIR};
 use shared::sim::{MatchConfig, SimPlugin};
 
 fn main() {
@@ -27,7 +27,7 @@ fn main() {
         )
         .add_plugins(PhysicsPlugins::default())
         .add_plugins(SimPlugin { items_ron })
-        .add_plugins((InputPlugin, VisualsPlugin, ArmsPlugin, FxPlugin, GrassPlugin, LampsPlugin, WarriorAnimationPlugin, SoundPlugin, BuildingsPlugin, CharacterArtPlugin, CameraPlugin, HudPlugin, AutoshotPlugin))
+        .add_plugins((InputPlugin, VisualsPlugin, ArmsPlugin, FxPlugin, GrassPlugin, LampsPlugin, WarriorAnimationPlugin, SoundPlugin, BuildingsPlugin, CharacterArtPlugin, CameraPlugin, HudPlugin, AutoshotPlugin, WaterPlugin))
         .add_plugins(bevy::diagnostic::LogDiagnosticsPlugin {
             wait_duration: std::time::Duration::from_secs(10),
             filter: std::env::var("VIVAD_PERF_LOG").is_ok().then(|| {

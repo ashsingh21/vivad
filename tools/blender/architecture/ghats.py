@@ -34,7 +34,7 @@ OUT = os.path.join(T.ROOT, "assets", "models", "props")
 TOP = 5.02                  # the deck along the top of the ghats (the town bank is at 5.0)
 BED = -1.6
 BOTTOM = -1.7
-TERRACE_X = 152.0           # the deck runs from here to the edge of the first flight
+TERRACE_X = 140.0           # the deck runs from here (under the palaces' fronts) to the first flight
 # Flights (x from, x to, y from, y to) descending east; landings between them.
 FLIGHTS = ((156.0, 160.0, TOP, 2.82), (164.0, 168.0, 2.82, 0.62), (170.5, 175.5, 0.62, BED + 0.08))
 STEP_RISE = 0.22
@@ -66,9 +66,12 @@ def ghat_profile():
 
 
 def ghat(kit, z0, z1):
-    """One ghat's flights between burj faces at game z0 < z1."""
-    o = O.solid_from_outline("ghat", ghat_profile(), -z1, -z0, "stone")
-    kit.add(o)
+    """One ghat's flights between burj faces at game z0 < z1, laid in runs about 2.4 m wide so
+    each run of slabs can take its own tone (see `weather`)."""
+    n = max(1, round((z1 - z0) / 2.4))
+    for k in range(n):
+        a, b = z0 + (z1 - z0) * k / n, z0 + (z1 - z0) * (k + 1) / n
+        kit.add(O.solid_from_outline("ghat", ghat_profile(), -b, -a, "stone"))
 
 
 def burj_plan(zc, grow=0.0):
@@ -148,7 +151,45 @@ def embankment():
         ghat(kit, z0, z1)
     for zc in BURJ_Z:
         burj(kit, zc)
-    return B.finish("ghats", kit, lods=(0.3,))
+    import geo
+    obj = geo.join(kit.objs, "ghats_LOD0")
+    obj.data.set_sharp_from_angle(angle=math.radians(40))
+    for p in obj.data.polygons:
+        p.use_smooth = True
+    # Not `T.bake_weathering`: the AO bake reads every vertex on a seam between slab runs as
+    # half buried and blackens the treads; the grime here is computed instead.
+    weather(obj)
+    export.triangulate(obj)
+    # One LOD: the game picks LODs by distance to a model's origin, and this one is 180 m long
+    # (a coarse LOD1 would show up close at its ends). At ~18k triangles it doesn't need one.
+    return [obj]
+
+
+def weather(obj):
+    """Vertex colours: a tone for every slab face (worn treads differ), risers a shade darker
+    than treads, grime rising from the foot of the burj walls, a dark wet band at the water
+    line, river silt and green algae below it."""
+    import random
+    me = obj.data
+    col = me.color_attributes.new("Col", "BYTE_COLOR", "CORNER")
+    me.color_attributes.active_color = col
+    rnd = random.Random(11)
+    water = -0.54
+    for p in me.polygons:
+        flat = p.normal.z > 0.9
+        tone = 0.86 + 0.2 * rnd.random() if flat else 0.78 + 0.1 * rnd.random()
+        for li in p.loop_indices:
+            z = me.vertices[me.loops[li].vertex_index].co.z
+            r = g = b = 1.0
+            k = tone if flat else tone * (1.0 - 0.18 * max(0.0, 1.0 - (z - water) / 4.0))
+            # Wet and stained up to ~0.6 m above the water, darkest at the line; green-brown below.
+            if z < water + 0.6:
+                wet = min(1.0, (water + 0.6 - z) / 0.6)
+                k *= 1.0 - 0.38 * wet
+                g_tint, b_tint = 1.0 + 0.05 * wet, 1.0 - 0.12 * wet
+            else:
+                g_tint = b_tint = 1.0
+            col.data[li].color = (r * k, g * k * g_tint, b * k * b_tint, 1.0)
 
 
 # ------------------------------------------------------------------ pieces

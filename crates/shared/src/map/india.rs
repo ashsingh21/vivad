@@ -252,7 +252,9 @@ const KASHI_X0: f32 = 112.0;
 const GHAT_EDGE: f32 = 156.0;
 const GHAT_Z: (f32, f32) = (-30.0, 130.0);
 const GHAT_DECK: f32 = 5.02;
-const GHAT_TERRACE_X: f32 = 152.0;
+const GHAT_TERRACE_X: f32 = 140.0;
+/// The palaces' fronts stand back from the first flight by a promenade.
+const GHAT_FRONT: f32 = 152.0;
 const GHAT_BOTTOM: f32 = -1.7;
 const GHAT_FLIGHTS: [(f32, f32, f32, f32); 3] = [(156.0, 160.0, GHAT_DECK, 2.82), (164.0, 168.0, 2.82, 0.62), (170.5, 175.5, 0.62, RIVER_BED + 0.08)];
 const BURJ_Z: [f32; 6] = [-26.5, 4.0, 34.5, 65.5, 96.0, 126.5];
@@ -334,7 +336,7 @@ fn river_and_ghats(b: &mut Builder, rng: &mut SmallRng) {
             }
         }
         b.loot(w, Vec3::new(l2, GHAT_FLIGHTS[1].3 + 0.3, (z0 + z1) / 2.0));
-        b.loot(w, Vec3::new(GHAT_TERRACE_X + 2.0, GHAT_DECK + 0.3, rng.random_range(z0 + 2.0..z1 - 2.0)));
+        b.loot(w, Vec3::new(GHAT_FRONT + 2.0, GHAT_DECK + 0.3, rng.random_range(z0 + 2.0..z1 - 2.0)));
     }
     // East bank ghats so the river is never a trap.
     for zc in [-90.0, 20.0, 140.0] {
@@ -376,17 +378,25 @@ fn river_and_ghats(b: &mut Builder, rng: &mut SmallRng) {
             }
         });
     }
-    // The town on the bank: houses fronting the ghats and two temples behind them.
-    let mut z = GHAT_Z.0 + 4.0;
-    while z < GHAT_Z.1 - 6.0 {
-        let wdt = rng.random_range(8.0..11.0);
-        let dep = rng.random_range(7.0..10.0);
+    // The town on the bank: a palace at the head of each ghat, tall and balconied, its front on
+    // the deck; houses set back a little between them; two temples behind.
+    for &(z0, z1) in &ghats {
+        let wdt = rng.random_range(13.0..16.0);
+        let dep = rng.random_range(10.0..12.0);
+        let floors = rng.random_range(3..=4);
+        let mat = [Mat::Sandstone, Mat::PlasterOchre, Mat::Sandstone, Mat::Plaster][rng.random_range(0..4)];
+        let f = Frame::new(Vec3::new(GHAT_FRONT - 1.0 - dep / 2.0, KASHI_TOP, (z0 + z1) / 2.0), FRAC_PI_2); // faces the river
+        house_with(b, rng, f, wdt, dep, floors, mat, true);
+    }
+    for zc in BURJ_Z {
+        let wdt = rng.random_range(7.5..9.5);
+        let dep = rng.random_range(7.0..9.0);
         let floors = rng.random_range(1..=3);
-        let x = GHAT_TERRACE_X - 2.0 - dep / 2.0 - rng.random_range(0.0..3.0);
-        let f = Frame::new(Vec3::new(x, KASHI_TOP, z + wdt / 2.0), FRAC_PI_2); // door faces the river (east)
+        let x = GHAT_FRONT - 4.0 - dep / 2.0 - rng.random_range(0.0..2.0);
+        let z = zc.clamp(GHAT_Z.0 + wdt / 2.0 + 0.5, GHAT_Z.1 - wdt / 2.0 - 0.5);
+        let f = Frame::new(Vec3::new(x, KASHI_TOP, z), FRAC_PI_2);
         let mat = pick_plaster(rng);
         house(b, rng, f, wdt, dep, floors, mat);
-        z += wdt + rng.random_range(3.0..7.0);
     }
     temple(b, rng, Frame::new(Vec3::new(125.0, KASHI_TOP, 15.0), FRAC_PI_2), 1.0);
     temple(b, rng, Frame::new(Vec3::new(128.0, KASHI_TOP, 85.0), FRAC_PI_2), 0.8);
@@ -492,6 +502,12 @@ fn pick_plaster(rng: &mut SmallRng) -> Mat {
 
 /// Multi-storey house / haveli. Frame origin at the ground-floor centre; door faces local +Z.
 pub fn house(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, floors: u32, mat: Mat) {
+    house_with(b, rng, f, w, d, floors, mat, false);
+}
+
+/// `palace`: a riverfront palace, every upper-floor front window a jharokha and a chhatri on
+/// each front corner of the roof.
+fn house_with(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, floors: u32, mat: Mat, palace: bool) {
     let hw = w / 2.0;
     let hd = d / 2.0;
     let t = WALL_T;
@@ -515,24 +531,33 @@ pub fn house(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, floo
             front.push(Opening::door(w / 2.0));
         }
         let corners = [Vec2::new(-hw, hd), Vec2::new(hw, hd), Vec2::new(hw, -hd), Vec2::new(-hw, -hd)];
-        // A jharokha (projecting balcony window) replaces the central upper-floor window of wide havelis.
-        let jharokha = k > 0 && w >= 9.0;
-        if jharokha {
-            front.retain(|o| (o.at - w / 2.0).abs() > 1.4);
-            front.push(Opening { at: w / 2.0, width: 1.2, bottom: 0.9, top: 2.4 });
+        // A jharokha (projecting balcony window) replaces the central upper-floor window of wide
+        // havelis, or every upper-floor front window of a palace.
+        let balconies: Vec<f32> = if k == 0 {
+            vec![]
+        } else if palace {
+            front.iter().map(|o| o.at).collect()
+        } else if w >= 9.0 {
+            vec![w / 2.0]
+        } else {
+            vec![]
+        };
+        if !balconies.is_empty() {
+            front.retain(|o| balconies.iter().all(|&at| (o.at - at).abs() > 1.4));
+            front.extend(balconies.iter().map(|&at| Opening { at, width: 1.2, bottom: 0.9, top: 2.4 }));
         }
         b.wall(f, corners[0], corners[1], y0, FLOOR_H, t, mat, &front);
         b.wall(f, corners[1], corners[2], y0, FLOOR_H, t, mat, &win(d));
         b.wall(f, corners[2], corners[3], y0, FLOOR_H, t, mat, &[]);
         b.wall(f, corners[3], corners[0], y0, FLOOR_H, t, mat, &win(d));
         let trim = trim_for(mat);
-        let arched: Vec<Opening> = front.iter().copied().filter(|o| !(jharokha && (o.at - w / 2.0).abs() < 0.1)).collect();
+        let arched: Vec<Opening> = front.iter().copied().filter(|o| !balconies.iter().any(|&at| (o.at - at).abs() < 0.1)).collect();
         b.arch_openings(f, corners[0], corners[1], y0, t, &arched);
         b.arch_openings(f, corners[1], corners[2], y0, t, &win(d));
         b.arch_openings(f, corners[3], corners[0], y0, t, &win(d));
-        if jharokha {
+        for &at in &balconies {
             // Balcony floor level with the window sill.
-            b.ornament(f, Vec3::new(0.0, y0 + 0.26, hd), 0.0, JHAROKHA, Vec3::ONE);
+            b.ornament(f, Vec3::new(at - hw, y0 + 0.26, hd), 0.0, JHAROKHA, Vec3::ONE);
         }
         // String course marking each floor.
         if k > 0 {
@@ -586,7 +611,11 @@ pub fn house(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, floo
         let bw = (run + 1.4).max(w * 0.5).min(w - 2.0 * t - 1.0);
         barsati_room(b, f, Vec2::new(-hw + t, -hd + t), bw, 2.0 * lane_w + 1.0, ry, mat, false);
     }
-    if w > 9.5 && rng.random_bool(if barsati { 0.25 } else { 0.5 }) {
+    if palace {
+        for sx in [-1.0, 1.0] {
+            b.chhatri(f, Vec3::new(sx * (hw - 1.7), ry, hd - 1.7), 2.3, mat);
+        }
+    } else if w > 9.5 && rng.random_bool(if barsati { 0.25 } else { 0.5 }) {
         b.chhatri(f, Vec3::new(hw - 2.2, ry, hd - 2.2), 2.8, mat);
     }
     if rng.random_bool(0.3) {

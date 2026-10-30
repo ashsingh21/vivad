@@ -145,10 +145,14 @@ fn drive_bots(
             MoveMode::Vimana => {
                 if m.vimana_t >= brain.drop_at && pos.x.abs() < 230.0 && pos.z.abs() < 230.0 {
                     intent.pressed |= btn::JUMP;
-                    // Land near a random chest.
-                    let n = chests.iter().count().max(1);
-                    let pick = rng.random_range(0..n);
-                    brain.goal = chests.iter().nth(pick).map(|(t, _)| t.translation);
+                    // Land near a random chest under open sky: one under a roof (a temple's
+                    // sanctum) would set us down on the spire, stranded.
+                    let open: Vec<Vec3> = chests
+                        .iter()
+                        .map(|(t, _)| t.translation)
+                        .filter(|p| spatial.cast_ray(*p + Vec3::Y * 0.6, Dir3::Y, 40.0, true, &los_filter).is_none())
+                        .collect();
+                    brain.goal = (!open.is_empty()).then(|| open[rng.random_range(0..open.len())]);
                 }
                 continue;
             }

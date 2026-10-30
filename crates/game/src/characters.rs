@@ -73,13 +73,14 @@ fn dress_props(mut commands: Commands, q: Query<(Entity, &PropIndex), Added<Prop
         commands
             .spawn((WorldAssetRoot(models.props[prop.model].clone()), Transform::default(), ChildOf(e)))
             .observe(move |ready: On<WorldInstanceReady>, children: Query<&Children>, names: Query<&Name>, mut commands: Commands| {
-                apply_lod_ranges(
-                    ready.entity,
-                    &[(0.0..0.0, lod0_end..lod0_end + 8.0), (lod0_end..lod0_end + 8.0, far..far + 30.0)],
-                    &children,
-                    &names,
-                    &mut commands,
-                );
+                // A model with no LOD1 (the ghats: long, and light enough) keeps its LOD0 to the end.
+                let has_lod1 = children.iter_descendants(ready.entity).any(|e| names.get(e).is_ok_and(|n| n.as_str().ends_with("LOD1")));
+                let ranges: &[(Range<f32>, Range<f32>)] = if has_lod1 {
+                    &[(0.0..0.0, lod0_end..lod0_end + 8.0), (lod0_end..lod0_end + 8.0, far..far + 30.0)]
+                } else {
+                    &[(0.0..0.0, far..far + 30.0)]
+                };
+                apply_lod_ranges(ready.entity, ranges, &children, &names, &mut commands);
             });
     }
 }
