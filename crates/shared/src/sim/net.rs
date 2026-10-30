@@ -12,8 +12,10 @@ use super::combat::{KillMsg, Projectile, feed_line};
 use super::flow::Match;
 use super::loot::{Chest, Claims, Pickup, PickupId, open_chest, revoke, spawn_pickup};
 use super::{
-    Action, DamageCause, DamageMsg, Door, Eliminated, FeedMsg, Health, Inventory, Kinematic, MoveMode, PlayerIntent, SimSet, Warrior,
+    Action, DamageCause, DamageMsg, Door, Eliminated, FeedMsg, Health, Inventory, Kinematic, MatchConfig, MoveMode, PlayerIntent, SimSet,
+    Warrior,
 };
+use super::bots::BotBrain;
 use crate::items::{AstraEffect, ItemDb, ItemKind, ItemStack, Rarity};
 
 /// A peer's identity: the first eight bytes of its iroh endpoint key.
@@ -82,6 +84,9 @@ pub enum NetMsg {
     Took { pickup: PickupId, by: NetId, at: f32 },
     /// One of the sender's warriors put an item down to make room for another.
     Dropped { id: PickupId, at: Vec3, stack: ItemStack },
+    /// What one of the sender's warriors carries now (sent when it changes), so the others draw
+    /// the right weapon and can take the warrior over if its owner leaves.
+    Inventory { id: NetId, inv: Inventory },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -123,6 +128,10 @@ pub struct Outbox(pub Vec<NetMsg>);
 #[derive(Resource, Default, Debug)]
 pub struct Inbox(pub Vec<(PeerId, NetMsg)>);
 
+/// Peers whose connection is gone, pushed by the transport and handled at the next tick.
+#[derive(Resource, Default, Debug)]
+pub struct Departures(pub Vec<PeerId>);
+
 /// This peer's fixed-tick count.
 #[derive(Resource, Default, Debug)]
 pub struct NetTick(pub u32);
@@ -139,8 +148,9 @@ impl Plugin for NetPlugin {
             .init_resource::<Outbox>()
             .init_resource::<Inbox>()
             .init_resource::<NetTick>()
-            .add_systems(FixedUpdate, (apply_loot, apply_inbox).chain().in_set(SimSet::Brains).before(super::bots::drive_bots))
-            .add_systems(FixedUpdate, send_state.in_set(SimSet::Cleanup).before(super::clear_latched_input));
+            .init_resource::<Departures>()
+            .add_systems(FixedUpdate, (depart, apply_loot, apply_inbox).chain().in_set(SimSet::Brains).before(super::bots::drive_bots))
+            .add_systems(FixedUpdate, (send_state, send_inventory).in_set(SimSet::Cleanup).before(super::clear_latched_input));
     }
 }
 
@@ -242,6 +252,15 @@ fn apply_inbox(
                     }
                 }
             }
+            NetMsg::Inventory { id, inv: new } => {
+                let Some((e, owner, true, _)) = find(id) else { continue };
+                if owner != from {
+                    continue;
+                }
+                if let Ok((.., mut inv, _)) = q.get_mut(e) {
+                    *inv = new;
+                }
+            }
             // Handled by `apply_loot`.
             NetMsg::ChestOpened { .. } | NetMsg::Took { .. } | NetMsg::Dropped { .. } => {}
         }
@@ -341,5 +360,67 @@ fn send_state(
             since_attack: act.since_attack,
             charge: act.charge,
         }));
+    }
+}
+
+/// What each of our warriors carries, sent whenever it changes.
+fn send_inventory(
+    mut outbox: ResMut<Outbox>,
+    peers: Res<Peers>,
+    mut sent: Local<std::collections::BTreeMap<u32, Inventory>>,
+    m: Res<Match>,
+    mut generation: Local<u32>,
+    q: Query<(&NetId, &Inventory), (With<Warrior>, Without<Remote>, Without<Eliminated>)>,
+) {
+    if *generation != m.generation {
+        *generation = m.generation;
+        sent.clear();
+    }
+    if peers.all.len() == 1 {
+        return;
+    }
+    for (id, inv) in &q {
+        if sent.get(&id.0) != Some(inv) {
+            sent.insert(id.0, inv.clone());
+            outbox.0.push(NetMsg::Inventory { id: *id, inv: inv.clone() });
+        }
+    }
+}
+
+/// A peer left: its player falls out of the match and its bots are dealt round those who remain
+/// (the same way on every peer), the new owner's copy taking over where the last update left it.
+#[allow(clippy::type_complexity)]
+fn depart(
+    mut commands: Commands,
+    mut departures: ResMut<Departures>,
+    mut peers: ResMut<Peers>,
+    config: Res<MatchConfig>,
+    m: Res<Match>,
+    mut q: Query<(Entity, &NetId, &mut Owner, &Warrior, Has<Eliminated>)>,
+    mut feed: MessageWriter<FeedMsg>,
+) {
+    let mut placement = m.alive;
+    for gone in std::mem::take(&mut departures.0) {
+        if gone == peers.local || !peers.all.contains(&gone) {
+            continue;
+        }
+        peers.all.retain(|p| *p != gone);
+        for (e, id, mut owner, w, down) in &mut q {
+            if owner.0 != gone {
+                continue;
+            }
+            if w.is_bot {
+                owner.0 = peers.all[id.0 as usize % peers.all.len()];
+                if owner.0 == peers.local {
+                    commands.entity(e).remove::<(Remote, LastUpdate)>().insert(BotBrain::new(&mut rand::rng(), config.bot_skill));
+                } else {
+                    commands.entity(e).insert(LastUpdate::default());
+                }
+            } else if !down {
+                commands.entity(e).insert(Eliminated { placement, by: None }).remove::<Collider>();
+                placement = placement.saturating_sub(1);
+                feed.write(FeedMsg(format!("{} left the match", w.name)));
+            }
+        }
     }
 }

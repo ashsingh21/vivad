@@ -2,9 +2,10 @@
 //! lobby, the rest join with its code, and the match is fought out by bots (players on autopilot)
 //! over real connections. Checks that the lobby links everyone to everyone, that they build the
 //! same roster with the players' names, that remote warriors follow their owners, and that every
-//! peer agrees on who fell, the kills, the winner and the loot.
+//! peer agrees on who fell, the kills, the winner and the loot. Partway through, the last peer
+//! quits (closing its connections) and the rest fight on without it.
 //!
-//! cargo run --release -p net --bin mesh_check -- [peers] [bots] [max seconds] [speed]
+//! cargo run --release -p net --bin mesh_check -- [peers] [bots] [max seconds] [speed] [leave at seconds, 0 = never]
 //! (VIVAD_RELAY=1 to go through iroh's relays)
 
 use std::collections::BTreeMap;
@@ -27,6 +28,7 @@ fn main() {
     // Sim seconds per wall second: the network runs in real time, so this sets how many ticks a
     // message can lag behind.
     let speed: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(4.0);
+    let leave_at: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(90.0);
     let items = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/data/items.ron")).unwrap();
 
     let started = Instant::now();
@@ -58,18 +60,24 @@ fn main() {
     );
     check(sessions.iter().all(|s| s.transport.linked() == n - 1), format!("every peer is linked to the {} others", n - 1));
 
-    let ids: Vec<PeerId> = sessions.iter().map(|s| s.peers.local).collect();
+    let mut ids: Vec<PeerId> = sessions.iter().map(|s| s.peers.local).collect();
     let mut apps: Vec<App> = sessions.into_iter().map(|s| peer(s, &items)).collect();
 
     let started = Instant::now();
     let mut tick = 0u32;
     let mut lag = (0.0f32, 0u32, 0usize);
     let mut ended_at = None;
+    let mut gone = None;
     while tick < (seconds * 60.0) as u32 {
         for app in &mut apps {
             app.update();
         }
         tick += 1;
+        if leave_at > 0.0 && tick == (leave_at * 60.0) as u32 && apps.len() > 2 {
+            // Quitting drops the app, and with it the transport, which closes its connections.
+            drop(apps.pop());
+            gone = ids.pop();
+        }
         // Pace to `speed` times real time.
         let due = Duration::from_secs_f32(tick as f32 / 60.0 / speed);
         if let Some(wait) = due.checked_sub(started.elapsed()) {
@@ -109,6 +117,10 @@ fn main() {
     check(players.iter().filter(|p| p.starts_with("Player")).count() == n - 1, format!("players carry their names ({players:?} on peer 2)"));
     check(lag.2 > 0 && lag.1 == 0, format!("remote copies follow their owners ({} samples, worst {:.2} m, {} too far behind)", lag.2, lag.0, lag.1));
 
+    if let Some(gone) = gone {
+        let peers_left: Vec<bool> = apps.iter().map(|a| !a.world().resource::<shared::sim::net::Peers>().all.contains(&gone)).collect();
+        check(peers_left.iter().all(|l| *l), format!("every peer saw {gone:016x} leave"));
+    }
     let outcomes: Vec<_> = apps.iter_mut().map(|app| outcome(app.world_mut())).collect();
     let o = &outcomes[0];
     let total_kills: u32 = o.kills.values().sum();

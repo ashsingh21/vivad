@@ -165,7 +165,7 @@ pub struct PosHistory {
 
 pub const INVENTORY_SLOTS: usize = 5;
 
-#[derive(Component, Clone, Debug, Reflect)]
+#[derive(Component, Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct Inventory {
     pub melee: ItemStack,
     pub slots: [Option<ItemStack>; INVENTORY_SLOTS],

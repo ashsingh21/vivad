@@ -2,9 +2,10 @@
 //! every peer's `Outbox` is delivered to every other peer's `Inbox`. Checks that they agree on
 //! the roster, that each warrior is run by exactly one peer, that every peer sees every warrior
 //! where its owner has it, and, once the match is fought out (local players on autopilot), on who
-//! fell, the kill counts and the winner.
+//! fell, the kill counts and the winner. Partway through, the last peer leaves: the others must
+//! take its bots over and fight on to the same end.
 //!
-//! cargo run --release -p shared --bin net_check -- [peers] [bots] [max seconds]
+//! cargo run --release -p shared --bin net_check -- [peers] [bots] [max seconds] [leave at seconds, 0 = never]
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -15,7 +16,7 @@ use bevy::time::TimeUpdateStrategy;
 use shared::sim::bots::BotBrain;
 use shared::sim::flow::{Match, MatchState};
 use shared::sim::loot::{Chest, Pickup};
-use shared::sim::net::{Inbox, NetId, Outbox, Owner, PeerId, Peers, Remote};
+use shared::sim::net::{Departures, Inbox, NetId, Outbox, Owner, PeerId, Peers, Remote};
 use shared::sim::{Eliminated, Inventory, Kinematic, MatchConfig, MoveMode, PlayerIntent, SimPlugin, Warrior, btn};
 
 fn main() {
@@ -23,11 +24,15 @@ fn main() {
     let n: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(3);
     let bots: u32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(6);
     let seconds: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(420.0);
+    let leave_at: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(90.0);
     let items = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/data/items.ron")).unwrap();
     // Unordered ids, as real endpoint keys would be.
     let ids: Vec<PeerId> = (0..n as u64).map(|i| (i * 0x9E37_79B9 + 17) % 1000).collect();
 
     let mut apps: Vec<App> = ids.iter().map(|&id| peer(id, &ids, bots, true, &items)).collect();
+    let mut live = ids.clone();
+    let mut leaver: Option<(PeerId, Vec<u32>)> = None;
+    let mut after_leave = None;
 
     let started = Instant::now();
     let mut sent = 0usize;
@@ -37,11 +42,24 @@ fn main() {
         for app in &mut apps {
             app.update();
         }
-        deliver(&mut apps, &ids, &mut sent);
+        deliver(&mut apps, &live, &mut sent);
         tick += 1;
         // Where everyone is, sampled once the warriors have landed.
         if tick == 60 * 60 {
             mid_match = Some(positions(&mut apps));
+        }
+        if leave_at > 0.0 && tick == (leave_at * 60.0) as u32 && apps.len() > 1 {
+            let mut gone = apps.pop().unwrap();
+            let id = live.pop().unwrap();
+            let w = gone.world_mut();
+            let owned = w.query::<(&NetId, &Owner)>().iter(w).filter(|(_, o)| o.0 == id).map(|(i, _)| i.0).collect();
+            for app in &mut apps {
+                app.world_mut().resource_mut::<Departures>().0.push(id);
+            }
+            leaver = Some((id, owned));
+        }
+        if leave_at > 0.0 && tick == ((leave_at + 30.0) * 60.0) as u32 {
+            after_leave = Some(positions(&mut apps));
         }
         if apps.iter().all(|a| a.world().resource::<Match>().state == MatchState::Ended) {
             break;
@@ -52,7 +70,7 @@ fn main() {
         for app in &mut apps {
             app.update();
         }
-        deliver(&mut apps, &ids, &mut sent);
+        deliver(&mut apps, &live, &mut sent);
     }
     println!(
         "{n} peers, {bots} bots, {:.0}s sim in {:.1}s wall, {sent} messages delivered",
@@ -79,7 +97,7 @@ fn main() {
     // Exactly one simulating copy of each warrior: on its owner, without `Remote`.
     let mut runners: BTreeMap<u32, Vec<PeerId>> = BTreeMap::new();
     let mut brains: BTreeMap<u32, usize> = BTreeMap::new();
-    for (app, &me) in apps.iter_mut().zip(&ids) {
+    for (app, &me) in apps.iter_mut().zip(&live) {
         let w = app.world_mut();
         for (id, owner, remote, brain) in w.query::<(&NetId, &Owner, Has<Remote>, Has<BotBrain>)>().iter(w) {
             if !remote {
@@ -89,24 +107,36 @@ fn main() {
             *brains.entry(id.0).or_default() += brain as usize;
         }
     }
-    check(runners.values().all(|r| r.len() == 1), "each warrior is simulated by exactly one peer".into());
-    check(brains.values().all(|&b| b == 1), "each warrior has one brain in the whole match".into());
-    let per_peer: Vec<usize> = ids.iter().map(|p| runners.values().filter(|r| r[0] == *p).count()).collect();
-    check(per_peer.iter().max().unwrap() - per_peer.iter().min().unwrap() <= 1, format!("bots are dealt evenly: {per_peer:?} warriors per peer"));
+    // The leaver's own warrior is left to no one.
+    let gone_player = |id: &u32| leaver.as_ref().is_some_and(|(_, owned)| owned.contains(id) && !rosters[0][id].1);
+    check(
+        rosters[0].keys().all(|id| runners.get(id).map_or(0, Vec::len) == if gone_player(id) { 0 } else { 1 }),
+        "each warrior is simulated by exactly one peer".into(),
+    );
+    check(
+        rosters[0].keys().all(|id| brains.get(id).copied().unwrap_or(0) == if gone_player(id) { 0 } else { 1 }),
+        "each warrior still playing has one brain (players on autopilot)".into(),
+    );
+    let per_peer: Vec<usize> = live.iter().map(|p| runners.values().filter(|r| r[0] == *p).count()).collect();
+    // Dealt round evenly; the leaver's are dealt again by roster index, which can tip one peer a warrior over.
+    check(per_peer.iter().max().unwrap() - per_peer.iter().min().unwrap() <= 1 + leaver.is_some() as usize, format!("bots are dealt evenly: {per_peer:?} warriors per peer"));
 
-    // A minute in: everyone sees each live warrior where its owner has it (a tick behind at most).
-    let (truth, seen) = mid_match.expect("the match lasted a minute");
-    let mut worst = (0.0f32, 0u32);
-    let mut late = 0;
-    for (id, pos) in &seen {
-        let Some((owned, vel)) = truth.get(id) else { continue };
-        let err = pos.distance(*owned);
-        if err > worst.0 {
-            worst = (err, *id);
+    // A minute in (and after the leave): everyone sees each live warrior where its owner has it.
+    let (truth, _) = mid_match.clone().expect("the match lasted a minute");
+    for (when, sample) in [("a minute in", mid_match), ("after the leave", after_leave)] {
+        let Some((truth, seen)) = sample else { continue };
+        let mut worst = (0.0f32, 0u32);
+        let mut late = 0;
+        for (id, pos) in &seen {
+            let Some((owned, vel)) = truth.get(id) else { continue };
+            let err = pos.distance(*owned);
+            if err > worst.0 {
+                worst = (err, *id);
+            }
+            late += (err > vel.length() * 2.0 / 60.0 + 0.05) as u32;
         }
-        late += (err > vel.length() * 2.0 / 60.0 + 0.05) as u32;
+        check(late == 0, format!("{when}, remote copies follow their owners (worst {:.2} m on warrior {}, {} copies)", worst.0, worst.1, seen.len()));
     }
-    check(late == 0, format!("remote copies follow their owners (worst {:.2} m on warrior {}, {} copies)", worst.0, worst.1, seen.len()));
     let landed = truth.values().filter(|(p, _)| p.y < 100.0).count();
     check(landed == truth.len(), format!("{landed}/{} live warriors left the vimana and landed", truth.len()));
 

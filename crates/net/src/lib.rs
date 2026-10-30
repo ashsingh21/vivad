@@ -13,11 +13,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bevy::prelude::*;
-use iroh::endpoint::{Connection, RecvStream, presets};
+use iroh::endpoint::{Connection, QuicTransportConfig, RecvStream, presets};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointAddr, EndpointId, Watcher};
 use serde::{Deserialize, Serialize};
-use shared::sim::net::{Inbox, NetMsg, Outbox, PeerId, Peers, WarriorState};
+use shared::sim::net::{Departures, Inbox, NetMsg, Outbox, PeerId, Peers, WarriorState};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
@@ -27,6 +27,7 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
 /// How long a joining peer waits to reach everyone in the match once it starts.
 const MESH_TIMEOUT: Duration = Duration::from_secs(20);
+const IDLE_TIMEOUT: Duration = Duration::from_secs(6);
 
 pub fn peer_id(id: &EndpointId) -> PeerId {
     u64::from_le_bytes(id.as_bytes()[..8].try_into().unwrap())
@@ -54,6 +55,8 @@ enum Wire {
     /// The match is full: everything every peer needs to build the same one.
     Start { seed: u64, map_seed: u64, bots: u32, members: Vec<Member> },
     Game(NetMsg),
+    /// Not sent: the link to this peer is gone.
+    Left,
 }
 
 /// What the connections share: who we are, who we're connected to, and where their frames go.
@@ -158,6 +161,7 @@ async fn run_link(mesh: Arc<Mesh>, conn: Connection) -> Result<(), Error> {
     let mut peers = mesh.peers.lock().unwrap();
     if peers.get(&them).is_some_and(|l| l.conn.stable_id() == conn.stable_id()) {
         peers.remove(&them);
+        let _ = mesh.events.send((them, Wire::Left));
     }
     Err(result)
 }
@@ -177,7 +181,13 @@ impl Node {
         let runtime = Arc::new(tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?);
         let (events_tx, events) = unbounded_channel();
         let (router, mesh) = runtime.block_on(async {
-            let endpoint = if relay { Endpoint::bind(presets::N0).await? } else { Endpoint::bind(presets::N0DisableRelay).await? };
+            // A peer silent this long has left (keep-alives go every few seconds).
+            let quic = QuicTransportConfig::builder().max_idle_timeout(Some(IDLE_TIMEOUT.try_into()?)).build();
+            let endpoint = if relay {
+                Endpoint::builder(presets::N0).transport_config(quic).bind().await?
+            } else {
+                Endpoint::builder(presets::N0DisableRelay).transport_config(quic).bind().await?
+            };
             if relay {
                 let _ = tokio::time::timeout(Duration::from_secs(10), endpoint.online()).await;
             } else {
@@ -316,6 +326,14 @@ pub struct Transport {
     events: Mutex<UnboundedReceiver<(PeerId, Wire)>>,
 }
 
+impl Drop for Transport {
+    /// Close our connections, so the others see us leave at once rather than after a timeout.
+    fn drop(&mut self) {
+        let router = self._router.clone();
+        let _ = self._runtime.block_on(async { tokio::time::timeout(Duration::from_secs(1), router.shutdown()).await });
+    }
+}
+
 impl Transport {
     /// Bytes this peer has sent and received in datagrams and frames.
     pub fn traffic(&self) -> (u64, u64) {
@@ -336,11 +354,16 @@ impl Plugin for TransportPlugin {
     }
 }
 
-fn receive(transport: Res<Transport>, mut inbox: ResMut<Inbox>) {
+fn receive(transport: Res<Transport>, mut inbox: ResMut<Inbox>, mut departures: ResMut<Departures>) {
     let mut events = transport.events.lock().unwrap();
     while let Ok((from, wire)) = events.try_recv() {
-        if let Wire::Game(msg) = wire {
-            inbox.0.push((from, msg));
+        match wire {
+            Wire::Game(msg) => inbox.0.push((from, msg)),
+            Wire::Left => {
+                info!("peer {from:016x} left");
+                departures.0.push(from);
+            }
+            _ => {}
         }
     }
 }

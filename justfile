@@ -91,14 +91,14 @@ peers seed="1234":
     cargo run --release -p shared --bin peer_check -- {{seed}}
 
 # Peers in one process over an in-memory pipe, fighting a whole match: roster, ownership, positions, who fell, kills,
-# winner, chests and pickups, and a contested pickup.
-net peers="3" bots="6" seconds="420":
-    cargo run --release -p shared --bin net_check -- {{peers}} {{bots}} {{seconds}}
+# winner, chests and pickups, a contested pickup, and a peer leaving at `leave` seconds (0: never).
+net peers="3" bots="6" seconds="420" leave="90":
+    cargo run --release -p shared --bin net_check -- {{peers}} {{bots}} {{seconds}} {{leave}}
 
 # The same over real iroh connections on this machine: a lobby hosts, the rest join by code, and the
 # match runs at `speed` times real time (VIVAD_RELAY=1 to go through iroh's relays).
-mesh peers="3" bots="6" seconds="420" speed="4":
-    cargo run --release -p net --bin mesh_check -- {{peers}} {{bots}} {{seconds}} {{speed}}
+mesh peers="3" bots="6" seconds="420" speed="4" leave="90":
+    cargo run --release -p net --bin mesh_check -- {{peers}} {{bots}} {{seconds}} {{speed}} {{leave}}
 
 # Host an online match for `players` (you included); prints the code the others pass to `just join`.
 host players="2" name="":
