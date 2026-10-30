@@ -10,6 +10,7 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use shared::map::MapLayout;
+use shared::map::india::{hampi_at, hampi_dir};
 use shared::sim::{CAPSULE_LENGTH, CAPSULE_RADIUS, DamageCause, DamageMsg, HALF_HEIGHT, Health, Inventory, Kinematic, Layer, MatchConfig, MoveMode, PlayerIntent, SimPlugin};
 
 #[derive(Component)]
@@ -159,6 +160,59 @@ fn main() {
             seconds: 3.5,
             pass: Box::new(|_, _, hi| hi > 23.8),
             want: "up on the Diwan-i-Aam roof (feet > 23.8)".into(),
+            track: everywhere(),
+            hurts: false,
+        },
+        Case {
+            // Hampi: up the bazaar street, through the gopuram into the temple courtyard (left
+            // of the axis, past the chariot).
+            name: "hampi bazaar through the gopuram".into(),
+            start: hampi_at(Vec3::new(-1.0, HALF_HEIGHT + 0.4, -56.0)),
+            dir: hampi_dir(Vec3::Z),
+            seconds: 7.0,
+            pass: Box::new(|p, _, _| { let l = p - hampi_at(Vec3::ZERO); hampi_dir(Vec3::Z).dot(l) > -20.0 }),
+            want: "in the courtyard (local z > -20)".into(),
+            track: everywhere(),
+            hurts: false,
+        },
+        Case {
+            name: "hampi stair to the wall walk".into(),
+            start: hampi_at(Vec3::new(9.4, HALF_HEIGHT + 0.4, -28.3)),
+            dir: hampi_dir(Vec3::X),
+            seconds: 4.0,
+            pass: Box::new(|_, _, hi| hi > 4.3),
+            want: "up on the cloister roof (feet > 4.3)".into(),
+            track: everywhere(),
+            hurts: false,
+        },
+        Case {
+            name: "hampi bazaar roof stair".into(),
+            start: hampi_at(Vec3::new(12.4, HALF_HEIGHT + 0.4, -57.6)),
+            dir: hampi_dir(Vec3::Z),
+            seconds: 2.4,
+            pass: Box::new(|_, _, hi| hi > 4.9),
+            want: "up on the gallery roof (feet > 4.9)".into(),
+            track: everywhere(),
+            hurts: false,
+        },
+        Case {
+            // Down the stepped tank's flights to the pool's edge, then (separately) back up.
+            name: "hampi stepped tank down".into(),
+            start: hampi_at(Vec3::new(-40.0, 0.0, -2.0)) + Vec3::new(10.5, HALF_HEIGHT + 0.3, 0.0),
+            dir: Vec3::NEG_X,
+            seconds: 4.0,
+            pass: Box::new(|_, lo, _| lo < -3.1),
+            want: "down at the bottom tier (feet < -3.1)".into(),
+            track: everywhere(),
+            hurts: false,
+        },
+        Case {
+            name: "hampi stepped tank up".into(),
+            start: hampi_at(Vec3::new(-40.0, 0.0, -2.0)) + Vec3::new(3.3, -3.18 + HALF_HEIGHT + 0.3, 0.0),
+            dir: Vec3::X,
+            seconds: 4.0,
+            pass: Box::new(|p, _, _| p.y - HALF_HEIGHT > -0.1),
+            want: "back up on the rim (feet > -0.1)".into(),
             track: everywhere(),
             hurts: false,
         },

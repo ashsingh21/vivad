@@ -35,7 +35,7 @@ fn terrain_spec(seed: u64) -> TerrainSpec {
     let mut pads = vec![
         pad(0.0, 0.0, 66.0, 30.0),
         pad(STEPWELL_C.x, STEPWELL_C.z, 42.0, 25.0),
-        pad(-140.0, -130.0, 42.0, 30.0),
+        pad(HAMPI_C.x, HAMPI_C.z, 62.0, 25.0), // the temple complex, its bazaar, the tank, the outcrops
         pad(95.0, 170.0, 50.0, 25.0),
         pad(-200.0, 0.0, 62.0, 25.0),
         // The cliff's ends: the north one holds the spur stair's foot.
@@ -60,6 +60,12 @@ fn terrain_spec(seed: u64) -> TerrainSpec {
         roads: ROADS.to_vec(),
         river: (RIVER_X.0, RIVER_X.1, RIVER_BED),
         pits: vec![(
+            // Hampi's stepped tank: the outline at its rim apron's outer edge (the apron is two
+            // cells wide, hiding the slope down to the floor).
+            tank_centre().xz() - TANK_HALVES[0],
+            tank_centre().xz() + TANK_HALVES[0],
+            TANK_BOTTOM - 0.1,
+        ), (
             Vec2::new(STEPWELL_C.x - STEPWELL_L / 2.0 - STEPWELL_WALL, STEPWELL_C.z - STEPWELL_W / 2.0 - STEPWELL_WALL),
             Vec2::new(STEPWELL_C.x + STEPWELL_L / 2.0 + STEPWELL_WALL, STEPWELL_C.z + STEPWELL_W / 2.0 + STEPWELL_WALL),
             -STEPWELL_DEPTH - 2.0,
@@ -996,79 +1002,250 @@ fn stepwell_pillar_rows(x: f32, landing: f32) -> [f32; 2] {
 
 // ------------------------------------------------------------------ Hampi Khandahar
 
+pub const HAMPI_C: Vec3 = Vec3::new(-140.0, 0.0, -130.0);
+const HAMPI_YAW: f32 = 0.25;
+pub const HAMPI_COMPLEX: &str = "models/props/hampi_complex.gltf";
+pub const HAMPI_TANK: &str = "models/props/hampi_tank.gltf";
+// The temple complex's plan, shared with tools/blender/architecture/hampi.py (in the Hampi
+// frame): the prakara's outer faces, its wall, the cloisters inside, the bazaar street south of
+// the gopuram, and the stepped tank (world-aligned, its own frame).
+const HAMPI_WALL: (f32, f32, f32, f32) = (-24.0, 24.0, -30.0, 20.0);
+const HAMPI_WALL_T: f32 = 1.6;
+const HAMPI_WALL_TOP: f32 = 4.4;
+const HAMPI_PARAPET: f32 = 0.9;
+const HAMPI_CLOISTER_D: f32 = 4.0;
+const HAMPI_SLAB: f32 = 3.8;
+const HAMPI_GOPURAM_HALF: f32 = 9.0;
+const BAZAAR_Z: (f32, f32) = (-58.0, -34.0);
+const BAZAAR_X: [f32; 4] = [6.5, 7.3, 10.7, 11.5];
+const BAZAAR_PLINTH: f32 = 1.2;
+const BAZAAR_SLAB: f32 = 4.4;
+const BAZAAR_GAP: (f32, f32) = (-50.0, -46.0);
+const TANK_LOCAL: Vec3 = Vec3::new(-40.0, 0.0, -2.0);
+const TANK_HALVES: [f32; 6] = [11.8, 8.2, 6.8, 5.4, 4.0, 2.6];
+const TANK_STEP: f32 = 0.8;
+const TANK_BOTTOM: f32 = -4.4;
+
+fn hampi_frame() -> Frame {
+    Frame::new(HAMPI_C, HAMPI_YAW)
+}
+
+/// A point and a direction given in Hampi's frame, in the world (for checks).
+pub fn hampi_at(local: Vec3) -> Vec3 {
+    hampi_frame().p(local)
+}
+
+pub fn hampi_dir(local: Vec3) -> Vec3 {
+    hampi_frame().rot() * local
+}
+
+/// The stepped tank's centre in the world (its frame is world-aligned; the terrain pit is too).
+fn tank_centre() -> Vec3 {
+    hampi_frame().p(TANK_LOCAL)
+}
+
+fn linspace(a: f32, b: f32, n: usize) -> impl Iterator<Item = f32> {
+    (0..n).map(move |k| a + (b - a) * k as f32 / (n - 1) as f32)
+}
+
+fn cloister_pillars() -> Vec<Vec2> {
+    let (_, x1, z0, z1) = HAMPI_WALL;
+    let (xi, zi) = (x1 - HAMPI_WALL_T - HAMPI_CLOISTER_D, z1 - HAMPI_WALL_T - HAMPI_CLOISTER_D);
+    let mut out = vec![];
+    for s in [-1.0, 1.0] {
+        out.extend(linspace(z0 + 4.0, zi, 14).map(|z| Vec2::new(s * xi, z)));
+    }
+    out.extend(linspace(-xi, xi, 12).skip(1).take(10).map(|x| Vec2::new(x, zi)));
+    out
+}
+
+fn bazaar_pillars() -> Vec<Vec2> {
+    let mut out = vec![];
+    for s in [-1.0, 1.0] {
+        for x in [BAZAAR_X[1], BAZAAR_X[2]] {
+            out.extend(linspace(BAZAAR_Z.0 + 1.0, BAZAAR_Z.1 - 1.0, 8).map(|z| Vec2::new(s * x, z)));
+        }
+    }
+    out
+}
+
 fn hampi(b: &mut Builder, rng: &mut SmallRng) {
-    let c = Vec3::new(-140.0, 0.0, -130.0);
-    let f = Frame::new(c, 0.25);
-    // Granite boulder piles.
+    let f = hampi_frame();
+    let (x0, x1, z0, z1) = HAMPI_WALL;
+    let t = HAMPI_WALL_T;
+    let (xi, zi) = (x1 - t - HAMPI_CLOISTER_D, z1 - t - HAMPI_CLOISTER_D);
+    // Box from frame extents in any order.
+    let bx = |b: &mut Builder, xa: f32, xb: f32, za: f32, zb: f32, ya: f32, yb: f32| {
+        b.span(f, Vec3::new(xa.min(xb), ya, za.min(zb)), Vec3::new(xa.max(xb), yb, za.max(zb)), Mat::Granite);
+    };
+    // ---- the temple complex: prakara walls with a walk on top, cloisters, the bazaar street
+    b.map.props.push(Prop { model: HAMPI_COMPLEX, pos: f.origin, yaw: f.yaw, scale: 1.0, trunk: None });
+    hidden(b, |b| {
+        let (w, p) = (HAMPI_WALL_TOP, HAMPI_WALL_TOP + HAMPI_PARAPET);
+        bx(b, x0, x0 + t, z0 - t / 2.0, z1, 0.0, w);
+        bx(b, x1 - t, x1, z0 - t / 2.0, z1, 0.0, w);
+        bx(b, x0 + t, x1 - t, z1 - t, z1, 0.0, w);
+        bx(b, x0, x0 + 0.5, z0 + t / 2.0, z1, w, p);
+        bx(b, x1 - 0.5, x1, z0 + t / 2.0, z1, w, p);
+        bx(b, x0 + 0.5, x1 - 0.5, z1 - 0.5, z1, w, p);
+        for s in [-1.0, 1.0] {
+            bx(b, s * HAMPI_GOPURAM_HALF, s * (x1 - t), z0 - t / 2.0, z0 + t / 2.0, 0.0, w);
+            bx(b, s * HAMPI_GOPURAM_HALF, s * (x1 - 0.5), z0 - t / 2.0, z0 - t / 2.0 + 0.5, w, p);
+            bx(b, s * (x1 - t), s * (xi - 0.5), z0 + t / 2.0, z1 - t, HAMPI_SLAB, w);
+        }
+        bx(b, -(xi - 0.5), xi - 0.5, zi - 0.5, z1 - t, HAMPI_SLAB, w);
+        for c in cloister_pillars() {
+            b.cyl(f, Vec3::new(c.x, 0.0, c.y), 0.4, HAMPI_SLAB, Mat::Granite);
+        }
+        // Bazaar galleries.
+        let (zb0, zb1) = BAZAAR_Z;
+        let [xf, _, _, xb] = BAZAAR_X;
+        for s in [-1.0, 1.0] {
+            bx(b, s * xf, s * xb, zb0, zb1, 0.0, BAZAAR_PLINTH);
+            bx(b, s * (xb - 0.4), s * xb, zb0, zb1, BAZAAR_PLINTH, BAZAAR_SLAB);
+            bx(b, s * xf, s * (xb - 0.4), zb0, zb0 + 0.4, BAZAAR_PLINTH, BAZAAR_SLAB);
+            bx(b, s * xf, s * (xb - 0.4), zb1 - 0.4, zb1, BAZAAR_PLINTH, BAZAAR_SLAB);
+            bx(b, s * xf, s * xb, zb0, zb1, BAZAAR_SLAB, BAZAAR_SLAB + 0.6);
+            bx(b, s * (xb - 0.4), s * xb, zb0, BAZAAR_GAP.0, BAZAAR_SLAB + 0.6, BAZAAR_SLAB + 1.4);
+            bx(b, s * (xb - 0.4), s * xb, BAZAAR_GAP.1, zb1, BAZAAR_SLAB + 0.6, BAZAAR_SLAB + 1.4);
+        }
+        for c in bazaar_pillars() {
+            b.cyl(f, Vec3::new(c.x, BAZAAR_PLINTH, c.y), 0.4, BAZAAR_SLAB - BAZAAR_PLINTH, Mat::Granite);
+        }
+        // Flagstaff on the axis.
+        b.cyl(f, Vec3::new(0.0, 0.0, -21.0), 0.6, 8.0, Mat::Granite);
+        // The paved courtyard keeps the grass off.
+        b.deco(f, Vec3::new(0.0, -0.04, (z0 + z1) / 2.0), Vec3::new(2.0 * (x1 - t), 0.12, z1 - z0), Mat::Granite);
+    });
+    // Stairs: up the inside of the south wall at both corners to the walk; up the bazaar
+    // plinths from the street; behind each gallery to its roof.
+    for s in [-1.0, 1.0] {
+        let yaw = if s < 0.0 { PI } else { 0.0 };
+        b.stairs(f.child(Vec3::new(s * (HAMPI_GOPURAM_HALF + 0.6), 0.0, z0 + t / 2.0 + 0.9), yaw), Vec3::ZERO, 8.0, HAMPI_WALL_TOP, 1.8, Mat::Granite);
+        for z in [-40.5, -51.5] {
+            b.stairs(f.child(Vec3::new(s * (BAZAAR_X[0] - 1.5), 0.0, z), yaw), Vec3::ZERO, 1.5, BAZAAR_PLINTH, 2.0, Mat::Granite);
+        }
+        b.stairs(f.child(Vec3::new(s * (BAZAAR_X[3] + 0.9), 0.0, BAZAAR_Z.0 + 1.0), -FRAC_PI_2), Vec3::ZERO, BAZAAR_GAP.1 - BAZAAR_Z.0 - 1.0 - 0.6, BAZAAR_SLAB + 0.6, 1.8, Mat::Granite);
+    }
+    // Inside: the temple facing the gopuram, the stone chariot on the axis between.
+    temple_dravida(b, rng, f.child(Vec3::new(0.0, 0.0, 5.0), PI), 0.85);
+    let cf = f.child(Vec3::new(0.0, 0.0, -13.0), 0.0);
+    hidden(b, |b| {
+        b.span(cf, Vec3::new(-3.0, 0.0, -2.2), Vec3::new(3.0, 2.2, 2.2), Mat::Granite);
+        for (x, z) in [(-1.6, -2.6), (1.6, -2.6), (-1.6, 2.6), (1.6, 2.6)] {
+            b.push(cf.p(Vec3::new(x, 1.3, z)), cf.rot() * Quat::from_rotation_x(FRAC_PI_2),
+                   super::Shape::Cylinder { radius: 1.3, height: 0.4 }, Mat::Granite, true, true);
+        }
+        b.tower(cf, Vec3::new(0.0, 2.2, 0.0), 4.0, 3.0, 4.5, 3, 0.55, Mat::Granite);
+    });
+    b.map.props.push(Prop { model: STONE_CHARIOT, pos: cf.origin, yaw: cf.yaw, scale: 1.0, trunk: None });
+    // The gopuram in the south wall.
+    let gf = f.child(Vec3::new(0.0, 0.0, z0), 0.0);
+    hidden(b, |b| {
+        b.span(gf, Vec3::new(-9.0, 0.0, -3.0), Vec3::new(-2.5, 7.0, 3.0), Mat::Granite);
+        b.span(gf, Vec3::new(2.5, 0.0, -3.0), Vec3::new(9.0, 7.0, 3.0), Mat::Granite);
+        b.span(gf, Vec3::new(-9.0, 7.0, -3.0), Vec3::new(9.0, 8.0, 3.0), Mat::Granite);
+        b.tower(gf, Vec3::new(0.0, 8.0, 0.0), 16.0, 5.5, 14.0, 6, 0.6, Mat::Brick);
+    });
+    b.map.props.push(Prop { model: GOPURAM, pos: gf.origin, yaw: gf.yaw, scale: 1.0, trunk: None });
+    b.chest(gf, Vec3::new(-1.8, 0.0, 1.5), 0.0, ChestKind::Kalash); // in the gateway passage
+    // Loot: in the cloisters, on the walk, in the bazaar galleries and on their roofs.
+    for c in cloister_pillars().into_iter().step_by(7) {
+        b.loot(f, Vec3::new(c.x + c.x.signum() * 2.0, 0.3, c.y)); // under the cloister roof
+    }
+    for s in [-1.0, 1.0] {
+        b.loot(f, Vec3::new(s * 9.0, BAZAAR_PLINTH + 0.3, rng.random_range(-55.0..-37.0)));
+        b.loot(f, Vec3::new(s * 9.0, BAZAAR_SLAB + 0.9, rng.random_range(-55.0..-37.0)));
+    }
+    b.chest(f, Vec3::new(9.0, BAZAAR_PLINTH, -46.0), FRAC_PI_2, ChestKind::Peti);
+
+    // ---- the ruined mandapa, outside the east wall
+    let rf = f.child(Vec3::new(38.0, 0.0, -2.0), FRAC_PI_2);
+    art_over(b, MANDAPA_RUIN, rf, 1.0, |b| {
+        for (i, col) in MANDAPA_RUIN_PILLARS.iter().enumerate() {
+            for (j, st) in col.iter().enumerate() {
+                if let Some(h) = st {
+                    b.bx(rf, Vec3::new(-10.0 + i as f32 * 4.0, h / 2.0 + 0.6, -6.0 + j as f32 * 4.0), Vec3::new(0.66, *h, 0.66), Mat::Granite);
+                }
+            }
+        }
+        b.span(rf, Vec3::new(-12.0, 0.0, -8.0), Vec3::new(12.0, 0.6, 8.0), Mat::Granite);
+        b.span(rf, Vec3::new(-11.0, 4.8, -7.0), Vec3::new(1.0, 5.4, 7.0), Mat::Granite);
+        b.stairs(rf.child(Vec3::new(4.0, 0.0, 9.9), FRAC_PI_2), Vec3::ZERO, 1.8, 0.6, 3.0, Mat::Granite);
+        b.stairs(rf.child(Vec3::new(-4.0, 0.0, -9.9), -FRAC_PI_2), Vec3::ZERO, 1.8, 0.6, 3.0, Mat::Granite);
+        b.bx(rf.child(Vec3::new(7.5, 0.0, 3.5), 0.3), Vec3::new(0.0, 0.92, 0.0), Vec3::new(3.4, 0.64, 0.64), Mat::Granite);
+        b.bx(rf.child(Vec3::new(14.0, 0.0, -3.0), 1.2), Vec3::new(0.0, 0.32, 0.0), Vec3::new(3.0, 0.64, 0.64), Mat::Granite);
+    });
+    b.chest(rf, Vec3::new(-6.0, 0.6, 0.0), 0.0, ChestKind::Peti);
+
+    // ---- the stepped tank, west of the complex: tiers of chlorite, a flight on every side
+    let tc = tank_centre();
+    let tf = Frame::new(tc, 0.0);
+    b.map.props.push(Prop { model: HAMPI_TANK, pos: tc, yaw: 0.0, scale: 1.0, trunk: None });
+    hidden(b, |b| {
+        // Each tier a ring from its edge in to the next one down; the last one whole.
+        for (k, h) in TANK_HALVES.into_iter().enumerate() {
+            let top = 0.02 - TANK_STEP * k as f32;
+            let Some(&n) = TANK_HALVES.get(k + 1) else {
+                b.span(tf, Vec3::new(-h, TANK_BOTTOM, -h), Vec3::new(h, top, h), Mat::Granite);
+                continue;
+            };
+            for (lo, hi) in [(Vec2::new(-h, -h), Vec2::new(h, -n)), (Vec2::new(-h, n), Vec2::new(h, h)), (Vec2::new(-h, -n), Vec2::new(-n, n)), (Vec2::new(n, -n), Vec2::new(h, n))] {
+                b.span(tf, Vec3::new(lo.x, TANK_BOTTOM, lo.y), Vec3::new(hi.x, top, hi.y), Mat::Granite);
+            }
+        }
+    });
+    for k in 1..TANK_HALVES.len() {
+        let (hi, lo) = (TANK_HALVES[k], 0.02 - TANK_STEP * k as f32);
+        for yaw in [0.0, FRAC_PI_2, PI, -FRAC_PI_2] {
+            hidden(b, |b| b.stairs(Frame::new(tc, yaw), Vec3::new(hi - 1.0, lo, 0.0), 1.0, TANK_STEP, 1.6, Mat::Granite));
+        }
+    }
+    let pool = TANK_HALVES[5];
+    b.push(Vec3::new(tc.x, 0.02 - TANK_STEP * 5.0 + 0.3, tc.z), Quat::IDENTITY, super::Shape::Box(Vec3::new(2.0 * pool - 0.04, 0.02, 2.0 * pool - 0.04)),
+           Mat::Water, false, true);
+    b.loot(tf, Vec3::new(0.0, 0.02 - TANK_STEP * 4.0 + 0.3, TANK_HALVES[4] + 0.6));
+
+    // ---- granite outcrops round the edges: piles of boulders, some balanced on others
+    let keep_clear: [(Vec2, Vec2); 4] = [
+        (Vec2::new(x0 - 4.0, z0 - 6.0), Vec2::new(x1 + 4.0, z1 + 4.0)),
+        (Vec2::new(-15.0, BAZAAR_Z.0 - 4.0), Vec2::new(15.0, z0)),
+        (Vec2::new(24.0, -16.0), Vec2::new(52.0, 12.0)),
+        (Vec2::new(TANK_LOCAL.x - 15.0, TANK_LOCAL.z - 15.0), Vec2::new(TANK_LOCAL.x + 15.0, TANK_LOCAL.z + 15.0)),
+    ];
     let rock = |b: &mut Builder, rng: &mut SmallRng, p: Vec3, r: f32| {
         b.push(f.p(p), f.rot(), super::Shape::Sphere(r * 0.92), Mat::Granite, true, false);
         let model = ROCKS[rng.random_range(0..ROCKS.len())];
         b.ornament(f, p, rng.random_range(0.0..std::f32::consts::TAU), model, Vec3::splat(r));
     };
-    for _ in 0..40 {
-        let r = rng.random_range(1.6..6.5);
-        let p = Vec3::new(rng.random_range(-55.0..55.0), r * 0.35, rng.random_range(-50.0..50.0));
-        // Keep the mandapa, chariot, gopuram passage and temple clear.
-        let keep_clear = [(Vec2::ZERO, 18.0), (Vec2::new(0.0, 22.0), 9.0), (Vec2::new(0.0, -32.0), 14.0), (Vec2::new(30.0, 10.0), 16.0)];
-        if keep_clear.iter().any(|(c, rad)| p.xz().distance(*c) < rad + r * 0.6) {
+    let mut piles = 0;
+    while piles < 16 {
+        let a = rng.random_range(0.0..std::f32::consts::TAU);
+        let d = rng.random_range(30.0..60.0);
+        let c = Vec2::new(a.cos() * d, a.sin() * d);
+        let clear = |p: Vec2, r: f32| !keep_clear.iter().any(|(lo, hi)| p.x > lo.x - r && p.x < hi.x + r && p.y > lo.y - r && p.y < hi.y + r);
+        if !clear(c, 6.0) {
             continue;
         }
-        rock(b, rng, p, r);
-        // Hampi's famous balancing boulders.
-        if r > 3.5 && rng.random_bool(0.55) {
-            let r2 = r * rng.random_range(0.45..0.65);
-            let dz = rng.random_range(-0.5..0.5);
-            rock(b, rng, p + Vec3::new(r * 0.25, r * 0.6 + r2 * 0.55, dz), r2);
-        }
-    }
-    // Ruined mandapa: a grid of pillars (some snapped, some gone), roof over the western half.
-    art_over(b, MANDAPA_RUIN, f, 1.0, |b| {
-        for (i, col) in MANDAPA_RUIN_PILLARS.iter().enumerate() {
-            for (j, st) in col.iter().enumerate() {
-                if let Some(h) = st {
-                    b.bx(f, Vec3::new(-10.0 + i as f32 * 4.0, h / 2.0 + 0.6, -6.0 + j as f32 * 4.0), Vec3::new(0.66, *h, 0.66), Mat::Granite);
-                }
+        piles += 1;
+        for _ in 0..rng.random_range(3..7) {
+            let r = rng.random_range(2.0..7.0);
+            let p = c + Vec2::new(rng.random_range(-7.0..7.0), rng.random_range(-7.0..7.0));
+            if !clear(p, r * 0.7) {
+                continue;
+            }
+            let p3 = Vec3::new(p.x, r * 0.35, p.y);
+            rock(b, rng, p3, r);
+            if r > 3.5 && rng.random_bool(0.5) {
+                let r2 = r * rng.random_range(0.45..0.65);
+                let dz = rng.random_range(-0.5..0.5);
+                rock(b, rng, p3 + Vec3::new(r * 0.25, r * 0.6 + r2 * 0.55, dz), r2);
             }
         }
-        b.span(f, Vec3::new(-12.0, 0.0, -8.0), Vec3::new(12.0, 0.6, 8.0), Mat::Granite);
-        b.span(f, Vec3::new(-11.0, 4.8, -7.0), Vec3::new(1.0, 5.4, 7.0), Mat::Granite);
-        // Steps up the plinth, front and back.
-        b.stairs(f.child(Vec3::new(4.0, 0.0, 9.9), FRAC_PI_2), Vec3::ZERO, 1.8, 0.6, 3.0, Mat::Granite);
-        b.stairs(f.child(Vec3::new(-4.0, 0.0, -9.9), -FRAC_PI_2), Vec3::ZERO, 1.8, 0.6, 3.0, Mat::Granite);
-        // Fallen shafts.
-        b.bx(f.child(Vec3::new(7.5, 0.0, 3.5), 0.3), Vec3::new(0.0, 0.92, 0.0), Vec3::new(3.4, 0.64, 0.64), Mat::Granite);
-        b.bx(f.child(Vec3::new(14.0, 0.0, -3.0), 1.2), Vec3::new(0.0, 0.32, 0.0), Vec3::new(3.0, 0.64, 0.64), Mat::Granite);
-    });
-    b.chest(f, Vec3::new(-6.0, 0.6, 0.0), 0.0, ChestKind::Peti);
-    // Stone chariot.
-    let cf = f.child(Vec3::new(0.0, 0.0, 22.0), 0.0);
-    let first_chariot = b.map.blocks.len();
-    b.span(cf, Vec3::new(-3.0, 0.0, -2.2), Vec3::new(3.0, 2.2, 2.2), Mat::Granite);
-    for (x, z) in [(-1.6, -2.6), (1.6, -2.6), (-1.6, 2.6), (1.6, 2.6)] {
-        b.push(cf.p(Vec3::new(x, 1.3, z)), cf.rot() * Quat::from_rotation_x(FRAC_PI_2),
-               super::Shape::Cylinder { radius: 1.3, height: 0.4 }, Mat::Granite, true, true);
     }
-    b.tower(cf, Vec3::new(0.0, 2.2, 0.0), 4.0, 3.0, 4.5, 3, 0.55, Mat::Granite);
-    for blk in &mut b.map.blocks[first_chariot..] {
-        blk.visible = false;
+    for _ in 0..4 {
+        b.loot(f, Vec3::new(rng.random_range(-45.0..45.0), 0.3, rng.random_range(-45.0..45.0)));
     }
-    b.map.props.push(Prop { model: STONE_CHARIOT, pos: cf.origin, yaw: cf.yaw, scale: 1.0, trunk: None });
-    // Gopuram gateway: two massive piers and a stepped tower above the passage.
-    let gf = f.child(Vec3::new(0.0, 0.0, -32.0), 0.0);
-    let first_gate = b.map.blocks.len();
-    b.span(gf, Vec3::new(-9.0, 0.0, -3.0), Vec3::new(-2.5, 7.0, 3.0), Mat::Granite);
-    b.span(gf, Vec3::new(2.5, 0.0, -3.0), Vec3::new(9.0, 7.0, 3.0), Mat::Granite);
-    b.span(gf, Vec3::new(-9.0, 7.0, -3.0), Vec3::new(9.0, 8.0, 3.0), Mat::Granite);
-    b.tower(gf, Vec3::new(0.0, 8.0, 0.0), 16.0, 5.5, 14.0, 6, 0.6, Mat::Brick);
-    for blk in &mut b.map.blocks[first_gate..] {
-        blk.visible = false;
-    }
-    b.map.props.push(Prop { model: GOPURAM, pos: gf.origin, yaw: gf.yaw, scale: 1.0, trunk: None });
-    b.chest(gf, Vec3::new(-1.8, 0.0, 1.5), 0.0, ChestKind::Kalash); // in the gateway passage
-    for _ in 0..6 {
-        b.loot(f, Vec3::new(rng.random_range(-40.0..40.0), 0.3, rng.random_range(-40.0..40.0)));
-    }
-    temple_dravida(b, rng, f.child(Vec3::new(30.0, 0.0, 10.0), -FRAC_PI_2), 0.8);
 }
 
 /// Pillar heights of the ruined mandapa's 6 x 4 grid (None = gone); must match
@@ -1680,7 +1857,7 @@ fn scatter_trees(b: &mut Builder, rng: &mut SmallRng, n: u32) {
     let pois = [
         (Vec2::new(0.0, 0.0), 66.0),
         (STEPWELL_C.xz(), 42.0),
-        (Vec2::new(-140.0, -130.0), 30.0),
+        (HAMPI_C.xz(), 70.0),
         (Vec2::new(125.0, -135.0), 52.0),
         (Vec2::new(150.0, 40.0), 30.0),
         (Vec2::new(-200.0, 0.0), 78.0),

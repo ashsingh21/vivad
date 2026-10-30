@@ -15,7 +15,7 @@ sys.path.insert(0, HERE)
 
 import bmesh  # noqa: E402
 import bpy  # noqa: E402
-from mathutils import Vector, noise  # noqa: E402
+from mathutils import Matrix, Vector, noise  # noqa: E402
 
 import export  # noqa: E402
 import geo  # noqa: E402
@@ -29,6 +29,7 @@ def mats():
     texgen.sandstone(T.TEX)
     texgen.trim_sheet(T.TEX, tint=(0.66, 0.60, 0.55), streaks=0.8)
     texgen.granite(T.TEX)
+    texgen.sandstone(T.TEX, seed=21, tint=(0.66, 0.6, 0.55), name="hpaving")
     # Weathered lime stucco over brick, grey with age.
     texgen.plaster(T.TEX, name="stucco", tint=(0.66, 0.64, 0.60), grime=0.2, streaks=1.5)
     T.MATS.update({
@@ -37,6 +38,7 @@ def mats():
         "stucco": T.tex_material("stucco", "stucco"),
         "gold": T.flat_material("gold", (1.0, 0.72, 0.30), 1.0, 0.3),
         "cloth": T.flat_material("dhvaja", (0.95, 0.45, 0.05), 0.0, 0.8),
+        "pave": T.tex_material("hpaving", "hpaving"),
     })
 
 
@@ -451,11 +453,197 @@ def mandapa_ruin():
     return finish("mandapa_ruin", kit)
 
 
+# ------------------------------------------------------------------ the temple complex (prakara, cloisters, bazaar)
+# Plan shared with india.rs (`HAMPI_*`), in the Hampi frame (x, game z; Blender Y = -z).
+
+WALL = (-24.0, 24.0, -30.0, 20.0)     # prakara outer faces: x0, x1, z0 (south, the gopuram), z1
+WALL_T, WALL_TOP, PARAPET_H = 1.6, 4.4, 0.9
+CLOISTER_D, SLAB_BOTTOM = 4.0, 3.8      # pillar line's distance in from the wall; cloister roof
+GOPURAM_HALF = 9.0
+BAZAAR_Z = (-58.0, -34.0)
+BAZAAR_X = (6.5, 7.3, 10.7, 11.5)       # plinth front, pillar rows, back face (|x|)
+BAZAAR_PLINTH, BAZAAR_SLAB = 1.2, 4.4   # plinth top; roof slab bottom (top + 0.6)
+BAZAAR_GAP = (-50.0, -46.0)             # back parapet open where the roof stair lands
+
+
+def linspace(a, b, n):
+    return [a + (b - a) * k / (n - 1) for k in range(n)]
+
+
+def cloister_pillars():
+    """(x, z) of every cloister pillar: west and east lines, then the north line between them."""
+    x0, x1, z0, z1 = WALL
+    xi, zi = x1 - WALL_T - CLOISTER_D, z1 - WALL_T - CLOISTER_D
+    out = []
+    for s in (-1, 1):
+        out += [(s * xi, z) for z in linspace(z0 + 4.0, zi, 14)]
+    out += [(x, zi) for x in linspace(-xi, xi, 12)[1:-1]]
+    return out
+
+
+def bazaar_pillars():
+    out = []
+    for s in (-1, 1):
+        for x in BAZAAR_X[1:3]:
+            out += [(s * x, z) for z in linspace(BAZAAR_Z[0] + 1.0, BAZAAR_Z[1] - 1.0, 8)]
+    return out
+
+
+def gbox(kit, x0, x1, z0, z1, y0, y1, mat="stone"):
+    """Box from game-frame extents (x, z, height)."""
+    return kit.add(T.box("hb", (min(x0, x1), -max(z0, z1), y0), (max(x0, x1), -min(z0, z1), y1), mat))
+
+
+def wall_run(kit, x0, x1, z0, z1):
+    """A prakara wall segment (axis-aligned box in plan): a moulded base, plain ashlar, a
+    projecting cornice and a parapet on its outer edge (outer edge = the far side from the
+    courtyard centre)."""
+    cx, cz = (x0 + x1) / 2, (z0 + z1) / 2
+    hx, hz = abs(x1 - x0) / 2, abs(z1 - z0) / 2
+    plan = T.rect(hx, hz, cx, -cz)
+    kit.add(T.molded("pwall", [(0.0, T.offset_poly(plan, 0.14), "padma"), (0.45, T.offset_poly(plan, 0.14), None),
+                                (0.45, plan, None), (WALL_TOP - 0.45, plan, "dentil"),
+                                (WALL_TOP - 0.2, T.offset_poly(plan, 0.12), None), (WALL_TOP, T.offset_poly(plan, 0.12), None)]))
+
+
+def prakara(kit):
+    x0, x1, z0, z1 = WALL
+    t = WALL_T
+    # Walls: west, east, north, and the south either side of the gopuram.
+    wall_run(kit, x0, x0 + t, z0, z1)
+    wall_run(kit, x1 - t, x1, z0, z1)
+    wall_run(kit, x0 + t, x1 - t, z1 - t, z1)
+    for s in (-1, 1):
+        wall_run(kit, s * GOPURAM_HALF, s * (x1 - t), z0 - t / 2, z0 + t / 2)
+    # Parapets on the outer half of every wall top, with a cap.
+    p = PARAPET_H
+    for (a0, a1, b0, b1) in ((x0, x0 + 0.5, z0 + t / 2, z1), (x1 - 0.5, x1, z0 + t / 2, z1), (x0 + 0.5, x1 - 0.5, z1 - 0.5, z1)):
+        gbox(kit, a0, a1, b0, b1, WALL_TOP, WALL_TOP + p)
+    for s in (-1, 1):
+        gbox(kit, s * GOPURAM_HALF, s * (x1 - 0.5), z0 - t / 2, z0 - t / 2 + 0.5, WALL_TOP, WALL_TOP + p)
+    # Cloisters: pillars, roof slabs from the wall to beyond the pillar line, a kapota eave.
+    xi, zi = x1 - t - CLOISTER_D, z1 - t - CLOISTER_D
+    for (x, z) in cloister_pillars():
+        vijayanagara_pillar(kit, x, -z, 0.0, SLAB_BOTTOM)
+    for s in (-1, 1):
+        gbox(kit, s * (x1 - t), s * (xi - 0.5), z0 + t / 2, z1 - t, SLAB_BOTTOM, WALL_TOP)
+    gbox(kit, -(xi - 0.5), xi - 0.5, zi - 0.5, z1 - t, SLAB_BOTTOM, WALL_TOP)
+    prof = [(0.0, 0.0, "bead"), (0.08, 0.25, "plain"), (0.18, 0.45, "plain"), (0.3, 0.6, "plain"), (0.38, 0.66, None)]
+    zb = SLAB_BOTTOM - 0.35
+    for s in (-1, 1):
+        x = s * (xi - 0.5)
+        kit.add(T.molded("ckap", [(zb + dz, T.rect(0.01 + d / 2, (zi - 0.5 - (z0 + t / 2)) / 2, x + s * d / 2, -((zi - 0.5 + z0 + t / 2) / 2)), st)
+                                   for dz, d, st in prof]))
+    kit.add(T.molded("ckap", [(zb + dz, T.rect(xi - 0.5 + d, 0.01 + d / 2, 0.0, -(zi - 0.5 - d / 2)), st) for dz, d, st in prof]))
+    # Courtyard paving (2 cm proud of the ground) and a dhvaja stambha on the axis.
+    o = T.box("hpave", (x0 + t, -(z1 - t), -0.1), (x1 - t, -(z0 + t / 2), 0.02), "pave")
+    uvl = o.data.uv_layers[0]
+    for loop, d in zip(o.data.loops, uvl.data):
+        c = o.data.vertices[loop.vertex_index].co
+        d.uv = (c.x / 3.0, c.y / 3.0)
+    kit.add(o)
+    kit.add(T.lathe("stambha_base", [(0.9, 0.0), (0.9, 0.5), (0.6, 0.6)], 4, (0.0, 21.0), square=True))
+    kit.add(T.lathe("stambha", [(0.32, 0.6), (0.26, 7.5), (0.4, 7.7), (0.0, 8.0)], 8, (0.0, 21.0), uv_strip="bead"))
+
+
+def bazaar(kit):
+    """Hampi Bazaar: on each side of the street from the gopuram, a long pillared gallery on a
+    plinth with a solid back wall, a flat roof with a kapota eave over the street, a parapet at
+    the back, open where a stair comes up behind."""
+    zb0, zb1 = BAZAAR_Z
+    xf, _, _, xb = BAZAAR_X
+    for s in (-1, 1):
+        plan_c = (s * (xf + xb) / 2, -(zb0 + zb1) / 2)
+        hx, hz = (xb - xf) / 2, (zb1 - zb0) / 2
+        kit.add(T.molded("bplinth", [(0.0, T.rect(hx + 0.12, hz + 0.12, *plan_c), "padma"), (0.4, T.rect(hx + 0.12, hz + 0.12, *plan_c), None),
+                                     (0.4, T.rect(hx, hz, *plan_c), None), (BAZAAR_PLINTH, T.rect(hx, hz, *plan_c), None)]))
+        gbox(kit, s * (xb - 0.4), s * xb, zb0, zb1, BAZAAR_PLINTH, BAZAAR_SLAB)
+        for z in (zb0, zb1):
+            gbox(kit, s * xf, s * (xb - 0.4), z + (0.0 if z == zb0 else -0.4), z + (0.4 if z == zb0 else 0.0), BAZAAR_PLINTH, BAZAAR_SLAB)
+        gbox(kit, s * xf, s * xb, zb0, zb1, BAZAAR_SLAB, BAZAAR_SLAB + 0.6)
+        prof = [(0.0, 0.0, "bead"), (0.08, 0.25, "plain"), (0.18, 0.45, "plain"), (0.3, 0.6, "plain"), (0.38, 0.66, None)]
+        kit.add(T.molded("bkap", [(BAZAAR_SLAB + 0.05 + dz, T.rect(0.01 + d / 2, hz, s * (xf - d / 2), -(zb0 + zb1) / 2), st)
+                                   for dz, d, st in prof]))
+        for (a, b) in ((zb0, BAZAAR_GAP[0]), (BAZAAR_GAP[1], zb1)):
+            gbox(kit, s * (xb - 0.4), s * xb, a, b, BAZAAR_SLAB + 0.6, BAZAAR_SLAB + 1.4)
+    for (x, z) in bazaar_pillars():
+        vijayanagara_pillar(kit, x, -z, BAZAAR_PLINTH, BAZAAR_SLAB - BAZAAR_PLINTH)
+
+
+def complex_model():
+    kit = T.Kit()
+    prakara(kit)
+    bazaar(kit)
+    # One LOD: the bazaar reaches 58 m from the origin, past where an LOD1 would take over.
+    return finish("hampi_complex", kit, lods=())
+
+
+# ------------------------------------------------------------------ the stepped tank (Pushkarani)
+
+TANK_HALVES = (11.8, 8.2, 6.8, 5.4, 4.0, 2.6)   # rim apron, then the tiers going down
+TANK_STEP = 0.8
+TANK_BOTTOM = -4.4
+
+
+def tank_top(k):
+    return 0.02 - TANK_STEP * k
+
+
+def stepped_tank():
+    """A square stepped tank of dark green chlorite schist: five tiers down to a small pool, and on
+    each tier a short flight climbing to the tier above in the middle of every side."""
+    kit = T.Kit()
+    for k, h in enumerate(TANK_HALVES):
+        top = tank_top(k)
+        # A ring of four slabs between this tier's edge and the next one down (the last is whole).
+        hn = TANK_HALVES[k + 1] if k + 1 < len(TANK_HALVES) else 0.0
+        if hn == 0.0:
+            kit.add(T.box(f"tier{k}", (-h, -h, TANK_BOTTOM), (h, h, top)))
+            continue
+        for sy in (-1, 1):
+            y0, y1 = sorted((sy * hn, sy * h))
+            kit.add(T.box(f"tier{k}", (-h, y0, TANK_BOTTOM), (h, y1, top)))
+        for sx in (-1, 1):
+            x0, x1 = sorted((sx * hn, sx * h))
+            kit.add(T.box(f"tier{k}", (x0, -hn, TANK_BOTTOM), (x1, hn, top)))
+    for k in range(1, len(TANK_HALVES)):
+        # The flight climbs this tier's tread to the riser at its outer edge.
+        hi, lo = TANK_HALVES[k], tank_top(k)
+        n = 4
+        for ang in range(4):
+            R = Matrix.Rotation(ang * math.pi / 2, 4, "Z")
+            for i in range(n):
+                # Steps laid end to end (not nested), so no two share a side face.
+                x0 = hi - 1.0 + i * 0.25
+                o = T.box("tstep", (x0, -0.8, TANK_BOTTOM), (x0 + 0.25, 0.8, lo + (i + 1) * TANK_STEP / n))
+                o.matrix_world = R
+                bpy.context.view_layer.objects.active = o
+                o.select_set(True)
+                bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
+                o.select_set(False)
+                kit.add(o)
+    obj = geo.join(kit.objs, "hampi_tank_LOD0")
+    obj.data.set_sharp_from_angle(angle=math.radians(40))
+    for p in obj.data.polygons:
+        p.use_smooth = True
+    T.bake_weathering(obj, streak_k=0.2)
+    # Chlorite: tint the granite dark green-grey.
+    col = obj.data.color_attributes["Col"]
+    for d in col.data:
+        r, g, b, a = d.color
+        d.color = (r * 0.3, g * 0.38, b * 0.34, a)
+    export.triangulate(obj)
+    return [obj]
+
+
 def main():
     export.reset_scene()
     mats()
     out = {}
+    only = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else None
     for seed, name in ((1, "rock_a"), (2, "rock_b"), (3, "rock_c")):
+        if only and name not in only:
+            continue
         for o in list(bpy.data.objects):
             bpy.data.objects.remove(o)
         kit = T.Kit()
@@ -463,7 +651,9 @@ def main():
         lods = finish(name, kit, lods=(0.35,), smooth=True)
         out[name] = export.export_glb(lods, os.path.join(OUT, f"{name}.gltf"))
     for name, make in (("gopuram", gopuram), ("temple_dravida", dravida_temple), ("stone_chariot", stone_chariot),
-                       ("mandapa_ruin", mandapa_ruin)):
+                       ("mandapa_ruin", mandapa_ruin), ("hampi_complex", complex_model), ("hampi_tank", stepped_tank)):
+        if only and name not in only:
+            continue
         for o in list(bpy.data.objects):
             bpy.data.objects.remove(o)
         lods = make()
