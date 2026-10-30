@@ -351,6 +351,7 @@ impl Node {
             ready: Mutex::new(ready),
             steady: 0,
             said_ready: false,
+            conditions: Conditions::from_env(),
         };
         Session { peers, seed, map_seed, bots, transport }
     }
@@ -397,6 +398,53 @@ pub struct Transport {
     /// Smooth frames in a row since the match was built (loading makes long ones).
     steady: u32,
     said_ready: bool,
+    /// Simulated bad network on what arrives (VIVAD_NET_SIM), for testing.
+    conditions: Option<Conditions>,
+}
+
+/// A bad network, imitated on arrival: `VIVAD_NET_SIM=latency,jitter,loss` (milliseconds,
+/// milliseconds, percent of position updates lost). The ordered stream stays in order.
+pub struct Conditions {
+    latency: f32,
+    jitter: f32,
+    loss: f32,
+    queue: Mutex<Vec<(std::time::Instant, PeerId, Wire)>>,
+    /// When each peer's last ordered message is let through (nothing overtakes it).
+    ordered: Mutex<BTreeMap<PeerId, std::time::Instant>>,
+}
+
+impl Conditions {
+    pub fn from_env() -> Option<Conditions> {
+        let v: Vec<f32> = std::env::var("VIVAD_NET_SIM").ok().filter(|v| !v.is_empty())?.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+        let at = |i: usize| v.get(i).copied().unwrap_or(0.0);
+        info!("simulating a bad network: {} ms latency, {} ms jitter, {}% loss", at(0), at(1), at(2));
+        Some(Conditions { latency: at(0) / 1000.0, jitter: at(1) / 1000.0, loss: at(2) / 100.0, queue: default(), ordered: default() })
+    }
+
+    fn pass(&self, arrived: Vec<(PeerId, Wire)>) -> Vec<(PeerId, Wire)> {
+        use rand::RngExt;
+        let now = std::time::Instant::now();
+        let mut rng = rand::rng();
+        let mut queue = self.queue.lock().unwrap();
+        let mut ordered = self.ordered.lock().unwrap();
+        for (from, wire) in arrived {
+            let state = matches!(wire, Wire::Game(_, NetMsg::State(_)));
+            if state && rng.random::<f32>() < self.loss {
+                continue;
+            }
+            let delay = (self.latency + rng.random_range(-1.0..=1.0) * self.jitter).max(0.0);
+            let mut at = now + Duration::from_secs_f32(delay);
+            if !state && !matches!(wire, Wire::Left) {
+                let last = ordered.entry(from).or_insert(at);
+                at = at.max(*last);
+                *last = at;
+            }
+            queue.push((at, from, wire));
+        }
+        let (due, wait): (Vec<_>, Vec<_>) = std::mem::take(&mut *queue).into_iter().partition(|(at, ..)| *at <= now);
+        *queue = wait;
+        due.into_iter().map(|(_, from, wire)| (from, wire)).collect()
+    }
 }
 
 impl Drop for Transport {
@@ -566,7 +614,12 @@ fn receive(transport: Res<Transport>, m: Res<Match>, mut inbox: ResMut<Inbox>, m
     let mut held = transport.held.lock().unwrap();
     let mut queue = std::mem::take(&mut *held);
     let mut events = transport.events.lock().unwrap();
-    while let Ok((from, wire)) = events.try_recv() {
+    let arrived: Vec<(PeerId, Wire)> = std::iter::from_fn(|| events.try_recv().ok()).collect();
+    let arrived = match &transport.conditions {
+        Some(c) => c.pass(arrived),
+        None => arrived,
+    };
+    for (from, wire) in arrived {
         match wire {
             Wire::Game(generation, msg) => queue.push((from, generation, msg)),
             Wire::Left => {

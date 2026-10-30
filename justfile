@@ -96,7 +96,8 @@ net peers="3" bots="6" seconds="420" leave="90":
     cargo run --release -p shared --bin net_check -- {{peers}} {{bots}} {{seconds}} {{leave}}
 
 # The same over real iroh connections on this machine: a lobby hosts, the rest join by code, and the
-# match runs at `speed` times real time (VIVAD_RELAY=1 to go through iroh's relays).
+# match runs at `speed` times real time (VIVAD_RELAY=1 to go through iroh's relays;
+# VIVAD_NET_SIM=80,30,5 imitates 80 ms latency, 30 ms jitter, 5% loss: use speed=1 with it).
 p2p peers="3" bots="6" seconds="420" speed="4" leave="90" rematch="90":
     cargo run --release -p net --bin mesh_check -- {{peers}} {{bots}} {{seconds}} {{speed}} {{leave}} {{rematch}}
 

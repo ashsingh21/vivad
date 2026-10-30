@@ -71,6 +71,10 @@ fn main() {
     let mut ended_at = None;
     let mut gone = None;
     let mut begun: Vec<Option<u32>> = vec![None; apps.len()];
+    let mut jerk = Jerk::default();
+    // VIVAD_NET_SIM's latency and jitter, in sim seconds, which remote copies may trail by.
+    let sim_net: Vec<f32> = std::env::var("VIVAD_NET_SIM").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()).unwrap_or_default();
+    let lag_allowed = (sim_net.first().unwrap_or(&0.0) + sim_net.get(1).unwrap_or(&0.0)) / 1000.0 * speed;
     while tick < (seconds * 60.0) as u32 {
         for app in &mut apps {
             app.update();
@@ -90,8 +94,11 @@ fn main() {
             gone = ids.pop();
         }
         pace(started, tick, speed);
+        if tick >= 60 * 60 {
+            jerk.sample(&mut apps);
+        }
         if tick.is_multiple_of(600) && tick >= 60 * 60 {
-            let l = follow(&mut apps, speed);
+            let l = follow(&mut apps, speed, lag_allowed);
             lag = (lag.0.max(l.0), lag.1 + l.1, lag.2 + l.2);
         }
         if apps.iter().all(|a| a.world().resource::<Match>().state == MatchState::Ended) {
@@ -107,6 +114,8 @@ fn main() {
         begun.iter().max().unwrap() - begun.iter().min().unwrap() <= 2,
         format!("every peer's match began within two ticks of the others (ticks {begun:?})"),
     );
+    let (owned_jerk, remote_jerk, pops) = jerk.report();
+    println!("movement per tick, second difference: owners {owned_jerk:.1} mm, remote copies {remote_jerk:.1} mm; {pops} jumps of over a metre");
     let wall = started.elapsed().as_secs_f32();
     let sim = tick as f32 / 60.0;
     println!("{n} peers, {bots} bots, {sim:.0}s sim in {wall:.1}s wall");
@@ -143,6 +152,10 @@ fn main() {
     check(outcomes.iter().all(|x| x.opened == o.opened) && !o.opened.is_empty(), format!("every peer has the same chests open ({})", o.opened.len()));
     check(outcomes.iter().all(|x| x.pickups == o.pickups), format!("every peer has the same pickups lying about ({})", o.pickups.len()));
 
+    if rematch <= 0.0 {
+        println!("\n{failed} failed");
+        std::process::exit(failed as i32);
+    }
     // Two players ask for the next match on the same tick: everyone must move on to the same one,
     // with nothing from the last match leaking into it.
     let generation = apps[0].world().resource::<Match>().generation;
@@ -159,7 +172,7 @@ fn main() {
     }
     let next: Vec<(u32, u64)> = apps.iter().map(|a| a.world().resource::<Match>()).map(|m| (m.generation, m.seed)).collect();
     check(next.iter().all(|g| *g == next[0] && g.0 == generation + 1), format!("a double restart starts one next match everywhere ({next:?})"));
-    let l = follow(&mut apps, speed);
+    let l = follow(&mut apps, speed, lag_allowed);
     check(l.2 > 0 && l.1 == 0, format!("in the rematch, remote copies follow their owners ({} samples, worst {:.2} m)", l.2, l.0));
     let outcomes: Vec<_> = apps.iter_mut().map(|app| outcome(app.world_mut())).collect();
     check(outcomes.iter().all(|x| x.fallen == outcomes[0].fallen), format!("in the rematch, every peer agrees who fell so far ({})", outcomes[0].fallen.len()));
@@ -191,7 +204,7 @@ fn peer(session: Session, items: &str) -> App {
 
 /// How far each remote copy is from where its owner has the warrior: (worst metres, copies
 /// further than a few ticks' travel at `speed`, copies sampled).
-fn follow(apps: &mut [App], speed: f32) -> (f32, u32, usize) {
+fn follow(apps: &mut [App], speed: f32, lag_allowed: f32) -> (f32, u32, usize) {
     let mut truth = BTreeMap::new();
     let mut seen = vec![];
     for app in apps.iter_mut() {
@@ -213,7 +226,10 @@ fn follow(apps: &mut [App], speed: f32) -> (f32, u32, usize) {
         worst = worst.max(err);
         count += 1;
         // A localhost round trip is well under a millisecond: allow two ticks plus scheduling.
-        behind += (err > vel.length() * (2.0 + speed) / 60.0 + 0.05) as u32;
+        // Over a slow link a warrior that has just turned or stopped is honestly a latency
+        // behind at running pace.
+        let pace = if lag_allowed > 0.0 { vel.length().max(7.0) } else { vel.length() };
+        behind += (err > pace * ((2.0 + speed) / 60.0 + lag_allowed) + 0.05) as u32;
     }
     (worst, behind, count)
 }
@@ -238,4 +254,39 @@ fn outcome(w: &mut World) -> Outcome {
     let mut pickups: Vec<u64> = w.query::<&Pickup>().iter(w).map(|p| p.id.0).collect();
     pickups.sort();
     Outcome { ended: m.state == MatchState::Ended, fallen, kills, winner, opened, pickups }
+}
+
+/// How smoothly warriors move: the second difference of position per tick, for the owners'
+/// copies (the real motion) and the remote copies (what other players see), and jumps.
+#[derive(Default)]
+struct Jerk {
+    last: BTreeMap<(usize, u32), (Vec3, Option<Vec3>)>,
+    owned: (f64, u32),
+    remote: (f64, u32),
+    pops: u32,
+}
+
+impl Jerk {
+    fn sample(&mut self, apps: &mut [App]) {
+        for (i, app) in apps.iter_mut().enumerate() {
+            let w = app.world_mut();
+            for (id, t, remote) in w.query_filtered::<(&NetId, &Transform, Has<Remote>), Without<Eliminated>>().iter(w) {
+                let p = t.translation;
+                let key = (i, id.0);
+                if let Some((p1, Some(p2))) = self.last.get(&key) {
+                    let j = (p - 2.0 * *p1 + *p2).length() as f64 * 1000.0;
+                    let acc = if remote { &mut self.remote } else { &mut self.owned };
+                    acc.0 += j;
+                    acc.1 += 1;
+                    self.pops += (remote && p.distance(*p1) > 1.0) as u32;
+                }
+                let prev = self.last.get(&key).map(|l| l.0);
+                self.last.insert(key, (p, prev));
+            }
+        }
+    }
+
+    fn report(&self) -> (f64, f64, u32) {
+        (self.owned.0 / self.owned.1.max(1) as f64, self.remote.0 / self.remote.1.max(1) as f64, self.pops)
+    }
 }

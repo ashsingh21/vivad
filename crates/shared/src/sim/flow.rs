@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use rand::RngExt;
 
 use super::bots::BotBrain;
-use super::net::{Inbox, LastUpdate, NetId, NetMsg, Outbox, Owner, Peers, Remote};
+use super::net::{Inbox, LastUpdate, NetId, NetMsg, NetPose, Outbox, Owner, Peers, Remote};
 use super::combat::{Burst, FireZone, Projectile};
 use super::loot::{Chest, Pickup, spawn_loot};
 use super::zone::Zone;
@@ -144,7 +144,7 @@ pub fn start_match(world: &mut World) {
             CollisionLayers::new(Layer::Character, [Layer::World, Layer::Door]),
         ));
         if !local {
-            e.insert((Remote, LastUpdate::default()));
+            e.insert((Remote, LastUpdate::default(), NetPose::default()));
         } else if is_bot || autopilot {
             e.insert(BotBrain::new(&mut rng, skill));
         }

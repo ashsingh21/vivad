@@ -142,6 +142,23 @@ pub struct NetTick(pub u32);
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct LastUpdate(pub u32);
 
+/// Where a remote warrior's owner last had it, and how long ago. Between updates the copy carries
+/// on at that velocity, and is eased onto each new one rather than snapped, so a late or lost
+/// update doesn't make it stall and jump.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct NetPose {
+    pub pos: Vec3,
+    pub velocity: Vec3,
+    pub age: f32,
+}
+
+/// Further than this from its update, a copy is put straight there (a respawn, a long stall).
+const SNAP: f32 = 4.0;
+/// How long a copy keeps going on an old update's velocity before it waits for the next.
+const COAST: f32 = 0.25;
+/// Time constant of easing a copy onto where its owner has it, seconds.
+const EASE: f32 = 0.1;
+
 pub struct NetPlugin;
 
 impl Plugin for NetPlugin {
@@ -152,6 +169,7 @@ impl Plugin for NetPlugin {
             .init_resource::<NetTick>()
             .init_resource::<Departures>()
             .add_systems(FixedUpdate, (depart, apply_loot, apply_inbox).chain().in_set(SimSet::Brains).before(super::bots::drive_bots))
+            .add_systems(FixedUpdate, follow_remote.in_set(SimSet::Movement))
             .add_systems(FixedUpdate, (send_state, send_inventory).in_set(SimSet::Cleanup).before(super::clear_latched_input));
     }
 }
@@ -164,7 +182,7 @@ fn apply_inbox(
     db: Res<ItemDb>,
     ids: Query<(Entity, &NetId, &Owner, Has<Remote>, Has<Eliminated>)>,
     mut q: Query<
-        (&mut LastUpdate, &mut Transform, &mut Kinematic, &mut PlayerIntent, &mut Health, &mut Inventory, &mut Action),
+        (&mut LastUpdate, &mut Transform, &mut Kinematic, &mut PlayerIntent, &mut Health, &mut Inventory, &mut Action, &mut NetPose),
         With<Remote>,
     >,
     names: Query<&Warrior>,
@@ -189,12 +207,15 @@ fn apply_inbox(
             NetMsg::State(s) => {
                 // Only the owner speaks for a warrior; stale updates lose to newer ones.
                 let Some((e, owner, true, false)) = find(s.id) else { continue };
-                let Ok((mut last, mut tf, mut kin, mut intent, mut health, mut inv, mut act)) = q.get_mut(e) else { continue };
+                let Ok((mut last, mut tf, mut kin, mut intent, mut health, mut inv, mut act, mut pose)) = q.get_mut(e) else { continue };
                 if owner != from || (last.0 != 0 && s.tick <= last.0) {
                     continue;
                 }
+                if last.0 == 0 || tf.translation.distance(s.pos) > SNAP {
+                    tf.translation = s.pos;
+                }
                 last.0 = s.tick;
-                tf.translation = s.pos;
+                *pose = NetPose { pos: s.pos, velocity: s.velocity, age: 0.0 };
                 tf.rotation = Quat::from_rotation_y(s.yaw);
                 kin.velocity = s.velocity;
                 kin.grounded = s.grounded;
@@ -266,7 +287,7 @@ fn apply_inbox(
                 if owner != from {
                     continue;
                 }
-                if let Ok((.., mut inv, _)) = q.get_mut(e) {
+                if let Ok((.., mut inv, _, _)) = q.get_mut(e) {
                     *inv = new;
                 }
             }
@@ -427,7 +448,7 @@ fn depart(
             if w.is_bot {
                 owner.0 = peers.all[id.0 as usize % peers.all.len()];
                 if owner.0 == peers.local {
-                    commands.entity(e).remove::<(Remote, LastUpdate)>().insert(BotBrain::new(&mut rand::rng(), config.bot_skill));
+                    commands.entity(e).remove::<(Remote, LastUpdate, NetPose)>().insert(BotBrain::new(&mut rand::rng(), config.bot_skill));
                 } else {
                     commands.entity(e).insert(LastUpdate::default());
                 }
@@ -437,5 +458,20 @@ fn depart(
                 feed.write(FeedMsg(format!("{} left the match", w.name)));
             }
         }
+    }
+}
+
+/// Move each remote copy on: carried by its last update's velocity, and eased onto where that
+/// update puts it now.
+fn follow_remote(time: Res<Time>, mut q: Query<(&mut Transform, &mut NetPose), (With<Remote>, Without<Eliminated>)>) {
+    let dt = time.delta_secs();
+    let ease = 1.0 - (-dt / EASE).exp();
+    for (mut tf, mut pose) in &mut q {
+        pose.age += dt;
+        let coasting = pose.age <= COAST;
+        let target = pose.pos + pose.velocity * pose.age.min(COAST);
+        let step = if coasting { pose.velocity * dt } else { Vec3::ZERO };
+        let at = tf.translation + step;
+        tf.translation = at + (target - at) * ease;
     }
 }
