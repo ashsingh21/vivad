@@ -227,10 +227,12 @@ def vijayanagara_pillar(kit, x, y, z0, h, s=1.0):
     top = z0 + h
     kit.add(T.box("abacus", (x - w * 1.2, y - w * 1.2, zz), (x + w * 1.2, y + w * 1.2, zz + 0.12)))
     # Pushpa-potika: drooping bud brackets on four sides.
+    # One bar through along x, two arms along y butting against it (no doubled faces).
+    kit.add(T.box("potika", (x - 0.75, y - 0.12, zz + 0.12), (x + 0.75, y + 0.12, top)))
+    for sy in (-1, 1):
+        kit.add(T.box("potika", (x - 0.12, min(y + sy * 0.12, y + sy * 0.75), zz + 0.12), (x + 0.12, max(y + sy * 0.12, y + sy * 0.75), top)))
     for ang in range(4):
         dx, dy = math.cos(ang * math.pi / 2), math.sin(ang * math.pi / 2)
-        kit.add(T.box("potika", (x + min(0, dx) * 0.75 - 0.12 * abs(dy), y + min(0, dy) * 0.75 - 0.12 * abs(dx), zz + 0.12),
-                      (x + max(0, dx) * 0.75 + 0.12 * abs(dy), y + max(0, dy) * 0.75 + 0.12 * abs(dx), top)))
         kit.add(T.lathe("bud", [(0.0, zz - 0.15), (0.08, zz - 0.05), (0.1, zz + 0.08), (0.06, zz + 0.12)], 8, (x + dx * 0.68, y + dy * 0.68), uv_strip="padma"))
 
 

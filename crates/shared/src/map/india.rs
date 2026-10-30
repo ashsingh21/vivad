@@ -1714,13 +1714,12 @@ fn caves_and_stupa(b: &mut Builder, rng: &mut SmallRng) {
         for s in [-1.0, 1.0] {
             samai(b, hf, Vec3::new(x, 0.0, s * 2.2));
         }
-        b.map.lamps.push(Lamp {
-            pos: hf.p(Vec3::new(-7.0, 4.8, 0.0)),
-            color: Vec3::new(1.0, 0.86, 0.68),
-            lumens: 500_000.0,
-            range: 20.0,
-            flames: None,
-        });
+        // Daylight bounced in from the mouth, fading towards the back.
+        for (x, lumens) in [(-3.0, 380_000.0), (-9.5, 520_000.0), (-17.0, 620_000.0)] {
+            b.map.lamps.push(Lamp { pos: hf.p(Vec3::new(x, 4.6, 0.0)), color: Vec3::new(1.0, 0.86, 0.68), lumens, range: 13.0, flames: None });
+        }
+        // The model has the floor; this keeps the grass from growing up through it.
+        hidden(b, |b| b.deco(hf, Vec3::new(-hall_d / 2.0 + 0.6, 0.0, 0.0), Vec3::new(hall_d + 1.2, 0.1, hall_w), Mat::Granite));
     }
     // Chests and loot in the halls and on the cliff top.
     for (i, &hz) in halls.iter().enumerate() {

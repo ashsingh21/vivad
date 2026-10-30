@@ -181,7 +181,9 @@ impl<'a> Builder<'a> {
             } else {
                 (ARCH_WINDOW, 1.2, 1.2, 0.35)
             };
-            self.ornament(wf, Vec3::new(o.at, o.bottom, 0.0), 0.0, model, Vec3::new(o.width / w0, h / h0, thick / t0));
+            // A centimetre proud of both wall faces, so where the surround runs onto the wall it doesn't
+            // share its planes.
+            self.ornament(wf, Vec3::new(o.at, o.bottom, 0.0), 0.0, model, Vec3::new(o.width / w0, h / h0, (thick + 0.02) / t0));
         }
     }
 

@@ -286,13 +286,13 @@ fn setup_assets(
 pub struct Sun;
 
 fn setup_sky(mut commands: Commands, mut media: ResMut<Assets<ScatteringMedium>>, palette: Res<Palette>, mut meshes: ResMut<Assets<Mesh>>) {
-    // Late-afternoon sun from the west-south-west: long shadows across the ghats.
+    // Low morning sun from the east-south-east: the ghats and the Ajanta cliff both face east.
     commands.spawn((
         Sun,
         // Low (about 24 degrees) and warm: a softer, golden light than the hard white
         // high sun the map had, which read as glaring over the pale stone and dust.
         DirectionalLight { illuminance: 27_000.0, shadow_maps_enabled: std::env::var("VIVAD_NO_SHADOWS").is_err(), color: Color::srgb(1.0, 0.86, 0.68), ..default() },
-        Transform::from_xyz(-1.0, 0.5, 0.45).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(1.0, 0.5, 0.45).looking_at(Vec3::ZERO, Vec3::Y),
         // VIVAD_CASCADES / VIVAD_SHADOW_FAR for comparisons; the shadow pass is the frame's
         // largest GPU cost.
         CascadeShadowConfigBuilder {
