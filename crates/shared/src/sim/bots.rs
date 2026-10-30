@@ -7,7 +7,7 @@ use rand::RngExt;
 use super::flow::Match;
 use super::loot::{Chest, INTERACT_RANGE, Pickup};
 use super::zone::Zone;
-use super::{
+use super::{BotSkill, 
     EYE_OFFSET, Eliminated, HALF_HEIGHT, Health, HitMsg, Inventory, Kinematic, MoveMode, PlayerIntent, SimSet, Warrior, btn, solid_mask,
 };
 use crate::items::{AstraEffect, ItemDb, ItemKind};
@@ -26,6 +26,11 @@ pub struct BotBrain {
     /// Aim error in radians; reaction delay before firing at a new target.
     pub aim_error: f32,
     pub react: f32,
+    /// How far an archer (or a swordsman) picks a fight, metres.
+    pub sight: (f32, f32),
+    /// Share of the time spent attacking once engaged (the rest is drawing breath), and this
+    /// bot's phase in that rhythm.
+    pub tempo: (f32, f32),
     pub seen_for: f32,
     /// Whoever hit us recently, and for how much longer we hold the grudge.
     pub provoked: Option<(Entity, f32)>,
@@ -35,7 +40,8 @@ pub struct BotBrain {
 }
 
 impl BotBrain {
-    pub fn new(rng: &mut impl rand::Rng) -> Self {
+    pub fn new(rng: &mut impl rand::Rng, skill: BotSkill) -> Self {
+        let chill = skill == BotSkill::Chill;
         Self {
             drop_at: rng.random_range(0.15..0.85),
             goal: None,
@@ -45,8 +51,10 @@ impl BotBrain {
             unstick: 0.0,
             strafe: 1.0,
             strafe_timer: 0.0,
-            aim_error: rng.random_range(0.025..0.06),
-            react: rng.random_range(0.35..0.8),
+            aim_error: if chill { rng.random_range(0.06..0.11) } else { rng.random_range(0.025..0.06) },
+            react: if chill { rng.random_range(1.0..1.8) } else { rng.random_range(0.35..0.8) },
+            sight: if chill { (35.0, 7.0) } else { (55.0, 9.0) },
+            tempo: (if chill { 0.5 } else { 1.0 }, rng.random_range(0.0..1.0)),
             seen_for: 0.0,
             provoked: None,
             give_up: vec![],
@@ -123,7 +131,7 @@ fn drive_bots(
         let has_ranged = inv.slots.iter().flatten().any(|s| {
             matches!(db.get(&s.id).kind, ItemKind::Bow { .. }) && (s.count > 0 || inv.arrows > 0)
         });
-        let engage_range = if has_ranged { 55.0 } else { 9.0 };
+        let engage_range = if has_ranged { brain.sight.0 } else { brain.sight.1 };
 
         match kin.mode {
             MoveMode::Vimana => {
@@ -260,7 +268,8 @@ fn drive_bots(
             let wobble = brain.aim_error * (1.0 + dist / 40.0);
             intent.yaw = yaw + rng.random_range(-wobble..wobble);
             intent.pitch = pitch + rng.random_range(-wobble..wobble) * 0.6;
-            if brain.seen_for > brain.react {
+            let on_beat = (m.elapsed * 0.4 + brain.tempo.1).fract() < brain.tempo.0;
+            if brain.seen_for > brain.react && on_beat {
                 match held {
                     Some(ItemKind::Melee { .. }) => {
                         if dist < 2.6 {

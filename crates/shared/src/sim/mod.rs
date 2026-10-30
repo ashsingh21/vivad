@@ -276,11 +276,31 @@ pub struct MatchConfig {
     pub bots: u32,
     /// Let a bot brain drive the local warrior (automated play-testing).
     pub autopilot: bool,
+    pub bot_skill: BotSkill,
 }
 
 impl Default for MatchConfig {
     fn default() -> Self {
-        Self { map_seed: map_seed(), bots: 15, autopilot: false }
+        Self { map_seed: map_seed(), bots: 15, autopilot: false, bot_skill: BotSkill::from_env() }
+    }
+}
+
+/// How hard the bots fight: VIVAD_BOT_SKILL=chill (default) or normal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum BotSkill {
+    /// Loose aim, slow to react, short sight, pauses between shots and swings.
+    #[default]
+    Chill,
+    Normal,
+}
+
+impl BotSkill {
+    pub fn from_env() -> Self {
+        match std::env::var("VIVAD_BOT_SKILL").as_deref() {
+            Ok("normal") => Self::Normal,
+            Ok("chill") | Err(_) => Self::Chill,
+            Ok(s) => panic!("VIVAD_BOT_SKILL: expected chill or normal, got {s:?}"),
+        }
     }
 }
 

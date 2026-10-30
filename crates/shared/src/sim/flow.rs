@@ -78,6 +78,7 @@ pub fn start_match(world: &mut World) {
     let mut rng = rand::rng();
     let half = world.resource::<MapLayout>().half_extent;
     let bots = world.resource::<super::MatchConfig>().bots;
+    let skill = world.resource::<super::MatchConfig>().bot_skill;
     let autopilot = world.resource::<super::MatchConfig>().autopilot;
     // Flight path crosses the map through a random chord.
     let a = rng.random_range(0.0..std::f32::consts::TAU);
@@ -120,7 +121,7 @@ pub fn start_match(world: &mut World) {
             CollisionLayers::new(Layer::Character, [Layer::World, Layer::Door]),
         ));
         if is_bot || autopilot {
-            e.insert(BotBrain::new(&mut rng));
+            e.insert(BotBrain::new(&mut rng, skill));
         }
         if !is_bot {
             e.insert(LocalPlayer);

@@ -44,6 +44,10 @@ anti-aliasing the carved, normal-mapped surfaces scored 5-16 % (they crawl and s
 TAA plus sharpening, now the default, 1-4 %. Up close the score also counts edges and carving
 shimmering as the camera drifts, so look at where it is before calling it z-fighting.
 
+**Bot skill.** Bots are `chill` by default (loose aim, about a second and a half to react, an
+archer picks fights within 35 m, and they attack only half the time once engaged);
+`VIVAD_BOT_SKILL=normal` brings back the sharp ones, `VIVAD_BOTS=n` sets how many.
+
 **Map seeds.** `VIVAD_MAP_SEED` (or `just play <seed>`, `just play random`) picks the map; every
 check here takes it too, and seed 7 is the default. The seed changes the hills, groves, villages,
 the bazaar and Kashi houses and the loot; the landmarks stay put. `just seeds 40` sweeps the fast
