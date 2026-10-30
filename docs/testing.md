@@ -45,7 +45,8 @@ TAA plus sharpening, now the default, 1-4 %. Up close the score also counts edge
 shimmering as the camera drifts, so look at where it is before calling it z-fighting.
 
 **Bot skill.** Bots are `chill` by default (loose aim, about a second and a half to react, an
-archer picks fights within 35 m, and they attack only half the time once engaged);
+archer picks fights within 35 m, they attack only half the time once engaged, sidestep lazily,
+walk instead of sprinting unless the zone presses, and stand about 3-9 s wherever they arrive);
 `VIVAD_BOT_SKILL=normal` brings back the sharp ones, `VIVAD_BOTS=n` sets how many.
 
 **Map seeds.** `VIVAD_MAP_SEED` (or `just play <seed>`, `just play random`) picks the map; every

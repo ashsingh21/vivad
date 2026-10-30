@@ -31,6 +31,11 @@ pub struct BotBrain {
     /// Share of the time spent attacking once engaged (the rest is drawing breath), and this
     /// bot's phase in that rhythm.
     pub tempo: (f32, f32),
+    /// Chill bots walk rather than sprint, sidestep lazily and stop a while at each spot.
+    pub calm: bool,
+    /// Seconds left standing about before wandering on; whether the zone is pushing us.
+    pub rest: f32,
+    pub urgent: bool,
     pub seen_for: f32,
     /// Whoever hit us recently, and for how much longer we hold the grudge.
     pub provoked: Option<(Entity, f32)>,
@@ -55,6 +60,9 @@ impl BotBrain {
             react: if chill { rng.random_range(1.0..1.8) } else { rng.random_range(0.35..0.8) },
             sight: if chill { (35.0, 7.0) } else { (55.0, 9.0) },
             tempo: (if chill { 0.5 } else { 1.0 }, rng.random_range(0.0..1.0)),
+            calm: chill,
+            rest: 0.0,
+            urgent: false,
             seen_for: 0.0,
             provoked: None,
             give_up: vec![],
@@ -211,6 +219,7 @@ fn drive_bots(
                 .filter(|(t, _)| !skip.iter().any(|g| g.distance(t.translation) < 0.5))
                 .min_by(|a, b| a.0.translation.distance(pos).total_cmp(&b.0.translation.distance(pos)))
                 .map(|(t, _)| t.translation);
+            brain.urgent = zone_goal.is_some();
             let previous = brain.goal;
             brain.goal = zone_goal.or(pickup_goal).or(chest_goal).or_else(|| {
                 if brain.goal.is_none_or(|g| g.distance(pos) < 4.0) {
@@ -290,7 +299,7 @@ fn drive_bots(
             // Movement: melee rushes, archers keep a band and strafe.
             brain.strafe_timer -= dt;
             if brain.strafe_timer <= 0.0 {
-                brain.strafe_timer = rng.random_range(0.6..1.6);
+                brain.strafe_timer = if brain.calm { rng.random_range(1.5..3.5) } else { rng.random_range(0.6..1.6) };
                 brain.strafe = -brain.strafe;
             }
             let forward = if matches!(held, Some(ItemKind::Melee { .. })) {
@@ -302,8 +311,9 @@ fn drive_bots(
             } else {
                 0.0
             };
-            intent.move_axis = Vec2::new(brain.strafe * 0.8, forward);
-            if rng.random_bool(0.01) {
+            let (side, ahead) = if brain.calm { (0.3, forward * 0.6) } else { (0.8, forward) };
+            intent.move_axis = Vec2::new(brain.strafe * side, ahead);
+            if !brain.calm && rng.random_bool(0.01) {
                 intent.pressed |= btn::JUMP;
             }
             continue;
@@ -316,6 +326,10 @@ fn drive_bots(
             } else {
                 intent.pressed |= btn::FIRE;
             }
+            continue;
+        }
+        brain.rest -= dt;
+        if brain.calm && brain.rest > 0.0 && !brain.urgent && brain.unstick <= 0.0 {
             continue;
         }
         if let Some(goal) = brain.goal {
@@ -331,7 +345,11 @@ fn drive_bots(
             intent.pitch = 0.0;
             let d = pos.xz().distance(goal.xz());
             intent.move_axis = if d > 1.4 { Vec2::Y } else { Vec2::ZERO };
-            if d > 25.0 {
+            if d <= 1.4 && brain.calm {
+                // Arrived: stand about for a while before wandering on.
+                brain.rest = rng.random_range(3.0..9.0);
+            }
+            if d > 25.0 && (!brain.calm || brain.urgent) {
                 intent.held |= btn::SPRINT;
             }
             if d < INTERACT_RANGE - 0.4 && (goal.y - pos.y).abs() < 2.5 {
