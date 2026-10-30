@@ -7,7 +7,7 @@
 //! That player only introduces everyone and picks the seed; once the match starts it is a peer
 //! like the others.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -15,9 +15,10 @@ use std::time::Duration;
 use bevy::prelude::*;
 use iroh::endpoint::{Connection, QuicTransportConfig, RecvStream, presets};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
-use iroh::{Endpoint, EndpointAddr, EndpointId, Watcher};
+use iroh::{Endpoint, EndpointAddr, EndpointId, TransportAddr, Watcher};
 use serde::{Deserialize, Serialize};
-use shared::sim::flow::Match;
+use shared::sim::flow::{Match, start_match};
+use shared::sim::{Hold, MatchConfig};
 use shared::sim::net::{Departures, Inbox, NetMsg, Outbox, PeerId, Peers, WarriorState};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -57,6 +58,8 @@ enum Wire {
     Start { seed: u64, map_seed: u64, bots: u32, members: Vec<Member> },
     /// A game message, tagged with the match (`Match::generation`) it belongs to.
     Game(u32, NetMsg),
+    /// The sender has loaded the match and is waiting for the rest.
+    Ready,
     /// Not sent: the link to this peer is gone.
     Left,
 }
@@ -170,6 +173,7 @@ async fn run_link(mesh: Arc<Mesh>, conn: Connection) -> Result<(), Error> {
 
 /// This player's endpoint, before it has joined a match.
 pub struct Node {
+    relay: bool,
     runtime: Arc<Runtime>,
     router: Router,
     mesh: Arc<Mesh>,
@@ -208,16 +212,20 @@ impl Node {
             let router = Router::builder(endpoint).accept(ALPN, Handler(mesh.clone())).spawn();
             Ok::<_, Error>((router, mesh))
         })?;
-        Ok(Node { runtime, router, mesh, events })
+        Ok(Node { relay, runtime, router, mesh, events })
     }
 
     pub fn peer(&self) -> PeerId {
         self.mesh.me.peer()
     }
 
-    /// What other players paste to join this one's match.
-    pub fn code(&self) -> String {
-        hex(&postcard::to_stdvec(&self.router.endpoint().addr()).expect("encode"))
+    /// What other players paste to join this one's match on this map: our key, plus our
+    /// addresses when there are no relays to find us by key.
+    pub fn code(&self, map_seed: u64) -> String {
+        let mut addr = self.router.endpoint().addr();
+        // With relays the key is enough to find us; without, a LAN's IPv4 addresses are.
+        addr.addrs.retain(|a| !self.relay && matches!(a, TransportAddr::Ip(ip) if ip.is_ipv4()));
+        base32(&postcard::to_stdvec(&Ticket { addr, map_seed }).expect("encode"))
     }
 
     fn dial(&self, addr: EndpointAddr) {
@@ -241,50 +249,78 @@ impl Node {
         }
     }
 
-    /// Wait for `players` (us included), then start a match with `bots` bots on this map.
-    pub fn host(mut self, players: usize, bots: u32, map_seed: u64) -> Result<Session, Error> {
-        let mut members = vec![self.mesh.me.clone()];
-        while members.len() < players {
-            let Some((_, wire)) = self.events.blocking_recv() else { return Err("network stopped".into()) };
-            if let Wire::Hello(m) = wire
-                && !members.iter().any(|x| x.peer() == m.peer())
-            {
-                info!("{} joined ({}/{players})", m.name, members.len() + 1);
-                members.push(m);
-                self.broadcast(&Wire::Members(members.clone()));
+    /// The next lobby event, if one comes within `wait`. Peers that finish loading before we
+    /// have even started are remembered.
+    fn next(&mut self, wait: Duration, ready: &mut BTreeSet<PeerId>) -> Result<Option<(PeerId, Wire)>, Error> {
+        match self.runtime.block_on(async { tokio::time::timeout(wait, self.events.recv()).await }) {
+            Err(_) => Ok(None),
+            Ok(None) => Err("network stopped".into()),
+            Ok(Some((from, Wire::Ready))) => {
+                ready.insert(from);
+                Ok(None)
             }
+            Ok(Some(event)) => Ok(Some(event)),
+        }
+    }
+
+    /// Wait for `players` (us included), then start a match with `bots` bots on this map.
+    pub fn host(self, players: usize, bots: u32, map_seed: u64) -> Result<Session, Error> {
+        self.host_until(bots, map_seed, &mut |_| {}, &mut |n| n >= players)
+    }
+
+    /// Gather players, telling `report` who is in, until `go` says how many is enough.
+    pub fn host_until(mut self, bots: u32, map_seed: u64, report: &mut dyn FnMut(Vec<String>), go: &mut dyn FnMut(usize) -> bool) -> Result<Session, Error> {
+        let mut members = vec![self.mesh.me.clone()];
+        let mut ready = BTreeSet::new();
+        report(names(&members));
+        while !go(members.len()) {
+            let Some((from, wire)) = self.next(Duration::from_millis(100), &mut ready)? else { continue };
+            match wire {
+                Wire::Hello(m) if !members.iter().any(|x| x.peer() == m.peer()) => {
+                    info!("{} joined ({} players)", m.name, members.len() + 1);
+                    members.push(m);
+                }
+                Wire::Left => members.retain(|m| m.peer() != from),
+                _ => continue,
+            }
+            self.broadcast(&Wire::Members(members.clone()));
+            report(names(&members));
         }
         let seed = rand::random();
         self.broadcast(&Wire::Start { seed, map_seed, bots, members: members.clone() });
-        Ok(self.session(seed, map_seed, bots, &members))
+        Ok(self.session(seed, map_seed, bots, &members, ready))
     }
 
     /// Join the match whose code another player shared, and wait for it to start.
-    pub fn join(mut self, code: &str) -> Result<Session, Error> {
-        let addr: EndpointAddr = postcard::from_bytes(&unhex(code.trim()).ok_or("not a join code")?)?;
+    pub fn join(self, code: &str) -> Result<Session, Error> {
+        self.join_reporting(code, &mut |_| {})
+    }
+
+    pub fn join_reporting(mut self, code: &str, report: &mut dyn FnMut(Vec<String>)) -> Result<Session, Error> {
+        let (addr, _) = read_code(code)?;
         let host = peer_id(&addr.id);
         self.dial(addr);
         let me = self.peer();
         let mut dialled = vec![host];
+        let mut ready = BTreeSet::new();
         let mut start: Option<(u64, u64, u32, Vec<Member>)> = None;
-        let mut deadline = None;
+        let mut deadline = std::time::Instant::now() + MESH_TIMEOUT;
         loop {
-            if let Some((seed, map_seed, bots, members)) = &start {
-                let linked = self.mesh.peers.lock().unwrap().keys().copied().collect::<Vec<_>>();
-                if members.iter().all(|m| m.peer() == me || linked.contains(&m.peer())) {
-                    return Ok(self.session(*seed, *map_seed, *bots, &members.clone()));
-                }
+            let linked = self.mesh.peers.lock().unwrap().keys().copied().collect::<Vec<_>>();
+            if let Some((seed, map_seed, bots, members)) = &start
+                && members.iter().all(|m| m.peer() == me || linked.contains(&m.peer()))
+            {
+                return Ok(self.session(*seed, *map_seed, *bots, &members.clone(), ready));
             }
-            let wait = deadline.map(|d: std::time::Instant| d.saturating_duration_since(std::time::Instant::now())).unwrap_or(Duration::from_secs(3600));
-            let event = self.runtime.block_on(async { tokio::time::timeout(wait.min(Duration::from_millis(200)), self.events.recv()).await });
-            if deadline.is_some_and(|d| std::time::Instant::now() > d) {
-                return Err("could not reach every player in the match".into());
+            // Reaching the host, and later everyone in the match, has a deadline; the lobby filling up does not.
+            if (start.is_some() || !linked.contains(&host)) && std::time::Instant::now() > deadline {
+                return Err(if start.is_some() { "could not reach every player in the match" } else { "could not reach the host" }.into());
             }
-            let Ok(event) = event else { continue };
-            let Some((from, wire)) = event else { return Err("network stopped".into()) };
+            let Some((from, wire)) = self.next(Duration::from_millis(200), &mut ready)? else { continue };
             match wire {
                 // Of each pair, the lower key dials, so there is one connection per pair.
                 Wire::Members(members) if from == host => {
+                    report(names(&members));
                     for m in members {
                         if me < m.peer() && !dialled.contains(&m.peer()) {
                             dialled.push(m.peer());
@@ -295,18 +331,46 @@ impl Node {
                 Wire::Start { seed, map_seed, bots, members } if from == host => {
                     info!("match starting with {} players", members.len());
                     start = Some((seed, map_seed, bots, members));
-                    deadline = Some(std::time::Instant::now() + MESH_TIMEOUT);
+                    deadline = std::time::Instant::now() + MESH_TIMEOUT;
                 }
+                Wire::Left if from == host && start.is_none() => return Err("the host left".into()),
                 _ => {}
             }
         }
     }
 
-    fn session(self, seed: u64, map_seed: u64, bots: u32, members: &[Member]) -> Session {
+    fn session(self, seed: u64, map_seed: u64, bots: u32, members: &[Member], ready: BTreeSet<PeerId>) -> Session {
         let mut peers = Peers::new(self.peer(), members.iter().map(Member::peer).collect());
         peers.names = members.iter().map(|m| (m.peer(), m.name.clone())).collect();
-        Session { peers, seed, map_seed, bots, transport: Transport { _runtime: self.runtime, _router: self.router, mesh: self.mesh, events: Mutex::new(self.events), held: default() } }
+        let transport = Transport {
+            _runtime: self.runtime,
+            _router: self.router,
+            mesh: self.mesh,
+            events: Mutex::new(self.events),
+            held: default(),
+            ready: Mutex::new(ready),
+            steady: 0,
+            said_ready: false,
+        };
+        Session { peers, seed, map_seed, bots, transport }
     }
+}
+
+fn names(members: &[Member]) -> Vec<String> {
+    members.iter().map(|m| m.name.clone()).collect()
+}
+
+/// What a join code holds.
+#[derive(Serialize, Deserialize)]
+struct Ticket {
+    addr: EndpointAddr,
+    map_seed: u64,
+}
+
+/// The host's address and the map seed in a join code.
+pub fn read_code(code: &str) -> Result<(EndpointAddr, u64), Error> {
+    let ticket: Ticket = postcard::from_bytes(&unbase32(code.trim()).ok_or("not a join code")?)?;
+    Ok((ticket.addr, ticket.map_seed))
 }
 
 /// A match that has started: who is in it and what it was seeded with, and the live transport.
@@ -328,6 +392,11 @@ pub struct Transport {
     events: Mutex<UnboundedReceiver<(PeerId, Wire)>>,
     /// Messages for a match we haven't reached yet.
     held: Mutex<Vec<(PeerId, u32, NetMsg)>>,
+    /// Peers that have loaded the match; it begins once all of them have.
+    ready: Mutex<BTreeSet<PeerId>>,
+    /// Smooth frames in a row since the match was built (loading makes long ones).
+    steady: u32,
+    said_ready: bool,
 }
 
 impl Drop for Transport {
@@ -350,11 +419,144 @@ impl Transport {
     }
 }
 
+/// Carries the match over the network once a `Transport` is in (see `begin`), and runs a
+/// `Lobby` if there is one.
 pub struct TransportPlugin;
 
 impl Plugin for TransportPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(FixedPreUpdate, receive).add_systems(FixedPostUpdate, send);
+        // A long frame (loading, a stall) is caught up rather than lost, so this peer's match
+        // clock keeps step with the others'.
+        if let Some(mut time) = app.world_mut().get_resource_mut::<Time<Virtual>>() {
+            time.set_max_delta(Duration::from_secs(3));
+        }
+        app.add_systems(FixedPreUpdate, receive.run_if(resource_exists::<Transport>))
+            .add_systems(FixedPostUpdate, send.run_if(resource_exists::<Transport>))
+            .add_systems(Update, (poll_lobby.run_if(resource_exists::<Lobby>), wait_for_everyone.run_if(resource_exists::<Transport>)).chain());
+    }
+}
+
+/// Build the session's match and hold it until every peer has loaded it.
+pub fn begin(world: &mut World, session: Session) {
+    let mut config = *world.resource::<MatchConfig>();
+    assert_eq!(config.map_seed, session.map_seed, "the join code names the map");
+    config.match_seed = Some(session.seed);
+    config.bots = session.bots;
+    world.insert_resource(config);
+    world.insert_resource(session.peers);
+    world.insert_resource(session.transport);
+    world.resource_mut::<Hold>().0 = true;
+    start_match(world);
+}
+
+/// Once our frames run smoothly (the match is loaded), say so; once everyone linked has, go.
+fn wait_for_everyone(mut transport: ResMut<Transport>, mut hold: ResMut<Hold>, time: Res<Time<Real>>, peers: Res<Peers>) {
+    if !hold.0 {
+        return;
+    }
+    let t = &mut *transport;
+    t.steady = if time.delta_secs() < 0.05 { t.steady + 1 } else { 0 };
+    if t.steady >= 20 && !t.said_ready {
+        t.said_ready = true;
+        let bytes = frame(&Wire::Ready);
+        for link in t.mesh.peers.lock().unwrap().values() {
+            let _ = link.frames.send(bytes.clone());
+        }
+    }
+    let linked: Vec<PeerId> = t.mesh.peers.lock().unwrap().keys().copied().collect();
+    let ready = t.ready.lock().unwrap();
+    if t.said_ready && peers.all.iter().all(|p| *p == peers.local || ready.contains(p) || !linked.contains(p)) {
+        info!("everyone has loaded: the match begins");
+        hold.0 = false;
+    }
+}
+
+enum News {
+    Code(String),
+    Players(Vec<String>),
+    Started(Box<Session>),
+    Failed(String),
+}
+
+/// Gathering a match in the background while the game runs: what the lobby screen shows.
+#[derive(Resource)]
+pub struct Lobby {
+    pub hosting: bool,
+    /// The code to share (hosting only).
+    pub code: Option<String>,
+    pub players: Vec<String>,
+    pub error: Option<String>,
+    /// The match has been built (it may still be waiting for everyone to load).
+    pub started: bool,
+    go: Arc<std::sync::atomic::AtomicBool>,
+    news: Mutex<std::sync::mpsc::Receiver<News>>,
+}
+
+impl Lobby {
+    /// Host a match on this map; it starts at `players` (us included), or when `start_now` is called.
+    pub fn host(name: String, relay: bool, players: Option<usize>, bots: u32, map_seed: u64) -> Lobby {
+        let (lobby, news) = Lobby::new(true);
+        let go = lobby.go.clone();
+        std::thread::spawn(move || {
+            let result = Node::bind(&name, relay).and_then(|node| {
+                let _ = news.send(News::Code(node.code(map_seed)));
+                let tell = news.clone();
+                node.host_until(bots, map_seed, &mut |p| drop(tell.send(News::Players(p))), &mut |n| {
+                    players.is_some_and(|p| n >= p) || go.load(Ordering::Relaxed)
+                })
+            });
+            let _ = news.send(match result {
+                Ok(session) => News::Started(Box::new(session)),
+                Err(e) => News::Failed(e.to_string()),
+            });
+        });
+        lobby
+    }
+
+    pub fn join(name: String, relay: bool, code: String) -> Lobby {
+        let (lobby, news) = Lobby::new(false);
+        std::thread::spawn(move || {
+            let tell = news.clone();
+            let result = Node::bind(&name, relay).and_then(|node| node.join_reporting(&code, &mut |p| drop(tell.send(News::Players(p)))));
+            let _ = news.send(match result {
+                Ok(session) => News::Started(Box::new(session)),
+                Err(e) => News::Failed(e.to_string()),
+            });
+        });
+        lobby
+    }
+
+    /// Start with whoever has joined (hosting).
+    pub fn start_now(&self) {
+        self.go.store(true, Ordering::Relaxed);
+    }
+
+    fn new(hosting: bool) -> (Lobby, std::sync::mpsc::Sender<News>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        (Lobby { hosting, code: None, players: vec![], error: None, started: false, go: default(), news: Mutex::new(rx) }, tx)
+    }
+}
+
+fn poll_lobby(world: &mut World) {
+    let news: Vec<News> = world.resource::<Lobby>().news.lock().unwrap().try_iter().collect();
+    for n in news {
+        let mut lobby = world.resource_mut::<Lobby>();
+        match n {
+            News::Code(code) => {
+                println!("join code: {code}");
+                lobby.code = Some(code);
+            }
+            News::Players(p) => lobby.players = p,
+            News::Failed(e) => {
+                warn!("online: {e}");
+                lobby.error = Some(e);
+            }
+            News::Started(session) => {
+                lobby.started = true;
+                lobby.players = session.peers.all.iter().map(|p| session.peers.names.get(p).cloned().unwrap_or_default()).collect();
+                begin(world, *session);
+            }
+        }
     }
 }
 
@@ -370,6 +572,9 @@ fn receive(transport: Res<Transport>, m: Res<Match>, mut inbox: ResMut<Inbox>, m
             Wire::Left => {
                 info!("peer {from:016x} left");
                 departures.0.push(from);
+            }
+            Wire::Ready => {
+                transport.ready.lock().unwrap().insert(from);
             }
             _ => {}
         }
@@ -430,10 +635,36 @@ fn send(transport: Res<Transport>, m: Res<Match>, mut outbox: ResMut<Outbox>) {
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+const BASE32: &[u8; 32] = b"abcdefghijkmnpqrstuvwxyz23456789";
+
+/// Lower-case base 32 without the look-alikes (l, o, 0, 1), for codes read off a screen.
+fn base32(bytes: &[u8]) -> String {
+    let mut out = String::new();
+    let (mut acc, mut bits) = (0u32, 0);
+    for &b in bytes {
+        acc = (acc << 8) | b as u32;
+        bits += 8;
+        while bits >= 5 {
+            bits -= 5;
+            out.push(BASE32[((acc >> bits) & 31) as usize] as char);
+        }
+    }
+    if bits > 0 {
+        out.push(BASE32[((acc << (5 - bits)) & 31) as usize] as char);
+    }
+    out
 }
 
-fn unhex(s: &str) -> Option<Vec<u8>> {
-    (0..s.len()).step_by(2).map(|i| s.get(i..i + 2).and_then(|b| u8::from_str_radix(b, 16).ok())).collect()
+fn unbase32(s: &str) -> Option<Vec<u8>> {
+    let mut out = vec![];
+    let (mut acc, mut bits) = (0u32, 0);
+    for c in s.bytes() {
+        acc = (acc << 5) | BASE32.iter().position(|&x| x == c.to_ascii_lowercase())? as u32;
+        bits += 5;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Some(out)
 }

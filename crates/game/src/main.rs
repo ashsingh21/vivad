@@ -12,11 +12,8 @@ fn main() {
     let mut config = MatchConfig { bots, autopilot, ..default() };
     let mut app = App::new();
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some(session) = online(&config) {
-        config.map_seed = session.map_seed;
-        config.match_seed = Some(session.seed);
-        config.bots = session.bots;
-        app.insert_resource(session.peers).insert_resource(session.transport).add_plugins(net::TransportPlugin);
+    if let Some(lobby) = online(&mut config) {
+        app.insert_resource(lobby);
     }
     app.insert_resource(config)
         .add_plugins(
@@ -45,6 +42,8 @@ fn main() {
             }).or(Some(Default::default()))),
             ..default()
         });
+    #[cfg(not(target_arch = "wasm32"))]
+    app.add_plugins((net::TransportPlugin, game::lobby::LobbyPlugin));
     // VIVAD_PERF_ALL=1: log every diagnostic, GPU time per render pass among them.
     if std::env::var("VIVAD_PERF_ALL").is_ok() {
         app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
@@ -52,31 +51,30 @@ fn main() {
     app.run();
 }
 
-/// Online play: VIVAD_HOST=<players> prints a join code and waits for that many players (counting
-/// you); VIVAD_JOIN=<code> joins that match. VIVAD_NAME is what others see you as, and VIVAD_LAN=1
-/// skips iroh's relays (enough on one machine or a LAN). Blocks until the match starts.
+/// Online play: VIVAD_HOST=1 hosts a match (shows a join code; Enter starts it, or VIVAD_HOST=<n>
+/// starts at n players counting you); VIVAD_JOIN=<code> joins one. VIVAD_NAME is what others see
+/// you as, and VIVAD_LAN=1 skips iroh's relays (enough on one machine or a LAN; the code is then
+/// longer, carrying addresses). The window opens on a lobby screen meanwhile.
 #[cfg(not(target_arch = "wasm32"))]
-fn online(config: &MatchConfig) -> Option<net::Session> {
-    let host = std::env::var("VIVAD_HOST").ok().and_then(|s| s.parse::<usize>().ok());
-    let join = std::env::var("VIVAD_JOIN").ok();
+fn online(config: &mut MatchConfig) -> Option<net::Lobby> {
+    let host = std::env::var("VIVAD_HOST").ok();
+    let join = std::env::var("VIVAD_JOIN").ok().filter(|c| !c.is_empty());
     if host.is_none() && join.is_none() {
         return None;
     }
     let name = std::env::var("VIVAD_NAME").ok().filter(|n| !n.is_empty()).or_else(|| std::env::var("USER").ok()).unwrap_or_else(|| "Warrior".into());
-    let node = net::Node::bind(&name, std::env::var("VIVAD_LAN").is_err()).expect("start networking");
-    let session = match (host, join) {
-        (Some(players), _) => {
-            println!("join code (VIVAD_JOIN=...):\n{}", node.code());
-            println!("waiting for {} more player(s)...", players.saturating_sub(1));
-            node.host(players, config.bots, config.map_seed)
+    let relay = std::env::var("VIVAD_LAN").is_err();
+    config.online = true;
+    Some(match join {
+        Some(code) => {
+            // The code names the map, so it is built before the match starts.
+            let (_, map_seed) = net::read_code(&code).unwrap_or_else(|e| panic!("VIVAD_JOIN: {e}"));
+            config.map_seed = map_seed;
+            net::Lobby::join(name, relay, code)
         }
-        (None, Some(code)) => {
-            println!("joining...");
-            node.join(&code)
+        None => {
+            let players = host.and_then(|h| h.parse::<usize>().ok()).filter(|n| *n > 1);
+            net::Lobby::host(name, relay, players, config.bots, config.map_seed)
         }
-        _ => unreachable!(),
-    };
-    let session = session.unwrap_or_else(|e| panic!("could not join the match: {e}"));
-    println!("match starting: {} players, seed {}", session.peers.all.len(), session.seed);
-    Some(session)
+    })
 }

@@ -19,7 +19,7 @@ use net::{Node, Session, Transport, TransportPlugin};
 use shared::sim::flow::{Match, MatchState};
 use shared::sim::loot::{Chest, Pickup};
 use shared::sim::net::{NetId, Owner, PeerId, Remote};
-use shared::sim::{Eliminated, Kinematic, MatchConfig, RestartMatch, SimPlugin, Warrior};
+use shared::sim::{Hold, Eliminated, Kinematic, MatchConfig, RestartMatch, SimPlugin, Warrior};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -37,8 +37,8 @@ fn main() {
     // VIVAD_RELAY=1: go through iroh's relays and address lookup, as players across the internet would.
     let relay = std::env::var("VIVAD_RELAY").is_ok();
     let nodes: Vec<Node> = (0..n).map(|i| Node::bind(&format!("Player{}", i + 1), relay).expect("bind")).collect();
-    let code = nodes[0].code();
-    println!("join code: {} chars", code.len());
+    let code = nodes[0].code(7);
+    println!("join code: {code} ({} chars)", code.len());
     let threads: Vec<_> = nodes
         .into_iter()
         .enumerate()
@@ -70,11 +70,20 @@ fn main() {
     let mut lag = (0.0f32, 0u32, 0usize);
     let mut ended_at = None;
     let mut gone = None;
+    let mut begun: Vec<Option<u32>> = vec![None; apps.len()];
     while tick < (seconds * 60.0) as u32 {
         for app in &mut apps {
             app.update();
         }
         tick += 1;
+        for (b, app) in begun.iter_mut().zip(&apps) {
+            if b.is_none() && !app.world().resource::<Hold>().0 {
+                *b = Some(tick);
+            }
+        }
+        if tick == 1 {
+            check(apps.iter().all(|a| a.world().resource::<Hold>().0), "the match waits for everyone to load".into());
+        }
         if leave_at > 0.0 && tick == (leave_at * 60.0) as u32 && apps.len() > 2 {
             // Quitting drops the app, and with it the transport, which closes its connections.
             drop(apps.pop());
@@ -93,6 +102,11 @@ fn main() {
             }
         }
     }
+    let begun: Vec<u32> = begun.iter().map(|b| b.unwrap_or(u32::MAX)).collect();
+    check(
+        begun.iter().max().unwrap() - begun.iter().min().unwrap() <= 2,
+        format!("every peer's match began within two ticks of the others (ticks {begun:?})"),
+    );
     let wall = started.elapsed().as_secs_f32();
     let sim = tick as f32 / 60.0;
     println!("{n} peers, {bots} bots, {sim:.0}s sim in {wall:.1}s wall");
@@ -163,9 +177,7 @@ fn pace(started: Instant, tick: u32, speed: f32) {
 
 fn peer(session: Session, items: &str) -> App {
     let mut app = App::new();
-    app.insert_resource(MatchConfig { map_seed: session.map_seed, match_seed: Some(session.seed), bots: session.bots, autopilot: true, ..default() })
-        .insert_resource(session.peers)
-        .insert_resource(session.transport)
+    app.insert_resource(MatchConfig { map_seed: session.map_seed, autopilot: true, online: true, ..default() })
         .add_plugins((MinimalPlugins, TransformPlugin, AssetPlugin::default(), bevy::mesh::MeshPlugin))
         .add_plugins(PhysicsPlugins::default())
         .add_plugins(SimPlugin { items_ron: items.to_string() })
@@ -173,6 +185,7 @@ fn peer(session: Session, items: &str) -> App {
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)));
     app.finish();
     app.cleanup();
+    net::begin(app.world_mut(), session);
     app
 }
 

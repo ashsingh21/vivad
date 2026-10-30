@@ -285,11 +285,17 @@ pub struct MatchConfig {
     /// Let a bot brain drive the local warrior (automated play-testing).
     pub autopilot: bool,
     pub bot_skill: BotSkill,
+    /// Online: no match at startup; the transport starts one when the lobby fills.
+    pub online: bool,
 }
+
+/// While set, the match stands still (online, until every peer has loaded it).
+#[derive(Resource, Default, Debug)]
+pub struct Hold(pub bool);
 
 impl Default for MatchConfig {
     fn default() -> Self {
-        Self { map_seed: map_seed(), match_seed: None, bots: 15, autopilot: false, bot_skill: BotSkill::from_env() }
+        Self { map_seed: map_seed(), match_seed: None, bots: 15, autopilot: false, bot_skill: BotSkill::from_env(), online: false }
     }
 }
 
@@ -376,6 +382,21 @@ impl Plugin for SimPlugin {
                     SimSet::Cleanup,
                 )
                     .chain(),
+            )
+            .init_resource::<Hold>()
+            .configure_sets(
+                FixedUpdate,
+                (
+                    SimSet::Brains,
+                    SimSet::Flow,
+                    SimSet::Movement,
+                    SimSet::Combat,
+                    SimSet::Damage,
+                    SimSet::Loot,
+                    SimSet::Zone,
+                    SimSet::Cleanup,
+                )
+                    .distributive_run_if(|hold: Res<Hold>| !hold.0),
             )
             .add_systems(Startup, spawn_map)
             .add_systems(FixedFirst, record_prev_positions)

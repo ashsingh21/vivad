@@ -97,16 +97,17 @@ net peers="3" bots="6" seconds="420" leave="90":
 
 # The same over real iroh connections on this machine: a lobby hosts, the rest join by code, and the
 # match runs at `speed` times real time (VIVAD_RELAY=1 to go through iroh's relays).
-mesh peers="3" bots="6" seconds="420" speed="4" leave="90" rematch="90":
+p2p peers="3" bots="6" seconds="420" speed="4" leave="90" rematch="90":
     cargo run --release -p net --bin mesh_check -- {{peers}} {{bots}} {{seconds}} {{speed}} {{leave}} {{rematch}}
 
-# Host an online match for `players` (you included); prints the code the others pass to `just join`.
-host players="2" name="":
-    VIVAD_HOST={{players}} VIVAD_NAME="{{name}}" cargo run --release -p game --bin game
+# Host an online match: shows the code the others pass to `just join`; Enter starts it (or it starts
+# by itself at `players`, you included). lan=1 skips iroh's relays (one machine or a LAN).
+host name="" players="0" lan="":
+    VIVAD_HOST={{players}} VIVAD_NAME="{{name}}" {{ if lan != "" { "VIVAD_LAN=1" } else { "" } }} cargo run --release -p game --bin game
 
-# Join an online match by its code.
-join code name="":
-    VIVAD_JOIN={{code}} VIVAD_NAME="{{name}}" cargo run --release -p game --bin game
+# Join an online match by its code (lan=1 if the host used it).
+join code name="" lan="":
+    VIVAD_JOIN={{code}} VIVAD_NAME="{{name}}" {{ if lan != "" { "VIVAD_LAN=1" } else { "" } }} cargo run --release -p game --bin game
 
 walk:
     cargo run --release -p shared --bin walk_check

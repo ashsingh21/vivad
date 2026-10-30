@@ -10,6 +10,8 @@ pub mod characters;
 pub mod hud;
 pub mod input;
 pub mod lamps;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod lobby;
 pub mod studio_env;
 pub mod visuals;
 

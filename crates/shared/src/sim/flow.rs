@@ -73,7 +73,9 @@ const BOT_NAMES: [&str; 23] = [
 ];
 
 fn start_match_on_startup(world: &mut World) {
-    start_match(world);
+    if !world.resource::<super::MatchConfig>().online {
+        start_match(world);
+    }
 }
 
 /// Spawns warriors, loot and resets the zone. Everything from a previous match must already be gone.
