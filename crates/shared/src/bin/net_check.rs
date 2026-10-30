@@ -14,8 +14,9 @@ use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use shared::sim::bots::BotBrain;
 use shared::sim::flow::{Match, MatchState};
+use shared::sim::loot::{Chest, Pickup};
 use shared::sim::net::{Inbox, NetId, Outbox, Owner, PeerId, Peers, Remote};
-use shared::sim::{Eliminated, Kinematic, MatchConfig, SimPlugin, Warrior};
+use shared::sim::{Eliminated, Inventory, Kinematic, MatchConfig, MoveMode, PlayerIntent, SimPlugin, Warrior, btn};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -26,21 +27,7 @@ fn main() {
     // Unordered ids, as real endpoint keys would be.
     let ids: Vec<PeerId> = (0..n as u64).map(|i| (i * 0x9E37_79B9 + 17) % 1000).collect();
 
-    let mut apps: Vec<App> = ids
-        .iter()
-        .map(|&id| {
-            let mut app = App::new();
-            app.insert_resource(MatchConfig { match_seed: Some(99), bots, autopilot: true, ..default() })
-                .insert_resource(Peers::new(id, ids.clone()))
-                .add_plugins((MinimalPlugins, TransformPlugin, AssetPlugin::default(), bevy::mesh::MeshPlugin))
-                .add_plugins(PhysicsPlugins::default())
-                .add_plugins(SimPlugin { items_ron: items.clone() })
-                .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)));
-            app.finish();
-            app.cleanup();
-            app
-        })
-        .collect();
+    let mut apps: Vec<App> = ids.iter().map(|&id| peer(id, &ids, bots, true, &items)).collect();
 
     let started = Instant::now();
     let mut sent = 0usize;
@@ -143,8 +130,80 @@ fn main() {
     check(outcomes.iter().all(|o| o.1 == *kills), format!("every peer agrees on the kill counts ({total_kills} weapon kills)"));
     check(total_kills > 0, "warriors killed each other across peers".into());
     check(outcomes.iter().all(|o| o.2 == *winner) && winner.is_some(), format!("every peer crowns the same winner ({winner:?})"));
+
+    // The loot, as each peer has it.
+    let loot: Vec<(Vec<u64>, Vec<usize>)> = apps
+        .iter_mut()
+        .map(|app| {
+            let w = app.world_mut();
+            let mut pickups: Vec<u64> = w.query::<&Pickup>().iter(w).map(|p| p.id.0).collect();
+            pickups.sort();
+            let mut opened: Vec<usize> = w.query::<&Chest>().iter(w).filter(|c| c.opened).map(|c| c.index).collect();
+            opened.sort();
+            (pickups, opened)
+        })
+        .collect();
+    check(loot.iter().all(|l| l.1 == loot[0].1), format!("every peer has the same chests open ({})", loot[0].1.len()));
+    check(loot.iter().all(|l| l.0 == loot[0].0), format!("every peer has the same pickups lying about ({})", loot[0].0.len()));
+    check(!loot[0].1.is_empty(), "chests were opened".into());
+
+    // Two players grab the same item on the same tick: exactly one keeps it.
+    let pair = [ids[0], ids[1]];
+    let mut duel: Vec<App> = pair.iter().map(|&id| peer(id, &pair, 0, false, &items)).collect();
+    for app in &mut duel {
+        app.update();
+    }
+    let (item, at) = {
+        let w = duel[0].world_mut();
+        let p = w.query::<(&Pickup, &Transform)>().iter(w).find(|(p, _)| p.stack.id != "arrows").map(|(p, t)| (p.clone(), t.translation)).unwrap();
+        p
+    };
+    for app in &mut duel {
+        let w = app.world_mut();
+        let mut q = w.query_filtered::<(&mut Transform, &mut Kinematic, &mut PlayerIntent), Without<Remote>>();
+        let (mut t, mut kin, mut intent) = q.single_mut(w).unwrap();
+        // The same spot on both: each peer only collides its own warrior with the world.
+        t.translation = at + Vec3::Y * 1.0;
+        kin.mode = MoveMode::Ground;
+        intent.pressed = btn::INTERACT;
+    }
+    for _ in 0..3 {
+        for app in &mut duel {
+            app.update();
+        }
+        deliver(&mut duel, &pair, &mut sent);
+    }
+    let holders: Vec<bool> = duel
+        .iter_mut()
+        .map(|app| {
+            let w = app.world_mut();
+            let mut q = w.query_filtered::<&Inventory, Without<Remote>>();
+            q.single(w).unwrap().slots.iter().flatten().any(|s| s.id == item.stack.id)
+        })
+        .collect();
+    let left = duel
+        .iter_mut()
+        .filter_map(|app| {
+            let w = app.world_mut();
+            w.query::<&Pickup>().iter(w).any(|p| p.id == item.id).then_some(())
+        })
+        .count();
+    check(left == 0 && holders.iter().filter(|h| **h).count() == 1, format!("a contested {} ends up with one player ({holders:?})", item.stack.id));
     println!("\n{failed} failed");
     std::process::exit(failed as i32);
+}
+
+fn peer(id: PeerId, ids: &[PeerId], bots: u32, autopilot: bool, items: &str) -> App {
+    let mut app = App::new();
+    app.insert_resource(MatchConfig { match_seed: Some(99), bots, autopilot, ..default() })
+        .insert_resource(Peers::new(id, ids.to_vec()))
+        .add_plugins((MinimalPlugins, TransformPlugin, AssetPlugin::default(), bevy::mesh::MeshPlugin))
+        .add_plugins(PhysicsPlugins::default())
+        .add_plugins(SimPlugin { items_ron: items.to_string() })
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)));
+    app.finish();
+    app.cleanup();
+    app
 }
 
 /// Each live warrior's position and velocity on its owner, and every remote copy's position.

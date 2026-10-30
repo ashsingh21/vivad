@@ -90,7 +90,8 @@ sim matches="3" bots="15":
 peers seed="1234":
     cargo run --release -p shared --bin peer_check -- {{seed}}
 
-# Peers in one process over an in-memory pipe, fighting a whole match: roster, ownership, positions, who fell, kills, winner.
+# Peers in one process over an in-memory pipe, fighting a whole match: roster, ownership, positions, who fell, kills,
+# winner, chests and pickups, and a contested pickup.
 net peers="3" bots="6" seconds="420":
     cargo run --release -p shared --bin net_check -- {{peers}} {{bots}} {{seconds}}
 

@@ -8,7 +8,8 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 
 use super::combat::{KillMsg, Projectile, feed_line};
-use super::loot::spawn_pickup;
+use super::flow::Match;
+use super::loot::{Chest, Claims, Pickup, PickupId, open_chest, revoke, spawn_pickup};
 use super::{
     Action, DamageCause, DamageMsg, Door, Eliminated, FeedMsg, Health, Inventory, Kinematic, MoveMode, PlayerIntent, SimSet, Warrior,
 };
@@ -72,6 +73,12 @@ pub enum NetMsg {
     Down { id: NetId, by: Option<NetId>, placement: u32, at: Vec3, drops: Vec<ItemStack>, cause: DamageCause },
     /// A door took damage from one of the sender's warriors (index in `MapLayout::doors`).
     DoorHit { index: usize, amount: f32 },
+    /// One of the sender's warriors opened a chest (index in `MapLayout::chests`).
+    ChestOpened { index: usize },
+    /// One of the sender's warriors took a pickup, at this match time.
+    Took { pickup: PickupId, by: NetId, at: f32 },
+    /// One of the sender's warriors put an item down to make room for another.
+    Dropped { id: PickupId, at: Vec3, stack: ItemStack },
 }
 
 #[derive(Clone, Debug)]
@@ -129,7 +136,7 @@ impl Plugin for NetPlugin {
             .init_resource::<Outbox>()
             .init_resource::<Inbox>()
             .init_resource::<NetTick>()
-            .add_systems(FixedUpdate, apply_inbox.in_set(SimSet::Brains).before(super::bots::drive_bots))
+            .add_systems(FixedUpdate, (apply_loot, apply_inbox).chain().in_set(SimSet::Brains).before(super::bots::drive_bots))
             .add_systems(FixedUpdate, send_state.in_set(SimSet::Cleanup).before(super::clear_latched_input));
     }
 }
@@ -217,7 +224,7 @@ fn apply_inbox(
                 }
                 let killer = by.and_then(|b| find(b)).map(|(k, ..)| k);
                 commands.entity(e).insert(Eliminated { placement, by: killer }).remove::<Collider>();
-                drop_loot(&mut commands, at, drops);
+                drop_loot(&mut commands, id, at, drops);
                 let name = |e: Entity| names.get(e).map(|w| w.name.as_str()).unwrap_or_default();
                 feed.write(FeedMsg(feed_line(name(e), &cause, killer.map(name), &db)));
                 if let Some(k) = killer.filter(|k| *k != e) {
@@ -232,6 +239,8 @@ fn apply_inbox(
                     }
                 }
             }
+            // Handled by `apply_loot`.
+            NetMsg::ChestOpened { .. } | NetMsg::Took { .. } | NetMsg::Dropped { .. } => {}
         }
     }
 }
@@ -249,11 +258,54 @@ fn max_hit(db: &ItemDb, item: &str) -> f32 {
 }
 
 /// A fallen warrior's belongings, scattered round where it fell (the same on every peer).
-pub fn drop_loot(commands: &mut Commands, at: Vec3, drops: Vec<ItemStack>) {
+pub fn drop_loot(commands: &mut Commands, victim: NetId, at: Vec3, drops: Vec<ItemStack>) {
     for (i, st) in drops.into_iter().enumerate() {
         let a = i as f32 * 1.3;
-        spawn_pickup(commands, at - Vec3::Y * 0.8 + Vec3::new(a.cos(), 0.0, a.sin()) * 1.2, st);
+        spawn_pickup(commands, PickupId::fallen(victim, i), at - Vec3::Y * 0.8 + Vec3::new(a.cos(), 0.0, a.sin()) * 1.2, st);
     }
+}
+
+/// Chests, pickups and contested takes (taken out of the inbox before the rest is applied).
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn apply_loot(
+    mut commands: Commands,
+    mut inbox: ResMut<Inbox>,
+    db: Res<ItemDb>,
+    m: Res<Match>,
+    spatial: SpatialQuery,
+    mut chests: Query<(&Transform, &mut Chest)>,
+    pickups: Query<(Entity, &Pickup)>,
+    mut ours: Query<(&NetId, &mut Inventory), Without<Remote>>,
+    mut claims: ResMut<Claims>,
+) {
+    let mut rest = vec![];
+    for (from, msg) in inbox.0.drain(..) {
+        match msg {
+            NetMsg::ChestOpened { index } => {
+                // Both peers opening it at once is harmless: the contents are the same.
+                if let Some((ct, mut c)) = chests.iter_mut().find(|(_, c)| c.index == index && !c.opened) {
+                    open_chest(&mut commands, &spatial, &db, m.seed, ct, &mut c);
+                }
+            }
+            NetMsg::Took { pickup, by, at } => {
+                if let Some((e, _)) = pickups.iter().find(|(_, p)| p.id == pickup) {
+                    commands.entity(e).despawn();
+                } else if let Some(k) = claims.0.iter().position(|c| c.pickup == pickup) {
+                    // We took it too: the earlier take keeps it.
+                    let mine = &claims.0[k];
+                    if (at, by.0) < (mine.at, mine.by.0) {
+                        if let Some((_, mut inv)) = ours.iter_mut().find(|(id, _)| **id == mine.by) {
+                            revoke(&mut inv, &mine.stack);
+                        }
+                        claims.0.remove(k);
+                    }
+                }
+            }
+            NetMsg::Dropped { id, at, stack } => spawn_pickup(&mut commands, id, at, stack),
+            other => rest.push((from, other)),
+        }
+    }
+    inbox.0 = rest;
 }
 
 #[allow(clippy::type_complexity)]

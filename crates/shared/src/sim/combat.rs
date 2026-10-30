@@ -482,11 +482,10 @@ fn apply_damage(
                 drops.push(ItemStack { id: "arrows".into(), rarity: crate::items::Rarity::Common, count: inv.arrows });
                 inv.arrows = 0;
             }
-            if let Ok(&id) = net_ids.get(msg.target) {
-                let by = msg.source.and_then(|s| net_ids.get(s).ok()).copied();
-                outbox.0.push(NetMsg::Down { id, by, placement, at: tf.translation, drops: drops.clone(), cause: msg.cause.clone() });
-            }
-            drop_loot(&mut commands, tf.translation, drops);
+            let id = net_ids.get(msg.target).copied().unwrap_or(NetId(u32::MAX));
+            let by = msg.source.and_then(|s| net_ids.get(s).ok()).copied();
+            outbox.0.push(NetMsg::Down { id, by, placement, at: tf.translation, drops: drops.clone(), cause: msg.cause.clone() });
+            drop_loot(&mut commands, id, tf.translation, drops);
             let killer = msg.source.and_then(|s| names.get(s).ok()).map(|k| k.name.as_str());
             feed.write(FeedMsg(feed_line(&w.name, &msg.cause, killer, &db)));
             if let Some(src) = msg.source {
