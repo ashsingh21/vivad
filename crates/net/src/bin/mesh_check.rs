@@ -89,6 +89,8 @@ fn main() {
     let mut ended_at = None;
     let mut gone: Option<(PeerId, Instant)> = None;
     let mut noticed = None;
+    let mut crash_tick = 0;
+    let mut bots_back = None;
     let mut begun: Vec<Option<u32>> = vec![None; apps.len()];
     let mut jerk = Jerk::default();
     // VIVAD_NET_SIM's latency and jitter, in sim seconds, which remote copies may trail by.
@@ -112,6 +114,17 @@ fn main() {
             let mut app = apps.pop().unwrap();
             app.world_mut().remove_resource::<Transport>().unwrap().crash();
             gone = ids.pop().map(|id| (id, Instant::now()));
+            crash_tick = tick;
+        }
+        // Its bots stand still until someone takes them over.
+        if let Some((id, _)) = gone
+            && bots_back.is_none()
+            && apps.iter_mut().all(|a| {
+                let w = a.world_mut();
+                !w.query_filtered::<(&Owner, &Warrior), Without<Eliminated>>().iter(w).any(|(o, war)| o.0 == id && war.is_bot)
+            })
+        {
+            bots_back = Some((tick - crash_tick) as f32 / 60.0);
         }
         if let Some((id, at)) = gone
             && noticed.is_none()
@@ -172,6 +185,10 @@ fn main() {
     check(lag.2 > 0 && lag.1 == 0, format!("remote copies follow their owners ({} samples, worst {:.2} m, {} too far behind)", lag.2, lag.0, lag.1));
 
     if gone.is_some() {
+        check(
+            bots_back.is_some_and(|s| s < 1.5),
+            format!("the crashed peer's bots were taken over {:.2} s (match time) after it went silent", bots_back.unwrap_or(f32::NAN)),
+        );
         check(
             noticed.is_some_and(|s| s < 4.0),
             format!("every peer noticed the crashed peer had gone ({:.1} s after it went silent)", noticed.unwrap_or(f32::NAN)),

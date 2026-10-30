@@ -38,12 +38,36 @@ fn main() {
     let mut sent = 0usize;
     let mut tick = 0;
     let mut mid_match = None;
+    // Peer 1's game stalls for two seconds (its connection stays up): its bots must pass to their
+    // heirs, and it must take that when it comes back.
+    let stall = (45 * 60, 47 * 60);
+    let owned_by = |app: &mut App, p: PeerId| {
+        let w = app.world_mut();
+        w.query_filtered::<(&Owner, &Warrior), Without<Eliminated>>().iter(w).filter(|(o, war)| o.0 == p && war.is_bot).count()
+    };
+    let mut stalled_bots = (0, 0);
+    for app in &mut apps {
+        app.update();
+    }
+    let dealt: Vec<usize> = {
+        let w = apps[0].world_mut();
+        let owners: Vec<PeerId> = w.query::<&Owner>().iter(w).map(|o| o.0).collect();
+        ids.iter().map(|p| owners.iter().filter(|o| *o == p).count()).collect()
+    };
     while tick < (seconds * 60.0) as u32 {
-        for app in &mut apps {
-            app.update();
+        if tick == stall.0 {
+            stalled_bots.0 = owned_by(&mut apps[0], ids[1]);
+        }
+        for (i, app) in apps.iter_mut().enumerate() {
+            if !(i == 1 && (stall.0..stall.1).contains(&tick)) {
+                app.update();
+            }
         }
         deliver(&mut apps, &live, &mut sent);
         tick += 1;
+        if tick == stall.1 + 60 {
+            stalled_bots.1 = owned_by(&mut apps[0], ids[1]);
+        }
         // Where everyone is, sampled once the warriors have landed.
         if tick == 60 * 60 {
             mid_match = Some(positions(&mut apps));
@@ -83,6 +107,10 @@ fn main() {
         println!("{} {what}", if ok { "PASS" } else { "FAIL" });
         failed += !ok as u32;
     };
+    check(
+        stalled_bots.0 > 0 && stalled_bots.1 == 0,
+        format!("a stalled peer's bots pass to their heirs ({} live bots before the stall, {} after)", stalled_bots.0, stalled_bots.1),
+    );
 
     // Roster: the same names and owners everywhere (names differ only for "You").
     let rosters: Vec<BTreeMap<u32, (PeerId, bool)>> = apps
@@ -117,9 +145,8 @@ fn main() {
         rosters[0].keys().all(|id| brains.get(id).copied().unwrap_or(0) == if gone_player(id) { 0 } else { 1 }),
         "each warrior still playing has one brain (players on autopilot)".into(),
     );
-    let per_peer: Vec<usize> = live.iter().map(|p| runners.values().filter(|r| r[0] == *p).count()).collect();
-    // Dealt round evenly; the leaver's are dealt again by roster index, which can tip one peer a warrior over.
-    check(per_peer.iter().max().unwrap() - per_peer.iter().min().unwrap() <= 1 + leaver.is_some() as usize, format!("bots are dealt evenly: {per_peer:?} warriors per peer"));
+    // At the start (leaving and stalling move bots on later).
+    check(dealt.iter().max().unwrap() - dealt.iter().min().unwrap() <= 1, format!("bots are dealt evenly: {dealt:?} warriors per peer"));
 
     // A minute in (and after the leave): everyone sees each live warrior where its owner has it.
     let (truth, _) = mid_match.clone().expect("the match lasted a minute");
@@ -133,7 +160,8 @@ fn main() {
             if err > worst.0 {
                 worst = (err, *id);
             }
-            late += (err > vel.length() * 2.0 / 60.0 + 0.05) as u32;
+            // Corrections (a push out of a wall, a knock) are eased in over a few ticks.
+            late += (err > vel.length() * 2.0 / 60.0 + 0.1) as u32;
         }
         check(late == 0, format!("{when}, remote copies follow their owners (worst {:.2} m on warrior {}, {} copies)", worst.0, worst.1, seen.len()));
     }

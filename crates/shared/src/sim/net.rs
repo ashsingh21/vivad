@@ -49,6 +49,12 @@ impl Peers {
     pub fn bot_owner(&self, k: u32) -> PeerId {
         self.all[k as usize % self.all.len()]
     }
+
+    /// Who takes a bot over when `owner` goes: dealt round the others by roster index.
+    pub fn heir(&self, owner: PeerId, id: NetId) -> PeerId {
+        let rest: Vec<PeerId> = self.all.iter().copied().filter(|p| *p != owner).collect();
+        if rest.is_empty() { owner } else { rest[id.0 as usize % rest.len()] }
+    }
 }
 
 /// Names an entity the same way on every peer. Warriors: their roster index.
@@ -89,6 +95,9 @@ pub enum NetMsg {
     Inventory { id: NetId, inv: Inventory },
     /// The sender started the next match after match `generation` ended (see `flow::restart`).
     Restart { generation: u32 },
+    /// The sender, heir to `from`, has taken bot `id` over because `from` went silent (see
+    /// `stand_in`).
+    TakeOver { id: NetId, from: PeerId },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -168,7 +177,11 @@ impl Plugin for NetPlugin {
             .init_resource::<Inbox>()
             .init_resource::<NetTick>()
             .init_resource::<Departures>()
-            .add_systems(FixedUpdate, (depart, apply_loot, apply_inbox).chain().in_set(SimSet::Brains).before(super::bots::drive_bots))
+            .init_resource::<Heard>()
+            .add_systems(
+                FixedUpdate,
+                (depart, listen, apply_loot, apply_inbox, stand_in).chain().in_set(SimSet::Brains).before(super::bots::drive_bots),
+            )
             .add_systems(FixedUpdate, follow_remote.in_set(SimSet::Movement))
             .add_systems(FixedUpdate, (send_state, send_inventory).in_set(SimSet::Cleanup).before(super::clear_latched_input));
     }
@@ -265,7 +278,7 @@ fn apply_inbox(
                 if owner != from {
                     continue;
                 }
-                let killer = by.and_then(|b| find(b)).map(|(k, ..)| k);
+                let killer = by.and_then(find).map(|(k, ..)| k);
                 commands.entity(e).insert(Eliminated { placement, by: killer }).remove::<Collider>();
                 drop_loot(&mut commands, id, at, drops);
                 let name = |e: Entity| names.get(e).map(|w| w.name.as_str()).unwrap_or_default();
@@ -291,8 +304,8 @@ fn apply_inbox(
                     *inv = new;
                 }
             }
-            // Handled by `apply_loot`.
-            NetMsg::ChestOpened { .. } | NetMsg::Took { .. } | NetMsg::Dropped { .. } => {}
+            // Handled by `apply_loot` and `listen`.
+            NetMsg::ChestOpened { .. } | NetMsg::Took { .. } | NetMsg::Dropped { .. } | NetMsg::TakeOver { .. } => {}
         }
     }
 }
@@ -400,6 +413,7 @@ fn send_state(
 }
 
 /// What each of our warriors carries, sent whenever it changes.
+#[allow(clippy::type_complexity)]
 fn send_inventory(
     mut outbox: ResMut<Outbox>,
     peers: Res<Peers>,
@@ -440,13 +454,12 @@ fn depart(
         if gone == peers.local || !peers.all.contains(&gone) {
             continue;
         }
-        peers.all.retain(|p| *p != gone);
         for (e, id, mut owner, w, down) in &mut q {
             if owner.0 != gone {
                 continue;
             }
             if w.is_bot {
-                owner.0 = peers.all[id.0 as usize % peers.all.len()];
+                owner.0 = peers.heir(gone, *id);
                 if owner.0 == peers.local {
                     commands.entity(e).remove::<(Remote, LastUpdate, NetPose)>().insert(BotBrain::new(&mut rand::rng(), config.bot_skill));
                 } else {
@@ -456,6 +469,88 @@ fn depart(
                 commands.entity(e).insert(Eliminated { placement, by: None }).remove::<Collider>();
                 placement = placement.saturating_sub(1);
                 feed.write(FeedMsg(format!("{} left the match", w.name)));
+            }
+        }
+        peers.all.retain(|p| *p != gone);
+    }
+}
+
+/// When (by our tick count) we last heard from each peer.
+#[derive(Resource, Default, Debug)]
+pub struct Heard(pub std::collections::BTreeMap<PeerId, u32>);
+
+/// A peer whose messages stop this long (seconds) loses its bots to their heirs. A live owner
+/// sends every tick; the network itself notices a crash only after several seconds, and the bots
+/// would stand frozen till then.
+const SILENT: f32 = 0.75;
+
+/// Note who we've heard from, and hand over bots that their heirs have taken (before the rest of
+/// the inbox, so the new owner's updates that follow are taken).
+#[allow(clippy::type_complexity)]
+fn listen(
+    mut commands: Commands,
+    mut inbox: ResMut<Inbox>,
+    tick: Res<NetTick>,
+    mut heard: ResMut<Heard>,
+    peers: Res<Peers>,
+    mut q: Query<(Entity, &NetId, &mut Owner, &Transform, Has<Remote>)>,
+) {
+    let mut rest = vec![];
+    let mut msgs = std::mem::take(&mut inbox.0).into_iter();
+    while let Some((from, msg)) = msgs.next() {
+        heard.0.insert(from, tick.0);
+        match msg {
+            NetMsg::Restart { .. } => {
+                rest.push((from, msg));
+                rest.extend(msgs);
+                break;
+            }
+            NetMsg::TakeOver { id, from: was } => {
+                let Some((e, _, mut owner, tf, remote)) = q.iter_mut().find(|(_, i, ..)| **i == id) else { continue };
+                if owner.0 != was || peers.heir(was, id) != from {
+                    continue;
+                }
+                owner.0 = from;
+                if remote {
+                    commands.entity(e).insert(LastUpdate::default());
+                } else {
+                    // Ours: we stalled, and it went on without us.
+                    let pose = NetPose { pos: tf.translation, ..default() };
+                    commands.entity(e).remove::<BotBrain>().insert((Remote, LastUpdate::default(), pose));
+                }
+            }
+            other => rest.push((from, other)),
+        }
+    }
+    inbox.0 = rest;
+}
+
+/// Take over the live bots we are heir to whose owner has gone silent, and say so.
+#[allow(clippy::type_complexity)]
+fn stand_in(
+    mut commands: Commands,
+    mut outbox: ResMut<Outbox>,
+    tick: Res<NetTick>,
+    mut heard: ResMut<Heard>,
+    peers: Res<Peers>,
+    config: Res<MatchConfig>,
+    mut q: Query<(Entity, &NetId, &mut Owner, &Warrior), (With<Remote>, Without<Eliminated>)>,
+) {
+    let silent = (SILENT * super::TICK_HZ as f32) as u32;
+    for &p in &peers.all {
+        if p == peers.local {
+            continue;
+        }
+        let last = *heard.0.entry(p).or_insert(tick.0);
+        if tick.0.saturating_sub(last) < silent {
+            continue;
+        }
+        for (e, id, mut owner, w) in &mut q {
+            if owner.0 == p && w.is_bot && peers.heir(p, *id) == peers.local {
+                info!("{} stands in for silent peer {p:016x}'s bot {}", peers.local, w.name);
+                owner.0 = peers.local;
+                commands.entity(e).remove::<(Remote, LastUpdate, NetPose)>().insert(BotBrain::new(&mut rand::rng(), config.bot_skill));
+                outbox.0.push(NetMsg::TakeOver { id: *id, from: p });
             }
         }
     }
