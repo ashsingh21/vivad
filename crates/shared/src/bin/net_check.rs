@@ -1,9 +1,10 @@
 //! Several peers in one process, joined by an in-memory pipe instead of the network: each tick
 //! every peer's `Outbox` is delivered to every other peer's `Inbox`. Checks that they agree on
-//! the roster, that each warrior is run by exactly one peer, and that every peer sees every
-//! warrior where its owner has it. Local players are on autopilot.
+//! the roster, that each warrior is run by exactly one peer, that every peer sees every warrior
+//! where its owner has it, and, once the match is fought out (local players on autopilot), on who
+//! fell, the kill counts and the winner.
 //!
-//! cargo run --release -p shared --bin net_check -- [peers] [bots] [seconds]
+//! cargo run --release -p shared --bin net_check -- [peers] [bots] [max seconds]
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -12,6 +13,7 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use shared::sim::bots::BotBrain;
+use shared::sim::flow::{Match, MatchState};
 use shared::sim::net::{Inbox, NetId, Outbox, Owner, PeerId, Peers, Remote};
 use shared::sim::{Eliminated, Kinematic, MatchConfig, SimPlugin, Warrior};
 
@@ -19,7 +21,7 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let n: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(3);
     let bots: u32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(6);
-    let seconds: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(90.0);
+    let seconds: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(420.0);
     let items = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/data/items.ron")).unwrap();
     // Unordered ids, as real endpoint keys would be.
     let ids: Vec<PeerId> = (0..n as u64).map(|i| (i * 0x9E37_79B9 + 17) % 1000).collect();
@@ -41,15 +43,35 @@ fn main() {
         .collect();
 
     let started = Instant::now();
-    let ticks = (seconds * 60.0) as u32;
     let mut sent = 0usize;
-    for _ in 0..ticks {
+    let mut tick = 0;
+    let mut mid_match = None;
+    while tick < (seconds * 60.0) as u32 {
+        for app in &mut apps {
+            app.update();
+        }
+        deliver(&mut apps, &ids, &mut sent);
+        tick += 1;
+        // Where everyone is, sampled once the warriors have landed.
+        if tick == 60 * 60 {
+            mid_match = Some(positions(&mut apps));
+        }
+        if apps.iter().all(|a| a.world().resource::<Match>().state == MatchState::Ended) {
+            break;
+        }
+    }
+    // Let the last messages land.
+    for _ in 0..2 {
         for app in &mut apps {
             app.update();
         }
         deliver(&mut apps, &ids, &mut sent);
     }
-    println!("{n} peers, {bots} bots, {seconds}s sim in {:.1}s wall, {sent} messages delivered", started.elapsed().as_secs_f32());
+    println!(
+        "{n} peers, {bots} bots, {:.0}s sim in {:.1}s wall, {sent} messages delivered",
+        tick as f32 / 60.0,
+        started.elapsed().as_secs_f32()
+    );
 
     let mut failed = 0;
     let mut check = |ok: bool, what: String| {
@@ -85,35 +107,62 @@ fn main() {
     let per_peer: Vec<usize> = ids.iter().map(|p| runners.values().filter(|r| r[0] == *p).count()).collect();
     check(per_peer.iter().max().unwrap() - per_peer.iter().min().unwrap() <= 1, format!("bots are dealt evenly: {per_peer:?} warriors per peer"));
 
-    // Everyone sees each live warrior where its owner has it (a tick behind at most).
-    let truth: BTreeMap<u32, (Vec3, Vec3)> = apps
-        .iter_mut()
-        .flat_map(|app| {
-            let w = app.world_mut();
-            w.query_filtered::<(&NetId, &Transform, &Kinematic), (Without<Remote>, Without<Eliminated>)>()
-                .iter(w)
-                .map(|(id, t, k)| (id.0, (t.translation, k.velocity)))
-                .collect::<Vec<_>>()
-        })
-        .collect();
+    // A minute in: everyone sees each live warrior where its owner has it (a tick behind at most).
+    let (truth, seen) = mid_match.expect("the match lasted a minute");
     let mut worst = (0.0f32, 0u32);
     let mut late = 0;
-    for app in &mut apps {
-        let w = app.world_mut();
-        for (id, t) in w.query_filtered::<(&NetId, &Transform), With<Remote>>().iter(w) {
-            let Some((pos, vel)) = truth.get(&id.0) else { continue };
-            let err = t.translation.distance(*pos);
-            if err > worst.0 {
-                worst = (err, id.0);
-            }
-            late += (err > vel.length() * 2.0 / 60.0 + 0.05) as u32;
+    for (id, pos) in &seen {
+        let Some((owned, vel)) = truth.get(id) else { continue };
+        let err = pos.distance(*owned);
+        if err > worst.0 {
+            worst = (err, *id);
         }
+        late += (err > vel.length() * 2.0 / 60.0 + 0.05) as u32;
     }
-    check(late == 0, format!("remote copies follow their owners (worst {:.2} m on warrior {})", worst.0, worst.1));
-    let moved = truth.values().filter(|(p, _)| p.y < 100.0).count();
-    check(moved == truth.len(), format!("{moved}/{} live warriors left the vimana and landed", truth.len()));
+    check(late == 0, format!("remote copies follow their owners (worst {:.2} m on warrior {}, {} copies)", worst.0, worst.1, seen.len()));
+    let landed = truth.values().filter(|(p, _)| p.y < 100.0).count();
+    check(landed == truth.len(), format!("{landed}/{} live warriors left the vimana and landed", truth.len()));
+
+    // The fight, as each peer saw it.
+    let outcomes: Vec<(Vec<u32>, BTreeMap<u32, u32>, Option<u32>, MatchState)> = apps
+        .iter_mut()
+        .map(|app| {
+            let w = app.world_mut();
+            let mut fallen: Vec<u32> = w.query_filtered::<&NetId, With<Eliminated>>().iter(w).map(|i| i.0).collect();
+            fallen.sort();
+            let kills = w.query::<(&NetId, &Warrior)>().iter(w).map(|(i, war)| (i.0, war.kills)).collect();
+            let m = w.resource::<Match>().clone();
+            let winner = m.winner.and_then(|e| w.get::<NetId>(e)).map(|i| i.0);
+            (fallen, kills, winner, m.state)
+        })
+        .collect();
+    let (fallen, kills, winner, _) = &outcomes[0];
+    let total_kills: u32 = kills.values().sum();
+    check(outcomes.iter().all(|o| o.3 == MatchState::Ended), "the match ended on every peer".into());
+    check(outcomes.iter().all(|o| o.0 == *fallen), format!("every peer agrees who fell ({} of {})", fallen.len(), rosters[0].len()));
+    check(outcomes.iter().all(|o| o.1 == *kills), format!("every peer agrees on the kill counts ({total_kills} weapon kills)"));
+    check(total_kills > 0, "warriors killed each other across peers".into());
+    check(outcomes.iter().all(|o| o.2 == *winner) && winner.is_some(), format!("every peer crowns the same winner ({winner:?})"));
     println!("\n{failed} failed");
     std::process::exit(failed as i32);
+}
+
+/// Each live warrior's position and velocity on its owner, and every remote copy's position.
+#[allow(clippy::type_complexity)]
+fn positions(apps: &mut [App]) -> (BTreeMap<u32, (Vec3, Vec3)>, Vec<(u32, Vec3)>) {
+    let mut truth = BTreeMap::new();
+    let mut seen = vec![];
+    for app in apps {
+        let w = app.world_mut();
+        for (id, t, k, remote) in w.query_filtered::<(&NetId, &Transform, &Kinematic, Has<Remote>), Without<Eliminated>>().iter(w) {
+            if remote {
+                seen.push((id.0, t.translation));
+            } else {
+                truth.insert(id.0, (t.translation, k.velocity));
+            }
+        }
+    }
+    (truth, seen)
 }
 
 /// The pipe: everything each peer sent this tick reaches every other peer.

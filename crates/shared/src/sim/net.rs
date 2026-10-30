@@ -4,9 +4,15 @@
 //! and follows the state its owner broadcasts. The transport (iroh, or the in-process pipe in
 //! `net_check`) only moves `NetMsg`s between the `Outbox` and the other peers' `Inbox`.
 
+use avian3d::prelude::*;
 use bevy::prelude::*;
 
-use super::{Action, Eliminated, Health, Inventory, Kinematic, MoveMode, PlayerIntent, SimSet, Warrior};
+use super::combat::{KillMsg, Projectile, feed_line};
+use super::loot::spawn_pickup;
+use super::{
+    Action, DamageCause, DamageMsg, Door, Eliminated, FeedMsg, Health, Inventory, Kinematic, MoveMode, PlayerIntent, SimSet, Warrior,
+};
+use crate::items::{AstraEffect, ItemDb, ItemKind, ItemStack, Rarity};
 
 /// A peer's identity (later: derived from its iroh endpoint key).
 pub type PeerId = u64;
@@ -52,13 +58,35 @@ pub struct Owner(pub PeerId);
 pub struct Remote;
 
 /// What peers tell each other.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum NetMsg {
     /// A warrior's state after its owner's tick (sent every tick; a lost one is simply replaced).
     State(WarriorState),
+    /// An arrow or astra left a warrior's hand. Other peers fly an echo of it: an arrow's echo
+    /// never hurts (its shooter decides what it hit), an astra's bursts on every peer and each
+    /// applies it to its own warriors.
+    Shot(Shot),
+    /// The attacker's peer saw its hit land on a warrior owned by the receiver, who applies it.
+    Hit { target: NetId, by: NetId, amount: f32, headshot: bool, item: String },
+    /// A warrior fell on its owner's peer: everyone marks it, credits the kill and drops its loot.
+    Down { id: NetId, by: Option<NetId>, placement: u32, at: Vec3, drops: Vec<ItemStack>, cause: DamageCause },
+    /// A door took damage from one of the sender's warriors (index in `MapLayout::doors`).
+    DoorHit { index: usize, amount: f32 },
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
+pub struct Shot {
+    pub owner: NetId,
+    pub from: Vec3,
+    pub velocity: Vec3,
+    pub gravity: f32,
+    pub damage: f32,
+    pub headshot_mult: f32,
+    pub item: String,
+    pub astra: Option<AstraEffect>,
+}
+
+#[derive(Clone, Debug)]
 pub struct WarriorState {
     pub id: NetId,
     /// The owner's tick count, so late or reordered updates are dropped.
@@ -106,25 +134,34 @@ impl Plugin for NetPlugin {
     }
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn apply_inbox(
+    mut commands: Commands,
     mut inbox: ResMut<Inbox>,
     peers: Res<Peers>,
+    db: Res<ItemDb>,
+    ids: Query<(Entity, &NetId, &Owner, Has<Remote>, Has<Eliminated>)>,
     mut q: Query<
-        (&NetId, &Owner, &mut LastUpdate, &mut Transform, &mut Kinematic, &mut PlayerIntent, &mut Health, &mut Inventory, &mut Action),
+        (&mut LastUpdate, &mut Transform, &mut Kinematic, &mut PlayerIntent, &mut Health, &mut Inventory, &mut Action),
         With<Remote>,
     >,
+    names: Query<&Warrior>,
+    mut doors: Query<(Entity, &mut Door)>,
+    mut damage: MessageWriter<DamageMsg>,
+    mut feed: MessageWriter<FeedMsg>,
+    mut kills: MessageWriter<KillMsg>,
 ) {
+    let find = |id: NetId| ids.iter().find(|(_, i, ..)| **i == id).map(|(e, _, o, remote, down)| (e, o.0, remote, down));
     for (from, msg) in inbox.0.drain(..) {
+        if from == peers.local {
+            continue;
+        }
         match msg {
             NetMsg::State(s) => {
-                let Some((_, owner, mut last, mut tf, mut kin, mut intent, mut health, mut inv, mut act)) =
-                    q.iter_mut().find(|(id, ..)| **id == s.id)
-                else {
-                    continue;
-                };
                 // Only the owner speaks for a warrior; stale updates lose to newer ones.
-                if owner.0 != from || from == peers.local || (last.0 != 0 && s.tick <= last.0) {
+                let Some((e, owner, true, false)) = find(s.id) else { continue };
+                let Ok((mut last, mut tf, mut kin, mut intent, mut health, mut inv, mut act)) = q.get_mut(e) else { continue };
+                if owner != from || (last.0 != 0 && s.tick <= last.0) {
                     continue;
                 }
                 last.0 = s.tick;
@@ -142,7 +179,80 @@ fn apply_inbox(
                 act.since_attack = s.since_attack;
                 act.charge = s.charge;
             }
+            NetMsg::Shot(shot) => {
+                let Some((owner, peer, true, _)) = find(shot.owner) else { continue };
+                if peer != from {
+                    continue;
+                }
+                let dir = shot.velocity.normalize_or(Vec3::NEG_Z);
+                commands.spawn((
+                    Projectile {
+                        owner,
+                        velocity: shot.velocity,
+                        gravity: shot.gravity,
+                        damage: shot.damage,
+                        headshot_mult: shot.headshot_mult,
+                        ttl: if shot.astra.is_some() { 6.0 } else { 4.0 },
+                        item: shot.item,
+                        astra: shot.astra,
+                        stuck: false,
+                    },
+                    Transform::from_translation(shot.from).looking_to(dir, Vec3::Y),
+                ));
+            }
+            NetMsg::Hit { target, by, amount, headshot, item } => {
+                // Ours, still standing, hit by a warrior still standing here, by no more than
+                // the weapon can do.
+                let Some((victim, _, false, false)) = find(target) else { continue };
+                let Some((attacker, peer, _, false)) = find(by) else { continue };
+                if peer != from || amount <= 0.0 || amount > max_hit(&db, &item) {
+                    continue;
+                }
+                damage.write(DamageMsg { target: victim, amount, source: Some(attacker), headshot, cause: DamageCause::Weapon(item) });
+            }
+            NetMsg::Down { id, by, placement, at, drops, cause } => {
+                let Some((e, owner, true, false)) = find(id) else { continue };
+                if owner != from {
+                    continue;
+                }
+                let killer = by.and_then(|b| find(b)).map(|(k, ..)| k);
+                commands.entity(e).insert(Eliminated { placement, by: killer }).remove::<Collider>();
+                drop_loot(&mut commands, at, drops);
+                let name = |e: Entity| names.get(e).map(|w| w.name.as_str()).unwrap_or_default();
+                feed.write(FeedMsg(feed_line(name(e), &cause, killer.map(name), &db)));
+                if let Some(k) = killer.filter(|k| *k != e) {
+                    kills.write(KillMsg { killer: k });
+                }
+            }
+            NetMsg::DoorHit { index, amount } => {
+                if let Some((e, mut door)) = doors.iter_mut().find(|(_, d)| d.index == index) {
+                    door.hp -= amount;
+                    if door.hp <= 0.0 {
+                        commands.entity(e).despawn();
+                    }
+                }
+            }
         }
+    }
+}
+
+/// The most one hit of `item` can do: its best rarity, on the head.
+fn max_hit(db: &ItemDb, item: &str) -> f32 {
+    let Some(def) = db.items.get(item) else { return 0.0 };
+    let best = Rarity::ALL.iter().map(|r| r.damage_scale()).fold(1.0, f32::max);
+    let most = match &def.kind {
+        ItemKind::Melee { damage, .. } => damage * best,
+        ItemKind::Bow { damage, headshot, .. } => damage * best * headshot.max(1.0),
+        _ => 0.0,
+    };
+    most + 0.01
+}
+
+/// A fallen warrior's belongings, scattered round where it fell (the same on every peer).
+pub fn drop_loot(commands: &mut Commands, at: Vec3, drops: Vec<ItemStack>) {
+    for (i, st) in drops.into_iter().enumerate() {
+        let a = i as f32 * 1.3;
+        spawn_pickup(commands, at - Vec3::Y * 0.8 + Vec3::new(a.cos(), 0.0, a.sin()) * 1.2, st);
     }
 }
 

@@ -221,6 +221,8 @@ pub struct PropIndex(pub usize);
 #[derive(Component, Clone, Debug)]
 pub struct Door {
     pub hp: f32,
+    /// Index in `MapLayout::doors`: names the door across peers.
+    pub index: usize,
 }
 
 // ------------------------------------------------------------------ messages
@@ -408,10 +410,10 @@ fn spawn_map(mut commands: Commands, layout: Res<MapLayout>) {
             e.insert((RigidBody::Static, collider_for(block), CollisionLayers::new(Layer::World, LayerMask::ALL)));
         }
     }
-    for door in &layout.doors {
+    for (index, door) in layout.doors.iter().enumerate() {
         commands.spawn((
             MapBlock(door.clone()),
-            Door { hp: 60.0 },
+            Door { hp: 60.0, index },
             Transform::from_translation(door.pos).with_rotation(door.rot),
             RigidBody::Static,
             collider_for(door),

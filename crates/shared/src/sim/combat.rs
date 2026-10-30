@@ -9,8 +9,7 @@ use super::{
     Kinematic, MoveMode, PlayerIntent, SimSet, Warrior, aim_ray, btn, hit_mask,
 };
 use crate::items::{AstraEffect, ItemDb, ItemKind, ItemStack};
-use crate::sim::loot::spawn_pickup;
-use crate::sim::net::Remote;
+use crate::sim::net::{NetId, NetMsg, Outbox, Remote, Shot, drop_loot};
 
 pub struct CombatPlugin;
 
@@ -81,17 +80,33 @@ fn select_slot(mut q: Query<(&PlayerIntent, &mut Inventory, &mut Action), (Witho
 fn use_items(
     mut commands: Commands,
     mut q: Query<
-        (Entity, &Transform, &PlayerIntent, &mut Inventory, &mut Action, &mut Health, &Kinematic),
+        (Entity, &Transform, &PlayerIntent, &mut Inventory, &mut Action, &mut Health, &Kinematic, Option<&NetId>),
         (Without<Eliminated>, Without<Remote>),
     >,
     db: Res<ItemDb>,
     spatial: SpatialQuery,
     time: Res<Time>,
     mut damage: MessageWriter<DamageMsg>,
+    mut outbox: ResMut<Outbox>,
 ) {
     let dt = time.delta_secs();
     let mut rng = rand::rng();
-    for (entity, tf, intent, mut inv, mut act, mut health, kin) in &mut q {
+    for (entity, tf, intent, mut inv, mut act, mut health, kin, net_id) in &mut q {
+        // Arrows and astras are announced so the other peers fly them too.
+        let mut announce = |p: &Projectile, from: Vec3| {
+            if let Some(&owner) = net_id {
+                outbox.0.push(NetMsg::Shot(Shot {
+                    owner,
+                    from,
+                    velocity: p.velocity,
+                    gravity: p.gravity,
+                    damage: p.damage,
+                    headshot_mult: p.headshot_mult,
+                    item: p.item.clone(),
+                    astra: p.astra.clone(),
+                }));
+            }
+        };
         act.cooldown = (act.cooldown - dt).max(0.0);
         act.since_attack += dt;
         if kin.mode != MoveMode::Ground {
@@ -195,20 +210,19 @@ fn use_items(
                     let rot = Quat::from_axis_angle(Vec3::Y, yaw_off)
                         * Quat::from_axis_angle(base.cross(Vec3::Y).normalize_or(Vec3::X), pitch_off);
                     let dir = rot * base;
-                    commands.spawn((
-                        Projectile {
-                            owner: entity,
-                            velocity: dir * speed * (0.55 + 0.45 * power),
-                            gravity: *gravity,
-                            damage: dmg * scale * power,
-                            headshot_mult: *headshot,
-                            ttl: 4.0,
-                            item: stack.id.clone(),
-                            astra: None,
-                            stuck: false,
-                        },
-                        Transform::from_translation(muzzle).looking_to(dir, Vec3::Y),
-                    ));
+                    let arrow = Projectile {
+                        owner: entity,
+                        velocity: dir * speed * (0.55 + 0.45 * power),
+                        gravity: *gravity,
+                        damage: dmg * scale * power,
+                        headshot_mult: *headshot,
+                        ttl: 4.0,
+                        item: stack.id.clone(),
+                        astra: None,
+                        stuck: false,
+                    };
+                    announce(&arrow, muzzle);
+                    commands.spawn((arrow, Transform::from_translation(muzzle).looking_to(dir, Vec3::Y)));
                 }
                 if let Some(s) = inv.slots[slot - 1].as_mut() {
                     s.count -= 1;
@@ -219,20 +233,19 @@ fn use_items(
             ItemKind::Astra { effect, speed, .. } => {
                 if intent.pressed(btn::FIRE) && act.cooldown <= 0.0 {
                     let dir = (aim + Vec3::Y * 0.18).normalize();
-                    commands.spawn((
-                        Projectile {
-                            owner: entity,
-                            velocity: dir * speed,
-                            gravity: 16.0,
-                            damage: 0.0,
-                            headshot_mult: 1.0,
-                            ttl: 6.0,
-                            item: stack.id.clone(),
-                            astra: Some(effect.clone()),
-                            stuck: false,
-                        },
-                        Transform::from_translation(muzzle),
-                    ));
+                    let astra = Projectile {
+                        owner: entity,
+                        velocity: dir * speed,
+                        gravity: 16.0,
+                        damage: 0.0,
+                        headshot_mult: 1.0,
+                        ttl: 6.0,
+                        item: stack.id.clone(),
+                        astra: Some(effect.clone()),
+                        stuck: false,
+                    };
+                    announce(&astra, muzzle);
+                    commands.spawn((astra, Transform::from_translation(muzzle)));
                     let slot = inv.selected;
                     if let Some(s) = inv.slots[slot - 1].as_mut() {
                         s.count -= 1;
@@ -283,12 +296,15 @@ fn step_projectiles(
     mut q: Query<(Entity, &mut Transform, &mut Projectile)>,
     warriors: Query<&Transform, (With<Warrior>, Without<Projectile>)>,
     mut kin: Query<(&Transform, &mut Kinematic), (With<Warrior>, Without<Eliminated>, Without<Projectile>, Without<Remote>)>,
+    remote: Query<(), With<Remote>>,
     spatial: SpatialQuery,
     time: Res<Time>,
     mut damage: MessageWriter<DamageMsg>,
 ) {
     let dt = time.delta_secs();
     for (e, mut tf, mut p) in &mut q {
+        // An echo of another peer's arrow: its shooter decides what it hit.
+        let echo = remote.contains(p.owner);
         p.ttl -= dt;
         if p.ttl <= 0.0 {
             commands.entity(e).despawn();
@@ -312,13 +328,15 @@ fn step_projectiles(
                 .get(hit.entity)
                 .map(|t| point.y > t.translation.y + HEADSHOT_HEIGHT)
                 .unwrap_or(false);
-            damage.write(DamageMsg {
-                target: hit.entity,
-                amount: if headshot { p.damage * p.headshot_mult } else { p.damage },
-                source: Some(p.owner),
-                headshot,
-                cause: DamageCause::Weapon(p.item.clone()),
-            });
+            if !echo {
+                damage.write(DamageMsg {
+                    target: hit.entity,
+                    amount: if headshot { p.damage * p.headshot_mult } else { p.damage },
+                    source: Some(p.owner),
+                    headshot,
+                    cause: DamageCause::Weapon(p.item.clone()),
+                });
+            }
             if warriors.contains(hit.entity) {
                 commands.entity(e).despawn();
             } else {
@@ -398,6 +416,9 @@ fn apply_damage(
     mut msgs: MessageReader<DamageMsg>,
     // Each peer applies damage only to its own warriors (hits on others go to their owners).
     mut targets: Query<(&mut Health, &Transform, &mut Inventory, &Warrior), (Without<Eliminated>, Without<Remote>)>,
+    remote_targets: Query<(&NetId, &Health, &Transform), (With<Remote>, Without<Eliminated>)>,
+    net_ids: Query<&NetId>,
+    mut outbox: ResMut<Outbox>,
     mut doors: Query<&mut Door>,
     alive: Query<(), (With<Warrior>, Without<Eliminated>)>,
     db: Res<ItemDb>,
@@ -410,9 +431,25 @@ fn apply_damage(
     for msg in msgs.read() {
         if let Ok(mut door) = doors.get_mut(msg.target) {
             door.hp -= msg.amount;
+            outbox.0.push(NetMsg::DoorHit { index: door.index, amount: msg.amount });
             if door.hp <= 0.0 {
                 commands.entity(msg.target).despawn();
             }
+            continue;
+        }
+        // Another peer's warrior: tell its owner, who applies it.
+        if let Ok((target, h, tf)) = remote_targets.get(msg.target) {
+            let (Some(src), DamageCause::Weapon(item)) = (msg.source, &msg.cause) else { continue };
+            let Ok(&by) = net_ids.get(src) else { continue };
+            outbox.0.push(NetMsg::Hit { target: *target, by, amount: msg.amount, headshot: msg.headshot, item: item.clone() });
+            hits.write(HitMsg {
+                attacker: src,
+                target: msg.target,
+                amount: msg.amount,
+                headshot: msg.headshot,
+                shield: h.shield > 0.0,
+                at: tf.translation + Vec3::Y * 1.0,
+            });
             continue;
         }
         let Ok((mut h, tf, mut inv, w)) = targets.get_mut(msg.target) else { continue };
@@ -445,19 +482,13 @@ fn apply_damage(
                 drops.push(ItemStack { id: "arrows".into(), rarity: crate::items::Rarity::Common, count: inv.arrows });
                 inv.arrows = 0;
             }
-            for (i, st) in drops.into_iter().enumerate() {
-                let a = i as f32 * 1.3;
-                spawn_pickup(&mut commands, tf.translation - Vec3::Y * 0.8 + Vec3::new(a.cos(), 0.0, a.sin()) * 1.2, st);
+            if let Ok(&id) = net_ids.get(msg.target) {
+                let by = msg.source.and_then(|s| net_ids.get(s).ok()).copied();
+                outbox.0.push(NetMsg::Down { id, by, placement, at: tf.translation, drops: drops.clone(), cause: msg.cause.clone() });
             }
-            let how = match &msg.cause {
-                DamageCause::Pralaya => "was consumed by the Pralaya".to_string(),
-                DamageCause::Fall => "fell to their death".to_string(),
-                DamageCause::Weapon(id) => {
-                    let killer = msg.source.and_then(|s| names.get(s).ok()).map(|k| k.name.clone()).unwrap_or_default();
-                    format!("was felled by {killer} ({})", db.get(id).name)
-                }
-            };
-            feed.write(FeedMsg(format!("{} {}", w.name, how)));
+            drop_loot(&mut commands, tf.translation, drops);
+            let killer = msg.source.and_then(|s| names.get(s).ok()).map(|k| k.name.as_str());
+            feed.write(FeedMsg(feed_line(&w.name, &msg.cause, killer, &db)));
             if let Some(src) = msg.source {
                 if src != msg.target {
                     kill_msgs.write(KillMsg { killer: src });
@@ -465,6 +496,16 @@ fn apply_damage(
             }
         }
     }
+}
+
+/// "Bhima was felled by Karna (Sharanga)", in this peer's names.
+pub fn feed_line(victim: &str, cause: &DamageCause, killer: Option<&str>, db: &ItemDb) -> String {
+    let how = match cause {
+        DamageCause::Pralaya => "was consumed by the Pralaya".to_string(),
+        DamageCause::Fall => "fell to their death".to_string(),
+        DamageCause::Weapon(id) => format!("was felled by {} ({})", killer.unwrap_or_default(), db.get(id).name),
+    };
+    format!("{victim} {how}")
 }
 
 #[derive(Message, Clone, Debug)]
