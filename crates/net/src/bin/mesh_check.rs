@@ -3,9 +3,10 @@
 //! over real connections. Checks that the lobby links everyone to everyone, that they build the
 //! same roster with the players' names, that remote warriors follow their owners, and that every
 //! peer agrees on who fell, the kills, the winner and the loot. Partway through, the last peer
-//! quits (closing its connections) and the rest fight on without it.
+//! quits (closing its connections) and the rest fight on without it; then two players ask for a
+//! rematch at once.
 //!
-//! cargo run --release -p net --bin mesh_check -- [peers] [bots] [max seconds] [speed] [leave at seconds, 0 = never]
+//! cargo run --release -p net --bin mesh_check -- [peers] [bots] [max seconds] [speed] [leave at seconds, 0 = never] [rematch seconds]
 //! (VIVAD_RELAY=1 to go through iroh's relays)
 
 use std::collections::BTreeMap;
@@ -18,7 +19,7 @@ use net::{Node, Session, Transport, TransportPlugin};
 use shared::sim::flow::{Match, MatchState};
 use shared::sim::loot::{Chest, Pickup};
 use shared::sim::net::{NetId, Owner, PeerId, Remote};
-use shared::sim::{Eliminated, Kinematic, MatchConfig, SimPlugin, Warrior};
+use shared::sim::{Eliminated, Kinematic, MatchConfig, RestartMatch, SimPlugin, Warrior};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -29,6 +30,7 @@ fn main() {
     // message can lag behind.
     let speed: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(4.0);
     let leave_at: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(90.0);
+    let rematch: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(90.0);
     let items = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/data/items.ron")).unwrap();
 
     let started = Instant::now();
@@ -78,11 +80,7 @@ fn main() {
             drop(apps.pop());
             gone = ids.pop();
         }
-        // Pace to `speed` times real time.
-        let due = Duration::from_secs_f32(tick as f32 / 60.0 / speed);
-        if let Some(wait) = due.checked_sub(started.elapsed()) {
-            std::thread::sleep(wait);
-        }
+        pace(started, tick, speed);
         if tick.is_multiple_of(600) && tick >= 60 * 60 {
             let l = follow(&mut apps, speed);
             lag = (lag.0.max(l.0), lag.1 + l.1, lag.2 + l.2);
@@ -130,8 +128,37 @@ fn main() {
     check(outcomes.iter().all(|x| x.winner == o.winner) && o.winner.is_some(), format!("every peer crowns the same winner ({:?})", o.winner));
     check(outcomes.iter().all(|x| x.opened == o.opened) && !o.opened.is_empty(), format!("every peer has the same chests open ({})", o.opened.len()));
     check(outcomes.iter().all(|x| x.pickups == o.pickups), format!("every peer has the same pickups lying about ({})", o.pickups.len()));
+
+    // Two players ask for the next match on the same tick: everyone must move on to the same one,
+    // with nothing from the last match leaking into it.
+    let generation = apps[0].world().resource::<Match>().generation;
+    for app in apps.iter_mut().take(2) {
+        app.world_mut().write_message(RestartMatch);
+    }
+    let until = tick + (rematch * 60.0) as u32;
+    while tick < until {
+        for app in &mut apps {
+            app.update();
+        }
+        tick += 1;
+        pace(started, tick, speed);
+    }
+    let next: Vec<(u32, u64)> = apps.iter().map(|a| a.world().resource::<Match>()).map(|m| (m.generation, m.seed)).collect();
+    check(next.iter().all(|g| *g == next[0] && g.0 == generation + 1), format!("a double restart starts one next match everywhere ({next:?})"));
+    let l = follow(&mut apps, speed);
+    check(l.2 > 0 && l.1 == 0, format!("in the rematch, remote copies follow their owners ({} samples, worst {:.2} m)", l.2, l.0));
+    let outcomes: Vec<_> = apps.iter_mut().map(|app| outcome(app.world_mut())).collect();
+    check(outcomes.iter().all(|x| x.fallen == outcomes[0].fallen), format!("in the rematch, every peer agrees who fell so far ({})", outcomes[0].fallen.len()));
     println!("\n{failed} failed");
     std::process::exit(failed as i32);
+}
+
+/// Hold the loop to `speed` times real time.
+fn pace(started: Instant, tick: u32, speed: f32) {
+    let due = Duration::from_secs_f32(tick as f32 / 60.0 / speed);
+    if let Some(wait) = due.checked_sub(started.elapsed()) {
+        std::thread::sleep(wait);
+    }
 }
 
 fn peer(session: Session, items: &str) -> App {

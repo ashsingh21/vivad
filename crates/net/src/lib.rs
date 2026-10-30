@@ -17,6 +17,7 @@ use iroh::endpoint::{Connection, QuicTransportConfig, RecvStream, presets};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointAddr, EndpointId, Watcher};
 use serde::{Deserialize, Serialize};
+use shared::sim::flow::Match;
 use shared::sim::net::{Departures, Inbox, NetMsg, Outbox, PeerId, Peers, WarriorState};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -54,7 +55,8 @@ enum Wire {
     Members(Vec<Member>),
     /// The match is full: everything every peer needs to build the same one.
     Start { seed: u64, map_seed: u64, bots: u32, members: Vec<Member> },
-    Game(NetMsg),
+    /// A game message, tagged with the match (`Match::generation`) it belongs to.
+    Game(u32, NetMsg),
     /// Not sent: the link to this peer is gone.
     Left,
 }
@@ -138,10 +140,10 @@ async fn run_link(mesh: Arc<Mesh>, conn: Connection) -> Result<(), Error> {
         tokio::spawn(async move {
             while let Ok(bytes) = conn.read_datagram().await {
                 mesh.received.fetch_add(bytes.len() as u64, Ordering::Relaxed);
-                let mut rest = &bytes[..];
+                let Some((generation, mut rest)) = bytes.split_first_chunk::<4>().map(|(g, r)| (u32::from_le_bytes(*g), r)) else { continue };
                 while !rest.is_empty() {
                     let Ok((state, tail)) = postcard::take_from_bytes::<WarriorState>(rest) else { break };
-                    let _ = mesh.events.send((them, Wire::Game(NetMsg::State(state))));
+                    let _ = mesh.events.send((them, Wire::Game(generation, NetMsg::State(state))));
                     rest = tail;
                 }
             }
@@ -303,7 +305,7 @@ impl Node {
     fn session(self, seed: u64, map_seed: u64, bots: u32, members: &[Member]) -> Session {
         let mut peers = Peers::new(self.peer(), members.iter().map(Member::peer).collect());
         peers.names = members.iter().map(|m| (m.peer(), m.name.clone())).collect();
-        Session { peers, seed, map_seed, bots, transport: Transport { _runtime: self.runtime, _router: self.router, mesh: self.mesh, events: Mutex::new(self.events) } }
+        Session { peers, seed, map_seed, bots, transport: Transport { _runtime: self.runtime, _router: self.router, mesh: self.mesh, events: Mutex::new(self.events), held: default() } }
     }
 }
 
@@ -324,6 +326,8 @@ pub struct Transport {
     _router: Router,
     mesh: Arc<Mesh>,
     events: Mutex<UnboundedReceiver<(PeerId, Wire)>>,
+    /// Messages for a match we haven't reached yet.
+    held: Mutex<Vec<(PeerId, u32, NetMsg)>>,
 }
 
 impl Drop for Transport {
@@ -354,11 +358,15 @@ impl Plugin for TransportPlugin {
     }
 }
 
-fn receive(transport: Res<Transport>, mut inbox: ResMut<Inbox>, mut departures: ResMut<Departures>) {
+/// Hand the sim what arrived for the match it is in. Everything after a restart waits a tick, for
+/// the sim to start the next match first; messages from a match already over are dropped.
+fn receive(transport: Res<Transport>, m: Res<Match>, mut inbox: ResMut<Inbox>, mut departures: ResMut<Departures>) {
+    let mut held = transport.held.lock().unwrap();
+    let mut queue = std::mem::take(&mut *held);
     let mut events = transport.events.lock().unwrap();
     while let Ok((from, wire)) = events.try_recv() {
         match wire {
-            Wire::Game(msg) => inbox.0.push((from, msg)),
+            Wire::Game(generation, msg) => queue.push((from, generation, msg)),
             Wire::Left => {
                 info!("peer {from:016x} left");
                 departures.0.push(from);
@@ -366,9 +374,23 @@ fn receive(transport: Res<Transport>, mut inbox: ResMut<Inbox>, mut departures: 
             _ => {}
         }
     }
+    let mut wait = false;
+    for (from, generation, msg) in queue {
+        if wait {
+            held.push((from, generation, msg));
+        } else if let NetMsg::Restart { .. } = msg {
+            // Tagged with the sender's next match; the sim checks the one it names.
+            inbox.0.push((from, msg));
+            wait = true;
+        } else if generation > m.generation {
+            held.push((from, generation, msg));
+        } else if generation == m.generation {
+            inbox.0.push((from, msg));
+        }
+    }
 }
 
-fn send(transport: Res<Transport>, mut outbox: ResMut<Outbox>) {
+fn send(transport: Res<Transport>, m: Res<Match>, mut outbox: ResMut<Outbox>) {
     if outbox.0.is_empty() {
         return;
     }
@@ -377,7 +399,7 @@ fn send(transport: Res<Transport>, mut outbox: ResMut<Outbox>) {
     for msg in outbox.0.drain(..) {
         match msg {
             NetMsg::State(s) => states.push((postcard::to_stdvec(&s).expect("encode"), s)),
-            msg => frames.extend(frame(&Wire::Game(msg))),
+            msg => frames.extend(frame(&Wire::Game(m.generation, msg))),
         }
     }
     let mesh = &transport.mesh;
@@ -388,19 +410,20 @@ fn send(transport: Res<Transport>, mut outbox: ResMut<Outbox>) {
         // Pack the states into as few datagrams as fit; a peer that takes none gets them as frames.
         let Some(max) = link.conn.max_datagram_size() else {
             for (_, s) in &states {
-                let _ = link.frames.send(frame(&Wire::Game(NetMsg::State(s.clone()))));
+                let _ = link.frames.send(frame(&Wire::Game(m.generation, NetMsg::State(s.clone()))));
             }
             continue;
         };
-        let mut gram: Vec<u8> = vec![];
+        let tag = m.generation.to_le_bytes();
+        let mut gram: Vec<u8> = tag.to_vec();
         for (s, _) in &states {
-            if !gram.is_empty() && gram.len() + s.len() > max {
+            if gram.len() > 4 && gram.len() + s.len() > max {
                 mesh.sent.fetch_add(gram.len() as u64, Ordering::Relaxed);
-                let _ = link.conn.send_datagram(std::mem::take(&mut gram).into());
+                let _ = link.conn.send_datagram(std::mem::replace(&mut gram, tag.to_vec()).into());
             }
             gram.extend(s);
         }
-        if !gram.is_empty() {
+        if gram.len() > 4 {
             mesh.sent.fetch_add(gram.len() as u64, Ordering::Relaxed);
             let _ = link.conn.send_datagram(gram.into());
         }

@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use rand::RngExt;
 
 use super::bots::BotBrain;
-use super::net::{LastUpdate, NetId, Owner, Peers, Remote};
+use super::net::{Inbox, LastUpdate, NetId, NetMsg, Outbox, Owner, Peers, Remote};
 use super::combat::{Burst, FireZone, Projectile};
 use super::loot::{Chest, Pickup, spawn_loot};
 use super::zone::Zone;
@@ -157,11 +157,28 @@ pub fn start_match(world: &mut World) {
     world.flush();
 }
 
+/// A new match, when our player asks for one or another peer has started it. Online, only once
+/// the match is over (for everyone), and the peers tell each other so they all move on together.
 fn restart(world: &mut World) {
     let requested = world.resource_mut::<Messages<RestartMatch>>().drain().count() > 0;
-    if !requested {
+    let generation = world.resource::<Match>().generation;
+    let online = world.resource::<Peers>().all.len() > 1;
+    // `apply_inbox` stops at a restart and leaves it first in the inbox.
+    let mut told = false;
+    let mut inbox = world.resource_mut::<Inbox>();
+    if let Some((_, NetMsg::Restart { generation: g })) = inbox.0.first() {
+        // An older one: we both started the same next match.
+        told = *g == generation;
+        inbox.0.remove(0);
+    }
+    let asked = requested && (!online || world.resource::<Match>().state == MatchState::Ended);
+    if !told && !asked {
         return;
     }
+    if asked && !told {
+        world.resource_mut::<Outbox>().0.push(NetMsg::Restart { generation });
+    }
+    world.resource_mut::<super::loot::Claims>().0.clear();
     let mut doomed: Vec<Entity> = vec![];
     for e in world.query_filtered::<Entity, Or<(With<Warrior>, With<Chest>, With<Pickup>, With<Projectile>, With<FireZone>, With<Burst>, With<Vimana>)>>().iter(world) {
         doomed.push(e);

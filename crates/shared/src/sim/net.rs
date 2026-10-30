@@ -87,6 +87,8 @@ pub enum NetMsg {
     /// What one of the sender's warriors carries now (sent when it changes), so the others draw
     /// the right weapon and can take the warrior over if its owner leaves.
     Inventory { id: NetId, inv: Inventory },
+    /// The sender started the next match after match `generation` ended (see `flow::restart`).
+    Restart { generation: u32 },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -172,11 +174,18 @@ fn apply_inbox(
     mut kills: MessageWriter<KillMsg>,
 ) {
     let find = |id: NetId| ids.iter().find(|(_, i, ..)| **i == id).map(|(e, _, o, remote, down)| (e, o.0, remote, down));
-    for (from, msg) in inbox.0.drain(..) {
+    let mut msgs = std::mem::take(&mut inbox.0).into_iter();
+    while let Some((from, msg)) = msgs.next() {
         if from == peers.local {
             continue;
         }
         match msg {
+            // The rest belongs to the next match: leave it for after the restart.
+            NetMsg::Restart { .. } => {
+                inbox.0.push((from, msg));
+                inbox.0.extend(msgs);
+                break;
+            }
             NetMsg::State(s) => {
                 // Only the owner speaks for a warrior; stale updates lose to newer ones.
                 let Some((e, owner, true, false)) = find(s.id) else { continue };
@@ -301,8 +310,14 @@ fn apply_loot(
     mut claims: ResMut<Claims>,
 ) {
     let mut rest = vec![];
-    for (from, msg) in inbox.0.drain(..) {
+    let mut msgs = std::mem::take(&mut inbox.0).into_iter();
+    while let Some((from, msg)) = msgs.next() {
         match msg {
+            NetMsg::Restart { .. } => {
+                rest.push((from, msg));
+                rest.extend(msgs);
+                break;
+            }
             NetMsg::ChestOpened { index } => {
                 // Both peers opening it at once is harmless: the contents are the same.
                 if let Some((ct, mut c)) = chests.iter_mut().find(|(_, c)| c.index == index && !c.opened) {

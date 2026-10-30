@@ -433,6 +433,7 @@ fn minimap(
 
 fn overlay(
     m: Res<Match>,
+    peers: Res<shared::sim::net::Peers>,
     local: Query<(Entity, Option<&Eliminated>, &Warrior), With<LocalPlayer>>,
     names: Query<&Warrior>,
     mut o: Query<&mut Visibility, With<Overlay>>,
@@ -443,7 +444,9 @@ fn overlay(
         Some(format!("VIJAYI!\n#1 of {}   Kills {}\n\nPress R to fight again", m.total, w.kills))
     } else if let Some(e) = elim {
         let by = e.by.and_then(|b| names.get(b).ok()).map(|k| format!(" by {}", k.name)).unwrap_or_default();
-        Some(format!("Eliminated{by}\n#{} of {}   Kills {}\n\nPress R to fight again", e.placement, m.total, w.kills))
+        // Online, the next match starts for everyone at once, when this one is over.
+        let next = if peers.all.len() > 1 && m.state != MatchState::Ended { "The fight goes on without you" } else { "Press R to fight again" };
+        Some(format!("Eliminated{by}\n#{} of {}   Kills {}\n\n{next}", e.placement, m.total, w.kills))
     } else {
         None
     };
