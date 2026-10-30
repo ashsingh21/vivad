@@ -11,3 +11,8 @@ avian3d = { workspace = true }
 rand = { workspace = true }
 ron = { workspace = true }
 serde = { workspace = true }
+
+# The browser build: randomness from the Web Crypto API (see .cargo/config.toml).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }
+getrandom3 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }

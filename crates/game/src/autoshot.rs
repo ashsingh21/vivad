@@ -4,7 +4,8 @@
 //!   VIVAD_TOUR_ONLY=a,b only the views whose names contain one of these.
 //!   VIVAD_TOUR_FRAMES=n  n consecutive frames per view (`<name>_f<k>.png`), for flicker checks.
 //!   VIVAD_TOUR_DRIFT=m   during a burst, slide the camera sideways m metres per frame.
-//!   VIVAD_TOUR_SETTLE=n  frames to hold each view before its shot (with VIVAD_PERF_LOG, to time it).
+//!   VIVAD_TOUR_SETTLE=n  frames to hold each view before its shot; above 120 it prints each view's
+//!                        frame rate (`[tour-fps]`; run with VIVAD_NO_VSYNC=1).
 //! VIVAD_SHOTS=<dir>     with VIVAD_AUTOPILOT=1: screenshot the match at set times, then exit.
 //! VIVAD_ARMOURY=<dir>   stand the player on open ground and screenshot every item in hand, carried
 //!   and in use (aiming, drawing, swinging, drinking), from the front and the side, then exit.
@@ -26,6 +27,8 @@ pub struct Tour {
     shots: Vec<(&'static str, Vec3, Vec3)>,
     index: usize,
     frames: u32,
+    /// When this view's timing window opened (frame 30), for VIVAD_TOUR_SETTLE runs.
+    timed_from: f64,
 }
 
 #[derive(Resource)]
@@ -115,6 +118,7 @@ impl Plugin for AutoshotPlugin {
         if let Ok(dir) = std::env::var("VIVAD_TOUR") {
             let v = |x, y, z| Vec3::new(x, y, z);
             app.insert_resource(Tour {
+                timed_from: 0.0,
                 dir,
                 shots: vec![
                     ("01_overview", v(-60.0, 260.0, 300.0), v(0.0, 0.0, 0.0)),
@@ -222,6 +226,7 @@ fn run_tour(
     mut tour: ResMut<Tour>,
     mut cam: Query<&mut Transform, With<MainCamera>>,
     houses: Query<(&shared::sim::MapBlock, &Transform), Without<MainCamera>>,
+    time: Res<Time<Real>>,
     mut exit: MessageWriter<AppExit>,
 ) {
     let Ok(mut ct) = cam.single_mut() else { return };
@@ -246,6 +251,14 @@ fn run_tour(
     let side = (look - pos).cross(Vec3::Y).normalize_or_zero() * drift * tour.frames.saturating_sub(settle - 1) as f32;
     *ct = Transform::from_translation(pos + side).looking_at(look + side, Vec3::Y);
     tour.frames += 1;
+    // With a long settle, time each view (after 30 frames for loading and LOD to settle).
+    if settle > 120 && tour.frames == 30 {
+        tour.timed_from = time.elapsed_secs_f64();
+    }
+    if settle > 120 && tour.frames == settle {
+        let fps = (settle - 30) as f64 / (time.elapsed_secs_f64() - tour.timed_from);
+        println!("[tour-fps] {name:<24} {fps:6.1}");
+    }
     // Let shadows, the atmosphere and LOD settle for a few frames per view (the first view also
     // waits for the scene to finish its first renders); `settle` is set above.
     let burst: u32 = std::env::var("VIVAD_TOUR_FRAMES").ok().and_then(|s| s.parse().ok()).unwrap_or(1);

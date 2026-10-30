@@ -30,6 +30,12 @@ Render switches for comparisons: `VIVAD_EV=9.7` (camera exposure, default 10.6),
 `VIVAD_PERF_LOG=1` the game logs FPS every 10 s; `VIVAD_NO_VSYNC=1` uncaps the frame rate so
 the numbers mean something (with vsync they stop at the display's 60).
 
+**Frame rate per view.** `just perf` holds every tour view for 400 frames uncapped and prints
+its frame rate (`[tour-fps]`); compare runs before and after a change. `VIVAD_PERF_ALL=1` logs
+every diagnostic, including the GPU time of each render pass: the shadow pass is the largest.
+Knobs for comparisons: `VIVAD_GRASS=<0..1>` (share of blades; default 0.5),
+`VIVAD_CASCADES=n` (default 3), `VIVAD_SHADOW_FAR=m` (default 200).
+
 **Weapons in the hand.** `just armoury` stands the player on open ground and captures every item
 carried and in use (aiming, drawing, swinging, drinking) from the front, side and back, then
 tiles them into `previews/armoury_sheet.png`; `just armoury pinaka,soma` for a few. The last

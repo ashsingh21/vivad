@@ -93,6 +93,10 @@ walk:
 tour:
     mkdir -p previews/graybox && VIVAD_TOUR=previews/graybox cargo run --release -p game --bin game
 
+# Frame rate per tour view, uncapped (shots go to previews/perf).
+perf:
+    mkdir -p previews/perf && VIVAD_TOUR=previews/perf VIVAD_TOUR_SETTLE=400 VIVAD_NO_VSYNC=1 cargo run --release -q -p game --bin game 2>/dev/null | grep tour-fps
+
 # Screenshot triage in text (see docs/testing.md): numbers and flags per tour shot.
 shots dir="previews/graybox":
     python3 tools/shots.py stats {{dir}}

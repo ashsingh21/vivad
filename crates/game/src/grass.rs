@@ -49,6 +49,13 @@ const REBUILD: f32 = 3.0;
 const CLUMPS: f32 = 10.0;
 const BLADES: (u32, u32) = (10, 20);
 const CARPET: f32 = 40.0;
+/// Share of the full blade count grown: VIVAD_GRASS=<0..1>. Half looks the same (the painted
+/// ground carries the colour) and saves a third of the frame where grass fills the view.
+fn density() -> f32 {
+    static D: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *D.get_or_init(|| std::env::var("VIVAD_GRASS").ok().and_then(|s| s.parse().ok()).unwrap_or(0.5f32).clamp(0.05, 1.0))
+}
+
 /// Share of blades that are dry straw.
 const DRY: f32 = 0.06;
 const RIVER: (f32, f32) = shared::map::india::RIVER_X;
@@ -318,8 +325,9 @@ fn build_chunk(k: (i32, i32), t: &Terrain, blockers: &Blockers, keep: f32) -> Op
     let tip_tint = lin([0.55, 0.68, 0.28]);
     let (cool, warm, straw) = (lin([0.17, 0.33, 0.15]), lin([0.47, 0.54, 0.2]), lin([0.72, 0.64, 0.4]));
     let mut mesh = Blades::default();
-    let clumps = (CHUNK * CHUNK * CLUMPS) as usize;
-    let carpet = (CHUNK * CHUNK * CARPET) as usize;
+    let k = density();
+    let clumps = (CHUNK * CHUNK * CLUMPS * k) as usize;
+    let carpet = (CHUNK * CHUNK * CARPET * k) as usize;
     for i in 0..clumps + carpet {
         let p = x0 + Vec2::new(rng.f(), rng.f()) * CHUNK;
         let (h, rd) = (on_mesh(t, &t.h, p.x, p.y), on_mesh(t, &t.road_d, p.x, p.y));

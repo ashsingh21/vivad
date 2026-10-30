@@ -9,8 +9,8 @@ fn main() {
     let items_ron = std::fs::read_to_string(format!("{ASSET_DIR}/data/items.ron")).expect("read items.ron");
     let bots = std::env::var("VIVAD_BOTS").ok().and_then(|s| s.parse().ok()).unwrap_or(15);
     let autopilot = std::env::var("VIVAD_AUTOPILOT").is_ok();
-    App::new()
-        .insert_resource(MatchConfig { bots, autopilot, ..default() })
+    let mut app = App::new();
+    app.insert_resource(MatchConfig { bots, autopilot, ..default() })
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
@@ -30,12 +30,16 @@ fn main() {
         .add_plugins((InputPlugin, VisualsPlugin, ArmsPlugin, FxPlugin, GrassPlugin, LampsPlugin, WarriorAnimationPlugin, SoundPlugin, BuildingsPlugin, CharacterArtPlugin, CameraPlugin, HudPlugin, AutoshotPlugin, WaterPlugin))
         .add_plugins(bevy::diagnostic::LogDiagnosticsPlugin {
             wait_duration: std::time::Duration::from_secs(10),
-            filter: std::env::var("VIVAD_PERF_LOG").is_ok().then(|| {
+            filter: std::env::var("VIVAD_PERF_ALL").is_ok().then(|| None).unwrap_or_else(|| std::env::var("VIVAD_PERF_LOG").is_ok().then(|| {
                 [bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS, bevy::diagnostic::EntityCountDiagnosticsPlugin::ENTITY_COUNT]
                     .into_iter()
                     .collect()
-            }).or(Some(Default::default())),
+            }).or(Some(Default::default()))),
             ..default()
-        })
-        .run();
+        });
+    // VIVAD_PERF_ALL=1: log every diagnostic, GPU time per render pass among them.
+    if std::env::var("VIVAD_PERF_ALL").is_ok() {
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    }
+    app.run();
 }
