@@ -558,6 +558,7 @@ fn stand_in(
 
 /// Move each remote copy on: carried by its last update's velocity, and eased onto where that
 /// update puts it now.
+#[allow(clippy::type_complexity)]
 fn follow_remote(time: Res<Time>, mut q: Query<(&mut Transform, &mut NetPose), (With<Remote>, Without<Eliminated>)>) {
     let dt = time.delta_secs();
     let ease = 1.0 - (-dt / EASE).exp();
