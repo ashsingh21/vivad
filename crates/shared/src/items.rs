@@ -1,6 +1,6 @@
 //! Item definitions (weapons, astras, consumables), loaded from `assets/data/items.ron`.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use bevy::prelude::*;
 use serde::Deserialize;
@@ -83,7 +83,7 @@ pub struct ItemDef {
 
 #[derive(Resource, Clone, Debug, Deserialize)]
 pub struct ItemDb {
-    pub items: HashMap<String, ItemDef>,
+    pub items: BTreeMap<String, ItemDef>,
     /// The weapon every warrior starts with and cannot drop.
     pub default_melee: String,
 }

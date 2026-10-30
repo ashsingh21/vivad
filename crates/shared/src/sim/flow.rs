@@ -9,7 +9,7 @@ use super::combat::{Burst, FireZone, Projectile};
 use super::loot::{Chest, Pickup, spawn_loot};
 use super::zone::Zone;
 use super::{
-    Action, CAPSULE_LENGTH, CAPSULE_RADIUS, Eliminated, FeedMsg, Health, Inventory, Kinematic, Layer, LocalPlayer,
+    match_rng, stream, Action, CAPSULE_LENGTH, CAPSULE_RADIUS, Eliminated, FeedMsg, Health, Inventory, Kinematic, Layer, LocalPlayer,
     MoveMode, PlayerIntent, PosHistory, RestartMatch, SimSet, Warrior, btn,
 };
 use crate::items::ItemDb;
@@ -38,6 +38,8 @@ pub struct Match {
     pub winner: Option<Entity>,
     /// Bumped on every restart so clients can rebuild.
     pub generation: u32,
+    /// Everything random that peers must agree on comes from this (see `MatchConfig::match_seed`).
+    pub seed: u64,
 }
 
 impl Match {
@@ -75,19 +77,22 @@ fn start_match_on_startup(world: &mut World) {
 
 /// Spawns warriors, loot and resets the zone. Everything from a previous match must already be gone.
 pub fn start_match(world: &mut World) {
+    // Bot personalities stay local: a bot is only ever run by one peer.
     let mut rng = rand::rng();
     let half = world.resource::<MapLayout>().half_extent;
-    let bots = world.resource::<super::MatchConfig>().bots;
-    let skill = world.resource::<super::MatchConfig>().bot_skill;
-    let autopilot = world.resource::<super::MatchConfig>().autopilot;
+    let config = *world.resource::<super::MatchConfig>();
+    let (bots, skill, autopilot) = (config.bots, config.bot_skill, config.autopilot);
+    let generation = world.resource::<Match>().generation + 1;
+    // A rematch with a fixed seed still differs from the last, the same way on every peer.
+    let seed = config.match_seed.map(|s| s.wrapping_add(generation as u64)).unwrap_or_else(|| rng.random());
     // Flight path crosses the map through a random chord.
-    let a = rng.random_range(0.0..std::f32::consts::TAU);
-    let off = rng.random_range(-60.0..60.0);
+    let mut path = match_rng(seed, stream::VIMANA);
+    let a = path.random_range(0.0..std::f32::consts::TAU);
+    let off = path.random_range(-60.0..60.0);
     let dir = Vec2::new(a.cos(), a.sin());
     let perp = Vec2::new(-dir.y, dir.x) * off;
     let from = (-dir * (half + 40.0) + perp).extend(VIMANA_HEIGHT);
     let to = (dir * (half + 40.0) + perp).extend(VIMANA_HEIGHT);
-    let generation = world.resource::<Match>().generation + 1;
     *world.resource_mut::<Match>() = Match {
         state: MatchState::Flight,
         vimana_from: Vec3::new(from.x, from.z, from.y),
@@ -95,18 +100,20 @@ pub fn start_match(world: &mut World) {
         total: bots + 1,
         alive: bots + 1,
         generation,
+        seed,
         ..default()
     };
-    world.insert_resource(Zone::new());
+    world.insert_resource(Zone::new(seed));
     world.spawn((Vimana, Transform::default()));
 
     let melee = world.resource::<ItemDb>().default_melee.clone();
     let mut names: Vec<&str> = BOT_NAMES.to_vec();
+    let mut name_rng = match_rng(seed, stream::NAMES);
     // VIVAD_LOOK=1 swaps every warrior's look (the player's body) for captures.
     let look_shift = std::env::var("VIVAD_LOOK").ok().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
     for i in 0..=bots {
         let is_bot = i > 0;
-        let name = if is_bot { names.remove(rng.random_range(0..names.len())).to_string() } else { "You".into() };
+        let name = if is_bot { names.remove(name_rng.random_range(0..names.len())).to_string() } else { "You".into() };
         let mut e = world.spawn((
             Warrior { name, is_bot, look: i + look_shift, kills: 0 },
             Health::default(),
@@ -130,7 +137,7 @@ pub fn start_match(world: &mut World) {
     let layout = world.resource::<MapLayout>().clone();
     let db = world.resource::<ItemDb>().clone();
     let mut commands = world.commands();
-    spawn_loot(&mut commands, &layout, &db);
+    spawn_loot(&mut commands, &layout, &db, seed);
     world.flush();
 }
 

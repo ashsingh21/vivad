@@ -4,7 +4,8 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use rand::RngExt;
 
-use super::{Eliminated, Inventory, PlayerIntent, SimSet, Warrior, btn, solid_mask};
+use super::flow::Match;
+use super::{Eliminated, Inventory, PlayerIntent, SimSet, Warrior, btn, match_rng, solid_mask, stream};
 use crate::items::{ItemDb, ItemKind, ItemStack, Rarity};
 use crate::map::{ChestKind, MapLayout};
 
@@ -12,6 +13,8 @@ pub const INTERACT_RANGE: f32 = 2.4;
 
 #[derive(Component, Clone, Debug)]
 pub struct Chest {
+    /// Index in `MapLayout::chests`: names the chest across peers and seeds its contents.
+    pub index: usize,
     pub kind: ChestKind,
     pub opened: bool,
 }
@@ -94,12 +97,12 @@ fn is_consumable(k: &ItemKind) -> bool {
     matches!(k, ItemKind::Consumable { .. })
 }
 
-/// Fresh chests and floor loot for a new match.
-pub fn spawn_loot(commands: &mut Commands, layout: &MapLayout, db: &ItemDb) {
-    let mut rng = rand::rng();
-    for c in &layout.chests {
+/// Fresh chests and floor loot for a new match (the same on every peer for the same seed).
+pub fn spawn_loot(commands: &mut Commands, layout: &MapLayout, db: &ItemDb, seed: u64) {
+    let mut rng = match_rng(seed, stream::FLOOR_LOOT);
+    for (index, c) in layout.chests.iter().enumerate() {
         commands.spawn((
-            Chest { kind: c.kind, opened: false },
+            Chest { index, kind: c.kind, opened: false },
             Transform::from_translation(c.pos).with_rotation(Quat::from_rotation_y(c.yaw)),
         ));
     }
@@ -124,8 +127,9 @@ pub fn spawn_loot(commands: &mut Commands, layout: &MapLayout, db: &ItemDb) {
     }
 }
 
-fn chest_contents(db: &ItemDb, kind: ChestKind) -> Vec<ItemStack> {
-    let mut rng = rand::rng();
+/// What a chest holds: fixed by the match seed, whoever opens it.
+pub fn chest_contents(db: &ItemDb, seed: u64, index: usize, kind: ChestKind) -> Vec<ItemStack> {
+    let mut rng = match_rng(seed, stream::CHEST + index as u64);
     let mut out = vec![];
     let rarity = roll_rarity(Some(kind), &mut rng);
     out.extend(roll_item(db, rarity, is_weapon, &mut rng));
@@ -173,6 +177,7 @@ fn interact(
     mut chests: Query<(&Transform, &mut Chest), Without<Warrior>>,
     pickups: Query<(Entity, &Transform, &Pickup), Without<Warrior>>,
     db: Res<ItemDb>,
+    m: Res<Match>,
     spatial: SpatialQuery,
 ) {
     for (tf, intent, mut inv) in &mut warriors {
@@ -188,7 +193,7 @@ fn interact(
         if let Some((ct, mut c)) = chest {
             c.opened = true;
             let fwd = ct.rotation * Vec3::Z;
-            for (i, st) in chest_contents(&db, c.kind).into_iter().enumerate() {
+            for (i, st) in chest_contents(&db, m.seed, c.index, c.kind).into_iter().enumerate() {
                 let side = (i as f32 - 1.0) * 0.7;
                 let mut at = ct.translation + fwd * 1.0 + ct.rotation * Vec3::X * side + Vec3::Y * 0.6;
                 let filter = SpatialQueryFilter::from_mask(solid_mask());

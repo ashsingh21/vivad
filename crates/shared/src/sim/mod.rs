@@ -10,6 +10,8 @@ pub mod zone;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
+use rand::SeedableRng;
+use rand::rngs::SmallRng;
 
 use crate::items::{ItemDb, ItemStack};
 use crate::map::{Block, MapLayout};
@@ -273,6 +275,9 @@ pub enum SimSet {
 #[derive(Resource, Clone, Copy)]
 pub struct MatchConfig {
     pub map_seed: u64,
+    /// Seeds everything random that every peer must agree on (the vimana's path, the zone, the
+    /// loot, the chests' contents, bot names). None: a fresh one each match (single player).
+    pub match_seed: Option<u64>,
     pub bots: u32,
     /// Let a bot brain drive the local warrior (automated play-testing).
     pub autopilot: bool,
@@ -281,7 +286,7 @@ pub struct MatchConfig {
 
 impl Default for MatchConfig {
     fn default() -> Self {
-        Self { map_seed: map_seed(), bots: 15, autopilot: false, bot_skill: BotSkill::from_env() }
+        Self { map_seed: map_seed(), match_seed: None, bots: 15, autopilot: false, bot_skill: BotSkill::from_env() }
     }
 }
 
@@ -318,6 +323,23 @@ pub fn map_seed() -> u64 {
         Ok(s) => s.trim().parse().unwrap_or_else(|_| panic!("VIVAD_MAP_SEED: expected a number or `random`, got {s:?}")),
         Err(_) => 7,
     }
+}
+
+/// What a shared random stream is for: each purpose draws from its own stream, so peers agree on
+/// it however much randomness anything else consumed.
+pub mod stream {
+    pub const VIMANA: u64 = 1;
+    pub const NAMES: u64 = 2;
+    pub const FLOOR_LOOT: u64 = 3;
+    /// + the zone phase.
+    pub const ZONE: u64 = 0x100;
+    /// + the chest's index in `MapLayout::chests`.
+    pub const CHEST: u64 = 0x1_0000;
+}
+
+/// The match's random stream for one purpose (see `stream`).
+pub fn match_rng(seed: u64, purpose: u64) -> SmallRng {
+    SmallRng::seed_from_u64(seed ^ purpose.wrapping_mul(0x9E37_79B9_7F4A_7C15))
 }
 
 pub struct SimPlugin {

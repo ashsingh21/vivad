@@ -86,6 +86,10 @@ sim matches="3" bots="15":
     cargo run --release -p shared --bin sim_check -- {{matches}} {{bots}}
 
 # Walk a test character up the stairs, into the caves and over roofs; fails on a stuck walker.
+# Peers agree without a host: the same match seed builds the same match in separate processes.
+peers seed="1234":
+    cargo run --release -p shared --bin peer_check -- {{seed}}
+
 walk:
     cargo run --release -p shared --bin walk_check
 

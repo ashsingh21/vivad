@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 use rand::RngExt;
 
-use super::{DamageCause, DamageMsg, Eliminated, SimSet, Warrior};
+use super::{DamageCause, DamageMsg, Eliminated, SimSet, Warrior, match_rng, stream};
 use super::flow::{Match, MatchState};
 
 /// (wait seconds, shrink seconds, end radius, damage per second outside)
@@ -29,19 +29,21 @@ pub struct Zone {
     pub target_center: Vec2,
     pub target_radius: f32,
     pub dps: f32,
+    /// The match seed: each phase's circle comes from it, so every peer closes the same ring.
+    seed: u64,
     tick: f32,
 }
 
 impl Zone {
-    pub fn new() -> Self {
-        let mut z = Zone { radius: START_RADIUS, from_radius: START_RADIUS, dps: 1.0, ..default() };
+    pub fn new(seed: u64) -> Self {
+        let mut z = Zone { radius: START_RADIUS, from_radius: START_RADIUS, dps: 1.0, seed, ..default() };
         z.plan_next();
         z
     }
 
     fn plan_next(&mut self) {
         let Some(&(wait, _, end_r, dps)) = PHASES.get(self.phase) else { return };
-        let mut rng = rand::rng();
+        let mut rng = match_rng(self.seed, stream::ZONE + self.phase as u64);
         // Next circle sits fully inside the current one.
         let slack = (self.radius - end_r).max(0.0) * 0.8;
         let a = rng.random_range(0.0..std::f32::consts::TAU);
@@ -61,6 +63,28 @@ impl Zone {
         p.xz().distance(self.center) > self.radius
     }
 
+    /// One tick of the battle: wait, then shrink towards the planned circle, then plan the next.
+    pub fn advance(&mut self, dt: f32) {
+        let Some(&(_, shrink, _, _)) = PHASES.get(self.phase) else { return };
+        self.timer -= dt;
+        if !self.shrinking {
+            if self.timer <= 0.0 {
+                self.shrinking = true;
+                self.timer = shrink;
+            }
+        } else {
+            let t = 1.0 - (self.timer / shrink).clamp(0.0, 1.0);
+            self.center = self.from_center.lerp(self.target_center, t);
+            self.radius = self.from_radius + (self.target_radius - self.from_radius) * t;
+            if self.timer <= 0.0 {
+                self.center = self.target_center;
+                self.radius = self.target_radius;
+                self.phase += 1;
+                self.plan_next();
+            }
+        }
+    }
+
     /// Seconds until the next change, and whether it is a shrink.
     pub fn countdown(&self) -> (f32, bool) {
         (self.timer, self.shrinking)
@@ -71,32 +95,13 @@ pub struct ZonePlugin;
 
 impl Plugin for ZonePlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(Zone::new()).add_systems(FixedUpdate, (advance_zone, burn_outside).chain().in_set(SimSet::Zone));
+        app.insert_resource(Zone::new(0)).add_systems(FixedUpdate, (advance_zone, burn_outside).chain().in_set(SimSet::Zone));
     }
 }
 
 fn advance_zone(mut zone: ResMut<Zone>, m: Res<Match>, time: Res<Time>) {
-    if m.state != MatchState::InProgress {
-        return;
-    }
-    let dt = time.delta_secs();
-    let Some(&(_, shrink, _, _)) = PHASES.get(zone.phase) else { return };
-    zone.timer -= dt;
-    if !zone.shrinking {
-        if zone.timer <= 0.0 {
-            zone.shrinking = true;
-            zone.timer = shrink;
-        }
-    } else {
-        let t = 1.0 - (zone.timer / shrink).clamp(0.0, 1.0);
-        zone.center = zone.from_center.lerp(zone.target_center, t);
-        zone.radius = zone.from_radius + (zone.target_radius - zone.from_radius) * t;
-        if zone.timer <= 0.0 {
-            zone.center = zone.target_center;
-            zone.radius = zone.target_radius;
-            zone.phase += 1;
-            zone.plan_next();
-        }
+    if m.state == MatchState::InProgress {
+        zone.advance(time.delta_secs());
     }
 }
 
