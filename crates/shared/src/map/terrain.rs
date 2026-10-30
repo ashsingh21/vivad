@@ -160,6 +160,10 @@ pub struct TerrainSpec {
     pub pits: Vec<(Vec2, Vec2, f32)>,
     /// Hills with flat summits: (center, plateau half extents, summit height, skirt width).
     pub mesas: Vec<(Vec2, Vec2, f32, f32)>,
+    /// Raised river banks: (min, max, top, skirt). Flat at `top` inside the rectangle, a smooth
+    /// skirt round three sides, and a sheer drop along max.x (where the ghats' embankment
+    /// stands) wherever z lies within the rectangle.
+    pub banks: Vec<(Vec2, Vec2, f32, f32)>,
 }
 
 pub fn generate(spec: &TerrainSpec) -> Terrain {
@@ -206,6 +210,13 @@ pub fn generate(spec: &TerrainSpec) -> Terrain {
                 // Gentle ripples on the skirt so it doesn't look turned on a lathe.
                 let rip = if outside > 2.0 { fbm(x / 18.0, z / 18.0, 2, seed + 29) * 2.0 * smoothstep(0.0, 10.0, outside) * (1.0 - smoothstep(*skirt * 0.6, *skirt, outside)) } else { 0.0 };
                 h = h.max(m + rip);
+            }
+            for (mn, mx, top, skirt) in &spec.banks {
+                if x > mx.x && z >= mn.y && z <= mx.y {
+                    continue;
+                }
+                let d = Vec2::new((mn.x - x).max(x - mx.x).max(0.0), (mn.y - z).max(z - mx.y).max(0.0)).length();
+                h = h.max(*top * (1.0 - smoothstep(0.0, *skirt, d)));
             }
             if x > rx0 && x < rx1 {
                 h = bed;

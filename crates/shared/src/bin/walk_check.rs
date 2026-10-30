@@ -163,6 +163,39 @@ fn main() {
             hurts: false,
         },
         Case {
+            // Kashi: from the deck at the top of a ghat down all three flights into the river.
+            name: "kashi ghat down to the river".into(),
+            start: Vec3::new(153.5, 5.02 + HALF_HEIGHT + 0.3, 16.7), // between two landing slots
+            dir: Vec3::X,
+            seconds: 5.0,
+            pass: Box::new(|p, _, _| p.x > 176.0 && p.y - HALF_HEIGHT < -1.4),
+            want: "on the river bed past the last step (x > 176)".into(),
+            track: everywhere(),
+            hurts: false,
+        },
+        Case {
+            name: "kashi river up a ghat".into(),
+            start: Vec3::new(176.3, -1.6 + HALF_HEIGHT + 0.3, 47.65), // inside the moored boats
+            dir: Vec3::NEG_X,
+            seconds: 7.0,
+            pass: Box::new(|p, _, _| p.x < 152.0 && p.y - HALF_HEIGHT > 4.9),
+            want: "up on the town bank (x < 152, feet > 4.9)".into(),
+            track: everywhere(),
+            hurts: false,
+        },
+        Case {
+            // Out along a burj to its prow, between the chhatri's pillars.
+            name: "kashi burj prow".into(),
+            start: Vec3::new(150.0, 5.0 + HALF_HEIGHT + 0.3, 65.5),
+            dir: Vec3::X,
+            seconds: 4.0,
+            // (One burj per map keeps a chest at its prow.)
+            pass: Box::new(|p, lo, _| p.x > 169.5 && lo > 4.9),
+            want: "out at the prow, never off the burj (x > 169.5)".into(),
+            track: everywhere(),
+            hurts: false,
+        },
+        Case {
             // From the char-bagh up the steps, through the arcade's middle bays to the back wall.
             name: "fort palace wing hall".into(),
             start: Vec3::new(131.0, 18.0 + HALF_HEIGHT + 0.3, -139.0),

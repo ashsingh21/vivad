@@ -65,6 +65,8 @@ fn terrain_spec(seed: u64) -> TerrainSpec {
             -STEPWELL_DEPTH - 2.0,
         )],
         mesas: vec![(FORT_C, Vec2::new(34.0, 28.0), FORT_TOP, 62.0)],
+        // Kashi's town stands on a bank above the river, cut sheer where the ghats stand.
+        banks: vec![(Vec2::new(KASHI_X0, GHAT_Z.0), Vec2::new(GHAT_EDGE, GHAT_Z.1), KASHI_TOP, 16.0)],
     }
 }
 
@@ -88,6 +90,10 @@ pub const AJANTA: &str = "models/props/ajanta.gltf";
 pub const MANDAPA_RUIN: &str = "models/props/mandapa_ruin.gltf";
 pub const STEPWELL: &str = "models/props/stepwell.gltf";
 pub const SAMAI: &str = "models/props/samai.gltf";
+pub const GHATS: &str = "models/props/ghats.gltf";
+pub const GHAT_SHRINE: &str = "models/props/ghat_shrine.gltf";
+pub const GHAT_UMBRELLA: &str = "models/props/ghat_umbrella.gltf";
+pub const BOATS: [&str; 2] = ["models/props/boat.gltf", "models/props/boat_bajra.gltf"];
 
 /// Run `build` and hide everything it made: colliders whose art comes from a model placed separately.
 fn hidden(b: &mut Builder, build: impl FnOnce(&mut Builder)) {
@@ -238,21 +244,97 @@ fn ground(b: &mut Builder) {
 
 // ------------------------------------------------------------------ Kashi Ghat
 
+// The ghats' plan, shared with tools/blender/architecture/ghats.py: the town bank's height, its
+// sheer river edge and extent, the deck along the top, three flights descending east with a
+// landing between each, and the six burj (bastions) dividing the five ghats.
+const KASHI_TOP: f32 = 5.0;
+const KASHI_X0: f32 = 112.0;
+const GHAT_EDGE: f32 = 156.0;
+const GHAT_Z: (f32, f32) = (-30.0, 130.0);
+const GHAT_DECK: f32 = 5.02;
+const GHAT_TERRACE_X: f32 = 152.0;
+const GHAT_BOTTOM: f32 = -1.7;
+const GHAT_FLIGHTS: [(f32, f32, f32, f32); 3] = [(156.0, 160.0, GHAT_DECK, 2.82), (164.0, 168.0, 2.82, 0.62), (170.5, 175.5, 0.62, RIVER_BED + 0.08)];
+const BURJ_Z: [f32; 6] = [-26.5, 4.0, 34.5, 65.5, 96.0, 126.5];
+const BURJ_HALF: f32 = 3.5;
+const BURJ_TIP: f32 = 171.0;
+const BURJ_PARAPET: (f32, f32) = (0.4, 0.9);
+
 fn river_and_ghats(b: &mut Builder, rng: &mut SmallRng) {
     let (x0, x1) = RIVER_X;
     // 2 cm short of the banks, so its edges tuck inside the ghat steps rather than lying flush.
     b.push(Vec3::new((x0 + x1) / 2.0, -0.55, 0.0), Quat::IDENTITY,
            super::Shape::Box(Vec3::new(x1 - x0 - 0.04, 0.02, 2.0 * HALF + 60.0)), Mat::Water, false, true);
 
-    // Ghats: broad stone steps down to the water on the west bank, with shrines on top.
-    for zc in [-10.0, 30.0, 70.0, 110.0] {
-        let f = Frame::new(Vec3::new(x0, 0.0, zc), PI); // +X points west, away from the river
-        let run = 7.0;
-        b.stairs(f, Vec3::new(-run, RIVER_BED, 0.0), run, -RIVER_BED, 24.0, Mat::Sandstone);
-        b.span(f, Vec3::new(0.0, -0.4, -12.0), Vec3::new(4.0, 0.0, 12.0), Mat::Sandstone);
-        b.chhatri(f, Vec3::new(2.0, 0.0, -9.0), 3.2, Mat::Sandstone);
-        b.chhatri(f, Vec3::new(2.0, 0.0, 9.0), 3.2, Mat::Sandstone);
-        b.loot(f, Vec3::new(-3.0, -0.8, 0.0));
+    // The west bank's ghats: the embankment model over flights, landings and burj colliders.
+    let w = world();
+    b.map.props.push(Prop { model: GHATS, pos: Vec3::ZERO, yaw: 0.0, scale: 1.0, trunk: None });
+    let ghats: Vec<(f32, f32)> = BURJ_Z.windows(2).map(|p| (p[0] + BURJ_HALF, p[1] - BURJ_HALF)).collect();
+    hidden(b, |b| {
+        for &(z0, z1) in &ghats {
+            let (zm, width) = ((z0 + z1) / 2.0, z1 - z0);
+            b.span(w, Vec3::new(GHAT_TERRACE_X, GHAT_BOTTOM, z0), Vec3::new(GHAT_FLIGHTS[0].0, GHAT_DECK, z1), Mat::Sandstone);
+            for (k, &(fx0, fx1, fy0, fy1)) in GHAT_FLIGHTS.iter().enumerate() {
+                // Climbing west: start at the flight's foot.
+                b.stairs(Frame::new(Vec3::new(fx1, 0.0, zm), PI), Vec3::new(0.0, fy1, 0.0), fx1 - fx0, fy0 - fy1, width, Mat::Sandstone);
+                b.span(w, Vec3::new(fx0, GHAT_BOTTOM, z0), Vec3::new(fx1, fy1, z1), Mat::Sandstone);
+                if let Some(&(nx0, ..)) = GHAT_FLIGHTS.get(k + 1) {
+                    b.span(w, Vec3::new(fx1, GHAT_BOTTOM, z0), Vec3::new(nx0, fy1, z1), Mat::Sandstone);
+                }
+            }
+        }
+        let (t, ph) = BURJ_PARAPET;
+        for zc in BURJ_Z {
+            b.span(w, Vec3::new(GHAT_TERRACE_X, GHAT_BOTTOM, zc - BURJ_HALF), Vec3::new(BURJ_TIP, GHAT_DECK, zc + BURJ_HALF), Mat::Sandstone);
+            b.cyl(w, Vec3::new(BURJ_TIP, GHAT_BOTTOM, zc), BURJ_HALF, GHAT_DECK - GHAT_BOTTOM, Mat::Sandstone);
+            for s in [-1.0, 1.0] {
+                let (za, zb) = (zc + s * BURJ_HALF, zc + s * (BURJ_HALF - t));
+                b.span(w, Vec3::new(156.0, GHAT_DECK, za.min(zb)), Vec3::new(BURJ_TIP, GHAT_DECK + ph + 0.1, za.max(zb)), Mat::Sandstone);
+            }
+            // The prow's parapet in chords.
+            let n = 8;
+            for k in 0..n {
+                let a = -FRAC_PI_2 + PI * (k as f32 + 0.5) / n as f32;
+                let r = BURJ_HALF - t / 2.0;
+                let p = Vec3::new(BURJ_TIP + r * a.cos(), GHAT_DECK, zc - r * a.sin());
+                let chord = 2.0 * BURJ_HALF * (PI / (2.0 * n as f32)).sin() + 0.1;
+                let pf = Frame::new(p, a + FRAC_PI_2);
+                b.span(pf, Vec3::new(-chord / 2.0, 0.0, -t / 2.0), Vec3::new(chord / 2.0, ph + 0.1, t / 2.0), Mat::Sandstone);
+            }
+        }
+    });
+    // A chhatri on every burj's prow, a chest under one of them.
+    let chest_at = rng.random_range(1..BURJ_Z.len() - 1);
+    for (i, zc) in BURJ_Z.into_iter().enumerate() {
+        b.chhatri(w, Vec3::new(BURJ_TIP, GHAT_DECK, zc), 3.2, Mat::Sandstone);
+        if i == chest_at {
+            b.chest(w, Vec3::new(BURJ_TIP, GHAT_DECK, zc), -FRAC_PI_2, ChestKind::Kalash);
+        }
+    }
+    // On the landings: Shiva shrines on the upper one, cane umbrellas over chowkis lower down.
+    let (l1, l2) = ((GHAT_FLIGHTS[0].1 + GHAT_FLIGHTS[1].0) / 2.0, (GHAT_FLIGHTS[1].1 + GHAT_FLIGHTS[2].0) / 2.0);
+    for &(z0, z1) in &ghats {
+        let slots: Vec<f32> = (0..5).map(|i| z0 + 2.6 + i as f32 * (z1 - z0 - 5.2) / 4.0).collect();
+        let shrines = rng.random_range(1..=2);
+        let mut taken = vec![false; slots.len()];
+        for _ in 0..shrines {
+            let i = rng.random_range(0..slots.len());
+            if taken[i] || (i > 0 && taken[i - 1]) || taken.get(i + 1).copied().unwrap_or(false) {
+                continue;
+            }
+            taken[i] = true;
+            ghat_shrine(b, Vec3::new(l1, GHAT_FLIGHTS[0].3, slots[i]));
+        }
+        for (i, &z) in slots.iter().enumerate() {
+            if !taken[i] && rng.random_bool(0.35) {
+                ghat_umbrella(b, Vec3::new(l1, GHAT_FLIGHTS[0].3, z), rng.random_range(-0.4..0.4));
+            }
+            if rng.random_bool(0.5) {
+                ghat_umbrella(b, Vec3::new(l2 + 0.1, GHAT_FLIGHTS[1].3, z), rng.random_range(-0.4..0.4));
+            }
+        }
+        b.loot(w, Vec3::new(l2, GHAT_FLIGHTS[1].3 + 0.3, (z0 + z1) / 2.0));
+        b.loot(w, Vec3::new(GHAT_TERRACE_X + 2.0, GHAT_DECK + 0.3, rng.random_range(z0 + 2.0..z1 - 2.0)));
     }
     // East bank ghats so the river is never a trap.
     for zc in [-90.0, 20.0, 140.0] {
@@ -268,28 +350,70 @@ fn river_and_ghats(b: &mut Builder, rng: &mut SmallRng) {
     for i in 0..3 {
         b.cyl(bf, Vec3::new(-8.0 + 8.0 * i as f32, RIVER_BED, 0.0), 1.6, -RIVER_BED - 0.8, Mat::Sandstone);
     }
-    // Boats for cover.
-    for _ in 0..7 {
-        let z = rng.random_range(-200.0..200.0);
-        let x = rng.random_range(x0 + 4.0..x1 - 4.0);
-        let f = Frame::new(Vec3::new(x, RIVER_BED, z), rng.random_range(-0.3..0.3) + FRAC_PI_2);
-        b.bx(f, Vec3::new(0.0, 0.6, 0.0), Vec3::new(7.0, 1.2, 2.2), Mat::Wood);
-        b.bx(f, Vec3::new(0.0, 1.7, 0.0), Vec3::new(2.4, 0.1, 2.4), Mat::Cloth);
+    // Boats moored off the ghats and drifting along the river, for cover; afloat with a hand's
+    // breadth of hull above the water. The hull collider reaches the bed so no one walks under.
+    let mut boats: Vec<Vec2> = vec![];
+    while boats.len() < 9 {
+        let off_ghats = boats.len() < 5;
+        let z = if off_ghats { rng.random_range(GHAT_Z.0..GHAT_Z.1) } else { rng.random_range(-200.0..200.0) };
+        let x = if off_ghats { rng.random_range(178.5..182.0) } else { rng.random_range(x0 + 4.0..x1 - 4.0) };
+        let p = Vec2::new(x, z);
+        if boats.iter().any(|q| q.distance(p) < 9.0) || (z + 45.0).abs() < 8.0 {
+            continue;
+        }
+        boats.push(p);
+        let yaw = FRAC_PI_2 + rng.random_range(-0.25..0.25);
+        let f = Frame::new(Vec3::new(x, BOAT_KEEL, z), yaw);
+        let bajra = rng.random_bool(0.4);
+        b.ornament(f, Vec3::ZERO, 0.0, BOATS[bajra as usize], Vec3::ONE);
+        hidden(b, |b| {
+            b.span(f, Vec3::new(-3.2, RIVER_BED - BOAT_KEEL, -0.9), Vec3::new(3.2, 0.85, 0.9), Mat::Wood);
+            if bajra {
+                b.span(f, Vec3::new(-1.3, 2.2, -1.0), Vec3::new(1.3, 2.45, 1.0), Mat::Cloth);
+                for (sx, sz) in [(-1.1, -0.8), (1.1, -0.8), (1.1, 0.8), (-1.1, 0.8)] {
+                    b.cyl(f, Vec3::new(sx, 0.85, sz), 0.05, 1.4, Mat::Wood);
+                }
+            }
+        });
     }
-    // Riverside town: houses and temples along the ghats.
-    let mut z = -40.0;
-    while z < 130.0 {
-        let x = rng.random_range(140.0..158.0);
+    // The town on the bank: houses fronting the ghats and two temples behind them.
+    let mut z = GHAT_Z.0 + 4.0;
+    while z < GHAT_Z.1 - 6.0 {
         let wdt = rng.random_range(8.0..11.0);
         let dep = rng.random_range(7.0..10.0);
         let floors = rng.random_range(1..=3);
-        let f = Frame::new(Vec3::new(x, 0.0, z), FRAC_PI_2); // door faces the river (east)
+        let x = GHAT_TERRACE_X - 2.0 - dep / 2.0 - rng.random_range(0.0..3.0);
+        let f = Frame::new(Vec3::new(x, KASHI_TOP, z + wdt / 2.0), FRAC_PI_2); // door faces the river (east)
         let mat = pick_plaster(rng);
         house(b, rng, f, wdt, dep, floors, mat);
         z += wdt + rng.random_range(3.0..7.0);
     }
-    temple(b, rng, Frame::new(Vec3::new(125.0, 0.0, 15.0), FRAC_PI_2), 1.0);
-    temple(b, rng, Frame::new(Vec3::new(128.0, 0.0, 85.0), FRAC_PI_2), 0.8);
+    temple(b, rng, Frame::new(Vec3::new(125.0, KASHI_TOP, 15.0), FRAC_PI_2), 1.0);
+    temple(b, rng, Frame::new(Vec3::new(128.0, KASHI_TOP, 85.0), FRAC_PI_2), 0.8);
+}
+
+/// The boats' keel height: they float with 0.3 m of draught.
+const BOAT_KEEL: f32 = -0.85;
+
+/// A small Shiva shrine (2 x 2 m, door to the river): a solid collider up to the spire's top.
+fn ghat_shrine(b: &mut Builder, pos: Vec3) {
+    let f = Frame::new(pos, 0.0);
+    b.ornament(f, Vec3::ZERO, 0.0, GHAT_SHRINE, Vec3::ONE);
+    hidden(b, |b| {
+        b.span(f, Vec3::new(-1.0, 0.0, -1.0), Vec3::new(1.0, 0.3, 1.0), Mat::Sandstone);
+        b.span(f, Vec3::new(-0.86, 0.3, -0.86), Vec3::new(0.86, 2.06, 0.86), Mat::Sandstone);
+        b.span(f, Vec3::new(-0.55, 2.06, -0.55), Vec3::new(0.55, 3.7, 0.55), Mat::Sandstone);
+    });
+}
+
+/// A cane umbrella over a wooden chowki: the platform and the pole collide, the canopy doesn't.
+fn ghat_umbrella(b: &mut Builder, pos: Vec3, yaw: f32) {
+    let f = Frame::new(pos, yaw);
+    b.ornament(f, Vec3::ZERO, 0.0, GHAT_UMBRELLA, Vec3::ONE);
+    hidden(b, |b| {
+        b.span(f, Vec3::new(-1.0, 0.0, -0.65), Vec3::new(1.0, 0.45, 0.65), Mat::Wood);
+        b.cyl(f, Vec3::new(-0.15, 0.0, -0.73), 0.06, 2.7, Mat::Wood);
+    });
 }
 
 // ------------------------------------------------------------------ Chandni Bazaar
@@ -1554,7 +1678,7 @@ fn scatter_trees(b: &mut Builder, rng: &mut SmallRng, n: u32) {
     for _ in 0..70 {
         let z = rng.random_range(-HALF + 5.0..HALF - 5.0);
         let x = if rng.random_bool(0.6) { rng.random_range(RIVER_X.0 - 14.0..RIVER_X.0 - 3.0) } else { rng.random_range(RIVER_X.1 + 3.0..RIVER_X.1 + 16.0) };
-        if (x - 150.0).abs() < 12.0 && z > -45.0 && z < 135.0 || blocked(b.map, Vec2::new(x, z), 1.0) {
+        if x > KASHI_X0 && x < RIVER_X.0 && z > GHAT_Z.0 - 10.0 && z < GHAT_Z.1 + 10.0 || blocked(b.map, Vec2::new(x, z), 1.0) {
             continue; // keep the ghat town's houses (and the ghats) clear
         }
         prop(b, TREE_PALM, Vec3::new(x, 0.0, z), rng.random_range(0.0..tau), rng.random_range(0.85..1.15));
