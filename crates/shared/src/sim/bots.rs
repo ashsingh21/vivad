@@ -103,7 +103,7 @@ fn yaw_pitch_to(from: Vec3, to: Vec3) -> (f32, f32) {
 }
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
-fn drive_bots(
+pub(crate) fn drive_bots(
     mut bots: Query<
         (Entity, &Transform, &mut BotBrain, &mut PlayerIntent, &Kinematic, &Inventory, &Health),
         Without<Eliminated>,

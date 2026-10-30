@@ -71,7 +71,7 @@ fn feet_probe(spatial: &SpatialQuery, center: Vec3, entity: Entity, max: f32) ->
 
 #[allow(clippy::type_complexity)]
 fn move_warriors(
-    mut q: Query<(Entity, &mut Transform, &mut Kinematic, &PlayerIntent, &Collider), Without<Eliminated>>,
+    mut q: Query<(Entity, &mut Transform, &mut Kinematic, &PlayerIntent, &Collider), (Without<Eliminated>, Without<super::net::Remote>)>,
     move_and_slide: MoveAndSlide,
     spatial: SpatialQuery,
     time: Res<Time>,

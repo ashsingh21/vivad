@@ -10,6 +10,7 @@ use super::{
 };
 use crate::items::{AstraEffect, ItemDb, ItemKind, ItemStack};
 use crate::sim::loot::spawn_pickup;
+use crate::sim::net::Remote;
 
 pub struct CombatPlugin;
 
@@ -57,7 +58,7 @@ pub struct Burst {
     pub ttl: f32,
 }
 
-fn select_slot(mut q: Query<(&PlayerIntent, &mut Inventory, &mut Action), Without<Eliminated>>) {
+fn select_slot(mut q: Query<(&PlayerIntent, &mut Inventory, &mut Action), (Without<Eliminated>, Without<Remote>)>) {
     for (intent, mut inv, mut act) in &mut q {
         if let Some(s) = intent.select {
             let s = s as usize;
@@ -81,7 +82,7 @@ fn use_items(
     mut commands: Commands,
     mut q: Query<
         (Entity, &Transform, &PlayerIntent, &mut Inventory, &mut Action, &mut Health, &Kinematic),
-        Without<Eliminated>,
+        (Without<Eliminated>, Without<Remote>),
     >,
     db: Res<ItemDb>,
     spatial: SpatialQuery,
@@ -281,7 +282,7 @@ fn step_projectiles(
     mut commands: Commands,
     mut q: Query<(Entity, &mut Transform, &mut Projectile)>,
     warriors: Query<&Transform, (With<Warrior>, Without<Projectile>)>,
-    mut kin: Query<(&Transform, &mut Kinematic), (With<Warrior>, Without<Eliminated>, Without<Projectile>)>,
+    mut kin: Query<(&Transform, &mut Kinematic), (With<Warrior>, Without<Eliminated>, Without<Projectile>, Without<Remote>)>,
     spatial: SpatialQuery,
     time: Res<Time>,
     mut damage: MessageWriter<DamageMsg>,
@@ -334,7 +335,7 @@ fn step_projectiles(
 
 fn astra_burst(
     commands: &mut Commands,
-    kin: &mut Query<(&Transform, &mut Kinematic), (With<Warrior>, Without<Eliminated>, Without<Projectile>)>,
+    kin: &mut Query<(&Transform, &mut Kinematic), (With<Warrior>, Without<Eliminated>, Without<Projectile>, Without<Remote>)>,
     owner: Entity,
     at: Vec3,
     effect: &AstraEffect,
@@ -365,7 +366,7 @@ fn astra_burst(
 fn tick_fire_zones(
     mut commands: Commands,
     mut zones: Query<(Entity, &Transform, &mut FireZone)>,
-    warriors: Query<(Entity, &Transform), (With<Warrior>, Without<Eliminated>)>,
+    warriors: Query<(Entity, &Transform), (With<Warrior>, Without<Eliminated>, Without<Remote>)>,
     time: Res<Time>,
     mut damage: MessageWriter<DamageMsg>,
 ) {
@@ -395,7 +396,8 @@ fn tick_fire_zones(
 fn apply_damage(
     mut commands: Commands,
     mut msgs: MessageReader<DamageMsg>,
-    mut targets: Query<(&mut Health, &Transform, &mut Inventory, &Warrior), Without<Eliminated>>,
+    // Each peer applies damage only to its own warriors (hits on others go to their owners).
+    mut targets: Query<(&mut Health, &Transform, &mut Inventory, &Warrior), (Without<Eliminated>, Without<Remote>)>,
     mut doors: Query<&mut Door>,
     alive: Query<(), (With<Warrior>, Without<Eliminated>)>,
     db: Res<ItemDb>,

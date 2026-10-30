@@ -6,6 +6,7 @@ pub mod combat;
 pub mod flow;
 pub mod loot;
 pub mod movement;
+pub mod net;
 pub mod zone;
 
 use avian3d::prelude::*;
@@ -384,6 +385,7 @@ impl Plugin for SimPlugin {
                 loot::LootPlugin,
                 zone::ZonePlugin,
                 bots::BotPlugin,
+                net::NetPlugin,
             ));
     }
 }

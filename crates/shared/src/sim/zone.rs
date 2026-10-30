@@ -108,7 +108,7 @@ fn advance_zone(mut zone: ResMut<Zone>, m: Res<Match>, time: Res<Time>) {
 fn burn_outside(
     mut zone: ResMut<Zone>,
     m: Res<Match>,
-    q: Query<(Entity, &Transform), (With<Warrior>, Without<Eliminated>)>,
+    q: Query<(Entity, &Transform), (With<Warrior>, Without<Eliminated>, Without<super::net::Remote>)>,
     time: Res<Time>,
     mut damage: MessageWriter<DamageMsg>,
 ) {

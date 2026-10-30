@@ -90,6 +90,10 @@ sim matches="3" bots="15":
 peers seed="1234":
     cargo run --release -p shared --bin peer_check -- {{seed}}
 
+# Peers in one process over an in-memory pipe: roster, ownership, warriors seen where they are.
+net peers="3" bots="6" seconds="90":
+    cargo run --release -p shared --bin net_check -- {{peers}} {{bots}} {{seconds}}
+
 walk:
     cargo run --release -p shared --bin walk_check
 

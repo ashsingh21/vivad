@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use rand::RngExt;
 
 use super::bots::BotBrain;
+use super::net::{LastUpdate, NetId, Owner, Peers, Remote};
 use super::combat::{Burst, FireZone, Projectile};
 use super::loot::{Chest, Pickup, spawn_loot};
 use super::zone::Zone;
@@ -82,6 +83,8 @@ pub fn start_match(world: &mut World) {
     let half = world.resource::<MapLayout>().half_extent;
     let config = *world.resource::<super::MatchConfig>();
     let (bots, skill, autopilot) = (config.bots, config.bot_skill, config.autopilot);
+    let peers = world.resource::<Peers>().clone();
+    let humans = peers.all.len() as u32;
     let generation = world.resource::<Match>().generation + 1;
     // A rematch with a fixed seed still differs from the last, the same way on every peer.
     let seed = config.match_seed.map(|s| s.wrapping_add(generation as u64)).unwrap_or_else(|| rng.random());
@@ -97,8 +100,8 @@ pub fn start_match(world: &mut World) {
         state: MatchState::Flight,
         vimana_from: Vec3::new(from.x, from.z, from.y),
         vimana_to: Vec3::new(to.x, to.z, to.y),
-        total: bots + 1,
-        alive: bots + 1,
+        total: humans + bots,
+        alive: humans + bots,
         generation,
         seed,
         ..default()
@@ -111,10 +114,21 @@ pub fn start_match(world: &mut World) {
     let mut name_rng = match_rng(seed, stream::NAMES);
     // VIVAD_LOOK=1 swaps every warrior's look (the player's body) for captures.
     let look_shift = std::env::var("VIVAD_LOOK").ok().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
-    for i in 0..=bots {
-        let is_bot = i > 0;
-        let name = if is_bot { names.remove(name_rng.random_range(0..names.len())).to_string() } else { "You".into() };
+    // The roster, the same on every peer: a warrior per peer (in peer order), then the bots.
+    for i in 0..humans + bots {
+        let is_bot = i >= humans;
+        let owner = if is_bot { peers.bot_owner(i - humans) } else { peers.all[i as usize] };
+        let local = owner == peers.local;
+        let name = if is_bot {
+            names.remove(name_rng.random_range(0..names.len())).to_string()
+        } else if local {
+            "You".into()
+        } else {
+            format!("Warrior {}", i + 1)
+        };
         let mut e = world.spawn((
+            NetId(i),
+            Owner(owner),
             Warrior { name, is_bot, look: i + look_shift, kills: 0 },
             Health::default(),
             Inventory::new(&melee),
@@ -127,10 +141,12 @@ pub fn start_match(world: &mut World) {
             Collider::capsule(CAPSULE_RADIUS, CAPSULE_LENGTH),
             CollisionLayers::new(Layer::Character, [Layer::World, Layer::Door]),
         ));
-        if is_bot || autopilot {
+        if !local {
+            e.insert((Remote, LastUpdate::default()));
+        } else if is_bot || autopilot {
             e.insert(BotBrain::new(&mut rng, skill));
         }
-        if !is_bot {
+        if local && !is_bot {
             e.insert(LocalPlayer);
         }
     }
@@ -159,7 +175,7 @@ fn restart(world: &mut World) {
 #[allow(clippy::type_complexity)]
 fn fly_vimana(
     mut m: ResMut<Match>,
-    mut riders: Query<(&mut Transform, &mut Kinematic, &PlayerIntent), (With<Warrior>, Without<Vimana>)>,
+    mut riders: Query<(&mut Transform, &mut Kinematic, &PlayerIntent), (With<Warrior>, Without<Vimana>, Without<Remote>)>,
     mut vimana: Query<&mut Transform, With<Vimana>>,
     time: Res<Time>,
 ) {

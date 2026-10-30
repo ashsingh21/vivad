@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use rand::RngExt;
 
 use super::flow::Match;
+use super::net::Remote;
 use super::{Eliminated, Inventory, PlayerIntent, SimSet, Warrior, btn, match_rng, solid_mask, stream};
 use crate::items::{ItemDb, ItemKind, ItemStack, Rarity};
 use crate::map::{ChestKind, MapLayout};
@@ -173,7 +174,7 @@ pub fn give(inv: &mut Inventory, db: &ItemDb, mut st: ItemStack) -> Option<ItemS
 #[allow(clippy::type_complexity)]
 fn interact(
     mut commands: Commands,
-    mut warriors: Query<(&Transform, &PlayerIntent, &mut Inventory), (With<Warrior>, Without<Eliminated>)>,
+    mut warriors: Query<(&Transform, &PlayerIntent, &mut Inventory), (With<Warrior>, Without<Eliminated>, Without<Remote>)>,
     mut chests: Query<(&Transform, &mut Chest), Without<Warrior>>,
     pickups: Query<(Entity, &Transform, &Pickup), Without<Warrior>>,
     db: Res<ItemDb>,
@@ -225,7 +226,7 @@ fn interact(
 
 fn auto_pickup_arrows(
     mut commands: Commands,
-    mut warriors: Query<(&Transform, &mut Inventory), (With<Warrior>, Without<Eliminated>)>,
+    mut warriors: Query<(&Transform, &mut Inventory), (With<Warrior>, Without<Eliminated>, Without<Remote>)>,
     pickups: Query<(Entity, &Transform, &Pickup), Without<Warrior>>,
 ) {
     for (pe, pt, p) in &pickups {
