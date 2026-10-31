@@ -11,7 +11,7 @@ use bevy::camera::visibility::VisibilityRange;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 use shared::map::MapLayout;
-use shared::sim::{HALF_HEIGHT, PropIndex, Warrior};
+use shared::sim::{HALF_HEIGHT, OfMap, PropIndex, Warrior, map_reloaded};
 
 use crate::visuals::{Glider, HeldWeapon, WarriorVisual};
 
@@ -21,7 +21,8 @@ impl Plugin for CharacterArtPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, load_models)
             .add_systems(Startup, spawn_ornaments.after(load_models))
-        .add_systems(Update, (dress_props, dress_warriors, bind_animations, swap_weapons));
+            .add_systems(Update, (load_props, spawn_ornaments).chain().run_if(map_reloaded).before(dress_props))
+            .add_systems(Update, (dress_props, dress_warriors, bind_animations, swap_weapons));
     }
 }
 
@@ -33,18 +34,24 @@ struct Models {
 }
 
 fn load_models(mut commands: Commands, assets: Res<AssetServer>, layout: Res<MapLayout>) {
-    let mut props = HashMap::new();
-    for p in &layout.props {
-        props.entry(p.model).or_insert_with(|| assets.load(GltfAssetLabel::Scene(0).from_asset(p.model)));
-    }
-    for o in &layout.ornaments {
-        props.entry(o.model).or_insert_with(|| assets.load(GltfAssetLabel::Scene(0).from_asset(o.model)));
-    }
     commands.insert_resource(Models {
         male: assets.load(GltfAssetLabel::Scene(0).from_asset("models/characters/male.glb")),
         female: assets.load(GltfAssetLabel::Scene(0).from_asset("models/characters/female.glb")),
-        props,
+        props: prop_models(&assets, &layout),
     });
+}
+
+fn prop_models(assets: &AssetServer, layout: &MapLayout) -> HashMap<&'static str, Handle<WorldAsset>> {
+    let mut props = HashMap::new();
+    for model in layout.props.iter().map(|p| p.model).chain(layout.ornaments.iter().map(|o| o.model)) {
+        props.entry(model).or_insert_with(|| assets.load(GltfAssetLabel::Scene(0).from_asset(model)));
+    }
+    props
+}
+
+/// Another map: its props' and kit pieces' models.
+fn load_props(mut models: ResMut<Models>, assets: Res<AssetServer>, layout: Res<MapLayout>) {
+    models.props = prop_models(&assets, &layout);
 }
 
 /// A LOD node's visibility range before the quality level scales it (crate::quality::LodScale),
@@ -135,6 +142,7 @@ fn spawn_ornaments(mut commands: Commands, layout: Res<MapLayout>, models: Res<M
             .spawn((
                 WorldAssetRoot(models.props[o.model].clone()),
                 Transform { translation: o.pos, rotation: o.rot, scale: o.scale },
+                OfMap,
             ))
             .observe(move |ready: On<WorldInstanceReady>, children: Query<&Children>, names: Query<&Name>, scale: Res<crate::quality::LodScale>, mut commands: Commands| {
                 // Pieces with a LOD1 switch to it at 45 m; single-LOD pieces stay on LOD0 until they fade.

@@ -92,6 +92,7 @@ impl Plugin for BotPlugin {
 /// Bots on foot don't walk off a drop that would hurt badly (cliff tops, the stepwell's rim): with
 /// no ground within 6 m below the next step (on foot or mid-jump), they stop. A healthy bot will
 /// take a storey's roof (up to 13 m, about 35 damage) rather than be stranded up there.
+#[allow(clippy::type_complexity)]
 fn mind_the_drop(
     mut bots: Query<(Entity, &Transform, &mut PlayerIntent, &Kinematic, &Health), (With<BotBrain>, Without<Eliminated>)>,
     spatial: SpatialQuery,

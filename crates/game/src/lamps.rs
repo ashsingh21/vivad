@@ -5,12 +5,13 @@ use std::f32::consts::TAU;
 
 use bevy::prelude::*;
 use shared::map::MapLayout;
+use shared::sim::{OfMap, map_reloaded};
 
 pub struct LampsPlugin;
 
 impl Plugin for LampsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_lamps).add_systems(Update, flicker);
+        app.add_systems(Startup, spawn_lamps).add_systems(Update, (spawn_lamps.run_if(map_reloaded), flicker));
     }
 }
 
@@ -42,10 +43,10 @@ fn spawn_lamps(mut commands: Commands, layout: Res<MapLayout>, mut meshes: ResMu
             shadow_maps_enabled: false,
             ..default()
         };
-        let mut e = commands.spawn((light, Transform::from_translation(lamp.pos + Vec3::Y * 0.08)));
+        let mut e = commands.spawn((light, Transform::from_translation(lamp.pos + Vec3::Y * 0.08), OfMap));
         if let Some((r, n)) = lamp.flames {
             e.insert(Flicker { base: lamp.lumens, seed });
-            commands.spawn((Transform::from_translation(lamp.pos), Visibility::default())).with_children(|c| {
+            commands.spawn((Transform::from_translation(lamp.pos), Visibility::default(), OfMap)).with_children(|c| {
                 for k in 0..n {
                     let a = TAU * k as f32 / n as f32;
                     c.spawn((

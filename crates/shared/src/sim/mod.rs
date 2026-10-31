@@ -211,6 +211,32 @@ pub struct Action {
 #[derive(Component, Clone, Debug)]
 pub struct MapBlock(pub Block);
 
+/// Everything built from the map, here (colliders) and in the client (meshes, lamps, grass):
+/// cleared when another map is loaded (`load_map`). Its children go with it.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct OfMap;
+
+/// The map was swapped for another this frame (not its first load): for systems that build from
+/// `MapLayout` at startup to run again.
+pub fn map_reloaded(layout: Res<MapLayout>) -> bool {
+    layout.is_changed() && !layout.is_added()
+}
+
+/// Puts `map` in place of the current one: its layout, and the world's map entities rebuilt from
+/// it. The client rebuilds its own when it sees `MapLayout` change (`map_reloaded`).
+pub fn load_map(world: &mut World, map: crate::map::MapId) {
+    let seed = world.resource::<MatchConfig>().map_seed;
+    world.resource_mut::<MatchConfig>().map = map;
+    *world.resource_mut::<MapLayout>() = crate::map::generate(map, seed);
+    let doomed: Vec<Entity> = world.query_filtered::<Entity, With<OfMap>>().iter(world).collect();
+    for e in doomed {
+        if let Ok(e) = world.get_entity_mut(e) {
+            e.despawn();
+        }
+    }
+    world.run_system_cached(spawn_map).expect("spawn_map");
+}
+
 /// The heightfield ground; clients build its mesh from `MapLayout::terrain`.
 #[derive(Component, Clone, Copy, Debug)]
 pub struct MapTerrain;
@@ -293,6 +319,9 @@ pub struct MatchConfig {
     pub bot_skill: BotSkill,
     /// Online: no match at startup; the transport starts one when the lobby fills.
     pub online: bool,
+    /// A new map for each match (the one most voted for, else the next in turn): on unless
+    /// VIVAD_ROTATE=0.
+    pub rotate: bool,
 }
 
 /// While set, the match stands still (online, until every peer has loaded it).
@@ -301,7 +330,7 @@ pub struct Hold(pub bool);
 
 impl Default for MatchConfig {
     fn default() -> Self {
-        Self { map: crate::map::MapId::from_env(), map_seed: map_seed(), match_seed: None, bots: 15, autopilot: false, bot_skill: BotSkill::from_env(), online: false }
+        Self { map: crate::map::MapId::from_env(), map_seed: map_seed(), match_seed: None, bots: 15, autopilot: false, bot_skill: BotSkill::from_env(), online: false, rotate: std::env::var("VIVAD_ROTATE").as_deref() != Ok("0") }
     }
 }
 
@@ -377,6 +406,8 @@ impl Plugin for SimPlugin {
             .add_message::<FeedMsg>()
             .add_message::<HitMsg>()
             .add_message::<RestartMatch>()
+            .add_message::<flow::VoteMap>()
+            .init_resource::<flow::MapVotes>()
             .configure_sets(
                 FixedUpdate,
                 (
@@ -426,6 +457,7 @@ fn spawn_map(mut commands: Commands, layout: Res<MapLayout>) {
     let t = &layout.terrain;
     commands.spawn((
         MapTerrain,
+        OfMap,
         Transform::default(),
         RigidBody::Static,
         Collider::heightfield(t.rows(), Vec3::new(t.size, 1.0, t.size)),
@@ -434,6 +466,7 @@ fn spawn_map(mut commands: Commands, layout: Res<MapLayout>) {
     for block in &layout.blocks {
         let mut e = commands.spawn((
             MapBlock(block.clone()),
+            OfMap,
             Transform::from_translation(block.pos).with_rotation(block.rot),
         ));
         if block.collide {
@@ -449,6 +482,7 @@ fn spawn_map(mut commands: Commands, layout: Res<MapLayout>) {
         let (pos, tris) = crate::map::footprint::solid(fp);
         commands.spawn((
             MapFootprint(index),
+            OfMap,
             Transform::default(),
             RigidBody::Static,
             Collider::trimesh(pos, tris),
@@ -459,6 +493,7 @@ fn spawn_map(mut commands: Commands, layout: Res<MapLayout>) {
         commands.spawn((
             MapBlock(door.clone()),
             Door { hp: 60.0, index },
+            OfMap,
             Transform::from_translation(door.pos).with_rotation(door.rot),
             RigidBody::Static,
             collider_for(door),
@@ -468,6 +503,7 @@ fn spawn_map(mut commands: Commands, layout: Res<MapLayout>) {
     for (i, prop) in layout.props.iter().enumerate() {
         let mut e = commands.spawn((
             PropIndex(i),
+            OfMap,
             Transform::from_translation(prop.pos).with_rotation(Quat::from_rotation_y(prop.yaw)).with_scale(Vec3::splat(prop.scale)),
         ));
         if let Some((r, h)) = prop.trunk {

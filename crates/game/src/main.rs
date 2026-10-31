@@ -25,6 +25,14 @@ fn main() {
     let bots = std::env::var("VIVAD_BOTS").ok().and_then(|s| s.parse().ok()).unwrap_or(15);
     let autopilot = std::env::var("VIVAD_AUTOPILOT").is_ok();
     let mut config = MatchConfig { bots, autopilot, ..default() };
+    // In the browser the first map comes from the address: …/?map=chandni.
+    #[cfg(target_arch = "wasm32")]
+    if let Some(map) = web_sys::window()
+        .and_then(|w| w.location().search().ok())
+        .and_then(|q| q.trim_start_matches('?').split('&').find_map(|kv| kv.strip_prefix("map=").and_then(shared::map::MapId::parse)))
+    {
+        config.map = map;
+    }
     let mut app = App::new();
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(lobby) = online(&mut config) {

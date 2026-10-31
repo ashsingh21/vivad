@@ -14,6 +14,7 @@ use bevy::camera::visibility::VisibilityRange;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 use shared::map::MapLayout;
+use shared::sim::{OfMap, map_reloaded};
 
 use crate::characters::LodRange;
 
@@ -46,8 +47,13 @@ pub struct BatchPlugin;
 
 impl Plugin for BatchPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Templates>().add_systems(Update, (spawn_templates, build_batches).chain());
+        app.init_resource::<Templates>().add_systems(Update, (forget.run_if(map_reloaded), spawn_templates, build_batches).chain());
     }
+}
+
+/// Another map: its trees are merged afresh (the old batches went with it, being `OfMap`).
+fn forget(mut t: ResMut<Templates>) {
+    *t = Templates::default();
 }
 
 fn spawn_templates(mut commands: Commands, mut t: ResMut<Templates>, layout: Res<MapLayout>, assets: Res<AssetServer>) {
@@ -162,6 +168,7 @@ fn build_batches(
                 base.scaled(scale.0),
                 base,
                 crate::quality::LodShadow,
+                OfMap,
             ));
             spawned += 1;
         }

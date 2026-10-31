@@ -94,7 +94,7 @@ impl Plugin for InputPlugin {
         app.init_resource::<Bindings>()
             .init_resource::<ActionState>()
             .init_resource::<ShowPerf>()
-            .add_systems(PreUpdate, (resolve_actions, write_intent, grab_cursor, meta_actions).chain()
+            .add_systems(PreUpdate, (resolve_actions, write_intent, grab_cursor, meta_actions, vote).chain()
                 .in_set(LocalInput).after(bevy::input::InputSystems));
     }
 }
@@ -246,6 +246,27 @@ fn grab_cursor(
     if keys.just_pressed(KeyCode::Escape) {
         cursor.grab_mode = CursorGrabMode::None;
         cursor.visible = true;
+    }
+}
+
+/// Between matches (or once out of this one), the number keys vote for the next map: the n-th
+/// in the rotation (shared::sim::flow::rotation).
+fn vote(
+    keys: Res<ButtonInput<KeyCode>>,
+    m: Res<Match>,
+    local: Query<Has<Eliminated>, With<LocalPlayer>>,
+    config: Res<shared::sim::MatchConfig>,
+    mut votes: MessageWriter<shared::sim::flow::VoteMap>,
+) {
+    let dead = local.single().unwrap_or(true);
+    if m.state != MatchState::Ended && !dead {
+        return;
+    }
+    let keys_for = [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4, KeyCode::Digit5];
+    for (map, key) in shared::sim::flow::rotation(config.map).iter().zip(keys_for) {
+        if keys.just_pressed(key) {
+            votes.write(shared::sim::flow::VoteMap(*map));
+        }
     }
 }
 

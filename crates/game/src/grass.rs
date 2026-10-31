@@ -25,7 +25,7 @@ impl Plugin for GrassPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(MaterialPlugin::<GrassMaterial>::default())
             .add_systems(Startup, setup)
-            .add_systems(Update, blow);
+            .add_systems(Update, (regrow.run_if(shared::sim::map_reloaded), blow));
         // VIVAD_NO_GRASS=1 for render cost comparisons.
         if std::env::var("VIVAD_NO_GRASS").is_err() {
             app.add_systems(Update, stream_chunks);
@@ -241,6 +241,14 @@ fn setup(mut commands: Commands, layout: Res<MapLayout>, mut materials: ResMut<A
         extension: GrassWind { wind: Vec4::new(0.0, 0.12, 0.0, 0.0) },
     });
     commands.insert_resource(Grass { material, blockers: Blockers::new(&layout), live: HashMap::new(), density: density(0.5), regrow: false });
+}
+
+/// Another map: grass kept off its own buildings, and every chunk grown again.
+fn regrow(mut commands: Commands, mut grass: ResMut<Grass>, layout: Res<MapLayout>) {
+    grass.blockers = Blockers::new(&layout);
+    for (_, (e, _)) in grass.live.drain() {
+        commands.entity(e).try_despawn();
+    }
 }
 
 /// Small deterministic generator, seeded per chunk so a chunk rebuilds identically.

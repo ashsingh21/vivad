@@ -39,6 +39,17 @@ impl MapId {
         }
     }
 
+    /// Its name on screen.
+    pub fn title(self) -> &'static str {
+        match self {
+            MapId::Cp => "Connaught Place",
+            MapId::Chandni => "Chandni Chowk",
+            MapId::HauzKhas => "Hauz Khas",
+            MapId::IndiaGate => "India Gate",
+            MapId::Bharat => "Bharat",
+        }
+    }
+
     pub fn parse(s: &str) -> Option<MapId> {
         let s = s.trim().to_lowercase();
         MapId::ALL.into_iter().find(|m| m.name() == s).or(match s.as_str() {

@@ -8,6 +8,8 @@
 //!                        frame rate (`[tour-fps]`; run with VIVAD_NO_VSYNC=1).
 //! VIVAD_SHOTS=<dir>     with VIVAD_AUTOPILOT=1: screenshot the match at set times, then exit.
 //!   VIVAD_SHOTS_AT=a,b   at these match times (seconds) instead.
+//!   VIVAD_SHOTS_MATCHES=n then start the next match (the next map in turn) and shoot it too, n
+//!                        matches in all.
 //! VIVAD_ARMOURY=<dir>   stand the player on open ground and screenshot every item in hand, carried
 //!   and in use (aiming, drawing, swinging, drinking), from the front and the side, then exit.
 //!   VIVAD_ARMOURY_ONLY=a,b only the poses whose names contain one of these. The range poses
@@ -38,6 +40,9 @@ pub struct MatchShots {
     times: Vec<f32>,
     next: usize,
     taken_at: f32,
+    matches: u32,
+    /// The match being shot (until the restart we asked for has happened).
+    generation: u32,
 }
 
 /// One armoury shot: item in hand, what the warrior is doing, and where the camera stands.
@@ -251,7 +256,8 @@ impl Plugin for AutoshotPlugin {
             let times = std::env::var("VIVAD_SHOTS_AT")
                 .map(|v| v.split(',').filter_map(|t| t.trim().parse().ok()).collect())
                 .unwrap_or_else(|_| vec![6.0, 20.0, 34.0, 50.0, 80.0, 120.0, 170.0, 230.0]);
-            app.insert_resource(MatchShots { dir, times, next: 0, taken_at: -1.0 })
+            let matches = std::env::var("VIVAD_SHOTS_MATCHES").ok().and_then(|n| n.parse().ok()).unwrap_or(1);
+            app.insert_resource(MatchShots { dir, times, next: 0, taken_at: -1.0, matches, generation: 1 })
                 .add_systems(Update, match_shots);
         }
     }
@@ -343,16 +349,26 @@ fn match_shots(
     m: Res<Match>,
     time: Res<Time>,
     mut exit: MessageWriter<AppExit>,
+    mut restart: MessageWriter<shared::sim::RestartMatch>,
 ) {
     let now = time.elapsed_secs();
+    if m.generation < shots.generation {
+        return;
+    }
     if shots.next >= shots.times.len() {
         if now - shots.taken_at > 1.0 {
-            exit.write(AppExit::Success);
+            if m.generation < shots.matches {
+                restart.write(shared::sim::RestartMatch);
+                shots.next = 0;
+                shots.generation = m.generation + 1;
+            } else {
+                exit.write(AppExit::Success);
+            }
         }
         return;
     }
     if m.elapsed >= shots.times[shots.next] {
-        let path = format!("{}/match_{:02}_{:03.0}s.png", shots.dir, shots.next, m.elapsed);
+        let path = format!("{}/match{}_{:02}_{:03.0}s.png", shots.dir, m.generation, shots.next, m.elapsed);
         commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
         shots.next += 1;
         shots.taken_at = now;

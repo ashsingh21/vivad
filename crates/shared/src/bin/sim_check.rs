@@ -107,9 +107,17 @@ fn main() {
             if m.state == MatchState::Ended || m.elapsed > 1200.0 {
                 let winner = m.winner.and_then(|w| world.get::<Warrior>(w)).map(|w| (w.name.clone(), w.kills));
                 println!(
-                    "match {} ended at {:.0}s sim ({:.1}s wall): winner {:?}, {} weapon kills, {} Aandhi, {} feed lines",
-                    n + 1, m.elapsed, wall.elapsed().as_secs_f32(), winner, kills_by_weapon, kills_by_zone, feed_seen
+                    "match {} on {} ended at {:.0}s sim ({:.1}s wall): winner {:?}, {} weapon kills, {} Aandhi, {} feed lines",
+                    n + 1, world.resource::<shared::map::MapLayout>().name, m.elapsed, wall.elapsed().as_secs_f32(), winner, kills_by_weapon, kills_by_zone, feed_seen
                 );
+                // A map swapped in at a restart leaves nothing of the last one behind.
+                let layout = world.resource::<shared::map::MapLayout>().clone();
+                let terrains = world.query::<&shared::sim::MapTerrain>().iter(world).count();
+                let footprints = world.query::<&shared::sim::MapFootprint>().iter(world).count();
+                let props = world.query::<&shared::sim::PropIndex>().iter(world).count();
+                let want = layout.footprints.iter().filter(|f| f.mat != shared::map::Mat::Water).count();
+                assert!(terrains == 1 && footprints == want && props == layout.props.len(),
+                    "map entities: {terrains} terrains, {footprints}/{want} footprints, {props}/{} props", layout.props.len());
                 results.push((m.elapsed, kills_by_weapon, kills_by_zone, m.state == MatchState::Ended));
                 break;
             }

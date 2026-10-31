@@ -44,6 +44,7 @@ const MINIMAP: f32 = 190.0;
 #[derive(Component)] struct MapMe;
 #[derive(Component)] struct Overlay;
 #[derive(Component)] struct OverlayText;
+#[derive(Component)] struct VoteText;
 #[derive(Component)] struct PerfText;
 #[derive(Component)] struct ProgressBar;
 #[derive(Component)] struct ProgressFill;
@@ -173,10 +174,12 @@ fn build_hud(mut commands: Commands) {
     // End-of-match / eliminated overlay.
     commands
         .spawn((Overlay, Node { position_type: PositionType::Absolute, width: percent(100.0), height: percent(100.0),
+                                flex_direction: FlexDirection::Column, row_gap: px(28.0),
                                 justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() },
                 BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)), Visibility::Hidden))
         .with_children(|p| {
             p.spawn((OverlayText, text("", 40.0, Color::srgb(1.0, 0.85, 0.5)), TextLayout::justify(Justify::Center)));
+            p.spawn((VoteText, text("", 22.0, Color::srgb(0.95, 0.92, 0.85)), TextLayout::justify(Justify::Center)));
         });
     // Performance overlay (F3).
     commands.spawn((PerfText, text("", 14.0, Color::srgb(0.6, 1.0, 0.6)),
@@ -453,7 +456,10 @@ fn overlay(
     local: Query<(Entity, Option<&Eliminated>, &Warrior), With<LocalPlayer>>,
     names: Query<&Warrior>,
     mut o: Query<&mut Visibility, With<Overlay>>,
-    mut t: Query<&mut Text, With<OverlayText>>,
+    mut t: Query<&mut Text, (With<OverlayText>, Without<VoteText>)>,
+    mut vote_t: Query<&mut Text, (With<VoteText>, Without<OverlayText>)>,
+    config: Res<shared::sim::MatchConfig>,
+    votes: Res<shared::sim::flow::MapVotes>,
 ) {
     let Ok((me, elim, w)) = local.single() else { return };
     let msg = if m.state == MatchState::Ended && m.winner == Some(me) {
@@ -466,6 +472,20 @@ fn overlay(
     } else {
         None
     };
+    // The vote for the next map, and where it stands.
+    let pool = shared::sim::flow::rotation(config.map);
+    let mut vote = String::new();
+    if msg.is_some() && config.rotate && !pool.is_empty() {
+        let next = shared::sim::flow::next_map(config.map, &votes);
+        vote.push_str("Agla map? Number dabao");
+        for (k, map) in pool.iter().enumerate() {
+            let n = votes.count(*map);
+            let count = if n > 0 { format!(" ({n})") } else { String::new() };
+            let (l, r) = if *map == next { ("[ ", " ]") } else { ("", "") };
+            vote.push_str(&format!("\n{l}{}  {}{count}{r}", k + 1, map.title()));
+        }
+    }
+    for mut tt in &mut vote_t { set_text(&mut tt, vote.clone()); }
     for mut v in &mut o { *v = if msg.is_some() { Visibility::Inherited } else { Visibility::Hidden }; }
     if let Some(s) = msg {
         for mut tt in &mut t { set_text(&mut tt, s.clone()); }

@@ -210,8 +210,11 @@ fn main() {
     }
     // Two players ask for the next match on the same tick: everyone must move on to the same one,
     // with nothing from the last match leaking into it.
+    // They voted for different maps on that same tick, too late to hear each other: the lower
+    // peer's choice must win everywhere.
     let generation = apps[0].world().resource::<Match>().generation;
-    for app in apps.iter_mut().take(2) {
+    for (app, map) in apps.iter_mut().take(2).zip([shared::map::MapId::IndiaGate, shared::map::MapId::HauzKhas]) {
+        app.world_mut().write_message(shared::sim::flow::VoteMap(map));
         app.world_mut().write_message(RestartMatch);
     }
     let until = tick + (rematch * 60.0) as u32;
@@ -222,8 +225,14 @@ fn main() {
         tick += 1;
         pace(started, tick, speed);
     }
-    let next: Vec<(u32, u64)> = apps.iter().map(|a| a.world().resource::<Match>()).map(|m| (m.generation, m.seed)).collect();
-    check(next.iter().all(|g| *g == next[0] && g.0 == generation + 1), format!("a double restart starts one next match everywhere ({next:?})"));
+    let next: Vec<(u32, u64, &str)> = apps
+        .iter()
+        .map(|a| (a.world().resource::<Match>(), a.world().resource::<MatchConfig>().map))
+        .map(|(m, map)| (m.generation, m.seed, map.name()))
+        .collect();
+    check(next.iter().all(|g| *g == next[0] && g.0 == generation + 1), format!("a double restart starts one next match everywhere, on one map ({next:?})"));
+    let layouts: Vec<usize> = apps.iter().map(|a| a.world().resource::<shared::map::MapLayout>().footprints.len()).collect();
+    check(layouts.iter().all(|n| *n == layouts[0]), format!("every peer has that map built ({layouts:?} buildings)"));
     let l = follow(&mut apps, speed, lag_allowed);
     check(l.2 > 0 && l.1 == 0, format!("in the rematch, remote copies follow their owners ({} samples, worst {:.2} m)", l.2, l.0));
     let outcomes: Vec<_> = apps.iter_mut().map(|app| outcome(app.world_mut())).collect();

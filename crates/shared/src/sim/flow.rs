@@ -14,7 +14,7 @@ use super::{
     MoveMode, PlayerIntent, PosHistory, RestartMatch, SimSet, Warrior, btn,
 };
 use crate::items::ItemDb;
-use crate::map::MapLayout;
+use crate::map::{MapId, MapLayout};
 
 pub const VIMANA_HEIGHT: f32 = 120.0;
 pub const VIMANA_SPEED: f32 = 22.0;
@@ -61,8 +61,59 @@ pub struct FlowPlugin;
 impl Plugin for FlowPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Match>()
+            .init_resource::<StartedBy>()
             .add_systems(Startup, start_match_on_startup)
-            .add_systems(FixedUpdate, (restart, fly_vimana, check_winner).chain().in_set(SimSet::Flow));
+            .add_systems(FixedUpdate, (cast_votes, restart, fly_vimana, check_winner).chain().in_set(SimSet::Flow));
+    }
+}
+
+/// The peer whose restart began this match (us, if we asked first): when two peers start the
+/// next match at once on different maps, the lower one's stands.
+#[derive(Resource, Clone, Copy, Debug, Default)]
+pub struct StartedBy(pub super::net::PeerId);
+
+/// Our player's pick for the next match's map (between matches, or once out of this one).
+#[derive(Message, Clone, Copy, Debug)]
+pub struct VoteMap(pub MapId);
+
+/// Who wants which map next: every peer's vote (`NetMsg::Vote`), ours included. Cleared each match.
+#[derive(Resource, Clone, Debug, Default)]
+pub struct MapVotes(pub std::collections::BTreeMap<super::net::PeerId, MapId>);
+
+impl MapVotes {
+    pub fn count(&self, map: MapId) -> usize {
+        self.0.values().filter(|m| **m == map).count()
+    }
+}
+
+/// The maps that take turns after `current`: Delhi's, in order. The ancient-India map stays put.
+pub fn rotation(current: MapId) -> &'static [MapId] {
+    if MapId::DELHI.contains(&current) { &MapId::DELHI } else { &[] }
+}
+
+/// The next match's map: the most voted for, ties going to whichever comes up soonest in turn;
+/// with no votes, the next in turn.
+pub fn next_map(current: MapId, votes: &MapVotes) -> MapId {
+    let pool = rotation(current);
+    let Some(at) = pool.iter().position(|m| *m == current) else { return current };
+    // Turns from now until each map comes up: the current one last.
+    let wait = |m: MapId| (pool.iter().position(|p| *p == m).unwrap_or(at) + pool.len() - at - 1) % pool.len();
+    pool.iter().copied().max_by_key(|m| (votes.count(*m), std::cmp::Reverse(wait(*m)))).unwrap_or(current)
+}
+
+fn cast_votes(
+    mut asked: MessageReader<VoteMap>,
+    mut votes: ResMut<MapVotes>,
+    peers: Res<Peers>,
+    config: Res<super::MatchConfig>,
+    mut outbox: ResMut<Outbox>,
+) {
+    for VoteMap(map) in asked.read() {
+        if !config.rotate || !rotation(config.map).contains(map) || votes.0.get(&peers.local) == Some(map) {
+            continue;
+        }
+        votes.0.insert(peers.local, *map);
+        outbox.0.push(NetMsg::Vote { map: map.index() });
     }
 }
 
@@ -162,25 +213,41 @@ pub fn start_match(world: &mut World) {
 
 /// A new match, when our player asks for one or another peer has started it. Online, only once
 /// the match is over (for everyone), and the peers tell each other so they all move on together.
+/// The next match is on the map most voted for (`next_map`), and the restart names it, so a peer
+/// that is told follows onto the same map.
 fn restart(world: &mut World) {
     let requested = world.resource_mut::<Messages<RestartMatch>>().drain().count() > 0;
     let generation = world.resource::<Match>().generation;
-    let online = world.resource::<Peers>().all.len() > 1;
+    let peers = world.resource::<Peers>().clone();
+    let online = peers.all.len() > 1;
+    let config = *world.resource::<super::MatchConfig>();
     // `apply_inbox` stops at a restart and leaves it first in the inbox.
-    let mut told = false;
+    let mut told = None;
+    let started_by = world.resource::<StartedBy>().0;
     let mut inbox = world.resource_mut::<Inbox>();
-    if let Some((_, NetMsg::Restart { generation: g })) = inbox.0.first() {
-        // An older one: we both started the same next match.
-        told = *g == generation;
+    if let Some(&(from, NetMsg::Restart { generation: g, map })) = inbox.0.first() {
         inbox.0.remove(0);
+        let map = MapId::from_index(map);
+        if g == generation {
+            told = Some((from, map));
+        } else if g + 1 == generation && map != config.map && from < started_by {
+            // We both started the next match, on different maps: the lower peer's stands, so
+            // start it again on theirs.
+            world.resource_mut::<Match>().generation = g;
+            told = Some((from, map));
+        }
+        // Otherwise an older one: we both started the same next match.
     }
     let asked = requested && (!online || world.resource::<Match>().state == MatchState::Ended);
-    if !told && !asked {
+    if told.is_none() && !asked {
         return;
     }
-    if asked && !told {
-        world.resource_mut::<Outbox>().0.push(NetMsg::Restart { generation });
+    let (by, map) = told.unwrap_or_else(|| (peers.local, if config.rotate { next_map(config.map, world.resource::<MapVotes>()) } else { config.map }));
+    if told.is_none() {
+        world.resource_mut::<Outbox>().0.push(NetMsg::Restart { generation, map: map.index() });
     }
+    world.resource_mut::<StartedBy>().0 = by;
+    world.resource_mut::<MapVotes>().0.clear();
     world.resource_mut::<super::loot::Claims>().0.clear();
     let mut doomed: Vec<Entity> = vec![];
     for e in world.query_filtered::<Entity, Or<(With<Warrior>, With<Chest>, With<Pickup>, With<Projectile>, With<FireZone>, With<Burst>, With<Vimana>)>>().iter(world) {
@@ -188,6 +255,9 @@ fn restart(world: &mut World) {
     }
     for e in doomed {
         world.despawn(e);
+    }
+    if map != config.map {
+        super::load_map(world, map);
     }
     start_match(world);
 }

@@ -18,6 +18,8 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 getrandom3 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 # WebGPU only (Chrome/Edge, Safari 26+): keeps the compute-driven sky and GPU culling.
 bevy = { workspace = true, features = ["webgpu"] }
+# The page's address, for ?map=.
+web-sys = { version = "0.3", features = ["Window", "Location"] }
 
 # Online play over iroh (not in the browser build yet).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

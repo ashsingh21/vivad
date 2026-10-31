@@ -13,6 +13,7 @@ use bevy::image::{ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor, Ima
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use shared::map::{Block, MapLayout, Mat, Shape};
+use shared::sim::{OfMap, map_reloaded};
 
 const CHUNK: f32 = 64.0;
 /// Where a chunk's coarse LOD takes over, from its centre (scaled by quality: crate::quality::LodScale).
@@ -26,7 +27,8 @@ pub struct BuildingsPlugin;
 
 impl Plugin for BuildingsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, build_chunks).add_systems(Update, (queue_model_mips, mipmap_textures).chain());
+        app.add_systems(Startup, build_chunks)
+            .add_systems(Update, (build_chunks.run_if(map_reloaded), queue_model_mips, mipmap_textures).chain());
     }
 }
 
@@ -352,11 +354,11 @@ fn build_footprints(
             .or_insert_with(|| materials.add(StandardMaterial { base_color: tint(mat), base_color_texture: Some(facade.clone()), perceptual_roughness: 0.85, ..default() }))
             .clone();
         let (mesh, centre) = buf.into_mesh();
-        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(m), Transform::from_translation(centre)));
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(m), Transform::from_translation(centre), OfMap));
     }
     for (_, buf) in roofs {
         let (mesh, centre) = buf.into_mesh();
-        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(roof.clone()), Transform::from_translation(centre)));
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(roof.clone()), Transform::from_translation(centre), OfMap));
     }
     if !water.idx.is_empty() {
         let (mesh, centre) = water.into_mesh();
@@ -367,7 +369,7 @@ fn build_footprints(
             reflectance: 0.6,
             ..default()
         });
-        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(m), Transform::from_translation(centre), bevy::light::NotShadowCaster));
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(m), Transform::from_translation(centre), bevy::light::NotShadowCaster, OfMap));
     }
     info!("city: {} buildings from footprints", layout.footprints.len());
 }
@@ -420,6 +422,7 @@ fn build_chunks(
             Transform::from_translation(centre),
             range.0.clone(),
             range,
+            OfMap,
         ));
         if matches!(mat, Mat::Foliage | Mat::Cloth) {
             e.insert(bevy::light::NotShadowCaster);

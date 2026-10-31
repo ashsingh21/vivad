@@ -93,8 +93,11 @@ pub enum NetMsg {
     /// What one of the sender's warriors carries now (sent when it changes), so the others draw
     /// the right weapon and can take the warrior over if its owner leaves.
     Inventory { id: NetId, inv: Inventory },
-    /// The sender started the next match after match `generation` ended (see `flow::restart`).
-    Restart { generation: u32 },
+    /// The sender started the next match after match `generation` ended, on map `map`
+    /// (`MapId::index`; see `flow::restart`).
+    Restart { generation: u32, map: u8 },
+    /// The sender's player wants map `map` next (`MapId::index`; see `flow::MapVotes`).
+    Vote { map: u8 },
     /// The sender, heir to `from`, has taken bot `id` over because `from` went silent (see
     /// `stand_in`).
     TakeOver { id: NetId, from: PeerId },
@@ -203,6 +206,7 @@ fn apply_inbox(
     mut damage: MessageWriter<DamageMsg>,
     mut feed: MessageWriter<FeedMsg>,
     mut kills: MessageWriter<KillMsg>,
+    mut votes: ResMut<super::flow::MapVotes>,
 ) {
     let find = |id: NetId| ids.iter().find(|(_, i, ..)| **i == id).map(|(e, _, o, remote, down)| (e, o.0, remote, down));
     let mut msgs = std::mem::take(&mut inbox.0).into_iter();
@@ -303,6 +307,9 @@ fn apply_inbox(
                 if let Ok((.., mut inv, _, _)) = q.get_mut(e) {
                     *inv = new;
                 }
+            }
+            NetMsg::Vote { map } => {
+                votes.0.insert(from, crate::map::MapId::from_index(map));
             }
             // Handled by `apply_loot` and `listen`.
             NetMsg::ChestOpened { .. } | NetMsg::Took { .. } | NetMsg::Dropped { .. } | NetMsg::TakeOver { .. } => {}

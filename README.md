@@ -38,6 +38,9 @@ Maps, all from OpenStreetMap at real scale: Connaught Place (`just play`), Chand
 Hauz Khas (`map=hauzkhas`), India Gate (`map=indiagate`); `map=bharat` is the ancient-India one. Hosting with
 `just host Arjuna map=chandni` gives a room code that tells joiners the map. In Chandni Chowk and Hauz Khas up to
 50 houses can be entered (break the door): rooms on every floor, stairs to the roof, chests inside.
+Each match is on the next Delhi map in turn, unless the players vote: once out of a match (or when it ends), keys
+1-4 vote for the next map, and the most votes win (`VIVAD_ROTATE=0` keeps one map). In the browser the first map comes
+from the address: `http://localhost:8080/?map=chandni`.
 Gamepad: sticks, A jump, RT fire, LT aim, X interact, Y reload, bumpers cycle.
 
 Blender path comes from `.env` (`BLENDER=...`, see `.env.example`).
