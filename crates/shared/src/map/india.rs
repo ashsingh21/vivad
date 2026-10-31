@@ -80,6 +80,7 @@ fn terrain_spec(seed: u64) -> TerrainSpec {
         // hills bury its end houses.
         pad(150.0, -25.0, 26.0, 20.0),
         pad(150.0, 112.0, 30.0, 20.0),
+        pad(CP_C.x, CP_C.z, 50.0, 25.0),
     ];
     for (c, _) in VILLAGES {
         pads.push(pad(c.x, c.z, 42.0, 25.0));
@@ -90,7 +91,7 @@ fn terrain_spec(seed: u64) -> TerrainSpec {
         seed: seed as u32,
         half_extent: HALF,
         pads,
-        roads: ROADS.to_vec(),
+        roads: ROADS.iter().copied().chain(cp_roads()).collect(),
         river: (RIVER_X.0, RIVER_X.1, RIVER_BED),
         pits: vec![(
             // Hampi's stepped tank: the outline at its rim apron's outer edge (the apron is two
@@ -240,6 +241,7 @@ pub fn generate(seed: u64) -> MapLayout {
     fort(&mut b, &mut rng);
     banyan_grove(&mut b, &mut rng);
     caves_and_stupa(&mut b, &mut rng);
+    connaught_place(&mut b, &mut rng);
     for (c, n) in VILLAGES {
         village(&mut b, &mut rng, c, n);
     }
@@ -255,6 +257,7 @@ pub fn generate(seed: u64) -> MapLayout {
         poi("Bargad Van", 95.0, 170.0, 35.0),
         poi("Ajanta Gufa", -200.0, 0.0, 50.0),
         poi("Gaon", -40.0, 195.0, 30.0),
+        poi("Connaught Place", CP_C.x, CP_C.z, 46.0),
     ];
     map
 }
@@ -1099,6 +1102,152 @@ fn tank_centre() -> Vec3 {
     hampi_frame().p(TANK_LOCAL)
 }
 
+// ------------------------------------------------------------------ Connaught Place
+
+// Delhi's Connaught Place, scaled to the map (the real inner circle is ~350 m across): a ring of
+// six two-storey white blocks round a park, cut by radial streets (one on the north-south road),
+// each block colonnaded on both faces over a ring of shops, with a storey of windows above.
+const CP_C: Vec3 = Vec3::new(0.0, 0.0, 118.0);
+const CP_PARK: f32 = 19.0;
+/// Inner (park side) and outer column rows.
+const CP_RI: f32 = 26.0;
+const CP_RO: f32 = 42.0;
+/// Verandah depth behind each column row, to the shop fronts.
+const CP_VER: f32 = 3.4;
+/// Ground storey (to the top of the first-floor slab), upper storey, slab thickness.
+const CP_G: f32 = 5.0;
+const CP_U: f32 = 4.4;
+const CP_SLAB: f32 = 0.35;
+/// Segments per block (one shop front each), and the radial streets' width at the inner row.
+const CP_SEGS: usize = 10;
+const CP_STREET: f32 = 10.0;
+
+/// A point on the circle of radius `r` at angle `a` (from +X towards +Z), height `y`.
+fn cp_at(r: f32, a: f32, y: f32) -> Vec3 {
+    CP_C + Vec3::new(r * a.cos(), y, r * a.sin())
+}
+
+/// Connaught Place's roads, painted and levelled like the others: the inner circle round the
+/// park, the outer circle, and the six radial streets between the blocks.
+fn cp_roads() -> Vec<(Vec2, Vec2)> {
+    let tau = std::f32::consts::TAU;
+    let circle = |r: f32, n: usize| (0..n).map(move |k| (cp_at(r, tau * k as f32 / n as f32, 0.0).xz(), cp_at(r, tau * (k + 1) as f32 / n as f32, 0.0).xz()));
+    let radial = (0..6).map(|k| {
+        let a = FRAC_PI_2 + k as f32 * tau / 6.0;
+        (cp_at(CP_PARK, a, 0.0).xz(), cp_at(CP_RO + 8.0, a, 0.0).xz())
+    });
+    circle((CP_PARK + CP_RI) / 2.0 - 0.6, 16).chain(circle(CP_RO + 5.0, 24)).chain(radial).collect()
+}
+
+fn connaught_place(b: &mut Builder, rng: &mut SmallRng) {
+    let w = world();
+    let tau = std::f32::consts::TAU;
+    let half_gap = (CP_STREET / 2.0 / CP_RI).asin();
+    // The park: a fountain basin and the tall flag at its heart.
+    b.cyl(w, CP_C, 3.2, 0.55, Mat::Marble);
+    b.deco_cyl(w, CP_C + Vec3::Y * 0.55, 0.6, 1.2, Mat::Marble);
+    b.cyl(w, CP_C, 0.22, 32.0, Mat::Granite);
+    for (k, mat) in [Mat::PlasterOchre, Mat::Plaster, Mat::Grass].into_iter().enumerate() {
+        b.push(CP_C + Vec3::new(3.6, 31.0 - k as f32 * 1.3, 0.0), Quat::IDENTITY, super::Shape::Box(Vec3::new(6.6, 1.3, 0.06)), mat, false, true);
+    }
+    for k in 0..4 {
+        b.loot(w, cp_at(CP_PARK * 0.6, tau * (k as f32 + 0.5) / 4.0, 0.3));
+    }
+    for blk in 0..6 {
+        // Streets at 90 degrees + k * 60: two of them on the north-south road (x = 0).
+        let a0 = FRAC_PI_2 + blk as f32 * tau / 6.0 + half_gap;
+        let a1 = FRAC_PI_2 + (blk + 1) as f32 * tau / 6.0 - half_gap;
+        let ang = |t: f32| a0 + (a1 - a0) * t;
+        let segs: Vec<(f32, f32)> = (0..CP_SEGS).map(|i| (ang(i as f32 / CP_SEGS as f32), ang((i + 1) as f32 / CP_SEGS as f32))).collect();
+        let xz = |r: f32, a: f32| cp_at(r, a, 0.0).xz();
+        let stair_seg = CP_SEGS / 2;
+        for (i, &(s0, s1)) in segs.iter().enumerate() {
+            let am = (s0 + s1) / 2.0;
+            // Alternate segments sit 2 cm apart in height, so where neighbouring slabs overlap
+            // (boxes on a curve) their faces never share a plane.
+            let lift = if i % 2 == 0 { 0.0 } else { 0.02 };
+            let radial = Frame::new(cp_at(0.0, 0.0, 0.0), -am);
+            let slab = |b: &mut Builder, r0: f32, r1: f32, top: f32| {
+                let chord = 2.0 * r1 * ((s1 - s0) / 2.0).sin() + 0.08;
+                b.bx(radial, Vec3::new((r0 + r1) / 2.0, top - CP_SLAB / 2.0, 0.0), Vec3::new(r1 - r0, CP_SLAB, chord), Mat::Plaster);
+            };
+            // Marble underfoot (3 cm proud of the levelled ground: no step to trip on, and no
+            // grass through the verandahs), then the first floor (the verandah ceilings and the
+            // shops'), with the stair well left open.
+            let (core0, core1) = (CP_RI + CP_VER, CP_RO - CP_VER);
+            {
+                let chord = 2.0 * (CP_RO + 0.6) * ((s1 - s0) / 2.0).sin() + 0.08;
+                b.bx(radial, Vec3::new(CP_RO / 2.0 + CP_RI / 2.0, -0.1 + lift / 2.0, 0.0), Vec3::new(CP_RO - CP_RI + 1.2, 0.26, chord), Mat::Marble);
+            }
+            slab(b, CP_RI - 0.6, core0, CP_G + lift);
+            slab(b, core1, CP_RO + 0.6, CP_G + lift);
+            if i != stair_seg {
+                slab(b, core0, core1, CP_G + lift);
+            }
+            // Roof, its parapets and cornices (their tops 5 cm under the slabs' they run along).
+            slab(b, CP_RI - 0.3, CP_RO + 0.3, CP_G + CP_U + lift);
+            for (r, out) in [(CP_RO + 0.15, 1.0f32), (CP_RI - 0.15, -1.0)] {
+                b.wall(w, xz(r, s0), xz(r, s1), CP_G + CP_U + lift, 1.0, 0.3, Mat::Plaster, &[]);
+                b.deco(radial, Vec3::new(r + out * 0.25, CP_G + CP_U - 0.2 + lift, 0.0), Vec3::new(0.5, 0.3, 2.0 * r * ((s1 - s0) / 2.0).sin() + 0.1), Mat::Plaster);
+                b.deco(radial, Vec3::new(r + out * 0.3, CP_G - 0.25 + lift, 0.0), Vec3::new(0.6, 0.4, 2.0 * r * ((s1 - s0) / 2.0).sin() + 0.1), Mat::Plaster);
+            }
+            // Columns at the start of each segment (and the block's last), on both faces.
+            for (c, last) in [(s0, false), (s1, true)] {
+                if last && i + 1 != CP_SEGS {
+                    continue;
+                }
+                for r in [CP_RO - 0.45, CP_RI + 0.45] {
+                    let base = cp_at(r, c, 0.0);
+                    b.push(base + Vec3::Y * 0.2, Quat::from_rotation_y(-c), super::Shape::Box(Vec3::new(0.8, 0.4, 0.8)), Mat::Plaster, false, true);
+                    b.push(base + Vec3::Y * (CP_G - CP_SLAB) / 2.0, Quat::IDENTITY, super::Shape::Cylinder { radius: 0.3, height: CP_G - CP_SLAB }, Mat::Plaster, true, true);
+                    b.push(base + Vec3::Y * (CP_G - CP_SLAB - 0.15), Quat::from_rotation_y(-c), super::Shape::Box(Vec3::new(0.78, 0.3, 0.78)), Mat::Plaster, false, true);
+                }
+            }
+            // Shop fronts on both faces: an arched opening, or a window over a stall board.
+            let front = if i % 2 == 0 { Opening::arch(0.0, 1.8, 3.2) } else { Opening { at: 0.0, width: 1.6, bottom: 0.9, top: 3.0 } };
+            for r in [core1, core0] {
+                let (p, q) = (xz(r, s0), xz(r, s1));
+                let o = Opening { at: p.distance(q) / 2.0, ..front };
+                b.wall(w, p, q, 0.0, CP_G - CP_SLAB, 0.3, Mat::Plaster, &[o]);
+            }
+            // Upper storey: a window to each segment, front and back.
+            for r in [CP_RO - 0.2, CP_RI + 0.2] {
+                let (p, q) = (xz(r, s0), xz(r, s1));
+                b.wall(w, p, q, CP_G + lift, CP_U - CP_SLAB, 0.3, Mat::Plaster, &[Opening::window(p.distance(q) / 2.0)]);
+            }
+            // A party wall between every pair of shops; the block's ends close the shops and
+            // the upper storey off from the street, each with a door.
+            if i % 2 == 0 || i + 1 == CP_SEGS {
+                let c = if i + 1 == CP_SEGS && i % 2 == 1 { s1 } else { s0 };
+                let end = i == 0 || i + 1 == CP_SEGS;
+                let (p, q) = (xz(core0, c), xz(core1, c));
+                let door = if end { vec![Opening::door(p.distance(q) / 2.0)] } else { vec![] };
+                b.wall(w, p, q, 0.0, CP_G - CP_SLAB, 0.3, Mat::Plaster, &door);
+                if end {
+                    let (p, q) = (xz(CP_RI + 0.2, c), xz(CP_RO - 0.2, c));
+                    b.wall(w, p, q, CP_G, CP_U - CP_SLAB, 0.3, Mat::Plaster, &[Opening::window(p.distance(q) / 2.0)]);
+                }
+            }
+            // Stairs up through the middle shop, climbing outwards onto the floor beyond the well.
+            if i == stair_seg {
+                b.stairs(radial, Vec3::new(core0 + 0.5, 0.0, 0.0), core1 - core0 - 0.5, CP_G, 1.6, Mat::Plaster);
+            }
+            // Loot: a chest in every other shop, an urn upstairs, loose finds on the verandahs.
+            if i % 3 == 1 {
+                b.chest(radial, Vec3::new((core0 + core1) / 2.0, 0.0, 0.0), FRAC_PI_2, ChestKind::Peti);
+            }
+            if i == 2 || i == CP_SEGS - 3 {
+                let r = if blk % 2 == 0 { CP_RO - 2.0 } else { CP_RI + 2.0 };
+                b.chest(radial, Vec3::new(r, CP_G, 0.0), -FRAC_PI_2, ChestKind::Kalash);
+            }
+            if rng.random_bool(0.3) {
+                let r = if rng.random_bool(0.5) { CP_RO - CP_VER / 2.0 } else { CP_RI + CP_VER / 2.0 };
+                b.loot(radial, Vec3::new(r, 0.3, 0.0));
+            }
+        }
+    }
+}
+
 fn linspace(a: f32, b: f32, n: usize) -> impl Iterator<Item = f32> {
     (0..n).map(move |k| a + (b - a) * k as f32 / (n - 1) as f32)
 }
@@ -1916,6 +2065,7 @@ fn scatter_trees(b: &mut Builder, rng: &mut SmallRng, n: u32) {
         (Vec2::new(150.0, 40.0), 30.0),
         (Vec2::new(-200.0, 0.0), 78.0),
         (Vec2::new(95.0, 170.0), 45.0),
+        (CP_C.xz(), 48.0),
     ];
     let clear = |p: Vec2| !pois.iter().any(|(c, r)| p.distance(*c) < *r) && !(p.x > RIVER_X.0 - 3.0 && p.x < RIVER_X.1 + 3.0);
     let tau = std::f32::consts::TAU;
