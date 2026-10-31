@@ -2,7 +2,7 @@
 //! same way and overlap, with different materials (same-material overlaps shade identically, since
 //! building textures are mapped in world space, so they can't be seen to fight).
 //!
-//! cargo run --release -p shared --bin zfight_check [-- --all] [--dump <file.json>]   (VIVAD_MAP_SEED picks the map)
+//! cargo run --release -p shared --bin zfight_check [-- --all] [--dump <file.json>]   (VIVAD_MAP and VIVAD_MAP_SEED pick the map)
 //!
 //! `--dump` also writes model placements, visible box faces and the terrain heights for
 //! tools/zfight_models.py, which checks the models' own faces against both.
@@ -76,7 +76,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let all = args.iter().any(|a| a == "--all");
     let dump = args.iter().position(|a| a == "--dump").and_then(|i| args.get(i + 1)).cloned();
-    let map = shared::map::india::generate(shared::sim::map_seed());
+    let map = shared::map::generate(shared::map::MapId::from_env(), shared::sim::map_seed());
     let blocks: Vec<&Block> = map.blocks.iter().chain(map.doors.iter()).collect();
     let mut buckets: HashMap<(i32, i32, i32, i32), Vec<Face>> = HashMap::new();
     for (i, b) in blocks.iter().enumerate() {

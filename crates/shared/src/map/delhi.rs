@@ -9,6 +9,7 @@
 //! round Central Park with its flag) and India Gate. Avenue trees line the main roads and fill the
 //! parks. Axes: x east, z south, metres from the middle of the map.
 
+use std::cmp::Reverse;
 use std::f32::consts::PI;
 
 use bevy::prelude::*;
@@ -16,7 +17,7 @@ use rand::rngs::SmallRng;
 use rand::{RngExt, SeedableRng};
 use serde::Deserialize;
 
-use super::build::{Builder, Frame};
+use super::build::{Builder, FLOOR_H, Frame};
 use super::terrain::{self, Pad, TerrainSpec, ground};
 use super::{ChestKind, Footprint, MapLayout, Mat, Poi, Prop};
 
@@ -139,9 +140,9 @@ pub fn generate(id: super::MapId, seed: u64) -> MapLayout {
         }
     }
     water(&mut b, &data);
-    footprints(&mut b, &mut rng, &data, &ring);
-    trees(&mut b, &mut rng, &data, &ring);
-    street_loot(&mut b, &mut rng, &data, &ring);
+    let houses = footprints(&mut b, &mut rng, &data, &ring, id);
+    trees(&mut b, &mut rng, &data, &ring, &houses);
+    street_loot(&mut b, &mut rng, &data, &ring, &houses);
     map.terrain.settle_under(&map.blocks);
     map.pois = data.pois.iter().map(|p| Poi { name: p.name.clone(), center: Vec3::new(p.x, 0.0, p.z), radius: p.r }).collect();
     if id == super::MapId::Cp {
@@ -273,18 +274,39 @@ fn paint_ground(map: &mut MapLayout, data: &Data) {
 
 /// Every mapped building but those where the inner circle's blocks stand, as its real outline.
 /// White for the colonial blocks and offices, the rest in Delhi's plasters and red sandstone.
-fn footprints(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp::Ring) {
+/// In the old city and the village some of the houses (square ones of up to three storeys) are
+/// built to go inside instead: rooms, stairs to each floor and the roof, a door onto the street
+/// (crate::map::india::house). Their outlines are returned, to keep trees and finds out of them.
+fn footprints(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp::Ring, id: super::MapId) -> Vec<Vec<Vec2>> {
     let palette = [Mat::Plaster, Mat::Plaster, Mat::PlasterOchre, Mat::Sandstone, Mat::RedSandstone, Mat::Brick];
     // The old city's and the village's houses: limewashed in white, ochre and blue, or bare brick.
     let houses = [Mat::Plaster, Mat::PlasterOchre, Mat::PlasterBlue, Mat::Brick, Mat::PlasterOchre];
     // About 110 chests a map, however many buildings it has.
     let in_play = data.buildings.iter().filter(|b| b.pts.iter().map(v2).sum::<Vec2>().abs().max_element() < (HALF - 8.0) * b.pts.len() as f32).count();
-    let chest_odds = (110.0 / in_play.max(1) as f64).min(0.5);
+    // Where houses are entered, their own chests (about 1.4 a house) make up the rest.
+    let lived_in = matches!(id, super::MapId::Chandni | super::MapId::HauzKhas);
+    let chest_odds = ((if lived_in { 60.0 } else { 110.0 }) / in_play.max(1) as f64).min(0.5);
+    let mut entered = vec![];
     for bld in &data.buildings {
         let pts: Vec<Vec2> = bld.pts.iter().map(v2).collect();
         let c = pts.iter().sum::<Vec2>() / pts.len() as f32;
         let r = c.distance(ring.center.xz());
         if r > ring.ri - 10.0 && r < ring.ro + 8.0 {
+            continue;
+        }
+        let floors = (bld.h / FLOOR_H).round() as u32;
+        if lived_in
+            && matches!(bld.kind.as_str(), "infill" | "house" | "residential" | "apartments" | "yes")
+            && (1..=3).contains(&floors)
+            && c.abs().max_element() < HALF - 6.0
+            && entered.len() < MAX_HOUSES
+            && rng.random_bool(0.4)
+            && let Some((front, w, d)) = enterable(&pts, b.map)
+        {
+            let yaw = front.x.atan2(front.y);
+            let mat = [Mat::Plaster, Mat::PlasterOchre, Mat::PlasterBlue, Mat::PlasterOchre][rng.random_range(0..4)];
+            super::india::house(b, rng, Frame::new(Vec3::new(c.x, 0.0, c.y), yaw), w, d, floors, mat);
+            entered.push(pts);
             continue;
         }
         let mat = match bld.kind.as_str() {
@@ -307,6 +329,39 @@ fn footprints(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp
             b.chest(Frame::new(Vec3::ZERO, 0.0), Vec3::new(at.x, 0.0, at.y), yaw, ChestKind::Peti);
         }
     }
+    entered
+}
+
+/// Houses built to enter, at most, a map: each is a few hundred pieces and a chest or two.
+const MAX_HOUSES: usize = 50;
+
+/// A near-rectangular outline a house fits (7.5 to 16 m a side): the outward direction of its
+/// side onto a street, lane or path (else the one with nothing built in front), that side's
+/// length and the depth behind it.
+fn enterable(pts: &[Vec2], map: &MapLayout) -> Option<(Vec2, f32, f32)> {
+    if pts.len() != 4 {
+        return None;
+    }
+    let edges: Vec<Vec2> = (0..4).map(|k| pts[(k + 1) % 4] - pts[k]).collect();
+    if (0..4).any(|k| edges[k].normalize_or_zero().dot(edges[(k + 1) % 4].normalize_or_zero()).abs() > 0.08) {
+        return None;
+    }
+    if edges.iter().any(|e| !(7.5..=16.0).contains(&e.length())) {
+        return None;
+    }
+    let c = pts.iter().sum::<Vec2>() / 4.0;
+    let built = |p: Vec2| map.footprints.iter().any(|f| f.pts[0].distance(p) < 60.0 && super::footprint::contains(&f.pts, p));
+    let (k, _) = (0..4)
+        .map(|k| {
+            let mid = (pts[k] + pts[(k + 1) % 4]) / 2.0;
+            let out = (mid - c).normalize_or_zero();
+            let probe = mid + out * 3.0;
+            let street = matches!(map.terrain.ground_at(probe.x, probe.y), Some(ground::ROAD | ground::PATH | ground::PAVEMENT));
+            (k, street as u32 * 2 + !built(probe) as u32)
+        })
+        .max_by_key(|(k, score)| (*score, Reverse(*k)))?;
+    let mid = (pts[k] + pts[(k + 1) % 4]) / 2.0;
+    Some(((mid - c).normalize_or_zero(), edges[k].length(), edges[(k + 1) % 4].length()))
 }
 
 fn tree(b: &mut Builder, rng: &mut SmallRng, p: Vec2) {
@@ -316,7 +371,7 @@ fn tree(b: &mut Builder, rng: &mut SmallRng, p: Vec2) {
 }
 
 /// Free of buildings, roads and the blocks' ring: where a tree or a find can go.
-fn open(map: &MapLayout, ring: &super::cp::Ring, p: Vec2, clear: f32) -> bool {
+fn open(map: &MapLayout, ring: &super::cp::Ring, houses: &[Vec<Vec2>], p: Vec2, clear: f32) -> bool {
     let r = p.distance(ring.center.xz());
     if r > ring.ri - 6.0 && r < ring.ro + 3.0 || r < 12.0 {
         return false;
@@ -327,15 +382,16 @@ fn open(map: &MapLayout, ring: &super::cp::Ring, p: Vec2, clear: f32) -> bool {
     !map.footprints.iter().any(|f| {
         let c = f.pts.iter().sum::<Vec2>() / f.pts.len() as f32;
         c.distance(p) < 80.0 && (super::footprint::contains(&f.pts, p) || f.pts.iter().any(|q| q.distance(p) < clear))
-    }) && !map.props.iter().any(|q| q.pos.xz().distance(p) < 5.0)
+    }) && !houses.iter().any(|h| h[0].distance(p) < 30.0 && (super::footprint::contains(h, p) || h.iter().any(|q| q.distance(p) < clear)))
+        && !map.props.iter().any(|q| q.pos.xz().distance(p) < 5.0)
 }
 
 /// OpenStreetMap's mapped trees, Central Park and Palika Park planted round their edges and in
 /// groves, and neem avenues along the circles and main roads (on the pavement beside them).
-fn trees(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp::Ring) {
+fn trees(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp::Ring, houses: &[Vec<Vec2>]) {
     for t in &data.trees {
         let p = v2(t);
-        if open(b.map, ring, p, 1.5) {
+        if open(b.map, ring, houses, p, 1.5) {
             tree(b, rng, p);
         }
     }
@@ -357,7 +413,7 @@ fn trees(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp::Rin
                 break;
             }
             let p = Vec2::new(rng.random_range(lo.x..hi.x), rng.random_range(lo.y..hi.y));
-            if super::footprint::contains(&pts, p) && open(b.map, ring, p, 2.0) {
+            if super::footprint::contains(&pts, p) && open(b.map, ring, houses, p, 2.0) {
                 tree(b, rng, p);
                 here += 1;
                 planted += 1;
@@ -373,7 +429,7 @@ fn trees(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp::Rin
             while d < len {
                 for sgn in [-1.0, 1.0] {
                     let p = a.lerp(c, d / len) + side * sgn;
-                    if p.abs().max_element() < HALF + 40.0 && open(b.map, ring, p, 2.5) {
+                    if p.abs().max_element() < HALF + 40.0 && open(b.map, ring, houses, p, 2.5) {
                         tree(b, rng, p);
                     }
                 }
@@ -385,13 +441,13 @@ fn trees(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp::Rin
 
 /// Loose finds along the pavements and in the parks, and chests in the open where a map has too
 /// few buildings to stand them by (India Gate's lawns).
-fn street_loot(b: &mut Builder, rng: &mut SmallRng, _data: &Data, ring: &super::cp::Ring) {
+fn street_loot(b: &mut Builder, rng: &mut SmallRng, _data: &Data, ring: &super::cp::Ring, houses: &[Vec<Vec2>]) {
     let w = Frame::new(Vec3::ZERO, 0.0);
     let mut tries = 0;
     while b.map.chests.len() < 70 && tries < 5000 {
         tries += 1;
         let p = Vec2::new(rng.random_range(-HALF + 8.0..HALF - 8.0), rng.random_range(-HALF + 8.0..HALF - 8.0));
-        if open(b.map, ring, p, 2.0) && !b.map.chests.iter().any(|c| c.pos.xz().distance(p) < 15.0) {
+        if open(b.map, ring, houses, p, 2.0) && !b.map.chests.iter().any(|c| c.pos.xz().distance(p) < 15.0) {
             b.chest(w, Vec3::new(p.x, 0.0, p.y), rng.random_range(0.0..std::f32::consts::TAU), ChestKind::Peti);
         }
     }
@@ -400,7 +456,7 @@ fn street_loot(b: &mut Builder, rng: &mut SmallRng, _data: &Data, ring: &super::
     while placed < 90 && tries < 5000 {
         tries += 1;
         let p = Vec2::new(rng.random_range(-HALF + 6.0..HALF - 6.0), rng.random_range(-HALF + 6.0..HALF - 6.0));
-        if open(b.map, ring, p, 1.0) {
+        if open(b.map, ring, houses, p, 1.0) {
             b.loot(w, Vec3::new(p.x, 0.3, p.y));
             placed += 1;
         }
