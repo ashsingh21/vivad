@@ -22,19 +22,15 @@ fn main() {
     check_lfs();
     // Built in, so the browser build needn't fetch it before the app starts.
     let items_ron = include_str!("../../../assets/data/items.ron").to_string();
-    let bots = std::env::var("VIVAD_BOTS").ok().and_then(|s| s.parse().ok()).unwrap_or(15);
+    let bots = setting("bots").and_then(|s| s.parse().ok()).unwrap_or(15);
     let autopilot = std::env::var("VIVAD_AUTOPILOT").is_ok();
     let mut config = MatchConfig { bots, autopilot, ..default() };
     // In the browser the first map comes from the address: …/?map=chandni.
     #[cfg(target_arch = "wasm32")]
-    if let Some(map) = web_sys::window()
-        .and_then(|w| w.location().search().ok())
-        .and_then(|q| q.trim_start_matches('?').split('&').find_map(|kv| kv.strip_prefix("map=").and_then(shared::map::MapId::parse)))
-    {
+    if let Some(map) = setting("map").and_then(|m| shared::map::MapId::parse(&m)) {
         config.map = map;
     }
     let mut app = App::new();
-    #[cfg(not(target_arch = "wasm32"))]
     if let Some(lobby) = online(&mut config) {
         app.insert_resource(lobby);
     }
@@ -87,7 +83,6 @@ fn main() {
             }).or(Some(Default::default()))),
             ..default()
         });
-    #[cfg(not(target_arch = "wasm32"))]
     app.add_plugins((net::TransportPlugin, game::lobby::LobbyPlugin));
     // VIVAD_PERF_ALL=1: log every diagnostic, GPU time per render pass among them.
     if std::env::var("VIVAD_PERF_ALL").is_ok() {
@@ -96,32 +91,47 @@ fn main() {
     app.run();
 }
 
+/// A setting, by name ("host", "join", "name", "bots", "lan", "map"): natively from the
+/// environment (VIVAD_HOST, ...), in the browser from the page's address (?host&name=Ashu).
+fn setting(key: &str) -> Option<String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    return std::env::var(format!("VIVAD_{}", key.to_uppercase())).ok();
+    #[cfg(target_arch = "wasm32")]
+    {
+        let search = web_sys::window()?.location().search().ok()?;
+        web_sys::UrlSearchParams::new_with_str(&search).ok()?.get(key)
+    }
+}
+
 /// Online play: VIVAD_HOST=1 hosts a match (shows a join code; Enter starts it, or VIVAD_HOST=<n>
 /// starts at n players counting you), with no bots unless VIVAD_BOTS says; VIVAD_JOIN=<code> joins one. VIVAD_NAME is what others see
 /// you as, and VIVAD_LAN=1 skips iroh's relays (enough on one machine or a LAN; the code is then
-/// longer, carrying addresses). The window opens on a lobby screen meanwhile.
-#[cfg(not(target_arch = "wasm32"))]
+/// longer, carrying addresses). The window opens on a lobby screen meanwhile. In the browser the
+/// same from the address: ?host, ?host=4, ?join=chai-tiger-kulfi-42, &name=, &bots=, &map=.
 fn online(config: &mut MatchConfig) -> Option<net::Lobby> {
-    let host = std::env::var("VIVAD_HOST").ok();
-    let join = std::env::var("VIVAD_JOIN").ok().filter(|c| !c.is_empty());
+    let host = setting("host");
+    let join = setting("join").filter(|c| !c.is_empty());
     if host.is_none() && join.is_none() {
         return None;
     }
-    let name = std::env::var("VIVAD_NAME").ok().filter(|n| !n.is_empty()).or_else(|| std::env::var("USER").ok()).unwrap_or_else(|| "Warrior".into());
-    let relay = std::env::var("VIVAD_LAN").is_err();
+    let name = setting("name").filter(|n| !n.trim().is_empty()).or_else(|| std::env::var("USER").ok()).unwrap_or_else(|| "Warrior".into());
+    // The browser can only go through the relays.
+    let relay = cfg!(target_arch = "wasm32") || setting("lan").is_none();
     config.online = true;
     Some(match join {
         Some(code) => {
-            // The code names the map, so it is built before the match starts.
-            let (_, map, map_seed) = net::read_code(&code).unwrap_or_else(|e| panic!("VIVAD_JOIN: {e}"));
-            config.map = map;
-            config.map_seed = map_seed;
+            // The code names the map, so it is built before the match starts (a bad code is
+            // reported by the lobby).
+            if let Ok((_, map, map_seed)) = net::read_code(&code) {
+                config.map = map;
+                config.map_seed = map_seed;
+            }
             net::Lobby::join(name, relay, code)
         }
         None => {
             let players = host.and_then(|h| h.parse::<usize>().ok()).filter(|n| *n > 1);
             // Online, players fight each other: no bots unless the host asks (VIVAD_BOTS=<n>).
-            let bots = std::env::var("VIVAD_BOTS").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+            let bots = setting("bots").and_then(|s| s.parse().ok()).unwrap_or(0);
             // Across the internet the match gets a room code to read out, drawn so that it names
             // the host's map (VIVAD_MAP); its map seed comes with it.
             let room = relay.then(|| net::new_room_for(config.map));

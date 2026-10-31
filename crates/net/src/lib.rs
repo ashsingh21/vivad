@@ -6,10 +6,15 @@
 //! later. A match is gathered by a lobby: one player shares a join code and the rest dial it.
 //! That player only introduces everyone and picks the seed; once the match starts it is a peer
 //! like the others.
+//!
+//! The same code runs in the browser, where iroh reaches the others through its relays (over
+//! WebSockets) and finds a room's host by an HTTPS lookup: the lobby's steps are async, driven by
+//! a tokio runtime on threads of its own natively and by the page's event loop in the browser.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::future::Future;
 use std::time::Duration;
 
 use bevy::prelude::*;
@@ -21,8 +26,50 @@ use shared::sim::flow::{Match, start_match};
 use shared::map::MapId;
 use shared::sim::{Hold, MatchConfig};
 use shared::sim::net::{Departures, Inbox, NetMsg, Outbox, PeerId, Peers, WarriorState};
-use tokio::runtime::Runtime;
+use n0_future::time::{Instant, timeout};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+
+/// What runs the network: natively a tokio runtime on threads of its own; in the browser, the
+/// page's event loop (nothing to hold on to).
+#[cfg(not(target_arch = "wasm32"))]
+type Rt = Arc<tokio::runtime::Runtime>;
+#[cfg(target_arch = "wasm32")]
+type Rt = ();
+
+#[cfg(not(target_arch = "wasm32"))]
+fn runtime() -> Result<Rt, Error> {
+    Ok(Arc::new(tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?))
+}
+
+/// Run `make`'s future in the background: natively on a thread of its own (blocking on the
+/// runtime it is given), in the browser as a task of the page.
+#[cfg(not(target_arch = "wasm32"))]
+fn background<F: Future<Output = ()> + 'static>(make: impl FnOnce(Result<Rt, Error>) -> F + Send + 'static) {
+    std::thread::spawn(move || match runtime() {
+        Ok(rt) => rt.clone().block_on(make(Ok(rt))),
+        // No runtime: the future only reports that, so it needs none.
+        Err(e) => n0_future::future::block_on(make(Err(e))),
+    });
+}
+
+#[cfg(target_arch = "wasm32")]
+fn background<F: Future<Output = ()> + 'static>(make: impl FnOnce(Result<Rt, Error>) -> F + 'static) {
+    wasm_bindgen_futures::spawn_local(make(Ok(())));
+}
+
+/// Shut an endpoint down (at most a second), so the others see us go at once.
+fn shut(rt: &Rt, router: Router) {
+    let close = async move {
+        let _ = timeout(Duration::from_secs(1), router.shutdown()).await;
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    rt.block_on(close);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let () = rt;
+        wasm_bindgen_futures::spawn_local(close);
+    }
+}
 
 pub const ALPN: &[u8] = b"vivad/0";
 
@@ -30,6 +77,8 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
 /// How long a joining peer waits to reach everyone in the match once it starts.
 const MESH_TIMEOUT: Duration = Duration::from_secs(20);
+/// How often a joiner tries the host again until it answers.
+const REDIAL: Duration = Duration::from_secs(3);
 /// A peer silent this long has gone (crashed, or its network has). Keep-alives come from the
 /// network thread, not the game loop, so a long frame never trips it.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(3);
@@ -137,7 +186,7 @@ async fn run_link(mesh: Arc<Mesh>, conn: Connection) -> Result<(), Error> {
     info!("linked with {} ({})", member.name, conn.remote_id().fmt_short());
     let _ = mesh.events.send((them, Wire::Hello(member)));
 
-    let writer = tokio::spawn(async move {
+    let writer = n0_future::task::spawn(async move {
         while let Some(bytes) = outgoing.recv().await {
             if send.write_all(&bytes).await.is_err() {
                 break;
@@ -146,7 +195,7 @@ async fn run_link(mesh: Arc<Mesh>, conn: Connection) -> Result<(), Error> {
     });
     let datagrams = {
         let (mesh, conn) = (mesh.clone(), conn.clone());
-        tokio::spawn(async move {
+        n0_future::task::spawn(async move {
             while let Ok(bytes) = conn.read_datagram().await {
                 mesh.received.fetch_add(bytes.len() as u64, Ordering::Relaxed);
                 let Some((generation, mut rest)) = bytes.split_first_chunk::<4>().map(|(g, r)| (u32::from_le_bytes(*g), r)) else { continue };
@@ -180,7 +229,7 @@ async fn run_link(mesh: Arc<Mesh>, conn: Connection) -> Result<(), Error> {
 /// This player's endpoint, before it has joined a match.
 pub struct Node {
     relay: bool,
-    runtime: Arc<Runtime>,
+    rt: Rt,
     router: Router,
     mesh: Arc<Mesh>,
     events: UnboundedReceiver<(PeerId, Wire)>,
@@ -251,47 +300,51 @@ pub fn room_map_seed(room: &str) -> u64 {
 impl Node {
     /// `relay`: reachable across the internet through iroh's relays (otherwise direct addresses
     /// only, which is enough on one machine or a LAN).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn bind(name: &str, relay: bool) -> Result<Node, Error> {
-        Node::bind_as(name, relay, None)
+        let rt = runtime()?;
+        rt.clone().block_on(Node::connect(rt, name, relay, None))
     }
 
     /// Bound with the key a room code gives, so the code is all a joiner needs (with relays).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn bind_room(name: &str, room: &str) -> Result<Node, Error> {
-        let mut node = Node::bind_as(name, true, Some(room_key(room)))?;
+        let rt = runtime()?;
+        rt.clone().block_on(Node::connect_room(rt, name, room))
+    }
+
+    async fn connect_room(rt: Rt, name: &str, room: &str) -> Result<Node, Error> {
+        let mut node = Node::connect(rt, name, true, Some(room_key(room))).await?;
         node.room = Some(room.to_string());
         Ok(node)
     }
 
-    fn bind_as(name: &str, relay: bool, key: Option<SecretKey>) -> Result<Node, Error> {
-        let runtime = Arc::new(tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?);
+    async fn connect(rt: Rt, name: &str, relay: bool, key: Option<SecretKey>) -> Result<Node, Error> {
         let (events_tx, events) = unbounded_channel();
-        let (router, mesh) = runtime.block_on(async {
-            let quic = QuicTransportConfig::builder().keep_alive_interval(KEEP_ALIVE).max_idle_timeout(Some(IDLE_TIMEOUT.try_into()?)).build();
-            let builder = if relay { Endpoint::builder(presets::N0) } else { Endpoint::builder(presets::N0DisableRelay) };
-            let builder = match key {
-                Some(k) => builder.secret_key(k),
-                None => builder,
-            };
-            let endpoint = builder.transport_config(quic).bind().await?;
-            if relay {
-                let _ = tokio::time::timeout(Duration::from_secs(10), endpoint.online()).await;
-            } else {
-                let mut watch = endpoint.watch_addr();
-                let _ = tokio::time::timeout(Duration::from_secs(5), async {
-                    while watch.get().addrs.is_empty() {
-                        if watch.updated().await.is_err() {
-                            break;
-                        }
+        let quic = QuicTransportConfig::builder().keep_alive_interval(KEEP_ALIVE).max_idle_timeout(Some(IDLE_TIMEOUT.try_into()?)).build();
+        let builder = if relay { Endpoint::builder(presets::N0) } else { Endpoint::builder(presets::N0DisableRelay) };
+        let builder = match key {
+            Some(k) => builder.secret_key(k),
+            None => builder,
+        };
+        let endpoint = builder.transport_config(quic).bind().await?;
+        if relay {
+            let _ = timeout(Duration::from_secs(10), endpoint.online()).await;
+        } else {
+            let mut watch = endpoint.watch_addr();
+            let _ = timeout(Duration::from_secs(5), async {
+                while watch.get().addrs.is_empty() {
+                    if watch.updated().await.is_err() {
+                        break;
                     }
-                })
-                .await;
-            }
-            let me = Member { addr: endpoint.addr(), name: name.to_string() };
-            let mesh = Arc::new(Mesh { me, peers: default(), events: events_tx, sent: default(), received: default() });
-            let router = Router::builder(endpoint).accept(ALPN, Handler(mesh.clone())).spawn();
-            Ok::<_, Error>((router, mesh))
-        })?;
-        Ok(Node { relay, runtime, router, mesh, events, room: None })
+                }
+            })
+            .await;
+        }
+        let me = Member { addr: endpoint.addr(), name: name.to_string() };
+        let mesh = Arc::new(Mesh { me, peers: default(), events: events_tx, sent: default(), received: default() });
+        let router = Router::builder(endpoint).accept(ALPN, Handler(mesh.clone())).spawn();
+        Ok(Node { relay, rt, router, mesh, events, room: None })
     }
 
     pub fn peer(&self) -> PeerId {
@@ -311,9 +364,17 @@ impl Node {
     }
 
     fn dial(&self, addr: EndpointAddr) {
+        self.dial_marking(addr, default());
+    }
+
+    /// Dial, with `busy` set until the attempt has connected or failed.
+    fn dial_marking(&self, addr: EndpointAddr, busy: Arc<std::sync::atomic::AtomicBool>) {
         let (endpoint, mesh) = (self.router.endpoint().clone(), self.mesh.clone());
-        self.runtime.spawn(async move {
-            match endpoint.connect(addr, ALPN).await {
+        busy.store(true, Ordering::Relaxed);
+        n0_future::task::spawn(async move {
+            let conn = endpoint.connect(addr, ALPN).await;
+            busy.store(false, Ordering::Relaxed);
+            match conn {
                 Ok(conn) => {
                     if let Err(e) = run_link(mesh, conn).await {
                         warn!("peer link ended: {e}");
@@ -333,8 +394,8 @@ impl Node {
 
     /// The next lobby event, if one comes within `wait`. Peers that finish loading before we
     /// have even started are remembered.
-    fn next(&mut self, wait: Duration, ready: &mut BTreeSet<PeerId>) -> Result<Option<(PeerId, Wire)>, Error> {
-        match self.runtime.block_on(async { tokio::time::timeout(wait, self.events.recv()).await }) {
+    async fn next(&mut self, wait: Duration, ready: &mut BTreeSet<PeerId>) -> Result<Option<(PeerId, Wire)>, Error> {
+        match timeout(wait, self.events.recv()).await {
             Err(_) => Ok(None),
             Ok(None) => Err("network stopped".into()),
             Ok(Some((from, Wire::Ready))) => {
@@ -346,17 +407,19 @@ impl Node {
     }
 
     /// Wait for `players` (us included), then start a match with `bots` bots on this map.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn host(self, players: usize, bots: u32, map_seed: u64) -> Result<Session, Error> {
-        self.host_until(bots, map_seed, &mut |_| {}, &mut |n| n >= players)
+        let rt = self.rt.clone();
+        rt.block_on(self.host_until(bots, map_seed, &mut |_| {}, &mut |n| n >= players))
     }
 
     /// Gather players, telling `report` who is in, until `go` says how many is enough.
-    pub fn host_until(mut self, bots: u32, map_seed: u64, report: &mut dyn FnMut(Vec<String>), go: &mut dyn FnMut(usize) -> bool) -> Result<Session, Error> {
+    async fn host_until(mut self, bots: u32, map_seed: u64, report: &mut dyn FnMut(Vec<String>), go: &mut dyn FnMut(usize) -> bool) -> Result<Session, Error> {
         let mut members = vec![self.mesh.me.clone()];
         let mut ready = BTreeSet::new();
         report(names(&members));
         while !go(members.len()) {
-            let Some((from, wire)) = self.next(Duration::from_millis(100), &mut ready)? else { continue };
+            let Some((from, wire)) = self.next(Duration::from_millis(100), &mut ready).await? else { continue };
             match wire {
                 Wire::Hello(m) if !members.iter().any(|x| x.peer() == m.peer()) => {
                     info!("{} joined ({} players)", m.name, members.len() + 1);
@@ -374,32 +437,44 @@ impl Node {
     }
 
     /// Join the match whose code another player shared, and wait for it to start.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn join(self, code: &str) -> Result<Session, Error> {
         self.join_reporting(code, &mut |_| {}, &mut || true)
     }
 
     /// Join, telling `report` who is in, for as long as `stay` says so (leaving closes our links,
     /// and the host drops us from the lobby).
-    pub fn join_reporting(mut self, code: &str, report: &mut dyn FnMut(Vec<String>), stay: &mut dyn FnMut() -> bool) -> Result<Session, Error> {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn join_reporting(self, code: &str, report: &mut dyn FnMut(Vec<String>), stay: &mut dyn FnMut() -> bool) -> Result<Session, Error> {
+        let rt = self.rt.clone();
+        rt.block_on(self.enter(code, report, stay))
+    }
+
+    async fn enter(mut self, code: &str, report: &mut dyn FnMut(Vec<String>), stay: &mut dyn FnMut() -> bool) -> Result<Session, Error> {
         let (addr, _, _) = read_code(code)?;
         let host = peer_id(&addr.id);
-        self.dial(addr);
+        let dialling = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.dial_marking(addr.clone(), dialling.clone());
+        // A host that has only just gone online may not be findable by its key yet: dial again
+        // every few seconds until it answers.
+        let mut redial = Instant::now() + REDIAL;
         let me = self.peer();
         let mut dialled = vec![host];
         let mut ready = BTreeSet::new();
         let mut start: Option<(u64, u64, u32, Vec<Member>)> = None;
-        let mut deadline = std::time::Instant::now() + MESH_TIMEOUT;
+        let mut deadline = Instant::now() + MESH_TIMEOUT;
         // Players who left after the match was set (or never answered): it starts without them.
         let mut gone = vec![];
         loop {
             if !stay() {
-                self.close();
+                // Close our links, so the host sees us go at once.
+                let _ = timeout(Duration::from_secs(1), self.router.shutdown()).await;
                 return Err("left the lobby".into());
             }
             let linked = self.mesh.peers.lock().unwrap().keys().copied().collect::<Vec<_>>();
             if let Some((seed, map_seed, bots, members)) = &start {
                 let missing: Vec<PeerId> = members.iter().map(Member::peer).filter(|p| *p != me && !linked.contains(p) && !gone.contains(p)).collect();
-                if !missing.is_empty() && std::time::Instant::now() > deadline {
+                if !missing.is_empty() && Instant::now() > deadline {
                     warn!("starting without {} player(s) we could not reach", missing.len());
                     gone.extend(missing);
                     continue;
@@ -409,11 +484,14 @@ impl Node {
                     session.gone = gone;
                     return Ok(session);
                 }
-            } else if !linked.contains(&host) && std::time::Instant::now() > deadline {
+            } else if !linked.contains(&host) && Instant::now() > deadline {
                 // Reaching the host has a deadline; the lobby filling up does not.
                 return Err("could not reach the host".into());
+            } else if !linked.contains(&host) && Instant::now() > redial && !dialling.load(Ordering::Relaxed) {
+                redial = Instant::now() + REDIAL;
+                self.dial_marking(addr.clone(), dialling.clone());
             }
-            let Some((from, wire)) = self.next(Duration::from_millis(200), &mut ready)? else { continue };
+            let Some((from, wire)) = self.next(Duration::from_millis(200), &mut ready).await? else { continue };
             match wire {
                 // Of each pair, the lower key dials, so there is one connection per pair.
                 Wire::Members(members) if from == host => {
@@ -428,7 +506,7 @@ impl Node {
                 Wire::Start { seed, map_seed, bots, members } if from == host => {
                     info!("match starting with {} players", members.len());
                     start = Some((seed, map_seed, bots, members));
-                    deadline = std::time::Instant::now() + MESH_TIMEOUT;
+                    deadline = Instant::now() + MESH_TIMEOUT;
                 }
                 Wire::Left if from == host && start.is_none() => return Err("the host left".into()),
                 Wire::Left if start.is_some() => gone.push(from),
@@ -437,17 +515,11 @@ impl Node {
         }
     }
 
-    /// Close our links, so the others see us go at once.
-    fn close(self) {
-        let router = self.router.clone();
-        let _ = self.runtime.block_on(async { tokio::time::timeout(Duration::from_secs(1), router.shutdown()).await });
-    }
-
     fn session(self, seed: u64, map_seed: u64, bots: u32, members: &[Member], ready: BTreeSet<PeerId>) -> Session {
         let mut peers = Peers::new(self.peer(), members.iter().map(Member::peer).collect());
         peers.names = members.iter().map(|m| (m.peer(), m.name.clone())).collect();
         let transport = Transport {
-            net: Some((self.runtime, self.router)),
+            net: Some((self.rt, self.router)),
             mesh: self.mesh,
             events: Mutex::new(self.events),
             held: default(),
@@ -502,7 +574,7 @@ pub struct Session {
 #[derive(Resource)]
 pub struct Transport {
     /// The network thread and our endpoint (taken by `crash`).
-    net: Option<(Arc<Runtime>, Router)>,
+    net: Option<(Rt, Router)>,
     mesh: Arc<Mesh>,
     events: Mutex<UnboundedReceiver<(PeerId, Wire)>>,
     /// Messages for a match we haven't reached yet.
@@ -529,9 +601,9 @@ pub struct Conditions {
     latency: f32,
     jitter: f32,
     loss: f32,
-    queue: Mutex<Vec<(std::time::Instant, PeerId, Wire)>>,
+    queue: Mutex<Vec<(Instant, PeerId, Wire)>>,
     /// When each peer's last ordered message is let through (nothing overtakes it).
-    ordered: Mutex<BTreeMap<PeerId, std::time::Instant>>,
+    ordered: Mutex<BTreeMap<PeerId, Instant>>,
 }
 
 impl Conditions {
@@ -544,7 +616,7 @@ impl Conditions {
 
     fn pass(&self, arrived: Vec<(PeerId, Wire)>) -> Vec<(PeerId, Wire)> {
         use rand::RngExt;
-        let now = std::time::Instant::now();
+        let now = Instant::now();
         let mut rng = rand::rng();
         let mut queue = self.queue.lock().unwrap();
         let mut ordered = self.ordered.lock().unwrap();
@@ -571,8 +643,8 @@ impl Conditions {
 impl Drop for Transport {
     /// Close our connections, so the others see us leave at once rather than after a timeout.
     fn drop(&mut self) {
-        if let Some((runtime, router)) = self.net.take() {
-            let _ = runtime.block_on(async { tokio::time::timeout(Duration::from_secs(1), router.shutdown()).await });
+        if let Some((rt, router)) = self.net.take() {
+            shut(&rt, router);
         }
     }
 }
@@ -580,6 +652,7 @@ impl Drop for Transport {
 impl Transport {
     /// Stop dead, as a crashed game would: no goodbye, so the others only find out when we go
     /// silent. For testing.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn crash(mut self) {
         let Some((runtime, router)) = self.net.take() else { return };
         std::mem::forget(router);
@@ -708,18 +781,23 @@ impl Lobby {
     pub fn host(name: String, relay: bool, room: Option<String>, players: Option<usize>, bots: u32, map: MapId, map_seed: u64) -> Lobby {
         let (lobby, news) = Lobby::new(true);
         let go = lobby.go.clone();
-        std::thread::spawn(move || {
-            let node = match &room {
-                Some(r) if relay => Node::bind_room(&name, r),
-                _ => Node::bind(&name, relay),
+        background(move |rt| async move {
+            let node = match (rt, &room) {
+                (Err(e), _) => Err(e),
+                (Ok(rt), Some(r)) if relay => Node::connect_room(rt, &name, r).await,
+                (Ok(rt), _) => Node::connect(rt, &name, relay, None).await,
             };
-            let result = node.and_then(|node| {
-                let _ = news.send(News::Code(node.code(map, map_seed)));
-                let tell = news.clone();
-                node.host_until(bots, map_seed, &mut |p| drop(tell.send(News::Players(p))), &mut |n| {
-                    players.is_some_and(|p| n >= p) || go.load(Ordering::Relaxed)
-                })
-            });
+            let result = match node {
+                Ok(node) => {
+                    let _ = news.send(News::Code(node.code(map, map_seed)));
+                    let tell = news.clone();
+                    node.host_until(bots, map_seed, &mut |p| drop(tell.send(News::Players(p))), &mut |n| {
+                        players.is_some_and(|p| n >= p) || go.load(Ordering::Relaxed)
+                    })
+                    .await
+                }
+                Err(e) => Err(e),
+            };
             let _ = news.send(match result {
                 Ok(session) => News::Started(Box::new(session)),
                 Err(e) => News::Failed(e.to_string()),
@@ -732,10 +810,15 @@ impl Lobby {
         let (lobby, news) = Lobby::new(false);
         // For a joiner, `go` means leave.
         let go = lobby.go.clone();
-        std::thread::spawn(move || {
+        background(move |rt| async move {
             let tell = news.clone();
-            let result = Node::bind(&name, relay)
-                .and_then(|node| node.join_reporting(&code, &mut |p| drop(tell.send(News::Players(p))), &mut || !go.load(Ordering::Relaxed)));
+            let result = match rt {
+                Ok(rt) => match Node::connect(rt, &name, relay, None).await {
+                    Ok(node) => node.enter(&code, &mut |p| drop(tell.send(News::Players(p))), &mut || !go.load(Ordering::Relaxed)).await,
+                    Err(e) => Err(e),
+                },
+                Err(e) => Err(e),
+            };
             let _ = news.send(match result {
                 Ok(session) => News::Started(Box::new(session)),
                 Err(e) => News::Failed(e.to_string()),
@@ -770,7 +853,11 @@ fn poll_lobby(world: &mut World) {
         let mut lobby = world.resource_mut::<Lobby>();
         match n {
             News::Code(code) => {
+                // Natively in the terminal; in the browser, its console.
+                #[cfg(not(target_arch = "wasm32"))]
                 println!("join code: {code}");
+                #[cfg(target_arch = "wasm32")]
+                info!("join code: {code}");
                 lobby.code = Some(code);
             }
             News::Players(p) => lobby.players = p,

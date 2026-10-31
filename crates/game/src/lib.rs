@@ -12,7 +12,6 @@ pub mod hud;
 pub mod input;
 pub mod lamps;
 pub mod quality;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod lobby;
 pub mod studio_env;
 pub mod visuals;

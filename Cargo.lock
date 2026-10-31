@@ -5120,11 +5120,13 @@ dependencies = [
  "bevy",
  "blake3",
  "iroh",
+ "n0-future",
  "postcard",
  "rand",
  "serde",
  "shared",
  "tokio",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]

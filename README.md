@@ -39,9 +39,18 @@ Hauz Khas (`map=hauzkhas`), India Gate (`map=indiagate`); `map=bharat` is the an
 `just host Arjuna map=chandni` gives a room code that tells joiners the map. In Chandni Chowk and Hauz Khas up to
 50 houses can be entered (break the door): rooms on every floor, stairs to the roof, chests inside.
 Each match is on the next Delhi map in turn, unless the players vote: once out of a match (or when it ends), keys
-1-4 vote for the next map, and the most votes win (`VIVAD_ROTATE=0` keeps one map). In the browser the first map comes
-from the address: `http://localhost:8080/?map=chandni`.
+1-4 vote for the next map, and the most votes win (`VIVAD_ROTATE=0` keeps one map).
 Gamepad: sticks, A jump, RT fire, LT aim, X interact, Y reload, bumpers cycle.
+
+## In the browser
+Chrome or Edge (desktop or Android), or Safari 26+: the game needs WebGPU. One-time setup:
+`rustup target add wasm32-unknown-unknown` and `cargo install wasm-bindgen-cli --version 0.2.129`.
+Then `just web` builds it and serves it at http://localhost:8080/: a menu to play solo, make a room
+(its code shows on screen) or join one by code. Browser and desktop players play together: a room
+made in either can be joined from the other (through iroh's relays; a room only just made can take
+10-15 s to be found). The menu only sets the address, which can be used directly: `?solo&map=chandni`,
+`?host&name=Ashu&map=hauzkhas` (`?host=4` starts at 4 players; otherwise Enter starts),
+`?join=chai-tota-ludo-42&name=Ashu`, `&bots=6` for bots online.
 
 Blender path comes from `.env` (`BLENDER=...`, see `.env.example`).
 Weapon axis convention and all reference dimensions: `docs/references.md`.

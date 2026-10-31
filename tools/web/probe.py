@@ -10,7 +10,8 @@ and every console error. `--phone` emulates a Pixel 7a's screen (412 x 915 CSS p
 touch; `--cpu N` slows the CPU N times (4 is roughly a mid-range phone against this desktop).
 The GPU can't be slowed: phone GPU cost has to be judged from the desktop GPU's headroom.
 `--profile N` records Chrome's CPU profile for N seconds and prints the functions (the wasm's
-Rust functions by name) taking the most time on the page's thread.
+Rust functions by name) taking the most time on the page's thread. `--log FILE` appends the
+page's console to FILE as it arrives (to read a room code off a hosting page, say).
 """
 
 import argparse
@@ -67,6 +68,9 @@ async def run(a):
                 await ws.send(json.dumps({"id": me, "method": method, "params": params}))
                 while True:
                     msg = json.loads(await ws.recv())
+                    if a.log and msg.get("method") == "Runtime.consoleAPICalled":
+                        with open(a.log, "a") as f:
+                            f.write(" ".join(str(x.get("value", x.get("description", ""))) for x in msg["params"]["args"]) + "\n")
                     if msg.get("method") == "Runtime.consoleAPICalled" and msg["params"]["type"] in ("error", "warning"):
                         errors.append(" ".join(str(x.get("value", x.get("description", ""))) for x in msg["params"]["args"])[:300])
                     if msg.get("method") == "Runtime.exceptionThrown":
@@ -168,6 +172,7 @@ def main():
     p.add_argument("--cpu", type=float, default=1.0)
     p.add_argument("--profile", type=float, default=0.0)
     p.add_argument("--dump", help="save the CPU profile (JSON) here")
+    p.add_argument("--log", help="append every console message to this file as it arrives")
     asyncio.run(run(p.parse_args()))
 
 

@@ -65,7 +65,7 @@ fn show(
         // Broken into lines: a LAN code (which carries addresses) is too long for one.
         let code = lobby.code.as_ref().map(|c| c.as_bytes().chunks(50).map(|l| String::from_utf8_lossy(l)).collect::<Vec<_>>().join("\n"));
         let code = code.as_deref().unwrap_or("(going online...)");
-        Some(format!("Hosting a match\n\nJoin code (also printed in the terminal):\n{code}\n\n{players}\n\nPress Enter to start"))
+        Some(format!("Hosting a match\n\nRoom code: share it with your friends\n{code}\n\n{players}\n\nPress Enter to start"))
     } else {
         let waiting = if lobby.players.is_empty() { "Reaching the host..." } else { "Waiting for the host to start" };
         Some(format!("Joining a match\n\n{players}\n\n{waiting}"))
