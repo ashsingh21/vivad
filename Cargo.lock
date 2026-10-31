@@ -3473,6 +3473,7 @@ dependencies = [
  "ron",
  "serde",
  "shared",
+ "web-sys",
 ]
 
 [[package]]
