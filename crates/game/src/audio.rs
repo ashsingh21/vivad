@@ -46,12 +46,13 @@ const UI: f32 = 0.5;
 const ITEM: f32 = 0.6;
 const BED: f32 = 0.45;
 
-const NAMES: [&str; 57] = [
+const NAMES: [&str; 63] = [
     "step_dirt_0", "step_dirt_1", "step_dirt_2", "step_dirt_3", "step_stone_0", "step_stone_1", "step_stone_2", "step_stone_3",
     "step_wood_0", "step_wood_1", "step_wood_2", "step_wood_3", "step_grass_0", "step_grass_1", "step_grass_2", "step_grass_3",
     "step_water_0", "step_water_1", "step_water_2", "step_water_3", "sword_whoosh_0", "sword_whoosh_1", "sword_whoosh_2",
     "sword_hit_flesh", "sword_hit_stone", "bow_release", "bow_release_heavy", "bow_draw", "arrow_impact_wood",
-    "arrow_impact_stone", "hit_flesh", "hit_shield", "hitmarker", "hitmarker_head", "hurt", "jump", "land", "glider_open",
+    "arrow_impact_stone", "gun_tamancha", "gun_dunali", "gun_katta", "gulel_release", "bullet_impact_stone",
+    "bullet_impact_wood", "hit_flesh", "hit_shield", "hitmarker", "hitmarker_head", "hurt", "jump", "land", "glider_open",
     "glide_loop", "freefall_loop", "vimana_loop", "chest_open", "kalash_open", "pickup", "drink", "reload", "fire_ignite",
     "fire_loop", "wind_gust", "throw", "zone_warn", "zone_loop", "kill", "eliminated", "victory", "amb_day", "amb_river",
 ];
@@ -273,11 +274,25 @@ fn combat_events(
     mut stuck: Local<HashSet<Entity>>,
 ) {
     let me = local.iter().next();
+    // One report per shot, however many pellets it fires.
+    let mut fired: Vec<Entity> = vec![];
     for (p, tf) in &added {
+        if fired.contains(&p.owner) {
+            continue;
+        }
+        fired.push(p.owner);
         match p.astra {
             None => {
                 let heavy = matches!(db.get(&p.item).kind, ItemKind::Bow { charge, .. } if charge > 0.0);
-                play.at(if heavy { "bow_release_heavy" } else { "bow_release" }, tf.translation, WEAPON, 120.0);
+                let (sound, reach) = match p.item.as_str() {
+                    "gandiva" => ("gun_tamancha", 200.0),
+                    "sharanga" => ("gun_dunali", 220.0),
+                    "katta" => ("gun_katta", 220.0),
+                    "pinaka" => ("gulel_release", 60.0),
+                    _ if heavy => ("bow_release_heavy", 120.0),
+                    _ => ("bow_release", 120.0),
+                };
+                play.at(sound, tf.translation, WEAPON, reach);
             }
             Some(_) => play.at("throw", tf.translation, WEAPON, 60.0),
         }
@@ -288,7 +303,13 @@ fn combat_events(
     for (e, p, tf) in &arrows {
         if p.stuck && stuck.insert(e) {
             let soft = matches!(surface(&spatial, &blocks, &terrain, &layout, tf.translation), "wood" | "grass" | "dirt");
-            play.at(if soft { "arrow_impact_wood" } else { "arrow_impact_stone" }, tf.translation, IMPACT, 60.0);
+            let sound = match (crate::visuals::shot_kind(&p.item), soft) {
+                (crate::visuals::Shot::Bullet, true) => "bullet_impact_wood",
+                (crate::visuals::Shot::Bullet, false) => "bullet_impact_stone",
+                (_, true) => "arrow_impact_wood",
+                (_, false) => "arrow_impact_stone",
+            };
+            play.at(sound, tf.translation, IMPACT, 60.0);
         }
     }
     for h in hits.read() {

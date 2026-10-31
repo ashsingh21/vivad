@@ -238,6 +238,46 @@ def arrow_impact(surface):
     return fade(norm(y))
 
 
+def gunshot(kind):
+    """A country-made gun going off: a crack (the muzzle blast's broadband edge), a body (the
+    low boom, longer for a bigger charge), a thump under it, and a tail of the shot rolling off
+    the surroundings. Tamancha: sharp and short. Dunali: two barrels' worth of boom. Katta: one
+    heavy, rough shot."""
+    crack_hi, body_lp, body_t, thump_f, tail_t, d = {
+        "tamancha": (9000, 1800, 0.07, 95, 0.45, 0.7),
+        "dunali": (6000, 900, 0.22, 55, 1.1, 1.4),
+        "katta": (7000, 1200, 0.14, 70, 0.8, 1.1),
+    }[kind]
+    crack = band(white(d), 1200, crack_hi) * env(d, 0.0002, 0.006)
+    body = band(spectral(d, 1.2), 60, body_lp) * env(d, 0.001, body_t, 3.5)
+    thump = np.sin(2 * np.pi * thump_f * t_axis(d) * (1 - 0.3 * t_axis(d))) * env(d, 0.0005, body_t * 0.6) * 0.8
+    tail = band(spectral(d, 1.6), 80, 1400) * env(d, 0.02, tail_t, 2.5) * 0.35
+    return fade(norm(crack * 0.45 + body * 1.3 + thump * 1.4 + at(d, (0.03, tail))))
+
+
+def gulel_release():
+    """The rubber of a slingshot snapping back, and the pebble's flick off the pouch."""
+    d = 0.35
+    snap = band(white(d), 1500, 6000) * env(d, 0.0003, 0.012)
+    thwap = sweep_sine(d, 320, 110, 0.6) * env(d, 0.001, 0.05) * 0.8
+    flick = svf(white(0.12), np.linspace(3000, 1200, int(0.12 * SR)), q=2.0) * env(0.12, 0.005, 0.08) * 0.3
+    return fade(norm(at(d, (0, snap + thwap), (0.01, flick))))
+
+
+def bullet_impact(surface):
+    """A bullet striking: off stone a click and a whining ricochet; into wood or earth a thud."""
+    d = 0.5
+    if surface == "stone":
+        click = band(white(d), 2500, 9000) * env(d, 0.0003, 0.008)
+        t = t_axis(0.3)
+        whine = sweep_sine(0.3, 3600, 1700, 0.8) * (1 + 0.4 * np.sin(2 * np.pi * 38 * t)) * env(0.3, 0.01, 0.25) * 0.25
+        chips = band(white(d), 800, 4000) * env(d, 0.001, 0.05) * 0.4
+        return fade(norm(at(d, (0, click + chips), (0.02, whine))))
+    thud = band(spectral(d, 1.5), 60, 900) * env(d, 0.0005, 0.06)
+    knock = modes(d, [230, 520], [0.12, 0.07], [1, 0.5], 0.05) * 0.5
+    return fade(norm(thud + knock))
+
+
 def hit_flesh():
     y = band(spectral(0.2, 1.8), 40, 400) * env(0.2, 0.001, 0.07)
     y += np.sin(2 * np.pi * 70 * t_axis(0.2)) * env(0.2, 0.001, 0.06)
@@ -478,6 +518,12 @@ SOUNDS = {
     "bow_draw": bow_draw,
     "arrow_impact_wood": lambda: arrow_impact("wood"),
     "arrow_impact_stone": lambda: arrow_impact("stone"),
+    "gun_tamancha": lambda: gunshot("tamancha"),
+    "gun_dunali": lambda: gunshot("dunali"),
+    "gun_katta": lambda: gunshot("katta"),
+    "gulel_release": gulel_release,
+    "bullet_impact_stone": lambda: bullet_impact("stone"),
+    "bullet_impact_wood": lambda: bullet_impact("wood"),
     "hit_flesh": hit_flesh,
     "hit_shield": hit_shield,
     "hitmarker": hitmarker,

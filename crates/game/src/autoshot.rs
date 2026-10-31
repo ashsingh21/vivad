@@ -213,6 +213,9 @@ impl Plugin for AutoshotPlugin {
                 // The arrow in flight, seen down the shot.
                 range("gandiva", View::Player, 30.0, 0.05),
                 range("gandiva", View::Player, 30.0, 0.12),
+                // The muzzle flash, a moment after the shot.
+                range("gandiva", View::Range, 12.0, 0.02),
+                range("sharanga", View::Range, 9.0, 0.02),
                 range("sharanga", View::Range, 9.0, 0.08),
                 range("sharanga", View::Player, 9.0, 0.3),
                 range("agneyastra", View::Range, 9.0, 0.25),

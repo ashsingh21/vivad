@@ -1,4 +1,5 @@
-//! Combat feedback that isn't sound or HUD: streaks behind arrows and astras, a fading ribbon
+//! Combat feedback that isn't sound or HUD: tracers behind bullets, a muzzle flash, streaks behind
+//! arrows and astras, a fading ribbon
 //! behind a swinging blade, sparks where a hit lands and dust where an arrow sticks, a brief
 //! hit-stop on the attacker's swing, and camera punches (bow kick, hit shake, the Pinaka's zoom
 //! as it draws) for the local player.
@@ -14,6 +15,7 @@ use shared::sim::combat::Projectile;
 use shared::sim::{Action, HitMsg, Inventory, LocalPlayer, PlayerIntent, btn};
 
 use crate::animation::WarriorAnim;
+use crate::visuals::{Shot, shot_kind};
 use crate::visuals::{WarriorVisual, WeaponSocket};
 
 pub struct FxPlugin;
@@ -22,7 +24,7 @@ impl Plugin for FxPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraPunch>()
             .add_systems(Startup, setup)
-            .add_systems(Update, (add_streaks, hit_sparks, arrow_dust, fly_sparks, punch_camera, hit_stop))
+            .add_systems(Update, (add_streaks, muzzle_flash, hit_sparks, arrow_dust, fly_sparks, punch_camera, hit_stop))
             .add_systems(PostUpdate, (update_streaks, swing_ribbons).after(TransformSystems::Propagate));
     }
 }
@@ -41,6 +43,8 @@ struct FxAssets {
     sphere: Handle<Mesh>,
     cylinder: Handle<Mesh>,
     streak: Handle<StandardMaterial>,
+    tracer: Handle<StandardMaterial>,
+    flash: Handle<StandardMaterial>,
     fire_streak: Handle<StandardMaterial>,
     wind_streak: Handle<StandardMaterial>,
     ribbon: Handle<StandardMaterial>,
@@ -65,6 +69,8 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: Res
         sphere: meshes.add(Sphere::new(1.0).mesh().ico(1).unwrap()),
         cylinder: meshes.add(Cylinder::new(0.5, 1.0).mesh().resolution(6)),
         streak: glow(&mut mats, Color::srgb(1.0, 0.93, 0.78), LinearRgba::rgb(0.6, 0.5, 0.3), 0.6),
+        tracer: glow(&mut mats, Color::srgb(1.0, 0.8, 0.45), LinearRgba::rgb(8.0, 4.5, 1.2), 0.8),
+        flash: glow(&mut mats, Color::srgb(1.0, 0.75, 0.35), LinearRgba::rgb(20.0, 11.0, 3.0), 1.0),
         fire_streak: glow(&mut mats, Color::srgb(1.0, 0.5, 0.15), LinearRgba::rgb(4.0, 1.2, 0.2), 0.55),
         wind_streak: glow(&mut mats, Color::srgb(0.75, 0.9, 1.0), LinearRgba::rgb(0.6, 1.0, 1.4), 0.4),
         ribbon: mats.add(StandardMaterial {
@@ -95,25 +101,29 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: Res
 
 // ------------------------------------------------------------------ streaks
 
-/// A pale streak trailing a projectile: from where it is back to where it was a moment ago.
+/// A pale streak trailing a projectile: from where it is back to where it was `time` ago.
 #[derive(Component)]
 struct Streak {
     of: Entity,
     trail: VecDeque<(f32, Vec3)>,
+    time: f32,
 }
 
 const STREAK_TIME: f32 = 0.14;
+/// A bullet's tracer: short, hot and thin (a dunali's pellets thinner still).
+const TRACER_TIME: f32 = 0.05;
 
 fn add_streaks(mut commands: Commands, q: Query<(Entity, &Projectile, &Transform), Added<Projectile>>, fx: Res<FxAssets>, time: Res<Time>) {
     let now = time.elapsed_secs();
     for (e, p, t) in &q {
-        let (mat, width) = match p.astra.as_ref() {
-            Some(_) if p.item == "agneyastra" => (fx.fire_streak.clone(), 0.09),
-            Some(_) => (fx.wind_streak.clone(), 0.08),
-            None => (fx.streak.clone(), 0.055),
+        let (mat, width, time) = match p.astra.as_ref() {
+            Some(_) if p.item == "agneyastra" => (fx.fire_streak.clone(), 0.09, STREAK_TIME),
+            Some(_) => (fx.wind_streak.clone(), 0.08, STREAK_TIME),
+            None if shot_kind(&p.item) == Shot::Bullet => (fx.tracer.clone(), if p.item == "sharanga" { 0.018 } else { 0.03 }, TRACER_TIME),
+            None => (fx.streak.clone(), 0.055, STREAK_TIME),
         };
         commands.spawn((
-            Streak { of: e, trail: VecDeque::from([(now, t.translation)]) },
+            Streak { of: e, trail: VecDeque::from([(now, t.translation)]), time },
             Mesh3d(fx.cylinder.clone()),
             MeshMaterial3d(mat),
             Transform::from_translation(t.translation).with_scale(Vec3::new(width, 0.0, width)),
@@ -143,7 +153,7 @@ fn update_streaks(
                 false
             }
         };
-        while s.trail.len() > 2 && s.trail[1].0 < now - STREAK_TIME {
+        while s.trail.len() > 2 && s.trail[1].0 < now - s.time {
             s.trail.pop_front();
         }
         let (Some(&(_, head)), Some(&(_, tail))) = (s.trail.back(), s.trail.front()) else { continue };
@@ -313,14 +323,43 @@ fn hit_sparks(mut commands: Commands, mut hits: MessageReader<HitMsg>, fx: Res<F
 #[derive(Component)]
 struct Puffed;
 
-/// A puff of dust where an arrow sticks into the world.
+/// A puff of dust where an arrow sticks into the world; a bullet kicks up sparks with it.
 fn arrow_dust(mut commands: Commands, q: Query<(Entity, &Projectile, &Transform), Without<Puffed>>, fx: Res<FxAssets>) {
     for (e, p, t) in &q {
         if p.stuck {
             commands.entity(e).insert(Puffed);
             let back = -(t.rotation * Vec3::NEG_Z);
-            billow(&mut commands, &fx, &fx.dust, t.translation, back, 7, 1.2, 0.035);
+            if shot_kind(&p.item) == Shot::Bullet {
+                burst(&mut commands, &fx, &fx.spark, t.translation, back, 5, 5.0, 0.012, 9.0);
+                billow(&mut commands, &fx, &fx.dust, t.translation, back, 4, 1.0, 0.025);
+            } else {
+                billow(&mut commands, &fx, &fx.dust, t.translation, back, 7, 1.2, 0.035);
+            }
         }
+    }
+}
+
+/// A gun going off: a hot flash at the muzzle with a moment of light round it, and a few sparks
+/// thrown forward. Once per shot, however many pellets it fires.
+fn muzzle_flash(mut commands: Commands, q: Query<(&Projectile, &Transform), Added<Projectile>>, fx: Res<FxAssets>) {
+    let mut fired: Vec<Entity> = vec![];
+    for (p, t) in &q {
+        if p.astra.is_some() || shot_kind(&p.item) != Shot::Bullet || fired.contains(&p.owner) {
+            continue;
+        }
+        fired.push(p.owner);
+        let ahead = p.velocity.normalize_or(Vec3::NEG_Z);
+        let at = t.translation + ahead * 0.15;
+        let size = if p.item == "sharanga" { 0.2 } else { 0.13 };
+        commands.spawn((
+            Spark { vel: Vec3::ZERO, life: 0.06, max: 0.06, size, gravity: 0.0 },
+            Mesh3d(fx.sphere.clone()),
+            MeshMaterial3d(fx.flash.clone()),
+            Transform::from_translation(at).with_scale(Vec3::splat(size)),
+            bevy::light::NotShadowCaster,
+            PointLight { color: Color::srgb(1.0, 0.75, 0.4), intensity: 150_000.0, range: 7.0, shadow_maps_enabled: false, ..default() },
+        ));
+        burst(&mut commands, &fx, &fx.gold_spark, at, ahead, 5, 7.0, 0.01, 4.0);
     }
 }
 

@@ -34,6 +34,7 @@ impl Plugin for VisualsPlugin {
                     dress_pickups,
                     animate_pickups,
                     dress_projectiles,
+                    spent_bullets,
                     dress_fx,
                     animate_fx,
                     dress_vimana,
@@ -673,6 +674,22 @@ fn animate_pickups(time: Res<Time>, mut q: Query<&mut Transform, With<PickupSpin
 /// Arrow model scale in flight: (fletching and shaft width, length, width).
 const FLIGHT_SCALE: Vec3 = Vec3::new(2.0, 1.2, 2.0);
 
+/// What a weapon fires: the guns bullets, the gulel a pebble (bows, if any, arrows).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Shot {
+    Bullet,
+    Pebble,
+    Arrow,
+}
+
+pub fn shot_kind(item: &str) -> Shot {
+    match item {
+        "gandiva" | "sharanga" | "katta" => Shot::Bullet,
+        "pinaka" => Shot::Pebble,
+        _ => Shot::Arrow,
+    }
+}
+
 fn dress_projectiles(mut commands: Commands, q: Query<(Entity, &Projectile), Added<Projectile>>, palette: Res<Palette>) {
     for (e, p) in &q {
         commands.entity(e).insert(Visibility::default()).with_children(|c| {
@@ -684,6 +701,14 @@ fn dress_projectiles(mut commands: Commands, q: Query<(Entity, &Projectile), Add
                 }
                 c.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(glow), Transform::from_xyz(0.0, 0.0, -0.3).with_scale(Vec3::splat(0.1)),
                          bevy::light::NotShadowCaster));
+            } else if shot_kind(&p.item) == Shot::Bullet {
+                // A bullet is too small and fast to see: its tracer is the streak (crate::fx),
+                // with a hot point at its head.
+                c.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(palette.glint.clone()),
+                         Transform::from_scale(Vec3::splat(0.03)), bevy::light::NotShadowCaster));
+            } else if shot_kind(&p.item) == Shot::Pebble {
+                c.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(palette.mats[&(Mat::Granite, 1)].clone()),
+                         Transform::from_scale(Vec3::new(0.05, 0.045, 0.055))));
             } else {
                 // The arrow model points +Y from its nock; the projectile's point is the arrowhead.
                 // In flight it's drawn thicker and a little longer than the nocked arrow (seen from
@@ -697,6 +722,15 @@ fn dress_projectiles(mut commands: Commands, q: Query<(Entity, &Projectile), Add
                          Transform::from_xyz(0.0, 0.0, len).with_scale(Vec3::splat(0.035)), bevy::light::NotShadowCaster));
             }
         });
+    }
+}
+
+/// A bullet that has hit the world is gone (its puff and spark are crate::fx's).
+fn spent_bullets(mut q: Query<(&Projectile, &mut Visibility), Changed<Projectile>>) {
+    for (p, mut v) in &mut q {
+        if p.stuck && p.astra.is_none() && shot_kind(&p.item) == Shot::Bullet {
+            *v = Visibility::Hidden;
+        }
     }
 }
 
