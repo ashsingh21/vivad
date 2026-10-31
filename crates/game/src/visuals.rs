@@ -5,6 +5,7 @@ use std::f32::consts::FRAC_PI_2;
 
 use bevy::light::{Atmosphere, CascadeShadowConfigBuilder, atmosphere::ScatteringMedium};
 use bevy::prelude::*;
+use bevy::world_serialization::WorldInstanceReady;
 use shared::items::{ItemDb, ItemKind, Rarity};
 use shared::map::{ChestKind, Mat, Shape};
 use shared::sim::combat::{Burst, FireZone, Projectile};
@@ -36,6 +37,7 @@ impl Plugin for VisualsPlugin {
                     dress_fx,
                     animate_fx,
                     dress_vimana,
+                    sway_vimana,
                     update_zone_wall,
                     cleanup_orphans,
                 ),
@@ -688,33 +690,34 @@ fn animate_fx(time: Res<Time>, mut q: Query<(&mut Transform, &FxSpin)>) {
     }
 }
 
-fn dress_vimana(mut commands: Commands, q: Query<Entity, Added<Vimana>>, palette: Res<Palette>) {
+/// The Pushpaka Vimana model (tools/blender/architecture/vimana.py), riding a little on the air.
+#[derive(Component)]
+struct VimanaHull;
+
+fn dress_vimana(mut commands: Commands, q: Query<Entity, Added<Vimana>>, assets: Res<AssetServer>) {
     for e in &q {
-        commands.entity(e).insert(Visibility::default()).with_children(|c| {
-            let white = palette.mats[&(Mat::Marble, 0)].clone();
-            // Pushpaka Vimana: a flying temple-chariot. Hull, deck, pillared pavilion, shikhara, wings.
-            c.spawn((Mesh3d(palette.cube.clone()), MeshMaterial3d(palette.gold.clone()),
-                     Transform::from_xyz(0.0, -1.0, 0.0).with_scale(Vec3::new(6.0, 2.0, 16.0))));
-            c.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(palette.gold.clone()),
-                     Transform::from_xyz(0.0, -1.0, -8.0).with_scale(Vec3::new(3.0, 1.0, 3.0))));
-            c.spawn((Mesh3d(palette.cube.clone()), MeshMaterial3d(white.clone()),
-                     Transform::from_xyz(0.0, 0.2, 0.0).with_scale(Vec3::new(7.0, 0.4, 15.0))));
-            for (x, z) in [(-2.5, -4.0), (2.5, -4.0), (-2.5, 4.0), (2.5, 4.0)] {
-                c.spawn((Mesh3d(palette.cylinder.clone()), MeshMaterial3d(white.clone()),
-                         Transform::from_xyz(x, 2.2, z).with_scale(Vec3::new(0.5, 4.0, 0.5))));
-            }
-            c.spawn((Mesh3d(palette.cube.clone()), MeshMaterial3d(white),
-                     Transform::from_xyz(0.0, 4.4, 0.0).with_scale(Vec3::new(7.0, 0.5, 10.0))));
-            for (i, s) in [5.0f32, 3.8, 2.6, 1.4].iter().enumerate() {
-                c.spawn((Mesh3d(palette.cube.clone()), MeshMaterial3d(palette.gold.clone()),
-                         Transform::from_xyz(0.0, 5.2 + i as f32 * 1.2, 0.0).with_scale(Vec3::new(*s, 1.2, *s))));
-            }
-            for s in [-1.0, 1.0] {
-                c.spawn((Mesh3d(palette.cube.clone()), MeshMaterial3d(palette.rarity_glow[&Rarity::Divya].clone()),
-                         Transform::from_xyz(s * 7.5, 0.0, 1.0).with_rotation(Quat::from_rotation_z(s * 0.2))
-                             .with_scale(Vec3::new(9.0, 0.2, 4.0))));
-            }
-        });
+        commands.entity(e).insert(Visibility::default());
+        commands
+            .spawn((
+                WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset("models/props/vimana.gltf"))),
+                Transform::default(),
+                VimanaHull,
+                ChildOf(e),
+            ))
+            .observe(|ready: On<WorldInstanceReady>, children: Query<&Children>, names: Query<&Name>, mut commands: Commands| {
+                // Riders see it close up; from the ground it is 120 m away.
+                crate::characters::apply_lod_ranges(ready.entity, &[(0.0..0.0, 70.0..80.0), (70.0..80.0, 2000.0..2100.0)],
+                                                    &children, &names, &mut commands);
+            });
+    }
+}
+
+/// A slow heave and roll, so it floats rather than slides.
+fn sway_vimana(time: Res<Time>, mut q: Query<&mut Transform, With<VimanaHull>>) {
+    let t = time.elapsed_secs();
+    for mut tf in &mut q {
+        tf.translation.y = (t * 0.9).sin() * 0.35;
+        tf.rotation = Quat::from_rotation_z((t * 0.6).sin() * 0.025) * Quat::from_rotation_x((t * 0.45).cos() * 0.015);
     }
 }
 

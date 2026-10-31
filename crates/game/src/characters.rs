@@ -48,7 +48,7 @@ fn load_models(mut commands: Commands, assets: Res<AssetServer>, layout: Res<Map
 }
 
 /// After a glTF scene spawns, give every `..._LOD<n>` node (and its mesh children) a visibility range.
-fn apply_lod_ranges(root: Entity, ranges: &[(Range<f32>, Range<f32>)], children: &Query<&Children>, names: &Query<&Name>, commands: &mut Commands) {
+pub(crate) fn apply_lod_ranges(root: Entity, ranges: &[(Range<f32>, Range<f32>)], children: &Query<&Children>, names: &Query<&Name>, commands: &mut Commands) {
     for e in children.iter_descendants(root) {
         let Ok(name) = names.get(e) else { continue };
         let Some(lod) = name.as_str().rsplit("LOD").next().and_then(|s| s.parse::<usize>().ok()) else { continue };

@@ -7,6 +7,7 @@
 //!   VIVAD_TOUR_SETTLE=n  frames to hold each view before its shot; above 120 it prints each view's
 //!                        frame rate (`[tour-fps]`; run with VIVAD_NO_VSYNC=1).
 //! VIVAD_SHOTS=<dir>     with VIVAD_AUTOPILOT=1: screenshot the match at set times, then exit.
+//!   VIVAD_SHOTS_AT=a,b   at these match times (seconds) instead.
 //! VIVAD_ARMOURY=<dir>   stand the player on open ground and screenshot every item in hand, carried
 //!   and in use (aiming, drawing, swinging, drinking), from the front and the side, then exit.
 //!   VIVAD_ARMOURY_ONLY=a,b only the poses whose names contain one of these. The range poses
@@ -220,7 +221,10 @@ impl Plugin for AutoshotPlugin {
                 .add_systems(PostUpdate, armoury_camera.after(crate::camera::CameraSystems).before(TransformSystems::Propagate));
         }
         if let Ok(dir) = std::env::var("VIVAD_SHOTS") {
-            app.insert_resource(MatchShots { dir, times: vec![6.0, 20.0, 34.0, 50.0, 80.0, 120.0, 170.0, 230.0], next: 0, taken_at: -1.0 })
+            let times = std::env::var("VIVAD_SHOTS_AT")
+                .map(|v| v.split(',').filter_map(|t| t.trim().parse().ok()).collect())
+                .unwrap_or_else(|_| vec![6.0, 20.0, 34.0, 50.0, 80.0, 120.0, 170.0, 230.0]);
+            app.insert_resource(MatchShots { dir, times, next: 0, taken_at: -1.0 })
                 .add_systems(Update, match_shots);
         }
     }
