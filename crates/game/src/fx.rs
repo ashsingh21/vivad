@@ -24,7 +24,7 @@ impl Plugin for FxPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraPunch>()
             .add_systems(Startup, setup)
-            .add_systems(Update, (add_streaks, muzzle_flash, misfire_smoke, blast_shake, hit_sparks, arrow_dust, fly_sparks, punch_camera, hit_stop))
+            .add_systems(Update, (add_streaks, muzzle_flash, misfire_smoke, blast_shake, hit_sparks, arrow_dust, landing_dust, fly_sparks, punch_camera, hit_stop))
             .add_systems(PostUpdate, (update_streaks, swing_ribbons).after(TransformSystems::Propagate));
     }
 }
@@ -331,6 +331,25 @@ fn hit_sparks(mut commands: Commands, mut hits: MessageReader<HitMsg>, fx: Res<F
 
 #[derive(Component)]
 struct Puffed;
+
+/// A ring of dust kicked up where a warrior lands hard (a jump off a roof, the end of a glide).
+fn landing_dust(
+    mut commands: Commands,
+    q: Query<(Entity, &shared::sim::Kinematic, &Transform)>,
+    mut was: Local<std::collections::HashMap<Entity, (bool, f32)>>,
+    fx: Res<FxAssets>,
+) {
+    for (e, kin, t) in &q {
+        let (grounded, vy) = was.get(&e).copied().unwrap_or((true, 0.0));
+        if !grounded && kin.grounded && vy < -6.0 {
+            let n = (6.0 + -vy).min(20.0) as usize;
+            let feet = t.translation - Vec3::Y * shared::sim::HALF_HEIGHT + Vec3::Y * 0.1;
+            billow(&mut commands, &fx, &fx.dust, feet, Vec3::ZERO, n, 2.0 + -vy * 0.12, 0.22);
+        }
+        was.insert(e, (kin.grounded, kin.velocity.y));
+    }
+    was.retain(|e, _| q.contains(*e));
+}
 
 /// A puff of dust where an arrow sticks into the world; a bullet kicks up sparks with it.
 fn arrow_dust(mut commands: Commands, q: Query<(Entity, &Projectile, &Transform), Without<Puffed>>, fx: Res<FxAssets>) {
