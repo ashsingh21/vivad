@@ -10,7 +10,9 @@ use super::zone::Zone;
 use super::{BotSkill, 
     EYE_OFFSET, Eliminated, HALF_HEIGHT, Health, HitMsg, Inventory, Kinematic, MoveMode, PlayerIntent, SimSet, Warrior, btn, solid_mask,
 };
+use super::nav::{NavGrid, NoPath};
 use crate::items::{AstraEffect, ItemDb, ItemKind};
+use crate::map::MapLayout;
 
 #[derive(Component, Clone, Debug)]
 pub struct BotBrain {
@@ -42,6 +44,11 @@ pub struct BotBrain {
     /// Goals we failed to reach (blocked); ignored from now on.
     pub give_up: Vec<Vec3>,
     pub goal_time: f32,
+    /// The way to the goal around buildings (corners, in x/z), the goal it was planned for, and
+    /// seconds until it is planned afresh.
+    pub path: Vec<Vec2>,
+    pub path_for: Option<Vec3>,
+    pub replan: f32,
 }
 
 impl BotBrain {
@@ -67,6 +74,9 @@ impl BotBrain {
             provoked: None,
             give_up: vec![],
             goal_time: 0.0,
+            path: vec![],
+            path_for: None,
+            replan: 0.0,
         }
     }
 }
@@ -79,17 +89,22 @@ impl Plugin for BotPlugin {
     }
 }
 
-/// Bots on foot don't walk off a drop that would hurt (cliff tops, roofs, the stepwell's rim):
-/// with no ground within 6 m below the next step (on foot or mid-jump), they stop.
-fn mind_the_drop(mut bots: Query<(Entity, &Transform, &mut PlayerIntent, &Kinematic), (With<BotBrain>, Without<Eliminated>)>, spatial: SpatialQuery) {
-    for (me, tf, mut intent, kin) in &mut bots {
+/// Bots on foot don't walk off a drop that would hurt badly (cliff tops, the stepwell's rim): with
+/// no ground within 6 m below the next step (on foot or mid-jump), they stop. A healthy bot will
+/// take a storey's roof (up to 13 m, about 35 damage) rather than be stranded up there.
+fn mind_the_drop(
+    mut bots: Query<(Entity, &Transform, &mut PlayerIntent, &Kinematic, &Health), (With<BotBrain>, Without<Eliminated>)>,
+    spatial: SpatialQuery,
+) {
+    for (me, tf, mut intent, kin, health) in &mut bots {
         let wish = super::movement::wish_dir(&intent);
         if kin.mode != MoveMode::Ground || wish == Vec3::ZERO {
             continue;
         }
         let ahead = tf.translation + wish * 1.2;
         let filter = SpatialQueryFilter::from_mask(solid_mask()).with_excluded_entities([me]);
-        if spatial.cast_ray(ahead, Dir3::NEG_Y, HALF_HEIGHT + 6.0, true, &filter).is_none() {
+        let drop = if health.hp > 70.0 { 13.0 } else { 6.0 };
+        if spatial.cast_ray(ahead, Dir3::NEG_Y, HALF_HEIGHT + drop, true, &filter).is_none() {
             intent.move_axis = Vec2::ZERO;
         }
     }
@@ -117,6 +132,8 @@ pub(crate) fn drive_bots(
     spatial: SpatialQuery,
     time: Res<Time>,
     mut hits: MessageReader<HitMsg>,
+    nav: Res<NavGrid>,
+    layout: Res<MapLayout>,
 ) {
     let dt = time.delta_secs();
     let mut rng = rand::rng();
@@ -244,6 +261,7 @@ pub(crate) fn drive_bots(
         if brain.stuck_check.1 > 1.0 {
             if brain.stuck_check.0.distance(pos) < 0.6 && brain.goal.is_some() {
                 brain.unstick = 0.9;
+                brain.replan = 0.0;
                 brain.strafe = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
             }
             brain.stuck_check = (pos, 0.0);
@@ -344,10 +362,38 @@ pub(crate) fn drive_bots(
                 brain.goal = None;
                 brain.goal_time = 0.0;
             }
-            let (yaw, _) = yaw_pitch_to(pos, goal);
+            let d = pos.xz().distance(goal.xz());
+            // On the street, around buildings by the grid's path; upstairs or on a roof, straight.
+            let mut toward = goal;
+            let on_street = pos.y < layout.terrain.height(pos.x, pos.z) + HALF_HEIGHT + 1.5;
+            if nav.ready() && on_street && d > 3.0 {
+                brain.replan -= dt;
+                if brain.path_for != Some(goal) || brain.replan <= 0.0 {
+                    brain.path_for = Some(goal);
+                    brain.replan = 4.0;
+                    match nav.path(pos.xz(), goal.xz()) {
+                        Ok(path) => brain.path = path,
+                        Err(NoPath::There) if !brain.urgent => {
+                            // No way there: pick something else.
+                            brain.give_up.push(goal);
+                            brain.goal = None;
+                            brain.path.clear();
+                            continue;
+                        }
+                        // Lost to the grid, or the zone won't wait: straight at it.
+                        Err(_) => brain.path.clear(),
+                    }
+                }
+                while brain.path.len() > 1 && brain.path[0].distance(pos.xz()) < 1.2 {
+                    brain.path.remove(0);
+                }
+                if let Some(w) = brain.path.first() {
+                    toward = Vec3::new(w.x, goal.y, w.y);
+                }
+            }
+            let (yaw, _) = yaw_pitch_to(pos, toward);
             intent.yaw = yaw;
             intent.pitch = 0.0;
-            let d = pos.xz().distance(goal.xz());
             intent.move_axis = if d > 1.4 { Vec2::Y } else { Vec2::ZERO };
             if d <= 1.4 && brain.calm {
                 // Arrived: stand about for a while before wandering on.

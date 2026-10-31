@@ -6,6 +6,7 @@ pub mod combat;
 pub mod flow;
 pub mod loot;
 pub mod movement;
+pub mod nav;
 pub mod net;
 pub mod zone;
 
@@ -415,6 +416,7 @@ impl Plugin for SimPlugin {
                 loot::LootPlugin,
                 zone::ZonePlugin,
                 bots::BotPlugin,
+                nav::NavPlugin,
                 net::NetPlugin,
             ));
     }
