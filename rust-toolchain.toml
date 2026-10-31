@@ -1,0 +1,4 @@
+# rustup installs this toolchain by itself on first build (Bevy 0.20 needs 1.97.1 or newer).
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]

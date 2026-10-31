@@ -2,6 +2,22 @@
 
 Rust + Bevy 0.20 (pinned), assets scripted in Blender 5.2 and exported as GLB.
 
+## Setting up a new machine (to play)
+
+1. **Rust through rustup** (https://rustup.rs), not Homebrew or apt: `rust-toolchain.toml` pins
+   the version and rustup fetches it on the first build. A packaged Rust ignores that file and is
+   often too old (Bevy 0.20 needs 1.97.1+).
+2. **Git LFS and just**: `brew install git-lfs just` (macOS) or `sudo apt install git-lfs just` (Linux).
+3. Linux only, the build needs: `sudo apt install build-essential pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev`
+4. Clone and play (the first build takes several minutes):
+   ```
+   git lfs install
+   git clone git@github.com:ashsingh21/vivad.git && cd vivad
+   just play                        # alone, with bots
+   just host Arjuna                 # online: prints a code, Enter starts the match
+   just join <code> Bhima           # online: join with the host's code (lan=1 on both for one machine / Wi-Fi)
+   ```
+
 ```
 just assets            # rebuild every model from tools/blender (bake, LODs, export)
 just weapon khanda     # one weapon
