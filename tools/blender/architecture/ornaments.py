@@ -422,9 +422,13 @@ def main():
         for o in list(bpy.data.objects):
             bpy.data.objects.remove(o)
         obj = make()
+        lods = [obj]
         if key not in ("jali", "fresco_a", "fresco_b", "bunting"):
             T.bake_weathering(obj)
-        counts = export.export_glb([obj], os.path.join(OUT, f"{key}.gltf"))
+            # Hundreds of these stand on the map's buildings: past 45 m a quarter of the carving
+            # reads the same.
+            lods = export.make_lods(obj, (0.25,))
+        counts = export.export_glb(lods, os.path.join(OUT, f"{key}.gltf"))
         print(f"[ornament] {key}: {counts}")
 
 

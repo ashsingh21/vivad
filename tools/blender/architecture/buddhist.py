@@ -573,7 +573,7 @@ def ajanta():
     for hz in HALLS:
         hall(kit, hz)
     spur(kit)
-    return finish("ajanta", kit, lods=(0.35,))
+    return finish("ajanta", kit, lods=(0.35, 0.1))
 
 
 def basalt_rock(seed):

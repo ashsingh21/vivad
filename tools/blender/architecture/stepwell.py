@@ -237,7 +237,7 @@ def stepwell():
                                  (WELL_R - 0.55, b + 0.9), (WELL_R - 0.55, b + 0.3)], 40, (WELL_X, 0.0)))
     kit.add(T.lathe("wellband", [(WELL_R - 0.04, b + 0.25), (WELL_R + 0.02, b + 0.3), (WELL_R + 0.02, b + 0.6), (WELL_R - 0.04, b + 0.65)],
                     40, (WELL_X, 0.0), uv_strip="padma"))
-    return B.finish("stepwell", kit, lods=(0.3,))
+    return B.finish("stepwell", kit, lods=(0.3, 0.06))
 
 
 def main():

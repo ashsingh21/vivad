@@ -1,5 +1,5 @@
 """Indian trees: neem, peepal, banyan, coconut palm. Branch tubes + alpha leaf cards, 2 materials
-(bark, leaves), LOD0/LOD1, exported as GLB with the trunk base at the origin.
+(bark, leaves), LOD0/LOD1 (trees also a sparse LOD2 for the far distance), exported as GLB with the trunk base at the origin.
 
 blender -b --factory-startup -P tools/blender/nature/trees.py -- [species ...]
 """
@@ -73,7 +73,7 @@ class Tree:
         self.lod = lod
         self.bark_parts = []
         self.tips = []            # (position, direction, size)
-        self.ring_segs = 10 if lod == 0 else 6
+        self.ring_segs = (10, 6, 4)[lod]
 
     def branch(self, start, direction, length, r0, r1, *, bend=0.0, gravity=0.0, wobble=0.15, segments=10, flare=0.0):
         """Curved tube; returns the sampled centreline."""
@@ -86,7 +86,7 @@ class Tree:
             d = (d + jitter * 0.3 + Vector((0, 0, -gravity)) * 0.2 + Vector((0, 0, bend)) * 0.1).normalized()
             p = p + d * step
             pts.append(p.copy())
-        pts = geo.resample_even(geo.catmull_rom(pts, segments * 4), max(3, segments if self.lod == 0 else segments // 2 + 1))
+        pts = geo.resample_even(geo.catmull_rom(pts, segments * 4), max(3, (segments, segments // 2 + 1, segments // 3 + 1)[self.lod]))
         up = Vector((0, 0, 1)) if abs(direction.normalized().z) < 0.95 else Vector((1, 0, 0))
         frames = geo.path_frames(pts, up)
         rings = []
@@ -118,8 +118,8 @@ def leaf_cards(tree, name, canopy_center):
     rng = tree.rng
     for tip, d, size, count, species in tree.tips:
         u0, v0, u1, v1 = textures.quadrant_uv(species)
-        n = count if tree.lod == 0 else max(1, count // 2)
-        s_mul = 1.0 if tree.lod == 0 else 1.35
+        n = (count, max(1, count // 2), max(1, count // 5))[tree.lod]
+        s_mul = (1.0, 1.35, 1.9)[tree.lod]
         for _ in range(n):
             s = size * s_mul * rng.uniform(0.75, 1.15)
             c = tip + Vector((rng.uniform(-1, 1), rng.uniform(-1, 1), rng.uniform(-0.6, 0.8))) * size * 0.6
@@ -151,7 +151,7 @@ def palm_fronds(tree, crown, count, length, droop):
     uv = bm.loops.layers.uv.new("UVMap")
     u0, v0, u1, v1 = textures.quadrant_uv("palm")
     rng = tree.rng
-    seg = 12 if tree.lod == 0 else 6
+    seg = (12, 6, 4)[tree.lod]
     for i in range(count):
         az = 2 * math.pi * i / count + rng.uniform(-0.15, 0.15)
         elev = rng.uniform(0.55, 1.15)
@@ -248,7 +248,7 @@ def grow_palm(tree, scale=1.0):
     lean = Vector((rng.uniform(-0.25, 0.25), rng.uniform(-0.25, 0.25), 1.0))
     # Slender trunk, slightly swollen base, ringed (leaf-scar) radius modulation.
     h = rng.uniform(9.0, 11.5) * s
-    seg = 22 if tree.lod == 0 else 10
+    seg = (22, 10, 6)[tree.lod]
     pts = [Vector((0, 0, 0))]
     d = lean.normalized()
     for i in range(seg):
@@ -265,12 +265,12 @@ def grow_palm(tree, scale=1.0):
     tree.bark_parts.append(geo.loft("trunk", frames, rings, cap_end="fan"))
     crown = pts[-1]
     # Coconuts in a cluster under the crown.
-    for k in range(6):
+    for k in range(6 if tree.lod < 2 else 0):
         a = 2 * math.pi * k / 6
         c = crown + Vector((math.cos(a) * 0.25, math.sin(a) * 0.25, -0.35)) * s
         bpy.ops.mesh.primitive_uv_sphere_add(segments=10, ring_count=6, radius=0.13 * s, location=c)
         tree.bark_parts.append(bpy.context.active_object)
-    return crown, palm_fronds(tree, crown, 18 if tree.lod == 0 else 10, 4.6 * s, 0.62)
+    return crown, palm_fronds(tree, crown, (18, 10, 7)[tree.lod], 4.6 * s, 0.62)
 
 
 def grow_bush(tree, species, *, radius=1.1, height=1.4, stems=5, cards=90, card_size=0.75):
@@ -356,8 +356,9 @@ def main():
     for species in wanted:
         export.reset_scene()
         textures.draw_atlas(atlas)
-        lods = [build(species, lod, atlas) for lod in (0, 1)]
         prefix = "bush" if species in ("lantana", "bougainvillea") else "tree"
+        # Bushes are gone by 220 m; trees stand to the horizon and get a third, sparse LOD.
+        lods = [build(species, lod, atlas) for lod in ((0, 1) if prefix == "bush" else (0, 1, 2))]
         out = os.path.join(ROOT, "assets", "models", "props", f"{prefix}_{species}.gltf")
         counts = export.export_glb(lods, out)
         print(f"[tree {species}] {counts}")

@@ -47,16 +47,49 @@ fn load_models(mut commands: Commands, assets: Res<AssetServer>, layout: Res<Map
     });
 }
 
-/// After a glTF scene spawns, give every `..._LOD<n>` node (and its mesh children) a visibility range.
-pub(crate) fn apply_lod_ranges(root: Entity, ranges: &[(Range<f32>, Range<f32>)], children: &Query<&Children>, names: &Query<&Name>, commands: &mut Commands) {
+/// A LOD node's visibility range before the quality level scales it (crate::quality::LodScale),
+/// and which LOD it is (Low lets only LOD0 cast shadows).
+#[derive(Component, Clone)]
+pub(crate) struct LodRange(pub VisibilityRange, pub usize);
+
+impl LodRange {
+    pub(crate) fn scaled(&self, k: f32) -> VisibilityRange {
+        let r = &self.0;
+        VisibilityRange { start_margin: r.start_margin.start * k..r.start_margin.end * k, end_margin: r.end_margin.start * k..r.end_margin.end * k, use_aabb: r.use_aabb }
+    }
+}
+
+/// Ranges for a model's LODs: LOD k gives way to LOD k+1 at `switch[k]` (crossfading over 8 m),
+/// and the last fades out at `far`. LODs past the switches given never show.
+fn lod_ranges(lods: usize, switch: &[f32], far: Range<f32>) -> Vec<(Range<f32>, Range<f32>)> {
+    let mut start = 0.0..0.0;
+    (0..lods)
+        .map(|k| {
+            let end = if k + 1 == lods { far.clone() } else { switch.get(k).map_or(far.clone(), |&d| d..d + 8.0) };
+            (std::mem::replace(&mut start, end.clone()), end)
+        })
+        .collect()
+}
+
+/// How many `..._LOD<n>` levels the spawned scene under `root` has.
+fn lod_count(root: Entity, children: &Query<&Children>, names: &Query<&Name>) -> usize {
+    children.iter_descendants(root).filter_map(|e| names.get(e).ok()?.as_str().rsplit("LOD").next()?.parse::<usize>().ok()).max().map_or(1, |n| n + 1)
+}
+
+/// After a glTF scene spawns, give every `..._LOD<n>` node (and its mesh children) a visibility
+/// range, scaled by the quality level's `scale`; None keeps it fixed whatever the level (warriors,
+/// whom everyone must see as far, and the vimana).
+pub(crate) fn apply_lod_ranges(root: Entity, ranges: &[(Range<f32>, Range<f32>)], scale: Option<f32>, children: &Query<&Children>, names: &Query<&Name>, commands: &mut Commands) {
     for e in children.iter_descendants(root) {
         let Ok(name) = names.get(e) else { continue };
         let Some(lod) = name.as_str().rsplit("LOD").next().and_then(|s| s.parse::<usize>().ok()) else { continue };
         let Some((s, end)) = ranges.get(lod).cloned() else { continue };
-        let vr = VisibilityRange { start_margin: s, end_margin: end, use_aabb: false };
-        commands.entity(e).insert(vr.clone());
-        for d in children.iter_descendants(e) {
-            commands.entity(d).insert(vr.clone());
+        let base = LodRange(VisibilityRange { start_margin: s, end_margin: end, use_aabb: false }, lod);
+        for d in std::iter::once(e).chain(children.iter_descendants(e)) {
+            match scale {
+                Some(k) => commands.entity(d).insert((base.scaled(k), base.clone(), crate::quality::LodShadow)),
+                None => commands.entity(d).insert(base.0.clone()),
+            };
         }
     }
 }
@@ -68,19 +101,15 @@ fn dress_props(mut commands: Commands, q: Query<(Entity, &PropIndex), Added<Prop
         let prop = &layout.props[*i];
         let big = ["banyan", "ajanta", "stupa", "gopuram", "temple"].iter().any(|k| prop.model.contains(k));
         let bush = prop.model.contains("bush");
-        let (lod0_end, far) = if bush { (35.0, 220.0) } else if big { (90.0, 900.0) } else { (60.0, 700.0) };
+        // Where LOD0 gives way to LOD1, and LOD1 to LOD2 (trees, the stepwell, the fort, the caves).
+        let (switch, far) = if bush { ([35.0, 220.0], 220.0) } else if big { ([90.0, 260.0], 900.0) } else { ([60.0, 180.0], 700.0) };
         commands.entity(e).insert(Visibility::default());
         commands
             .spawn((WorldAssetRoot(models.props[prop.model].clone()), Transform::default(), ChildOf(e)))
-            .observe(move |ready: On<WorldInstanceReady>, children: Query<&Children>, names: Query<&Name>, mut commands: Commands| {
+            .observe(move |ready: On<WorldInstanceReady>, children: Query<&Children>, names: Query<&Name>, scale: Res<crate::quality::LodScale>, mut commands: Commands| {
                 // A model with no LOD1 (the ghats: long, and light enough) keeps its LOD0 to the end.
-                let has_lod1 = children.iter_descendants(ready.entity).any(|e| names.get(e).is_ok_and(|n| n.as_str().ends_with("LOD1")));
-                let ranges: &[(Range<f32>, Range<f32>)] = if has_lod1 {
-                    &[(0.0..0.0, lod0_end..lod0_end + 8.0), (lod0_end..lod0_end + 8.0, far..far + 30.0)]
-                } else {
-                    &[(0.0..0.0, far..far + 30.0)]
-                };
-                apply_lod_ranges(ready.entity, ranges, &children, &names, &mut commands);
+                let ranges = lod_ranges(lod_count(ready.entity, &children, &names), &switch, far..far + 30.0);
+                apply_lod_ranges(ready.entity, &ranges, Some(scale.0), &children, &names, &mut commands);
             });
     }
 }
@@ -103,15 +132,10 @@ fn spawn_ornaments(mut commands: Commands, layout: Res<MapLayout>, models: Res<M
                 WorldAssetRoot(models.props[o.model].clone()),
                 Transform { translation: o.pos, rotation: o.rot, scale: o.scale },
             ))
-            .observe(move |ready: On<WorldInstanceReady>, children: Query<&Children>, names: Query<&Name>, mut commands: Commands| {
+            .observe(move |ready: On<WorldInstanceReady>, children: Query<&Children>, names: Query<&Name>, scale: Res<crate::quality::LodScale>, mut commands: Commands| {
                 // Pieces with a LOD1 switch to it at 45 m; single-LOD pieces stay on LOD0 until they fade.
-                let has_lod1 = children.iter_descendants(ready.entity).any(|e| names.get(e).is_ok_and(|n| n.as_str().ends_with("LOD1")));
-                let ranges: &[(Range<f32>, Range<f32>)] = if has_lod1 {
-                    &[(0.0..0.0, 45.0..50.0), (45.0..50.0, far..far + 20.0)]
-                } else {
-                    &[(0.0..0.0, far..far + 20.0)]
-                };
-                apply_lod_ranges(ready.entity, ranges, &children, &names, &mut commands);
+                let ranges = lod_ranges(lod_count(ready.entity, &children, &names), &[45.0], far..far + 20.0);
+                apply_lod_ranges(ready.entity, &ranges, Some(scale.0), &children, &names, &mut commands);
             });
     }
     info!("ornaments: {}", layout.ornaments.len());
@@ -159,6 +183,7 @@ fn dress_warriors(mut commands: Commands, q: Query<(Entity, &WarriorVisual), Add
                 apply_lod_ranges(
                     ready.entity,
                     &[(0.0..0.0, 16.0..20.0), (16.0..20.0, 50.0..56.0), (50.0..56.0, 400.0..420.0)],
+                    None,
                     &children,
                     &names,
                     &mut commands,

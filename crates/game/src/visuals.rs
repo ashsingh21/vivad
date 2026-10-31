@@ -700,7 +700,7 @@ fn dress_vimana(mut commands: Commands, q: Query<Entity, Added<Vimana>>, assets:
             ))
             .observe(|ready: On<WorldInstanceReady>, children: Query<&Children>, names: Query<&Name>, mut commands: Commands| {
                 // Riders see it close up; from the ground it is 120 m away.
-                crate::characters::apply_lod_ranges(ready.entity, &[(0.0..0.0, 70.0..80.0), (70.0..80.0, 2000.0..2100.0)],
+                crate::characters::apply_lod_ranges(ready.entity, &[(0.0..0.0, 70.0..80.0), (70.0..80.0, 2000.0..2100.0)], None,
                                                     &children, &names, &mut commands);
             });
     }

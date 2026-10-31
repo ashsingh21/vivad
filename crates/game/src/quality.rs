@@ -58,6 +58,43 @@ impl Quality {
         }
     }
 
+    /// Multiplies every prop's LOD switch and fade-out distance (crate::characters).
+    fn lod_scale(self) -> f32 {
+        match self {
+            Quality::Low => 0.55,
+            Quality::Medium => 0.75,
+            Quality::High => 1.0,
+        }
+    }
+
+    /// The sky's lookup tables, rebuilt every frame: smaller and fewer samples below High (the sky
+    /// is a smooth gradient, and the sun never moves).
+    fn atmosphere(self) -> bevy::pbr::AtmosphereSettings {
+        let full = bevy::pbr::AtmosphereSettings::default();
+        let k = match self {
+            Quality::Low => 2,
+            Quality::Medium => 1,
+            Quality::High => return full,
+        };
+        let half = |n: u32| (n >> k).max(4);
+        bevy::pbr::AtmosphereSettings {
+            transmittance_lut_size: full.transmittance_lut_size.map(half),
+            transmittance_lut_samples: half(full.transmittance_lut_samples),
+            multiscattering_lut_dirs: half(full.multiscattering_lut_dirs),
+            multiscattering_lut_samples: half(full.multiscattering_lut_samples),
+            sky_view_lut_size: full.sky_view_lut_size.map(half),
+            sky_view_lut_samples: half(full.sky_view_lut_samples),
+            aerial_view_lut_size: full.aerial_view_lut_size.map(|n| (n >> (k - 1).min(1)).max(8)),
+            aerial_view_lut_samples: half(full.aerial_view_lut_samples),
+            ..full
+        }
+    }
+
+    /// Whether a prop's far LODs (LOD1 and up) cast shadows.
+    fn far_lod_shadows(self) -> bool {
+        self != Quality::Low
+    }
+
     /// Share of the full blade count grown (crate::grass).
     pub fn grass(self) -> f32 {
         match self {
@@ -85,6 +122,14 @@ impl Quality {
     }
 }
 
+/// Marks a prop LOD node whose shadow casting follows the level (`Quality::far_lod_shadows`).
+#[derive(Component)]
+pub struct LodShadow;
+
+/// The quality level's LOD distance multiplier, for props spawned after it is chosen.
+#[derive(Resource)]
+pub struct LodScale(pub f32);
+
 /// Window points per pixel of the 3D view's image, for placing HUD marks over world positions.
 #[derive(Resource)]
 pub struct ViewScale(pub f32);
@@ -107,12 +152,16 @@ pub struct QualityPlugin;
 impl Plugin for QualityPlugin {
     fn build(&self, app: &mut App) {
         let forced = std::env::var("VIVAD_QUALITY").ok().and_then(|s| Quality::parse(&s));
-        app.insert_resource(forced.unwrap_or(Quality::High)).insert_resource(ViewScale(1.0));
+        let first = forced.unwrap_or(Quality::High);
+        app.insert_resource(first).insert_resource(ViewScale(1.0)).insert_resource(LodScale(first.lod_scale()));
         if forced.is_none() {
             app.insert_resource(Undecided);
         }
         app.add_systems(Startup, spawn_view.after(crate::camera::spawn_camera))
-            .add_systems(Update, (choose.run_if(resource_exists::<Undecided>), cycle, fit_view, apply.run_if(resource_changed::<Quality>)).chain());
+            .add_systems(Update, (choose.run_if(resource_exists::<Undecided>), cycle, fit_view, apply.run_if(resource_changed::<Quality>), far_shadows).chain());
+        if std::env::var("VIVAD_TRIS").is_ok() {
+            app.add_systems(Last, tri_report);
+        }
     }
 }
 
@@ -143,9 +192,20 @@ fn cycle(state: Res<ActionState>, mut q: ResMut<Quality>) {
 fn spawn_view(mut commands: Commands, mut images: ResMut<Assets<Image>>, cam: Query<Entity, With<MainCamera>>) {
     let image = images.add(Image::new_target_texture(16, 9, TextureFormat::Rgba8Unorm, Some(TextureFormat::Rgba8UnormSrgb)));
     if let Ok(e) = cam.single() {
-        commands.entity(e).insert(RenderTarget::Image(ImageRenderTarget::from(image.clone())));
+        // The main camera is no longer the one drawing to the window, which is where Bevy measures
+        // lamp shadows' LOD distances from unless told.
+        commands.entity(e).insert((RenderTarget::Image(ImageRenderTarget::from(image.clone())), bevy::camera::ShadowLodOrigin));
     }
-    commands.spawn((Camera2d, Camera { order: 1, ..default() }, IsDefaultUiCamera));
+    // Bevy treats every camera as a view of the 3D world: it culls for it, measures LOD distances
+    // from it and fits sun-shadow cascades round it. On a render layer nothing is on, and far
+    // below the map, this one sees none of it (the UI it draws doesn't care where it stands).
+    commands.spawn((
+        Camera2d,
+        Camera { order: 1, ..default() },
+        IsDefaultUiCamera,
+        bevy::camera::visibility::RenderLayers::layer(31),
+        Transform::from_xyz(0.0, -100_000.0, 0.0),
+    ));
     commands.spawn((
         ViewImage,
         ImageNode::new(image.clone()),
@@ -192,10 +252,12 @@ fn apply(
     cam: Query<Entity, With<MainCamera>>,
     sun: Query<Entity, With<Sun>>,
     mut grass: ResMut<crate::grass::Grass>,
+    mut lods: Query<(Entity, &crate::characters::LodRange, &mut bevy::camera::visibility::VisibilityRange, Has<LodShadow>)>,
 ) {
     let env = |k: &str| std::env::var(k).ok();
     for e in &cam {
         let mut c = commands.entity(e);
+        c.insert(q.atmosphere());
         c.remove::<(ScreenSpaceAmbientOcclusion, TemporalAntiAliasing, ContrastAdaptiveSharpening, Smaa, Fxaa)>();
         if q.ssao() && env("VIVAD_NO_SSAO").is_none() {
             // Contact shadows in corners, under eaves and between blocks.
@@ -227,4 +289,75 @@ fn apply(
     }
     commands.insert_resource(DirectionalLightShadowMap { size: map });
     grass.set_density(q.grass());
+    let k = q.lod_scale();
+    commands.insert_resource(LodScale(k));
+    for (e, base, mut range, shadow) in &mut lods {
+        *range = base.scaled(k);
+        if shadow && base.1 > 0 {
+            if q.far_lod_shadows() {
+                commands.entity(e).remove::<bevy::light::NotShadowCaster>();
+            } else {
+                commands.entity(e).insert(bevy::light::NotShadowCaster);
+            }
+        }
+    }
+}
+
+/// VIVAD_TRIS=1: every 5 s, log the triangles drawn in view and the models they come from.
+pub fn tri_report(
+    time: Res<Time>,
+    mut next: Local<f32>,
+    meshes: Res<Assets<Mesh>>,
+    assets: Res<AssetServer>,
+    q: Query<(&Mesh3d, &ViewVisibility, Has<bevy::light::NotShadowCaster>, Option<&ChildOf>)>,
+    names: Query<(Option<&Name>, Has<shared::sim::MapBlock>, Has<shared::sim::Warrior>)>,
+) {
+    if time.elapsed_secs() < *next {
+        return;
+    }
+    *next = time.elapsed_secs() + 5.0;
+    let mut by: std::collections::HashMap<String, (usize, usize, usize)> = default();
+    let (mut total, mut casters) = (0, 0);
+    for (m, vis, no_shadow, parent) in &q {
+        let Some(mesh) = meshes.get(&m.0) else { continue };
+        let tris = mesh.indices().map_or(mesh.count_vertices(), |i| i.len()) / 3;
+        if !no_shadow {
+            casters += tris;
+        }
+        if !vis.get() {
+            continue;
+        }
+        total += tris;
+        let name = assets.get_path(m.0.id()).map(|p| p.path().display().to_string()).unwrap_or_else(|| {
+            let what = match parent.and_then(|p| names.get(p.parent()).ok()) {
+                Some((_, true, _)) => "map block".to_string(),
+                Some((_, _, true)) => "warrior".to_string(),
+                Some((Some(n), ..)) => n.as_str().to_string(),
+                _ => format!("{tris}-tri mesh"),
+            };
+            format!("(code) {what}")
+        });
+        let e = by.entry(name).or_default();
+        e.0 += tris;
+        e.1 += 1;
+        e.2 += if no_shadow { 0 } else { tris };
+    }
+    let mut v: Vec<_> = by.into_iter().collect();
+    v.sort_by_key(|x| std::cmp::Reverse(x.1 .0));
+    info!("[tris] {total} in view, {casters} in shadow casters anywhere");
+    for (name, (t, n, c)) in v.into_iter().take(25) {
+        info!("[tris]   {t:>8} in {n:>5} meshes ({c:>8} casting)  {name}");
+    }
+}
+
+/// Props that spawn after the level was applied: on Low their far LODs cast no shadows.
+fn far_shadows(mut commands: Commands, q: Res<Quality>, added: Query<(Entity, &crate::characters::LodRange), Added<LodShadow>>) {
+    if q.far_lod_shadows() {
+        return;
+    }
+    for (e, base) in &added {
+        if base.1 > 0 {
+            commands.entity(e).insert(bevy::light::NotShadowCaster);
+        }
+    }
 }

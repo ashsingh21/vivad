@@ -457,7 +457,7 @@ def fort():
     for side in (1, -1):
         mahal(kit, side)
     paving(kit)
-    return B.finish("fort", kit, lods=(0.3,))
+    return B.finish("fort", kit, lods=(0.3, 0.08))
 
 
 def main():
