@@ -212,7 +212,7 @@ pub fn new_room() -> String {
 
 /// A room code as typed (any case, spaces or dashes), or None if it isn't one.
 fn room(code: &str) -> Option<String> {
-    let parts: Vec<String> = code.trim().to_lowercase().split(|c: char| c == '-' || c == ' ' || c == '_').filter(|p| !p.is_empty()).map(str::to_string).collect();
+    let parts: Vec<String> = code.trim().to_lowercase().split(['-', ' ', '_']).filter(|p| !p.is_empty()).map(str::to_string).collect();
     let ok = parts.len() == 4 && parts[..3].iter().all(|p| WORDS.contains(&p.as_str())) && parts[3].parse::<u8>().is_ok();
     ok.then(|| parts.join("-"))
 }

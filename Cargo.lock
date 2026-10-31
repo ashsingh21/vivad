@@ -5117,6 +5117,7 @@ version = "0.1.0"
 dependencies = [
  "avian3d",
  "bevy",
+ "blake3",
  "iroh",
  "postcard",
  "rand",
