@@ -46,13 +46,13 @@ const UI: f32 = 0.5;
 const ITEM: f32 = 0.6;
 const BED: f32 = 0.45;
 
-const NAMES: [&str; 65] = [
+const NAMES: [&str; 67] = [
     "step_dirt_0", "step_dirt_1", "step_dirt_2", "step_dirt_3", "step_stone_0", "step_stone_1", "step_stone_2", "step_stone_3",
     "step_wood_0", "step_wood_1", "step_wood_2", "step_wood_3", "step_grass_0", "step_grass_1", "step_grass_2", "step_grass_3",
     "step_water_0", "step_water_1", "step_water_2", "step_water_3", "sword_whoosh_0", "sword_whoosh_1", "sword_whoosh_2",
     "sword_hit_flesh", "sword_hit_stone", "bow_release", "bow_release_heavy", "bow_draw", "arrow_impact_wood",
     "arrow_impact_stone", "gun_tamancha", "gun_dunali", "gun_katta", "gulel_release", "bullet_impact_stone",
-    "bullet_impact_wood", "katta_click", "katta_backfire", "hit_flesh", "hit_shield", "hitmarker", "hitmarker_head", "hurt", "jump", "land", "glider_open",
+    "bullet_impact_wood", "katta_click", "katta_backfire", "chakra_throw", "brahmastra_blast", "hit_flesh", "hit_shield", "hitmarker", "hitmarker_head", "hurt", "jump", "land", "glider_open",
     "glide_loop", "freefall_loop", "vimana_loop", "chest_open", "kalash_open", "pickup", "drink", "reload", "fire_ignite",
     "fire_loop", "wind_gust", "throw", "zone_warn", "zone_loop", "kill", "eliminated", "victory", "amb_day", "amb_river",
 ];
@@ -295,6 +295,7 @@ fn combat_events(
                 };
                 play.at(sound, tf.translation, WEAPON, reach);
             }
+            Some(_) if p.item == "chakra" => play.at("chakra_throw", tf.translation, WEAPON, 80.0),
             Some(_) => play.at("throw", tf.translation, WEAPON, 60.0),
         }
     }
@@ -337,7 +338,7 @@ fn combat_events(
 fn world_events(
     mut play: Player,
     fires: Query<(Entity, &Transform), Added<FireZone>>,
-    bursts: Query<&Transform, Added<Burst>>,
+    bursts: Query<(&Burst, &Transform), Added<Burst>>,
     chests: Query<(&Chest, &Transform), Changed<Chest>>,
     me_dead: Query<(), (With<LocalPlayer>, Added<Eliminated>)>,
     local: Query<(Entity, &Inventory), (With<LocalPlayer>, Changed<Inventory>)>,
@@ -349,7 +350,11 @@ fn world_events(
         play.at("fire_ignite", tf.translation, IMPACT, 80.0);
         play.attach_loop("fire_loop", e, IMPACT * 0.8);
     }
-    for tf in &bursts {
+    for (b, tf) in &bursts {
+        if b.blast {
+            play.at("brahmastra_blast", tf.translation, IMPACT * 1.6, 500.0);
+            continue;
+        }
         play.at("wind_gust", tf.translation, IMPACT, 80.0);
     }
     for (c, tf) in &chests {

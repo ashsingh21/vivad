@@ -24,7 +24,7 @@ impl Plugin for FxPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraPunch>()
             .add_systems(Startup, setup)
-            .add_systems(Update, (add_streaks, muzzle_flash, misfire_smoke, hit_sparks, arrow_dust, fly_sparks, punch_camera, hit_stop))
+            .add_systems(Update, (add_streaks, muzzle_flash, misfire_smoke, blast_shake, hit_sparks, arrow_dust, fly_sparks, punch_camera, hit_stop))
             .add_systems(PostUpdate, (update_streaks, swing_ribbons).after(TransformSystems::Propagate));
     }
 }
@@ -125,6 +125,8 @@ fn add_streaks(mut commands: Commands, q: Query<(Entity, &Projectile, &Transform
     for (e, p, t) in &q {
         let (mat, width, time) = match p.astra.as_ref() {
             Some(_) if p.item == "agneyastra" => (fx.fire_streak.clone(), 0.09, STREAK_TIME),
+            Some(_) if p.item == "chakra" => (fx.gold_spark.clone(), 0.06, STREAK_TIME * 1.5),
+            Some(_) if p.item == "brahmastra" => (fx.gold_spark.clone(), 0.12, STREAK_TIME * 2.0),
             Some(_) => (fx.wind_streak.clone(), 0.08, STREAK_TIME),
             None if shot_kind(&p.item) == Shot::Bullet => (fx.tracer.clone(), if p.item == "dunali" { 0.018 } else { 0.03 }, TRACER_TIME),
             None => (fx.streak.clone(), 0.055, STREAK_TIME),
@@ -342,6 +344,17 @@ fn arrow_dust(mut commands: Commands, q: Query<(Entity, &Projectile, &Transform)
             } else {
                 billow(&mut commands, &fx, &fx.dust, t.translation, back, 7, 1.2, 0.035);
             }
+        }
+    }
+}
+
+/// The Brahmastra shakes the view of everyone near it, harder the closer.
+fn blast_shake(q: Query<(&shared::sim::combat::Burst, &Transform), Added<shared::sim::combat::Burst>>, me: Query<&Transform, With<LocalPlayer>>,
+               mut punch: ResMut<CameraPunch>) {
+    let Ok(me) = me.single() else { return };
+    for (b, t) in &q {
+        if b.blast {
+            punch.shake += 0.35 * (1.0 - me.translation.distance(t.translation) / 80.0).max(0.0);
         }
     }
 }

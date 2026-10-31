@@ -1,6 +1,6 @@
 """Panga's street armoury: the cricket bat, the katta (a country-made single-shot pistol), the
 tamancha (a crude self-loader with a long magazine), the dunali (a double-barrelled shotgun) and the
-gulel (a forked-branch slingshot). Lofted, given procedural materials, baked to one texture set and
+gulel (a forked-branch slingshot); and two divine weapons, the Sudarshan Chakra and the Brahmastra. Lofted, given procedural materials, baked to one texture set and
 exported like the rest of the armoury (arsenal.py).
 
 Axes (docs/references.md): origin where the hand closes. The bat's blade runs Blender +Z (glTF +Y),
@@ -214,7 +214,59 @@ def gulel():
     return {"nock": tip, "bridge": tip, "rest": (0.0, tz, -0.03), "half_len": tz}
 
 
-BUILDERS = {"bat": bat, "katta": katta, "tamancha": tamancha, "dunali": dunali, "gulel": gulel}
+# ------------------------------------------------------------------ the two divine weapons
+
+CHAKRA_R = 0.13
+
+
+def chakra():
+    """The Sudarshan Chakra: a gold disc with a ring of saw teeth round its rim, a blue enamelled
+    face between raised rings, and a hub. Held by its rim: the origin is the bottom of the disc,
+    which stands up (+Z) with its faces to the sides (±X)."""
+    gold = F.metal("chakra_gold", A.GOLD, rough=0.2, chase=True)
+    blue = F.lacquer("chakra_enamel", base=(0.05, 0.14, 0.42))
+    R, teeth, th = CHAKRA_R, 24, 0.012
+    c = Vector((0, 0, R))
+    # The toothed rim: a saw-tooth outline (each tooth leaning the way it spins), extruded across X.
+    outline = []
+    for k in range(teeth):
+        a0 = 2 * math.pi * k / teeth
+        for frac, r in ((0.0, R - 0.012), (0.55, R - 0.008), (0.98, R + 0.024)):
+            a = a0 + frac * 2 * math.pi / teeth
+            outline.append((math.cos(a) * r, math.sin(a) * r))
+    frames = [(c + X * x, Y.copy(), Z.copy()) for x in (-th / 2, th / 2)]
+    parts = [geo.loft("rim", frames, [outline, outline], cap_start="fan", cap_end="fan", material=gold, merge=True)]
+    # Faces: a raised ring at the rim, the enamel field, an inner ring and the hub, both sides.
+    prof = [(0.0, th * 0.9), (0.03, th * 0.9), (0.032, th * 0.6), (R - 0.03, th * 0.6), (R - 0.028, th * 0.8),
+            (R - 0.016, th * 0.8), (R - 0.014, 0.0)]
+    for k, sgn in enumerate((-1, 1)):
+        axis = X * sgn
+        parts.append(A.lathe(f"field{k}", [(r, h) for r, h in prof], blue, seg=48, axis=axis, origin=c))
+        parts.append(A.lathe(f"hub{k}", [(0.0, th * 1.6), (0.018, th * 1.5), (0.024, th * 1.0), (0.034, th * 0.9), (0.034, 0.0)],
+                             gold, seg=32, axis=axis, origin=c))
+        parts.append(A.lathe(f"ring{k}", [(R - 0.032, th * 0.6), (R - 0.03, th * 1.0), (R - 0.018, th * 1.0), (R - 0.016, th * 0.8)],
+                             gold, seg=48, axis=axis, origin=c))
+    A.finish("chakra", parts, res=1024, hard=("rim",))
+
+
+def brahmastra():
+    """The Brahmastra: a white-and-gold javelin with a long four-faced head of pale crystal held
+    in a gold crown, rings of gold down the shaft."""
+    lac = F.lacquer("brahmastra_lac", base=(0.85, 0.82, 0.74), paint=(0.86, 0.62, 0.26))
+    gold = F.metal("brahmastra_gold", A.GOLD, rough=0.22, chase=True)
+    crystal = F.plain("brahmastra_crystal", (0.75, 0.88, 1.0), rough=0.08)
+    parts = [A.lathe("shaft", [(0.0, -0.24), (0.009, -0.235), (0.0095, 0.0), (0.0085, 0.25), (0.0, 0.255)], lac, seg=12,
+                     extra={"kv": lambda *a: 1.0})]
+    for z0 in (-0.24, -0.12, -0.02, 0.08, 0.2):
+        parts.append(A.lathe(f"ring{z0}", [(0.0098, z0), (0.0122, z0 + 0.004), (0.0122, z0 + 0.02), (0.0098, z0 + 0.024)], gold, seg=12))
+    parts.append(A.lathe("crown", [(0.009, 0.24), (0.02, 0.255), (0.024, 0.27), (0.016, 0.29), (0.012, 0.3)], gold, seg=16))
+    parts.append(A.lathe("head", [(0.0, 0.28), (0.022, 0.31), (0.018, 0.4), (0.0, 0.5)], crystal, seg=4))
+    parts.append(A.lathe("pommel", [(0.0, -0.28), (0.012, -0.275), (0.016, -0.26), (0.0095, -0.242)], gold, seg=12))
+    A.finish("brahmastra", parts, res=1024, hard=("pommel",))
+
+
+BUILDERS = {"bat": bat, "katta": katta, "tamancha": tamancha, "dunali": dunali, "gulel": gulel, "chakra": chakra,
+            "brahmastra": brahmastra}
 
 
 def write_gulel(spec):

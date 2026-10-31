@@ -76,6 +76,12 @@ pub enum AstraEffect {
     Fire { radius: f32, dps: f32, duration: f32 },
     /// Wind burst that throws everyone (including the thrower) upward and outward.
     Wind { radius: f32, impulse: f32 },
+    /// The Sudarshan Chakra: flies straight out to `range`, cutting through everyone it passes
+    /// (`damage` each, once per pass), and comes back to the thrower's hand to be thrown again.
+    Chakra { damage: f32, range: f32 },
+    /// The Brahmastra: a blast that hurts everyone within `radius` (`damage` at the centre, falling
+    /// off to nothing at the edge, the thrower included) and hurls them outward.
+    Blast { radius: f32, damage: f32, impulse: f32 },
 }
 
 #[derive(Clone, Debug, Deserialize)]

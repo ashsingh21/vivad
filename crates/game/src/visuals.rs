@@ -35,6 +35,7 @@ impl Plugin for VisualsPlugin {
                     animate_pickups,
                     dress_projectiles,
                     spent_bullets,
+                    spin_chakras,
                     dress_fx,
                     animate_fx,
                     dress_vimana,
@@ -47,8 +48,13 @@ impl Plugin for VisualsPlugin {
 }
 
 /// Baked models in assets/models/weapons, one per item (the arrow-quiver pickup shows the tarkash).
-pub const WEAPON_MODELS: [&str; 12] =
-    ["bat", "katta", "tamancha", "dunali", "gulel", "arrow", "tarkash", "agneyastra", "vayavyastra", "sanjeevani", "soma", "amrita"];
+pub const WEAPON_MODELS: [&str; 14] = [
+    "bat", "katta", "tamancha", "dunali", "gulel", "chakra", "brahmastra", "arrow", "tarkash", "agneyastra", "vayavyastra", "sanjeevani",
+    "soma", "amrita",
+];
+
+/// The chakra model's radius (tools/blender/weapons/desi.py CHAKRA_R): its origin is the rim.
+const CHAKRA_R: f32 = 0.13;
 
 /// One weapon model's LOD0 mesh and its material (converted from the glTF material once loaded).
 pub struct ModelHandles {
@@ -698,9 +704,24 @@ pub fn shot_kind(item: &str) -> Shot {
 fn dress_projectiles(mut commands: Commands, q: Query<(Entity, &Projectile), Added<Projectile>>, palette: Res<Palette>) {
     for (e, p) in &q {
         commands.entity(e).insert(Visibility::default()).with_children(|c| {
-            if p.astra.is_some() {
+            if p.item == "chakra" {
+                // Spinning flat, a little larger than in the hand so it reads in flight, in a halo.
+                if let Some(m) = palette.models.get("chakra") {
+                    c.spawn((ChakraSpin, Transform::from_scale(Vec3::splat(1.6)), Visibility::default())).with_children(|s| {
+                        s.spawn((Mesh3d(m.mesh.clone()), MeshMaterial3d(m.mat.clone()),
+                                 Transform::from_translation(Vec3::X * CHAKRA_R).with_rotation(Quat::from_rotation_z(FRAC_PI_2))));
+                    });
+                }
+                c.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(palette.rarity_glow[&Rarity::Divya].clone()),
+                         Transform::from_scale(Vec3::new(0.12, 0.03, 0.12)), bevy::light::NotShadowCaster));
+                c.spawn((PointLight { color: Color::srgb(1.0, 0.8, 0.4), intensity: 80_000.0, range: 5.0, ..default() }, Transform::default()));
+            } else if p.astra.is_some() {
                 // The astra itself, point first, wrapped in a small glow of its element.
-                let glow = if p.item == "agneyastra" { palette.fire.clone() } else { palette.wind.clone() };
+                let glow = match p.item.as_str() {
+                    "agneyastra" => palette.fire.clone(),
+                    "brahmastra" => palette.rarity_glow[&Rarity::Divya].clone(),
+                    _ => palette.wind.clone(),
+                };
                 if let Some(m) = palette.models.get(p.item.as_str()) {
                     c.spawn((Mesh3d(m.mesh.clone()), MeshMaterial3d(m.mat.clone()), Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2))));
                 }
@@ -727,6 +748,16 @@ fn dress_projectiles(mut commands: Commands, q: Query<(Entity, &Projectile), Add
                          Transform::from_xyz(0.0, 0.0, len).with_scale(Vec3::splat(0.035)), bevy::light::NotShadowCaster));
             }
         });
+    }
+}
+
+/// A flying chakra's spin.
+#[derive(Component)]
+struct ChakraSpin;
+
+fn spin_chakras(time: Res<Time>, mut q: Query<&mut Transform, With<ChakraSpin>>) {
+    for mut t in &mut q {
+        t.rotate_y(-28.0 * time.delta_secs());
     }
 }
 
@@ -759,8 +790,19 @@ fn dress_fx(
     }
     for (e, b) in &bursts {
         commands.entity(e).insert(Visibility::default()).with_children(|c| {
-            c.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(palette.wind.clone()),
-                     Transform::from_scale(Vec3::splat(b.radius * 0.3)), bevy::light::NotShadowCaster, FxSpin(b.radius)));
+            if b.blast {
+                // The Brahmastra: a core of golden light inside a shockwave swelling to the blast's
+                // edge, lighting everything round it.
+                c.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(palette.rarity_glow[&Rarity::Divya].clone()),
+                         Transform::from_scale(Vec3::splat(b.radius * 0.05)), bevy::light::NotShadowCaster, FxSpin(b.radius * 0.2)));
+                c.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(palette.wind.clone()),
+                         Transform::from_scale(Vec3::splat(b.radius * 0.3)), bevy::light::NotShadowCaster, FxSpin(b.radius)));
+                c.spawn((PointLight { color: Color::srgb(1.0, 0.85, 0.55), intensity: 8.0e6, range: b.radius * 4.0, ..default() },
+                         Transform::from_xyz(0.0, 2.0, 0.0)));
+            } else {
+                c.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(palette.wind.clone()),
+                         Transform::from_scale(Vec3::splat(b.radius * 0.3)), bevy::light::NotShadowCaster, FxSpin(b.radius)));
+            }
         });
     }
 }

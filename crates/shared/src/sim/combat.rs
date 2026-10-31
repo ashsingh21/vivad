@@ -19,7 +19,7 @@ impl Plugin for CombatPlugin {
             FixedUpdate,
             (
                 (select_slot, use_items).chain().in_set(SimSet::Combat),
-                (step_projectiles, tick_fire_zones).in_set(SimSet::Combat).after(use_items),
+                (fly_chakras, step_projectiles, tick_fire_zones).in_set(SimSet::Combat).after(use_items),
                 (apply_damage, count_kills).chain().in_set(SimSet::Damage),
             ),
         );
@@ -50,12 +50,26 @@ pub struct FireZone {
     pub ttl: f32,
 }
 
-/// One-shot visual cue for clients (wind bursts etc.).
+/// One-shot visual cue for clients (wind bursts, the Brahmastra's blast).
 #[derive(Component, Clone, Debug)]
 pub struct Burst {
     pub radius: f32,
     pub ttl: f32,
+    pub blast: bool,
 }
+
+/// A thrown chakra's flight: how far it has gone out, whether it is on its way back, and who it
+/// has cut on this pass.
+#[derive(Component, Clone, Debug, Default)]
+pub struct Boomerang {
+    pub travelled: f32,
+    pub returning: bool,
+    pub struck: Vec<Entity>,
+}
+
+/// How close a chakra passes to cut someone, and to be caught.
+const CHAKRA_REACH: f32 = 0.9;
+const CHAKRA_CATCH: f32 = 1.3;
 
 fn select_slot(mut q: Query<(&PlayerIntent, &mut Inventory, &mut Action), (Without<Eliminated>, Without<Remote>)>) {
     for (intent, mut inv, mut act) in &mut q {
@@ -247,12 +261,14 @@ fn use_items(
                 act.since_attack = 0.0;
             }
             ItemKind::Astra { effect, speed, .. } => {
-                if intent.pressed(btn::FIRE) && act.cooldown <= 0.0 {
-                    let dir = (aim + Vec3::Y * 0.18).normalize();
+                let chakra = matches!(effect, AstraEffect::Chakra { .. });
+                if intent.pressed(btn::FIRE) && act.cooldown <= 0.0 && stack.count > 0 {
+                    // A chakra flies flat along the aim; other astras are lobbed.
+                    let dir = if chakra { aim } else { (aim + Vec3::Y * 0.18).normalize() };
                     let astra = Projectile {
                         owner: entity,
                         velocity: dir * speed,
-                        gravity: 16.0,
+                        gravity: if chakra { 0.0 } else { 16.0 },
                         damage: 0.0,
                         headshot_mult: 1.0,
                         ttl: 6.0,
@@ -265,7 +281,8 @@ fn use_items(
                     let slot = inv.selected;
                     if let Some(s) = inv.slots[slot - 1].as_mut() {
                         s.count -= 1;
-                        if s.count == 0 {
+                        // The chakra stays in its slot, empty, until it comes back.
+                        if s.count == 0 && !chakra {
                             inv.slots[slot - 1] = None;
                         }
                     }
@@ -311,7 +328,7 @@ fn step_projectiles(
     mut commands: Commands,
     mut q: Query<(Entity, &mut Transform, &mut Projectile)>,
     warriors: Query<&Transform, (With<Warrior>, Without<Projectile>)>,
-    mut kin: Query<(&Transform, &mut Kinematic), (With<Warrior>, Without<Eliminated>, Without<Projectile>, Without<Remote>)>,
+    mut kin: Query<(Entity, &Transform, &mut Kinematic), (With<Warrior>, Without<Eliminated>, Without<Projectile>, Without<Remote>)>,
     remote: Query<(), With<Remote>>,
     spatial: SpatialQuery,
     time: Res<Time>,
@@ -326,7 +343,7 @@ fn step_projectiles(
             commands.entity(e).despawn();
             continue;
         }
-        if p.stuck {
+        if p.stuck || matches!(p.astra, Some(AstraEffect::Chakra { .. })) {
             continue;
         }
         p.velocity.y -= p.gravity * dt;
@@ -336,7 +353,7 @@ fn step_projectiles(
         if let Some(hit) = spatial.cast_ray(tf.translation, dir, dist, true, &filter) {
             let point = tf.translation + dir * hit.distance;
             if let Some(effect) = p.astra.clone() {
-                astra_burst(&mut commands, &mut kin, p.owner, point, &effect);
+                astra_burst(&mut commands, &mut kin, &mut damage, p.owner, point, &effect, &p.item);
                 commands.entity(e).despawn();
                 continue;
             }
@@ -369,10 +386,12 @@ fn step_projectiles(
 
 fn astra_burst(
     commands: &mut Commands,
-    kin: &mut Query<(&Transform, &mut Kinematic), (With<Warrior>, Without<Eliminated>, Without<Projectile>, Without<Remote>)>,
+    kin: &mut Query<(Entity, &Transform, &mut Kinematic), (With<Warrior>, Without<Eliminated>, Without<Projectile>, Without<Remote>)>,
+    damage: &mut MessageWriter<DamageMsg>,
     owner: Entity,
     at: Vec3,
     effect: &AstraEffect,
+    item: &str,
 ) {
     match effect {
         AstraEffect::Fire { radius, dps, duration } => {
@@ -382,8 +401,8 @@ fn astra_burst(
             ));
         }
         AstraEffect::Wind { radius, impulse } => {
-            commands.spawn((Burst { radius: *radius, ttl: 0.6 }, Transform::from_translation(at)));
-            for (tf, mut k) in kin.iter_mut() {
+            commands.spawn((Burst { radius: *radius, ttl: 0.6, blast: false }, Transform::from_translation(at)));
+            for (_, tf, mut k) in kin.iter_mut() {
                 let d = tf.translation - at;
                 if d.length() < *radius {
                     let out = d.with_y(0.0).normalize_or(Vec3::X);
@@ -393,6 +412,103 @@ fn astra_burst(
                     k.fall_from = None;
                 }
             }
+        }
+        AstraEffect::Blast { radius, damage: full, impulse } => {
+            commands.spawn((Burst { radius: *radius, ttl: 1.2, blast: true }, Transform::from_translation(at)));
+            // Each peer hurts and hurls its own warriors (this one's are local here).
+            for (we, tf, mut k) in kin.iter_mut() {
+                let d = tf.translation - at;
+                let near = 1.0 - d.length() / radius;
+                if near <= 0.0 {
+                    continue;
+                }
+                damage.write(DamageMsg {
+                    target: we,
+                    amount: full * near.powf(0.7),
+                    source: Some(owner),
+                    headshot: false,
+                    cause: DamageCause::Weapon(item.to_string()),
+                });
+                let out = d.with_y(0.0).normalize_or(Vec3::X);
+                k.velocity = (out * 0.6 + Vec3::Y) * impulse * near.sqrt();
+                k.grounded = false;
+            }
+        }
+        // Chakras never burst: they fly out and back (fly_chakras).
+        AstraEffect::Chakra { .. } => {}
+    }
+}
+
+/// Thrown chakras: straight out, cutting whoever they pass, turning back at their range or at a
+/// wall, and caught again by the thrower (who can throw it once more). The thrower's peer decides
+/// who is cut; other peers only fly it.
+#[allow(clippy::type_complexity)]
+fn fly_chakras(
+    mut commands: Commands,
+    mut q: Query<(Entity, &mut Transform, &mut Projectile, Option<&mut Boomerang>)>,
+    warriors: Query<(Entity, &Transform), (With<Warrior>, Without<Eliminated>, Without<Projectile>)>,
+    mut owners: Query<&mut Inventory, Without<Remote>>,
+    remote: Query<(), With<Remote>>,
+    spatial: SpatialQuery,
+    time: Res<Time>,
+    mut damage: MessageWriter<DamageMsg>,
+) {
+    let dt = time.delta_secs();
+    for (e, mut tf, mut p, flight) in &mut q {
+        let Some(AstraEffect::Chakra { damage: dmg, range }) = p.astra.clone() else { continue };
+        let Some(mut flight) = flight else {
+            commands.entity(e).insert(Boomerang::default());
+            continue;
+        };
+        let echo = remote.contains(p.owner);
+        let hand = warriors.get(p.owner).map(|(_, t)| t.translation + Vec3::Y * 0.4);
+        p.ttl -= dt;
+        // Back in the hand (or lost: its thrower fell, or it flew too long): the slot fills again.
+        let caught = flight.returning && hand.is_ok_and(|h| h.distance(tf.translation) < CHAKRA_CATCH);
+        if caught || hand.is_err() || p.ttl <= 0.0 {
+            if let Ok(mut inv) = owners.get_mut(p.owner) {
+                if let Some(s) = inv.slots.iter_mut().flatten().find(|s| s.id == p.item) {
+                    s.count = 1;
+                }
+            }
+            commands.entity(e).despawn();
+            continue;
+        }
+        let speed = p.velocity.length();
+        if flight.returning {
+            if let Ok(h) = hand {
+                p.velocity = (h - tf.translation).normalize_or(Vec3::Y) * speed;
+            }
+        }
+        let step = p.velocity * dt;
+        let Ok((dir, dist)) = Dir3::new_and_length(step) else { continue };
+        // A wall turns it back.
+        let walls = SpatialQueryFilter::from_mask(super::solid_mask());
+        if !flight.returning && spatial.cast_ray(tf.translation, dir, dist + 0.2, true, &walls).is_some() {
+            flight.returning = true;
+            flight.struck.clear();
+            continue;
+        }
+        let (a, b) = (tf.translation, tf.translation + step);
+        for (we, wt) in &warriors {
+            if we == p.owner || flight.struck.contains(&we) {
+                continue;
+            }
+            // Distance from the body's centre line to this step of the flight.
+            let c = wt.translation + Vec3::Y * 0.2;
+            let t = ((c - a).dot(step) / step.length_squared()).clamp(0.0, 1.0);
+            if (a + step * t).distance(c) < CHAKRA_REACH {
+                flight.struck.push(we);
+                if !echo {
+                    damage.write(DamageMsg { target: we, amount: dmg, source: Some(p.owner), headshot: false, cause: DamageCause::Weapon(p.item.clone()) });
+                }
+            }
+        }
+        tf.translation = b;
+        flight.travelled += dist;
+        if !flight.returning && flight.travelled >= range {
+            flight.returning = true;
+            flight.struck.clear();
         }
     }
 }

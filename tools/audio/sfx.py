@@ -274,6 +274,27 @@ def katta_backfire():
     return fade(norm(bang + thump + at(d, (0.04, crackle + fizz))))
 
 
+def chakra_throw():
+    """The Sudarshan Chakra leaving the hand: a rising metallic whirr with a ringing edge."""
+    d = 0.9
+    t = t_axis(d)
+    rate = 18 + 30 * (t / d)
+    whirr = band(white(d), 600, 4000) * (0.55 + 0.45 * np.sin(2 * np.pi * np.cumsum(rate) / SR)) * env(d, 0.02, 0.7, 2.5)
+    ring = modes(d, [1320, 1980, 2970], [0.6, 0.45, 0.3], [1, 0.6, 0.4], 0.01) * 0.5
+    return fade(norm(whirr + ring))
+
+
+def brahmastra_blast():
+    """The Brahmastra going off: a deep detonation, a long rolling rumble, and a high shimmer."""
+    d = 4.0
+    crack = band(white(d), 800, 8000) * env(d, 0.0005, 0.03)
+    boom = band(spectral(d, 1.6), 25, 600) * env(d, 0.002, 0.8, 3.0)
+    thump = np.sin(2 * np.pi * 38 * t_axis(d) * (1 - 0.2 * t_axis(d) / d)) * env(d, 0.001, 0.6, 3.0)
+    rumble = band(spectral(d, 2.0), 20, 200) * env(d, 0.2, 3.2, 2.0) * 0.8
+    shimmer = modes(d, [880, 1320, 1760, 2640], [2.5, 2.0, 1.6, 1.2], [0.4, 0.3, 0.2, 0.15], 0.02) * 0.25
+    return fade(norm(crack * 0.5 + boom + thump * 1.2 + rumble + at(d, (0.1, shimmer))))
+
+
 def gulel_release():
     """The rubber of a slingshot snapping back, and the pebble's flick off the pouch."""
     d = 0.35
@@ -543,6 +564,8 @@ SOUNDS = {
     "gulel_release": gulel_release,
     "katta_click": katta_click,
     "katta_backfire": katta_backfire,
+    "chakra_throw": chakra_throw,
+    "brahmastra_blast": brahmastra_blast,
     "bullet_impact_stone": lambda: bullet_impact("stone"),
     "bullet_impact_wood": lambda: bullet_impact("wood"),
     "hit_flesh": hit_flesh,

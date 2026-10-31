@@ -224,6 +224,10 @@ impl Plugin for AutoshotPlugin {
                 range("dunali", View::Range, 9.0, 0.08),
                 range("dunali", View::Player, 9.0, 0.3),
                 range("agneyastra", View::Range, 9.0, 0.25),
+                range("chakra", View::Range, 12.0, 0.3),
+                range("chakra", View::Range, 12.0, 1.6),
+                range("brahmastra", View::Range, 25.0, 1.4),
+                range("brahmastra", View::Range, 25.0, 1.8),
             ];
             if let Ok(only) = std::env::var("VIVAD_ARMOURY_ONLY").map(|s| s.trim().to_owned()).and_then(|s| if s.is_empty() { Err(std::env::VarError::NotPresent) } else { Ok(s) }) {
                 let keys: Vec<String> = only.split(',').map(str::to_owned).collect();

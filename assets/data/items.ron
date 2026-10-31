@@ -49,6 +49,18 @@
             kind: Astra(effect: Wind(radius: 5.0, impulse: 22.0), speed: 24.0, count: 2),
             drops: [(Rare, 3.0), (Epic, 1.5)],
         ),
+        "chakra": (
+            name: "Sudarshan Chakra",
+            lore: "Vishnu ka chakra. Jo raaste mein aaye, kat jaye; phir laut ke haath mein.",
+            kind: Astra(effect: Chakra(damage: 45.0, range: 32.0), speed: 30.0, count: 1),
+            drops: [(Divya, 1.0)],
+        ),
+        "brahmastra": (
+            name: "Brahmastra",
+            lore: "Sabse bada astra. Ek baar chalta hai, aur sab kuch badal deta hai.",
+            kind: Astra(effect: Blast(radius: 16.0, damage: 140.0, impulse: 20.0), speed: 24.0, count: 1),
+            drops: [(Divya, 0.4)],
+        ),
         "sanjeevani": (
             name: "Haldi Doodh",
             lore: "Maa ka nuskha. Har zakhm ka ilaaj.",
