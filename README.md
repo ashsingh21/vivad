@@ -32,7 +32,8 @@ just autoplay          # a bot plays as you; screenshots the match
 ## Controls
 WASD move, mouse look, Space jump / leap from the Vimana / open Garuda wings,
 LMB attack / draw (hold for Pinaka), RMB aim, E open chest / pick up, R reload (R restarts after a match),
-1-6 or mouse wheel hotbar, Shift sprint, F3 performance overlay, Esc releases the mouse.
+1-6 or mouse wheel hotbar, Shift sprint, F3 performance overlay, F4 cycles quality (Low / Medium / High),
+Esc releases the mouse. Quality is picked from the GPU at start; `VIVAD_QUALITY=low just play` forces one.
 Gamepad: sticks, A jump, RT fire, LT aim, X interact, Y reload, bumpers cycle.
 
 Blender path comes from `.env` (`BLENDER=...`, see `.env.example`).

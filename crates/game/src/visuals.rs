@@ -295,15 +295,9 @@ fn setup_sky(mut commands: Commands, mut media: ResMut<Assets<ScatteringMedium>>
         // high sun the map had, which read as glaring over the pale stone and dust.
         DirectionalLight { illuminance: 27_000.0, shadow_maps_enabled: std::env::var("VIVAD_NO_SHADOWS").is_err(), color: Color::srgb(1.0, 0.86, 0.68), ..default() },
         Transform::from_xyz(1.0, 0.5, 0.45).looking_at(Vec3::ZERO, Vec3::Y),
-        // VIVAD_CASCADES / VIVAD_SHADOW_FAR for comparisons; the shadow pass is the frame's
-        // largest GPU cost.
-        CascadeShadowConfigBuilder {
-            num_cascades: std::env::var("VIVAD_CASCADES").ok().and_then(|s| s.parse().ok()).unwrap_or(3),
-            maximum_distance: std::env::var("VIVAD_SHADOW_FAR").ok().and_then(|s| s.parse().ok()).unwrap_or(200.0),
-            first_cascade_far_bound: 18.0,
-            ..default()
-        }
-        .build(),
+        // Cascades and reach are the quality level's (crate::quality): the shadow pass is the
+        // frame's largest GPU cost.
+        CascadeShadowConfigBuilder::default().build(),
     ));
     commands.spawn(Atmosphere::earth(media.add(ScatteringMedium::default())));
     commands.insert_resource(GlobalAmbientLight { color: Color::srgb(0.85, 0.88, 1.0), brightness: 560.0, ..default() });

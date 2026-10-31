@@ -20,6 +20,7 @@ pub enum Act {
     PrevSlot,
     Restart,
     TogglePerf,
+    CycleQuality,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -53,6 +54,7 @@ impl Default for Bindings {
                 (Act::PrevSlot, vec![Pad(GamepadButton::LeftTrigger)]),
                 (Act::Restart, vec![Key(KeyCode::KeyR), Key(KeyCode::Enter), Pad(GamepadButton::Start)]),
                 (Act::TogglePerf, vec![Key(KeyCode::F3)]),
+                (Act::CycleQuality, vec![Key(KeyCode::F4)]),
             ],
             slot_keys: [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4, KeyCode::Digit5, KeyCode::Digit6],
             mouse_sensitivity: 0.0022,

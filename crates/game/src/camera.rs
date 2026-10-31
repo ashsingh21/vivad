@@ -27,8 +27,9 @@ impl Plugin for CameraPlugin {
     }
 }
 
-fn spawn_camera(mut commands: Commands) {
-    let mut cam = commands.spawn((
+pub fn spawn_camera(mut commands: Commands) {
+    // Ambient occlusion and anti-aliasing are the quality level's (crate::quality).
+    commands.spawn((
         MainCamera { distance: CAMERA_DISTANCE },
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection { fov: 70f32.to_radians(), near: 0.05, ..default() }),
@@ -36,8 +37,6 @@ fn spawn_camera(mut commands: Commands) {
         // Most of a stop under Bevy's default (9.7): the afternoon sun and sky were washing out the
         // ground and plaster. VIVAD_EV overrides for tuning.
         bevy::camera::Exposure { ev100: std::env::var("VIVAD_EV").ok().and_then(|s| s.parse().ok()).unwrap_or(10.8) },
-        // Contact shadows in corners, under eaves and between blocks.
-        bevy::pbr::ScreenSpaceAmbientOcclusion { radius: 0.6, ..default() },
         Msaa::Off,
         grading(),
         AtmosphereSettings::default(),
@@ -49,30 +48,6 @@ fn spawn_camera(mut commands: Commands) {
         },
         Transform::from_xyz(0.0, 140.0, 60.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
-    // Temporal anti-aliasing: without it, carved detail and normal-map highlights finer than a
-    // pixel crawl and sparkle as the camera moves (MSAA can't be used alongside SSAO).
-    // VIVAD_AA=smaa|none for comparison.
-    match std::env::var("VIVAD_AA").as_deref() {
-        Ok("none") => {}
-        Ok("smaa") => {
-            cam.insert(bevy::anti_alias::smaa::Smaa::default());
-        }
-        _ => {
-            // Sharpening wins back the crispness TAA's resolve softens.
-            cam.insert((
-                bevy::anti_alias::taa::TemporalAntiAliasing::default(),
-                bevy::anti_alias::contrast_adaptive_sharpening::ContrastAdaptiveSharpening {
-                    enabled: true,
-                    sharpening_strength: 0.45,
-                    ..default()
-                },
-            ));
-        }
-    }
-    // Render experiments (flicker hunting): VIVAD_NO_SSAO=1.
-    if std::env::var("VIVAD_NO_SSAO").is_ok() {
-        cam.remove::<bevy::pbr::ScreenSpaceAmbientOcclusion>();
-    }
 }
 
 /// AgX alone leaves the sunlit ground chalky: a little more saturation, midtone and highlight

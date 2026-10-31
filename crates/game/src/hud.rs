@@ -456,7 +456,7 @@ fn overlay(
     }
 }
 
-fn perf(show: Res<ShowPerf>, diag: Res<DiagnosticsStore>, mut q: Query<(&mut Text, &mut Visibility), With<PerfText>>) {
+fn perf(show: Res<ShowPerf>, diag: Res<DiagnosticsStore>, quality: Res<crate::quality::Quality>, mut q: Query<(&mut Text, &mut Visibility), With<PerfText>>) {
     for (mut t, mut v) in &mut q {
         *v = if show.0 { Visibility::Inherited } else { Visibility::Hidden };
         if !show.0 {
@@ -465,7 +465,7 @@ fn perf(show: Res<ShowPerf>, diag: Res<DiagnosticsStore>, mut q: Query<(&mut Tex
         let fps = diag.get(&FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()).unwrap_or(0.0);
         let ms = diag.get(&FrameTimeDiagnosticsPlugin::FRAME_TIME).and_then(|d| d.smoothed()).unwrap_or(0.0);
         let ents = diag.get(&EntityCountDiagnosticsPlugin::ENTITY_COUNT).and_then(|d| d.value()).unwrap_or(0.0);
-        **t = format!("{fps:.0} fps   {ms:.2} ms   {ents:.0} entities");
+        **t = format!("{fps:.0} fps   {ms:.2} ms   {ents:.0} entities   {quality:?} quality (F4)", quality = *quality);
     }
 }
 
@@ -479,6 +479,7 @@ fn damage_numbers(
     cam: Query<(&Camera, &GlobalTransform), With<crate::camera::MainCamera>>,
     mut nums: Query<(Entity, &mut DamageNumber, &mut Node, &mut Text, &mut TextColor, &mut TextFont)>,
     time: Res<Time>,
+    view_scale: Res<crate::quality::ViewScale>,
 ) {
     let Ok(me) = local.single() else { return };
     // This frame's hits per target (a volley lands in one tick), added to a recent number or new.
@@ -527,7 +528,7 @@ fn damage_numbers(
         }
         **t = format!("{}", n.amount.round() as i32);
         let rise = n.at + Vec3::Y * (n.age * 0.9);
-        if let Ok(p) = camera.world_to_viewport(cam_g, rise) {
+        if let Ok(p) = camera.world_to_viewport(cam_g, rise).map(|p| p * view_scale.0) {
             node.left = px(p.x - 14.0);
             node.top = px(p.y - 14.0);
             commands.entity(e).insert(Visibility::Inherited);

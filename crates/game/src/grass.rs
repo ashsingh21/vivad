@@ -49,11 +49,11 @@ const REBUILD: f32 = 3.0;
 const CLUMPS: f32 = 10.0;
 const BLADES: (u32, u32) = (10, 20);
 const CARPET: f32 = 40.0;
-/// Share of the full blade count grown: VIVAD_GRASS=<0..1>. Half looks the same (the painted
-/// ground carries the colour) and saves a third of the frame where grass fills the view.
-fn density() -> f32 {
-    static D: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
-    *D.get_or_init(|| std::env::var("VIVAD_GRASS").ok().and_then(|s| s.parse().ok()).unwrap_or(0.5f32).clamp(0.05, 1.0))
+/// Share of the full blade count grown: the quality level's (crate::quality), or VIVAD_GRASS=<0..1>.
+/// Half looks the same (the painted ground carries the colour) and saves a third of the frame
+/// where grass fills the view.
+fn density(level: f32) -> f32 {
+    std::env::var("VIVAD_GRASS").ok().and_then(|s| s.parse().ok()).unwrap_or(level).clamp(0.05, 1.0)
 }
 
 /// Share of blades that are dry straw.
@@ -185,11 +185,24 @@ impl Blockers {
 // ------------------------------------------------------------------ chunks
 
 #[derive(Resource)]
-struct Grass {
+pub struct Grass {
     material: Handle<GrassMaterial>,
     blockers: Blockers,
     /// Built chunks: entity and the share of blades kept.
     live: HashMap<(i32, i32), (Entity, f32)>,
+    density: f32,
+    /// The density changed: every chunk is rebuilt.
+    regrow: bool,
+}
+
+impl Grass {
+    pub fn set_density(&mut self, level: f32) {
+        let d = density(level);
+        if d != self.density {
+            self.density = d;
+            self.regrow = true;
+        }
+    }
 }
 
 fn setup(mut commands: Commands, layout: Res<MapLayout>, mut materials: ResMut<Assets<GrassMaterial>>) {
@@ -205,7 +218,7 @@ fn setup(mut commands: Commands, layout: Res<MapLayout>, mut materials: ResMut<A
         },
         extension: GrassWind { wind: Vec4::new(0.0, 0.12, 0.0, 0.0) },
     });
-    commands.insert_resource(Grass { material, blockers: Blockers::new(&layout), live: HashMap::new() });
+    commands.insert_resource(Grass { material, blockers: Blockers::new(&layout), live: HashMap::new(), density: density(0.5), regrow: false });
 }
 
 /// Small deterministic generator, seeded per chunk so a chunk rebuilds identically.
@@ -237,7 +250,8 @@ fn stream_chunks(
     // Up close only (high above the map, e.g. on the vimana, nothing is near enough to need it).
     let ground = layout.terrain.height(eye.x, eye.z);
     let near = eye.y - ground < BUILD;
-    let gone: Vec<_> = grass.live.keys().copied().filter(|&k| !near || reach(k) > DROP).collect();
+    let regrow = std::mem::take(&mut grass.regrow);
+    let gone: Vec<_> = grass.live.keys().copied().filter(|&k| regrow || !near || reach(k) > DROP).collect();
     for k in gone {
         if let Some((e, _)) = grass.live.remove(&k) {
             commands.entity(e).despawn();
@@ -268,7 +282,7 @@ fn stream_chunks(
     // A few per frame, nearest first.
     for k in want.into_iter().take(6) {
         let keep = keep_at(k);
-        let e = match build_chunk(k, &layout.terrain, &grass.blockers, keep) {
+        let e = match build_chunk(k, &layout.terrain, &grass.blockers, keep, grass.density) {
             Some((mesh, origin)) => commands
                 .spawn((
                     Mesh3d(meshes.add(mesh)),
@@ -325,7 +339,7 @@ impl Blades {
 
 /// Builds chunk `k` with only the blades of rank below `keep` (the rest would be sunk by the
 /// shader at the chunk's distance).
-fn build_chunk(k: (i32, i32), t: &Terrain, blockers: &Blockers, keep: f32) -> Option<(Mesh, Vec3)> {
+fn build_chunk(k: (i32, i32), t: &Terrain, blockers: &Blockers, keep: f32, density: f32) -> Option<(Mesh, Vec3)> {
     let x0 = Vec2::new(k.0 as f32, k.1 as f32) * CHUNK;
     let c = x0 + Vec2::splat(CHUNK * 0.5);
     let origin = Vec3::new(c.x, on_mesh(t, &t.h, c.x, c.y), c.y);
@@ -333,7 +347,7 @@ fn build_chunk(k: (i32, i32), t: &Terrain, blockers: &Blockers, keep: f32) -> Op
     let tip_tint = lin([0.55, 0.68, 0.28]);
     let (cool, warm, straw) = (lin([0.17, 0.33, 0.15]), lin([0.47, 0.54, 0.2]), lin([0.72, 0.64, 0.4]));
     let mut mesh = Blades::default();
-    let k = density();
+    let k = density;
     let clumps = (CHUNK * CHUNK * CLUMPS * k) as usize;
     let carpet = (CHUNK * CHUNK * CARPET * k) as usize;
     for i in 0..clumps + carpet {
