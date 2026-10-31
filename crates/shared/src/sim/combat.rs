@@ -15,7 +15,7 @@ pub struct CombatPlugin;
 
 impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<KillMsg>().add_systems(
+        app.add_message::<KillMsg>().add_message::<MisfireMsg>().add_systems(
             FixedUpdate,
             (
                 (select_slot, use_items).chain().in_set(SimSet::Combat),
@@ -87,6 +87,7 @@ fn use_items(
     spatial: SpatialQuery,
     time: Res<Time>,
     mut damage: MessageWriter<DamageMsg>,
+    mut misfires: MessageWriter<MisfireMsg>,
     mut outbox: ResMut<Outbox>,
 ) {
     let dt = time.delta_secs();
@@ -152,7 +153,7 @@ fn use_items(
                     act.since_attack = 0.0;
                 }
             }
-            ItemKind::Bow { damage: dmg, interval, speed, gravity, pellets, spread_deg, magazine, reload, charge, headshot } => {
+            ItemKind::Bow { damage: dmg, interval, speed, gravity, pellets, spread_deg, magazine, reload, charge, headshot, misfire, backfire } => {
                 let slot = inv.selected;
                 // Reloading.
                 if act.reload_left > 0.0 {
@@ -195,6 +196,21 @@ fn use_items(
                     None
                 };
                 let Some(power) = release else { continue };
+                // A katta lets you down now and then: a click and a spent round, or worse.
+                let roll = rng.random_range(0.0f32..1.0);
+                if roll < misfire + backfire {
+                    let blew = roll < *backfire;
+                    if blew {
+                        damage.write(DamageMsg { target: entity, amount: BACKFIRE_DAMAGE, source: Some(entity), headshot: false, cause: DamageCause::Weapon(stack.id.clone()) });
+                    }
+                    misfires.write(MisfireMsg { who: entity, at: muzzle, backfire: blew });
+                    if let Some(s) = inv.slots[slot - 1].as_mut() {
+                        s.count -= 1;
+                    }
+                    act.cooldown = *interval;
+                    act.since_attack = 0.0;
+                    continue;
+                }
                 // Aim at whatever the crosshair ray hits, fire from the bow.
                 let filter = SpatialQueryFilter::from_mask(hit_mask()).with_excluded_entities([entity]);
                 let target = spatial
@@ -506,6 +522,9 @@ pub fn feed_line(victim: &str, cause: &DamageCause, killer: Option<&str>, db: &I
         DamageCause::Pralaya => format!("Aandhi ne {whom} uda diya"),
         DamageCause::Fall if victim == "You" => "Tumhara panga zameen se ho gaya".to_string(),
         DamageCause::Fall => format!("{victim} ka panga zameen se ho gaya"),
+        // A katta that blew back on its owner.
+        DamageCause::Weapon(id) if killer == Some(victim) && victim == "You" => format!("{} ne tumhe hi tapka diya!", db.get(id).name),
+        DamageCause::Weapon(id) if killer == Some(victim) => format!("{} ne {victim} ko hi tapka diya!", db.get(id).name),
         DamageCause::Weapon(id) => {
             let who = match killer.unwrap_or_default() {
                 "You" => "Tumne".to_string(),
@@ -514,6 +533,17 @@ pub fn feed_line(victim: &str, cause: &DamageCause, killer: Option<&str>, db: &I
             format!("{who} {whom} tapka diya ({})", db.get(id).name)
         }
     }
+}
+
+/// What a backfiring katta does to the hand that fired it.
+pub const BACKFIRE_DAMAGE: f32 = 15.0;
+
+/// A gun that let its owner down: it only clicked, or (`backfire`) blew back at them.
+#[derive(Message, Clone, Debug)]
+pub struct MisfireMsg {
+    pub who: Entity,
+    pub at: Vec3,
+    pub backfire: bool,
 }
 
 #[derive(Message, Clone, Debug)]

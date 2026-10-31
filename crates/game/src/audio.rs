@@ -46,13 +46,13 @@ const UI: f32 = 0.5;
 const ITEM: f32 = 0.6;
 const BED: f32 = 0.45;
 
-const NAMES: [&str; 63] = [
+const NAMES: [&str; 65] = [
     "step_dirt_0", "step_dirt_1", "step_dirt_2", "step_dirt_3", "step_stone_0", "step_stone_1", "step_stone_2", "step_stone_3",
     "step_wood_0", "step_wood_1", "step_wood_2", "step_wood_3", "step_grass_0", "step_grass_1", "step_grass_2", "step_grass_3",
     "step_water_0", "step_water_1", "step_water_2", "step_water_3", "sword_whoosh_0", "sword_whoosh_1", "sword_whoosh_2",
     "sword_hit_flesh", "sword_hit_stone", "bow_release", "bow_release_heavy", "bow_draw", "arrow_impact_wood",
     "arrow_impact_stone", "gun_tamancha", "gun_dunali", "gun_katta", "gulel_release", "bullet_impact_stone",
-    "bullet_impact_wood", "hit_flesh", "hit_shield", "hitmarker", "hitmarker_head", "hurt", "jump", "land", "glider_open",
+    "bullet_impact_wood", "katta_click", "katta_backfire", "hit_flesh", "hit_shield", "hitmarker", "hitmarker_head", "hurt", "jump", "land", "glider_open",
     "glide_loop", "freefall_loop", "vimana_loop", "chest_open", "kalash_open", "pickup", "drink", "reload", "fire_ignite",
     "fire_loop", "wind_gust", "throw", "zone_warn", "zone_loop", "kill", "eliminated", "victory", "amb_day", "amb_river",
 ];
@@ -262,6 +262,7 @@ fn combat_events(
     mut play: Player,
     mut hits: MessageReader<HitMsg>,
     mut kills: MessageReader<KillMsg>,
+    mut misfires: MessageReader<shared::sim::combat::MisfireMsg>,
     db: Res<ItemDb>,
     arrows: Query<(Entity, &Projectile, &Transform)>,
     added: Query<(&Projectile, &Transform), Added<Projectile>>,
@@ -285,10 +286,10 @@ fn combat_events(
             None => {
                 let heavy = matches!(db.get(&p.item).kind, ItemKind::Bow { charge, .. } if charge > 0.0);
                 let (sound, reach) = match p.item.as_str() {
-                    "gandiva" => ("gun_tamancha", 200.0),
-                    "sharanga" => ("gun_dunali", 220.0),
+                    "tamancha" => ("gun_tamancha", 200.0),
+                    "dunali" => ("gun_dunali", 220.0),
                     "katta" => ("gun_katta", 220.0),
-                    "pinaka" => ("gulel_release", 60.0),
+                    "gulel" => ("gulel_release", 60.0),
                     _ if heavy => ("bow_release_heavy", 120.0),
                     _ => ("bow_release", 120.0),
                 };
@@ -321,6 +322,9 @@ fn combat_events(
         if Some(h.target) == me {
             play.ui("hurt", UI * 1.2);
         }
+    }
+    for m in misfires.read() {
+        play.at(if m.backfire { "katta_backfire" } else { "katta_click" }, m.at, WEAPON, if m.backfire { 120.0 } else { 25.0 });
     }
     for k in kills.read() {
         if Some(k.killer) == me {

@@ -35,7 +35,7 @@ impl Plugin for WarriorAnimationPlugin {
 /// Clips the torso can't share with the legs: played legs-only under a weapon action.
 const LOCOMOTION: [&str; 10] = ["idle", "walk_f", "walk_b", "walk_l", "walk_r", "run_f", "run_b", "run_l", "run_r", "sprint_f"];
 const FULL_BODY: [&str; 5] = ["jump", "fall", "freefall", "glide", "death"];
-const UPPER_BODY: [&str; 5] = ["melee_guard", "melee_swing", "melee_swing_b", "bow_draw", "consume"];
+const UPPER_BODY: [&str; 6] = ["melee_guard", "melee_swing", "melee_swing_b", "bow_draw", "rifle_aim", "consume"];
 /// Bones driven by the legs layer; everything else is upper body.
 const LOWER_BONES: [&str; 10] = ["Root", "pelvis", "thigh_l", "thigh_r", "calf_l", "calf_r", "foot_l", "foot_r", "ball_l", "ball_r"];
 const LOWER: u32 = 0;
@@ -330,7 +330,19 @@ fn drive(
                     let action = match held {
                         Some(ItemKind::Melee { .. }) if swung < SWING_TIME => Some((swing, swung / SWING_TIME * dur(swing))),
                         Some(ItemKind::Melee { .. }) => Some(("melee_guard", clock % dur("melee_guard"))),
-                        Some(k @ ItemKind::Bow { .. }) => bow_draw(k, act, loaded, intent.held(btn::AIM)).map(|d| ("bow_draw", d * (dur("bow_draw") - 1e-3))),
+                        // A long gun is shouldered; pistols are held up at the start of the draw, both
+                        // hands on the gun.
+                        Some(k @ ItemKind::Bow { .. }) => {
+                            let id = inv.current().map(|s| s.id.as_str()).unwrap_or_default();
+                            let gun = crate::visuals::shot_kind(id) == crate::visuals::Shot::Bullet;
+                            bow_draw(k, act, loaded, intent.held(btn::AIM)).map(|d| {
+                                if crate::visuals::long_gun(id) {
+                                    ("rifle_aim", 0.0)
+                                } else {
+                                    ("bow_draw", if gun { 0.0 } else { d * (dur("bow_draw") - 1e-3) })
+                                }
+                            })
+                        }
                         Some(ItemKind::Consumable { .. }) if act.using.is_some() => Some(("consume", clock % dur("consume"))),
                         _ => None,
                     };
@@ -347,7 +359,7 @@ fn drive(
         }
 
         // The torso follows the aim fully with a bow up, partly otherwise.
-        let raised = want.iter().any(|w| w.0 == "bow_draw");
+        let raised = want.iter().any(|w| w.0 == "bow_draw" || w.0 == "rifle_aim");
         let share = if elim.is_some() { 0.0 } else if raised { 1.0 } else { 0.45 };
         anim.aim_share += (share - anim.aim_share) * (dt * 8.0).min(1.0);
 
@@ -375,8 +387,8 @@ fn drive(
                 continue;
             }
             let w = *w;
-            if set.nodes.get("bow_draw").is_some_and(|n| n.1 == Some(node)) {
-                anim.bow_weight = w;
+            if ["bow_draw", "rifle_aim"].iter().any(|c| set.nodes.get(c).is_some_and(|n| n.1 == Some(node))) {
+                anim.bow_weight = anim.bow_weight.max(w);
             }
             let a = if player.is_playing_animation(node) { player.animation_mut(node).unwrap() } else { player.play(node) };
             a.set_speed(0.0).set_weight(w);

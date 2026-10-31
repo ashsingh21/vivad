@@ -255,6 +255,25 @@ def gunshot(kind):
     return fade(norm(crack * 0.45 + body * 1.3 + thump * 1.4 + at(d, (0.03, tail))))
 
 
+def katta_click():
+    """A katta's hammer falling on a dud: a dry metal click and the spring's ring."""
+    d = 0.3
+    click = band(white(d), 2000, 9000) * env(d, 0.0002, 0.004)
+    ring = modes(d, [2900, 4300, 6100], [0.06, 0.04, 0.03], [1, 0.6, 0.4], 0.05) * 0.4
+    return fade(norm(click + ring))
+
+
+def katta_backfire():
+    """A katta blowing back: a choked, ragged bang, then crackle and fizz."""
+    d = 1.0
+    bang = band(spectral(d, 1.4), 50, 1500) * env(d, 0.001, 0.09, 3.0)
+    thump = np.sin(2 * np.pi * 60 * t_axis(d)) * env(d, 0.0005, 0.05)
+    grains = (rng.random(int(d * SR)) < 0.003).astype(float) * rng.uniform(0.2, 1, int(d * SR))
+    crackle = band(grains, 1500, 7000) * env(d, 0.05, 0.6, 2.0) * 0.5
+    fizz = band(white(d), 3000, 9000) * env(d, 0.05, 0.5, 2.5) * 0.12
+    return fade(norm(bang + thump + at(d, (0.04, crackle + fizz))))
+
+
 def gulel_release():
     """The rubber of a slingshot snapping back, and the pebble's flick off the pouch."""
     d = 0.35
@@ -522,6 +541,8 @@ SOUNDS = {
     "gun_dunali": lambda: gunshot("dunali"),
     "gun_katta": lambda: gunshot("katta"),
     "gulel_release": gulel_release,
+    "katta_click": katta_click,
+    "katta_backfire": katta_backfire,
     "bullet_impact_stone": lambda: bullet_impact("stone"),
     "bullet_impact_wood": lambda: bullet_impact("wood"),
     "hit_flesh": hit_flesh,

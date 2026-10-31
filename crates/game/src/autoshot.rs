@@ -190,34 +190,39 @@ impl Plugin for AutoshotPlugin {
             let p = |item, state, view, pitch| Pose { item, state, view, pitch, target: None, after: 0.17 };
             let range = |item, view, dist, after| Pose { item, state: Use::Strike, view, pitch: 0.0, target: Some(dist), after };
             let mut poses = vec![
-                p("khanda", Use::Carry, View::Front, 0.0),
-                p("khanda", Use::Strike, View::Front, 0.0),
-                p("khanda", Use::Strike, View::Side, 0.0),
-                p("gandiva", Use::Carry, View::Front, 0.0),
-                p("gandiva", Use::Aim, View::Front, 0.0),
-                p("gandiva", Use::Aim, View::Side, 0.0),
-                p("gandiva", Use::Aim, View::Back, 0.0),
-                p("gandiva", Use::Aim, View::Side, 0.5),
-                p("sharanga", Use::Aim, View::Side, 0.0),
-                p("pinaka", Use::Hold, View::Side, 0.0),
-                p("pinaka", Use::Hold, View::Front, -0.4),
+                p("bat", Use::Carry, View::Front, 0.0),
+                p("bat", Use::Strike, View::Front, 0.0),
+                p("bat", Use::Strike, View::Side, 0.0),
+                p("tamancha", Use::Carry, View::Front, 0.0),
+                p("tamancha", Use::Aim, View::Front, 0.0),
+                p("tamancha", Use::Aim, View::Side, 0.0),
+                p("tamancha", Use::Aim, View::Back, 0.0),
+                p("tamancha", Use::Aim, View::Side, 0.5),
+                p("katta", Use::Carry, View::Front, 0.0),
+                p("katta", Use::Aim, View::Side, 0.0),
+                p("katta", Use::Aim, View::Back, 0.0),
+                p("dunali", Use::Carry, View::Side, 0.0),
+                p("dunali", Use::Aim, View::Side, 0.0),
+                p("gulel", Use::Hold, View::Side, 0.0),
+                p("gulel", Use::Hold, View::Front, -0.4),
                 p("agneyastra", Use::Carry, View::Front, 0.0),
                 p("vayavyastra", Use::Carry, View::Side, 0.0),
                 p("sanjeevani", Use::Carry, View::Front, 0.0),
                 p("soma", Use::Hold, View::Front, 0.0),
                 p("amrita", Use::Carry, View::Front, 0.0),
-                range("khanda", View::Front, 1.7, 0.21),
-                range("khanda", View::Player, 1.7, 0.24),
-                range("gandiva", View::Range, 12.0, 0.05),
-                range("gandiva", View::Player, 12.0, 0.25),
+                range("bat", View::Front, 1.7, 0.21),
+                range("bat", View::Player, 1.7, 0.24),
+                range("tamancha", View::Range, 12.0, 0.05),
+                range("tamancha", View::Player, 12.0, 0.25),
                 // The arrow in flight, seen down the shot.
-                range("gandiva", View::Player, 30.0, 0.05),
-                range("gandiva", View::Player, 30.0, 0.12),
+                range("tamancha", View::Player, 30.0, 0.05),
+                range("tamancha", View::Player, 30.0, 0.12),
                 // The muzzle flash, a moment after the shot.
-                range("gandiva", View::Range, 12.0, 0.02),
-                range("sharanga", View::Range, 9.0, 0.02),
-                range("sharanga", View::Range, 9.0, 0.08),
-                range("sharanga", View::Player, 9.0, 0.3),
+                range("tamancha", View::Range, 12.0, 0.02),
+                range("katta", View::Range, 12.0, 0.02),
+                range("dunali", View::Range, 9.0, 0.02),
+                range("dunali", View::Range, 9.0, 0.08),
+                range("dunali", View::Player, 9.0, 0.3),
                 range("agneyastra", View::Range, 9.0, 0.25),
             ];
             if let Ok(only) = std::env::var("VIVAD_ARMOURY_ONLY").map(|s| s.trim().to_owned()).and_then(|s| if s.is_empty() { Err(std::env::VarError::NotPresent) } else { Ok(s) }) {
@@ -281,7 +286,7 @@ fn run_tour(
     }
     if name.starts_with("31_pickup") {
         // Frame a weapon lying in the open (a bow or a sword), from standing height and 3 m off.
-        let want = if name.ends_with("bow") { "gandiva" } else { "khanda" };
+        let want = if name.ends_with("bow") { "tamancha" } else { "bat" };
         let found = pickups.iter().find(|(p, t)| p.stack.id == want && t.translation.y < 3.0).or_else(|| pickups.iter().next());
         if let Some((_, t)) = found {
             let at = t.translation;
@@ -390,7 +395,7 @@ fn armoury_actor(
         bkin.mode = MoveMode::Ground;
         bkin.velocity = Vec3::ZERO;
         bhp.hp = 100.0;
-        bhp.shield = if pose.item == "sharanga" { 50.0 } else { 0.0 };
+        bhp.shield = if pose.item == "dunali" { 50.0 } else { 0.0 };
         *bint = PlayerIntent::default();
         if pose.target.is_some() {
             let aim_at = btf.translation + Vec3::Y * 0.3;

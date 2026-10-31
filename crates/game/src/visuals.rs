@@ -47,8 +47,8 @@ impl Plugin for VisualsPlugin {
 }
 
 /// Baked models in assets/models/weapons, one per item (the arrow-quiver pickup shows the tarkash).
-pub const WEAPON_MODELS: [&str; 11] =
-    ["khanda", "gandiva", "sharanga", "pinaka", "arrow", "tarkash", "agneyastra", "vayavyastra", "sanjeevani", "soma", "amrita"];
+pub const WEAPON_MODELS: [&str; 12] =
+    ["bat", "katta", "tamancha", "dunali", "gulel", "arrow", "tarkash", "agneyastra", "vayavyastra", "sanjeevani", "soma", "amrita"];
 
 /// One weapon model's LOD0 mesh and its material (converted from the glTF material once loaded).
 pub struct ModelHandles {
@@ -61,8 +61,8 @@ pub struct ModelHandles {
 pub struct Palette {
     cube: Handle<Mesh>,
     pub(crate) cylinder: Handle<Mesh>,
-    sphere: Handle<Mesh>,
-    mats: HashMap<(Mat, u8), Handle<StandardMaterial>>,
+    pub(crate) sphere: Handle<Mesh>,
+    pub(crate) mats: HashMap<(Mat, u8), Handle<StandardMaterial>>,
     rarity_glow: HashMap<Rarity, Handle<StandardMaterial>>,
     /// Under a pickup: a soft pool of its rarity's light on the ground, and a faint beam rising.
     rarity_pool: HashMap<Rarity, Handle<StandardMaterial>>,
@@ -682,10 +682,15 @@ pub enum Shot {
     Arrow,
 }
 
+/// Guns held to the shoulder (the `rifle_aim` clip) rather than out in the hand.
+pub fn long_gun(item: &str) -> bool {
+    item == "dunali"
+}
+
 pub fn shot_kind(item: &str) -> Shot {
     match item {
-        "gandiva" | "sharanga" | "katta" => Shot::Bullet,
-        "pinaka" => Shot::Pebble,
+        "tamancha" | "dunali" | "katta" => Shot::Bullet,
+        "gulel" => Shot::Pebble,
         _ => Shot::Arrow,
     }
 }

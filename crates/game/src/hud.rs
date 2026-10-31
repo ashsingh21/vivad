@@ -246,7 +246,18 @@ fn prompts(
     mut prompt: Query<&mut Text, With<Prompt>>,
     mut bar: Query<&mut Visibility, With<ProgressBar>>,
     mut fill: Query<&mut Node, With<ProgressFill>>,
+    mut misfires: MessageReader<shared::sim::combat::MisfireMsg>,
+    local: Query<Entity, With<LocalPlayer>>,
+    time: Res<Time>,
+    mut toast: Local<(String, f32)>,
 ) {
+    // The katta letting the player down, shown over the usual prompt for a moment.
+    let now = time.elapsed_secs();
+    for m in misfires.read() {
+        if local.single().is_ok_and(|e| e == m.who) {
+            *toast = (if m.backfire { "Katta ulta pad gaya!" } else { "Katta ne dhoka diya!" }.to_string(), now + 1.4);
+        }
+    }
     let Ok((tf, kin, inv, act, dead)) = q.single() else { return };
     let me = tf.translation;
     let mut s = String::new();
@@ -290,6 +301,9 @@ fn prompts(
         if let Some(ItemKind::Bow { charge, .. }) = inv.current().map(|s| &db.get(&s.id).kind) {
             progress = Some(act.charge / charge);
         }
+    }
+    if now < toast.1 {
+        s = toast.0.clone();
     }
     for mut t in &mut prompt { **t = s.clone(); }
     for mut v in &mut bar { *v = if progress.is_some() { Visibility::Inherited } else { Visibility::Hidden }; }

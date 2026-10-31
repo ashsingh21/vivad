@@ -24,7 +24,7 @@ impl Plugin for FxPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraPunch>()
             .add_systems(Startup, setup)
-            .add_systems(Update, (add_streaks, muzzle_flash, hit_sparks, arrow_dust, fly_sparks, punch_camera, hit_stop))
+            .add_systems(Update, (add_streaks, muzzle_flash, misfire_smoke, hit_sparks, arrow_dust, fly_sparks, punch_camera, hit_stop))
             .add_systems(PostUpdate, (update_streaks, swing_ribbons).after(TransformSystems::Propagate));
     }
 }
@@ -53,6 +53,7 @@ struct FxAssets {
     gold_spark: Handle<StandardMaterial>,
     gulal: Handle<StandardMaterial>,
     dust: Handle<StandardMaterial>,
+    smoke: Handle<StandardMaterial>,
 }
 
 fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>) {
@@ -96,6 +97,12 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: Res
             unlit: true,
             ..default()
         }),
+        smoke: mats.add(StandardMaterial {
+            base_color: Color::srgba(0.32, 0.31, 0.3, 0.5),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        }),
     });
 }
 
@@ -119,7 +126,7 @@ fn add_streaks(mut commands: Commands, q: Query<(Entity, &Projectile, &Transform
         let (mat, width, time) = match p.astra.as_ref() {
             Some(_) if p.item == "agneyastra" => (fx.fire_streak.clone(), 0.09, STREAK_TIME),
             Some(_) => (fx.wind_streak.clone(), 0.08, STREAK_TIME),
-            None if shot_kind(&p.item) == Shot::Bullet => (fx.tracer.clone(), if p.item == "sharanga" { 0.018 } else { 0.03 }, TRACER_TIME),
+            None if shot_kind(&p.item) == Shot::Bullet => (fx.tracer.clone(), if p.item == "dunali" { 0.018 } else { 0.03 }, TRACER_TIME),
             None => (fx.streak.clone(), 0.055, STREAK_TIME),
         };
         commands.spawn((
@@ -179,8 +186,8 @@ struct SwingRibbon {
 }
 
 const RIBBON_TIME: f32 = 0.13;
-/// The swing ribbon spans this part of the khanda's blade (its glTF +Y from the grip).
-const BLADE: (f32, f32) = (0.3, 0.92);
+/// The swing ribbon spans this part of the bat's blade (its glTF +Y from the grip).
+const BLADE: (f32, f32) = (0.2, 0.7);
 
 #[allow(clippy::type_complexity)]
 fn swing_ribbons(
@@ -339,6 +346,18 @@ fn arrow_dust(mut commands: Commands, q: Query<(Entity, &Projectile, &Transform)
     }
 }
 
+/// A katta that only clicked coughs a wisp of smoke; one that backfired a flash and a cloud.
+fn misfire_smoke(mut commands: Commands, mut msgs: MessageReader<shared::sim::combat::MisfireMsg>, fx: Res<FxAssets>) {
+    for m in msgs.read() {
+        if m.backfire {
+            burst(&mut commands, &fx, &fx.gold_spark, m.at, Vec3::Y, 10, 4.0, 0.016, 6.0);
+            billow(&mut commands, &fx, &fx.smoke, m.at, Vec3::Y, 12, 1.4, 0.06);
+        } else {
+            billow(&mut commands, &fx, &fx.smoke, m.at, Vec3::Y, 3, 0.4, 0.03);
+        }
+    }
+}
+
 /// A gun going off: a hot flash at the muzzle with a moment of light round it, and a few sparks
 /// thrown forward. Once per shot, however many pellets it fires.
 fn muzzle_flash(mut commands: Commands, q: Query<(&Projectile, &Transform), Added<Projectile>>, fx: Res<FxAssets>) {
@@ -350,7 +369,7 @@ fn muzzle_flash(mut commands: Commands, q: Query<(&Projectile, &Transform), Adde
         fired.push(p.owner);
         let ahead = p.velocity.normalize_or(Vec3::NEG_Z);
         let at = t.translation + ahead * 0.15;
-        let size = if p.item == "sharanga" { 0.2 } else { 0.13 };
+        let size = if p.item == "dunali" { 0.2 } else { 0.13 };
         commands.spawn((
             Spark { vel: Vec3::ZERO, life: 0.06, max: 0.06, size, gravity: 0.0 },
             Mesh3d(fx.sphere.clone()),

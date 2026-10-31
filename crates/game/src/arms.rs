@@ -49,6 +49,8 @@ impl Plugin for ArmsPlugin {
 
 /// String anchors in a bow's glTF frame (limbs along Y, target -Z, string side +Z), upper limb;
 /// the lower mirrors y. Written by the asset script.
+/// A gulel's two band anchors sit side by side at the fork's tips instead: `mirror_x` mirrors the
+/// nock in x, and the pouch rests between them.
 #[derive(Deserialize, Clone, Copy)]
 struct BowSpec {
     nock: (f32, f32, f32),
@@ -56,6 +58,8 @@ struct BowSpec {
     rest: (f32, f32, f32),
     #[allow(dead_code)]
     half_len: f32,
+    #[serde(default)]
+    mirror_x: bool,
 }
 
 #[derive(Resource)]
@@ -117,8 +121,11 @@ pub fn palm_normal(index: Vec3, middle: Vec3, pinky: Vec3) -> Vec3 {
     -(middle - index).reject_from(k).reject_from(fwd).normalize()
 }
 
-fn rig_bows(mut commands: Commands, mut q: Query<(Entity, &mut BowRig), Added<BowRig>>, palette: Res<Palette>) {
+/// A bow gets its string and nocked arrows, a gulel its bands and a pebble in the pouch; a gun
+/// (no anchors) neither.
+fn rig_bows(mut commands: Commands, mut q: Query<(Entity, &mut BowRig), Added<BowRig>>, palette: Res<Palette>, specs: Res<BowSpecs>) {
     for (e, mut rig) in &mut q {
+        let Some(spec) = specs.0.get(&rig.model) else { continue };
         for _ in 0..4 {
             let s = commands
                 .spawn((
@@ -131,11 +138,14 @@ fn rig_bows(mut commands: Commands, mut q: Query<(Entity, &mut BowRig), Added<Bo
                 .id();
             rig.string.push(s);
         }
-        let arrow = &palette.models["arrow"];
+        let (mesh, mat) = if spec.mirror_x {
+            (palette.sphere.clone(), palette.mats[&(shared::map::Mat::Granite, 1)].clone())
+        } else {
+            let arrow = &palette.models["arrow"];
+            (arrow.mesh.clone(), arrow.mat.clone())
+        };
         for _ in 0..rig.pellets.clamp(1, 3) {
-            let a = commands
-                .spawn((Mesh3d(arrow.mesh.clone()), MeshMaterial3d(arrow.mat.clone()), Transform::from_scale(Vec3::ZERO), ChildOf(e)))
-                .id();
+            let a = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), Transform::from_scale(Vec3::ZERO), ChildOf(e))).id();
             rig.arrows.push(a);
         }
     }
@@ -160,13 +170,13 @@ fn segment(a: Vec3, b: Vec3) -> Transform {
 /// transforms for this frame (their local transforms keep the grip).
 #[allow(clippy::type_complexity)]
 fn orient_bows(
-    rigs: Query<Entity, With<BowRig>>,
+    rigs: Query<(Entity, &BowRig)>,
     parents: Query<&ChildOf>,
     vis: Query<(&WarriorVisual, &WarriorAnim)>,
     intents: Query<&PlayerIntent>,
     mut tf: Query<(&Transform, &mut GlobalTransform)>,
 ) {
-    for e in &rigs {
+    for (e, rig) in &rigs {
         let Some((wv, anim)) = parents.iter_ancestors(e).find_map(|a| vis.get(a).ok()) else { continue };
         let w = anim.bow_weight.clamp(0.0, 1.0);
         let (Ok(intent), Ok(socket), Ok(hand)) = (intents.get(wv.sim), parents.get(e).map(|p| p.parent()), parents.get(e).and_then(|p| parents.get(p.parent())).map(|p| p.parent())) else {
@@ -179,7 +189,9 @@ fn orient_bows(
         let (hand_g, grip, bow_local) = (*hand_g, *grip, *bow_local);
         let held = hand_g.mul_transform(grip);
         let f = intent.aim_dir();
-        let up = Quat::from_axis_angle(f, CANT) * Vec3::Y.reject_from(f).normalize_or(Vec3::Y);
+        // A shouldered long gun stays level; a bow (or a pistol) is canted a little.
+        let cant = if crate::visuals::long_gun(&rig.model) { 0.0 } else { CANT };
+        let up = Quat::from_axis_angle(f, cant) * Vec3::Y.reject_from(f).normalize_or(Vec3::Y);
         // Bow frame: -Z (its back) along the aim, +Y (upper limb) up.
         let raised = Quat::from_mat3(&Mat3::from_cols(up.cross(-f), up, -f));
         let (scale, rot, pos) = held.to_scale_rotation_translation();
@@ -210,7 +222,7 @@ fn draw_bows(
         let owner = parents.iter_ancestors(e).find_map(|a| vis.get(a).ok());
         let v3 = |t: (f32, f32, f32)| Vec3::new(t.0, t.1, t.2);
         let (nock, bridge, rest) = (v3(spec.nock), v3(spec.bridge), v3(spec.rest));
-        let at_rest = Vec3::new(0.0, 0.0, bridge.z);
+        let at_rest = if spec.mirror_x { Vec3::new(0.0, nock.y, bridge.z) } else { Vec3::new(0.0, 0.0, bridge.z) };
         let mut point = at_rest;
         let mut show_arrows = false;
         if let Some((wv, body, Some(anim))) = owner {
@@ -227,8 +239,11 @@ fn draw_bows(
         }
         let mut locals = [Transform::from_scale(Vec3::ZERO); 4];
         for (k, s) in [1.0f32, -1.0].into_iter().enumerate() {
-            let n = Vec3::new(nock.x, nock.y * s, nock.z);
-            let b = Vec3::new(bridge.x, bridge.y * s, bridge.z);
+            let (n, b) = if spec.mirror_x {
+                (Vec3::new(nock.x * s, nock.y, nock.z), Vec3::new(bridge.x * s, bridge.y, bridge.z))
+            } else {
+                (Vec3::new(nock.x, nock.y * s, nock.z), Vec3::new(bridge.x, bridge.y * s, bridge.z))
+            };
             // Does the straight nock-to-point line pass through the ear? Then the string wraps
             // its belly at the bridge first.
             let t = (b.y - n.y) / (point.y - n.y);
@@ -254,7 +269,9 @@ fn draw_bows(
         let n = rig.arrows.len();
         for (i, a) in rig.arrows.iter().enumerate() {
             let fan = (i as f32 - (n as f32 - 1.0) * 0.5) * 0.06;
-            let local = if show_arrows {
+            let local = if show_arrows && spec.mirror_x {
+                Transform::from_translation(point).with_scale(Vec3::splat(0.022))
+            } else if show_arrows {
                 Transform::from_translation(point).with_rotation(Quat::from_axis_angle(Vec3::Y, fan) * Quat::from_rotation_arc(Vec3::Y, dir))
             } else {
                 Transform::from_scale(Vec3::ZERO)

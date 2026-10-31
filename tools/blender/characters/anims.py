@@ -8,7 +8,7 @@ Opens build/char_<variant>_final.blend (written by human.py, so the rig is exact
   locomotion  (loops, one cycle = two steps, all start at the left foot's contact)
     idle, walk_{f,b,l,r} (AIM_SPEED 3.6 m/s), run_{f,b,l,r} (WALK_SPEED 5.6), sprint_f (7.4)
   air         jump, fall, freefall, glide (loops / holds)
-  upper body  melee_guard, melee_swing(_b), bow_draw, consume (the game masks these to the torso)
+  upper body  melee_guard, melee_swing(_b), bow_draw, rifle_aim, consume (the game masks these to the torso)
   death       one-shot, holds its last frame
 
 Legs are posed by analytic two-bone IK against foot paths in which the planted foot travels
@@ -511,6 +511,35 @@ def bow_draw_pose(rig, t):
     relax_fingers(rig, "l", 0.55)
 
 
+# Where the long gun's hands go (crates/game/src/arms.rs holds the gun at the right hand, barrel
+# along the aim): the right hand on the grip this far in front of the shoulder, so the stock's
+# butt (0.4 m behind the grip) sits in the shoulder pocket; the left hand under the fore-end.
+RIFLE_GRIP = 0.3
+RIFLE_FOREND = 0.3
+
+
+def rifle_aim_pose(rig, t):
+    """A long gun shouldered: left shoulder toward the target, the right hand on the grip in front
+    of the right shoulder, the left hand cupping the fore-end, the head down along the barrel."""
+    legs_neutral(rig)
+    rig.rotate("spine_02", UP, -0.35)
+    rig.rotate("spine_02", LEFT, 0.05)
+    rig.rotate("head", UP, 0.3)
+    rig.rotate("head", LEFT, 0.12)
+    shoulder = rig.head("upperarm_r")
+    grip = shoulder + FWD * RIFLE_GRIP + LEFT * 0.1 + UP * 0.02
+    for _ in range(4):
+        arm_ik(rig, "r", grip, Vector((-1.0, 0.2, -0.7)))
+        rig.aim("hand_r", FWD + UP * 0.15 - LEFT * 0.1)
+        grip += (shoulder + FWD * RIFLE_GRIP + LEFT * 0.1 + UP * 0.02) - rig.head("hand_r").lerp(rig.head("middle_01_r"), 0.6)
+    shot = FWD
+    forend = rig.head("hand_r") + shot * RIFLE_FOREND + UP * 0.0
+    arm_ik(rig, "l", forend + UP * 0.035, Vector((0.6, 0.1, -1.0)))
+    rig.aim("hand_l", FWD + UP * 0.1 - LEFT * 0.3)
+    relax_fingers(rig, "r", 0.95)
+    relax_fingers(rig, "l", 0.85)
+
+
 def consume_pose(rig, t):
     """Raise a flask or herb to the mouth and back."""
     legs_neutral(rig)
@@ -584,6 +613,7 @@ def main():
     hold_pose(rig, "melee_swing", 12, melee_swing_pose)
     hold_pose(rig, "melee_swing_b", 12, lambda r, t: melee_swing_pose(r, t, SWING_BACK))
     hold_pose(rig, "bow_draw", 20, bow_draw_pose)
+    hold_pose(rig, "rifle_aim", 10, rifle_aim_pose)
     hold_pose(rig, "consume", 30, consume_pose)
     print(f"[anims] {variant}: cycles {cycles}, IK reach clamped on {rig.clamped} leg poses")
     print(f"[anims] stance duty: {rig.duty}")

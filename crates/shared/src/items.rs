@@ -43,7 +43,9 @@ impl Rarity {
 pub enum ItemKind {
     /// Swept-sphere melee swing.
     Melee { damage: f32, interval: f32, reach: f32, hit_delay: f32 },
-    /// Arrows: `pellets` arrows per shot spread over `spread_deg`. `charge` > 0 means hold to draw.
+    /// Arrows (or bullets): `pellets` per shot spread over `spread_deg`. `charge` > 0 means hold to
+    /// draw. A country-made gun can let its owner down: `misfire` is the chance a pull of the
+    /// trigger only clicks (the round is spent), `backfire` the chance it blows back in their face.
     Bow {
         damage: f32,
         interval: f32,
@@ -55,6 +57,10 @@ pub enum ItemKind {
         reload: f32,
         charge: f32,
         headshot: f32,
+        #[serde(default)]
+        misfire: f32,
+        #[serde(default)]
+        backfire: f32,
     },
     /// Thrown astra that bursts into an area effect on impact.
     Astra { effect: AstraEffect, speed: f32, count: u32 },

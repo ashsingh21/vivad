@@ -1,29 +1,36 @@
 // Weapons, astras and consumables. Times in seconds, distances in metres, speeds in m/s.
 // Damage is the Common value; higher rarities scale it (see Rarity::damage_scale).
 (
-    default_melee: "khanda",
+    default_melee: "bat",
     items: {
-        "khanda": (
+        "bat": (
             name: "Cricket Bat",
             lore: "Gully cricket ka asli hathiyar. Sixer!",
             kind: Melee(damage: 30.0, interval: 0.65, reach: 2.3, hit_delay: 0.18),
             drops: [],
         ),
-        "gandiva": (
+        "katta": (
+            name: "Katta",
+            lore: "Gali ka desi katta. Ek goli, bada dhamaka. Bharosa mat karna.",
+            kind: Bow(damage: 60.0, interval: 0.4, speed: 140.0, gravity: 3.0, pellets: 1, spread_deg: 1.2,
+                      magazine: 1, reload: 1.7, charge: 0.0, headshot: 2.0, misfire: 0.15, backfire: 0.03),
+            drops: [(Common, 9.0), (Rare, 5.0), (Epic, 2.0)],
+        ),
+        "tamancha": (
             name: "Tamancha",
             lore: "Jugaad se bana, par chalta full speed mein.",
             kind: Bow(damage: 24.0, interval: 0.30, speed: 95.0, gravity: 4.0, pellets: 1, spread_deg: 0.6,
                       magazine: 20, reload: 1.9, charge: 0.0, headshot: 1.75),
             drops: [(Common, 10.0), (Rare, 7.0), (Epic, 4.0), (Legendary, 1.5)],
         ),
-        "sharanga": (
+        "dunali": (
             name: "Dunali",
             lore: "Do naal, ek dhamaka. Paas aao toh pata chalega.",
             kind: Bow(damage: 13.0, interval: 0.85, speed: 70.0, gravity: 9.0, pellets: 7, spread_deg: 7.0,
                       magazine: 5, reload: 2.4, charge: 0.0, headshot: 1.5),
             drops: [(Common, 8.0), (Rare, 6.0), (Epic, 3.0), (Legendary, 1.0)],
         ),
-        "pinaka": (
+        "gulel": (
             name: "Gulel",
             lore: "Bachpan wali gulel. Poora kheencho, phir dekho kamaal.",
             kind: Bow(damage: 95.0, interval: 1.2, speed: 170.0, gravity: 2.0, pellets: 1, spread_deg: 0.0,
