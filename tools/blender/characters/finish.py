@@ -21,7 +21,19 @@ CARDS = (("hair", (0.045, 0.032, 0.026), 0.7), ("eyebrows", (0.035, 0.025, 0.02)
 SKIN_TONE = {"male": (0.66, 0.44, 0.31), "female": (0.71, 0.48, 0.35)}
 
 CLOTH = {
-    # name prefix: (base sRGB, border sRGB or None, pattern, border width m)
+    # name prefix: (base sRGB, border sRGB or None, pattern, border width m). Longer prefixes first:
+    # a garment takes the first that its name starts with.
+    # Panga: modern desi clothes.
+    "shirt_placket": ((0.14, 0.26, 0.52), None, "check", 0.0),
+    "shirt": ((0.14, 0.26, 0.52), None, "check", 0.0),
+    "jeans": ((0.13, 0.19, 0.33), None, "denim", 0.0),
+    "belt": ((0.22, 0.12, 0.06), None, "weave", 0.0),
+    "gamchha": ((0.78, 0.10, 0.10), None, "check_fine", 0.0),
+    "kameez": ((0.74, 0.10, 0.38), (0.86, 0.64, 0.24), "buti", 0.012),
+    "salwar": ((0.92, 0.88, 0.78), None, "weave", 0.0),
+    "dupatta_fall": ((0.94, 0.70, 0.12), (0.74, 0.10, 0.38), "weave", 0.03),
+    "dupatta": ((0.94, 0.70, 0.12), (0.74, 0.10, 0.38), "weave", 0.025),
+    # Vivad: the ancient warriors' clothes.
     "dhoti_fold": ((0.88, 0.85, 0.77), (0.72, 0.52, 0.18), "weave", 0.012),
     "dhoti": ((0.88, 0.85, 0.77), (0.72, 0.52, 0.18), "weave", 0.035),
     "kamarband": ((0.40, 0.05, 0.08), (0.80, 0.60, 0.22), "weave", 0.008),
@@ -162,7 +174,20 @@ def cloth_material(name, base_rgb, border_rgb, pattern, border_w):
     gold = (*srgb_to_lin((0.80, 0.60, 0.22)), 1)
     metal = g.value(0.0)
     rough = g.add(0.78, g.mul(slub, 0.1))
-    if pattern == "bandhani":
+    if pattern in ("check", "check_fine"):
+        # Madras check / gamchha: pale stripes crossing both ways, darker where they cross.
+        k = 30.0 if pattern == "check" else 18.0
+        sx = g.smooth(g.wave(g.mapping(co), k, 0.0, detail=0.0, direction="X"), 0.9, 0.95)
+        sz = g.smooth(g.wave(g.mapping(co), k, 0.0, detail=0.0, direction="Z"), 0.9, 0.95)
+        pale = (0.95, 0.93, 0.88) if pattern == "check_fine" else tuple(min(1.0, x * 1.8 + 0.15) for x in base_rgb)
+        col = g.mixc(g.maxf(sx, sz), col, (*srgb_to_lin(pale), 1))
+        col = g.mixc(g.mul(g.mul(sx, sz), 0.6), col, tuple(x * 0.55 for x in base) + (1,))
+    elif pattern == "denim":
+        # Twill: fine diagonal ribs, faded on the raised slubs.
+        twill = g.wave(g.mapping(co, scale=(1, 1, 1)), 900.0, 0.0, detail=0.0, direction="DIAGONAL")
+        col = g.mixc(g.mul(twill, 0.25), col, (*srgb_to_lin((0.55, 0.62, 0.75)), 1))
+        col = g.mixc(g.mul(g.smooth(slub, 0.55, 0.75), 0.5), col, (*srgb_to_lin((0.45, 0.55, 0.72)), 1))
+    elif pattern == "bandhani":
         # Tie-dye: rings of small pale dots.
         dots = g.voronoi(g.mapping(co, scale=(1, 1, 1)), 140.0, randomness=0.25)
         dot = g.smooth(dots, 0.12, 0.06)

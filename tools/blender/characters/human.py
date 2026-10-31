@@ -50,7 +50,7 @@ VARIANTS = {
                  "nose/nose-hump-incr": 0.5, "nose/nose-scale-vert-incr": 0.4,
                  "mouth/mouth-lowerlip-volume-decr": 0.7, "mouth/mouth-upperlip-volume-decr": 0.6, "mouth/mouth-scale-horiz-decr": 0.3,
                  "eyes/l-eye-height2-incr": 0.7, "eyes/r-eye-height2-incr": 0.7, "eyes/l-eye-scale-incr": 0.3, "eyes/r-eye-scale-incr": 0.3},
-        "outfit": outfits.male_warrior,
+        "outfit": outfits.male_street,
     },
     "female": {
         "macro": {"gender": 0.0, "age": 0.5, "muscle": 0.62, "weight": 0.48, "proportions": 0.75, "height": 0.52,
@@ -63,7 +63,7 @@ VARIANTS = {
         "face": {"nose/nose-scale-horiz-decr": 0.7, "nose/nose-flaring-decr": 0.9, "nose/nose-point-width-decr": 0.7,
                  "mouth/mouth-lowerlip-volume-decr": 0.5, "mouth/mouth-upperlip-volume-decr": 0.5, "mouth/mouth-scale-horiz-decr": 0.2,
                  "eyes/l-eye-height2-incr": 0.8, "eyes/r-eye-height2-incr": 0.8, "eyes/l-eye-scale-incr": 0.35, "eyes/r-eye-scale-incr": 0.35},
-        "outfit": outfits.female_warrior,
+        "outfit": outfits.female_street,
     },
 }
 
