@@ -497,14 +497,23 @@ fn apply_damage(
     }
 }
 
-/// "Bhima was felled by Karna (Sharanga)", in this peer's names.
+/// "Pappu ne Bunty ko tapka diya (Dunali)", in this peer's names. Hinglish built so it never
+/// needs the victim's gender.
+/// The local player is "You": "Tumne ...", "... tumhe ...", "Tumhara ...".
 pub fn feed_line(victim: &str, cause: &DamageCause, killer: Option<&str>, db: &ItemDb) -> String {
-    let how = match cause {
-        DamageCause::Pralaya => "was consumed by the Pralaya".to_string(),
-        DamageCause::Fall => "fell to their death".to_string(),
-        DamageCause::Weapon(id) => format!("was felled by {} ({})", killer.unwrap_or_default(), db.get(id).name),
-    };
-    format!("{victim} {how}")
+    let whom = if victim == "You" { "tumhe".to_string() } else { format!("{victim} ko") };
+    match cause {
+        DamageCause::Pralaya => format!("Aandhi ne {whom} uda diya"),
+        DamageCause::Fall if victim == "You" => "Tumhara panga zameen se ho gaya".to_string(),
+        DamageCause::Fall => format!("{victim} ka panga zameen se ho gaya"),
+        DamageCause::Weapon(id) => {
+            let who = match killer.unwrap_or_default() {
+                "You" => "Tumne".to_string(),
+                k => format!("{k} ne"),
+            };
+            format!("{who} {whom} tapka diya ({})", db.get(id).name)
+        }
+    }
 }
 
 #[derive(Message, Clone, Debug)]

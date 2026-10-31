@@ -249,11 +249,11 @@ pub fn generate(seed: u64) -> MapLayout {
     map.terrain.settle_under(&map.blocks);
 
     map.pois = vec![
-        poi("Chandni Bazaar", 0.0, 0.0, 55.0),
+        poi("Chandni Chowk", 0.0, 0.0, 55.0),
         poi("Rani ki Baoli", STEPWELL_C.x, STEPWELL_C.z, 40.0),
         poi("Hampi Khandahar", -140.0, -130.0, 45.0),
         poi("Garh Qila", 125.0, -135.0, 50.0),
-        poi("Kashi Ghat", 150.0, 40.0, 50.0),
+        poi("Banaras Ghat", 150.0, 40.0, 50.0),
         poi("Bargad Van", 95.0, 170.0, 35.0),
         poi("Ajanta Gufa", -200.0, 0.0, 50.0),
         poi("Gaon", -40.0, 195.0, 30.0),

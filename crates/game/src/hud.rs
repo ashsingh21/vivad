@@ -192,7 +192,7 @@ fn vitals(
     let Ok(h) = q.single() else { return };
     for mut n in &mut hp { n.width = percent(100.0 * h.hp / h.max_hp); }
     for mut n in &mut sh { n.width = percent(100.0 * h.shield / h.max_shield); }
-    for mut s in &mut t { **s = format!("Prana {:.0}   Kavacha {:.0}", h.hp.ceil(), h.shield.ceil()); }
+    for mut s in &mut t { **s = format!("Jaan {:.0}   Kavach {:.0}", h.hp.ceil(), h.shield.ceil()); }
 }
 
 fn hotbar(
@@ -229,9 +229,9 @@ fn hotbar(
         **t = match cur.map(|s| (s, &db.get(&s.id).kind)) {
             Some((s, ItemKind::Bow { magazine, .. })) => {
                 let state = if act.reload_left > 0.0 { "  reloading" } else if act.charge > 0.0 { "  drawing" } else { "" };
-                format!("{} / {}   Tarkash {}{}", s.count, magazine, inv.arrows, state)
+                format!("{} / {}   Goli {}{}", s.count, magazine, inv.arrows, state)
             }
-            _ => format!("Tarkash {}", inv.arrows),
+            _ => format!("Goli {}", inv.arrows),
         };
     }
 }
@@ -255,28 +255,28 @@ fn prompts(
     } else if kin.mode == MoveMode::Vimana {
         let over = me.x.abs() < 240.0 && me.z.abs() < 240.0;
         s = if over && m.state == MatchState::Flight {
-            "[Space] Leap from the Pushpaka Vimana".into()
+            "[Space] Vimana se chhalang lagao".into()
         } else {
-            "The Pushpaka Vimana approaches Bharat...".into()
+            "Pushpaka Vimana Bharat ki taraf...".into()
         };
     } else if kin.mode == MoveMode::Freefall {
-        s = "[Space] Spread the Garuda wings".into();
+        s = "[Space] Garuda pankh kholo".into();
     } else if let Some((_, c)) = chests.iter().filter(|(t, c)| !c.opened && t.translation.distance(me) < INTERACT_RANGE).next() {
         s = match c.kind {
-            ChestKind::Peti => "[E] Open the Peti".into(),
-            ChestKind::Kalash => "[E] Open the golden Kalash".into(),
+            ChestKind::Peti => "[E] Peti kholo".into(),
+            ChestKind::Kalash => "[E] Sone ka Kalash kholo".into(),
         };
     } else if let Some((_, p)) = pickups
         .iter()
         .filter(|(t, _)| t.translation.distance(me) < INTERACT_RANGE)
         .min_by(|a, b| a.0.translation.distance(me).total_cmp(&b.0.translation.distance(me)))
     {
-        s = format!("[E] Take {} ({:?})", db.get(&p.stack.id).name, p.stack.rarity);
+        s = format!("[E] {} uthao ({:?})", db.get(&p.stack.id).name, p.stack.rarity);
     }
     if let Some((slot, left)) = act.using {
         if let Some(st) = inv.slots[slot - 1].as_ref() {
             if let ItemKind::Consumable { use_time, .. } = db.get(&st.id).kind {
-                s = format!("Using {}...", db.get(&st.id).name);
+                s = format!("{} pee rahe ho...", db.get(&st.id).name);
                 progress = Some(1.0 - left / use_time);
             }
         }
@@ -384,16 +384,16 @@ fn top_right(
     let Ok((tf, w)) = local.single() else { return };
     let (t, shrinking) = zone.countdown();
     let zone_line = if m.state != MatchState::InProgress {
-        "Pralaya gathers...".to_string()
+        "Aandhi aa rahi hai...".to_string()
     } else if shrinking {
-        format!("Pralaya closing  {:>2}:{:02}", t as u32 / 60, t as u32 % 60)
+        format!("Aandhi chal rahi  {:>2}:{:02}", t as u32 / 60, t as u32 % 60)
     } else {
-        format!("Pralaya closes in  {:>2}:{:02}", t as u32 / 60, t as u32 % 60)
+        format!("Aandhi in  {:>2}:{:02}", t as u32 / 60, t as u32 % 60)
     };
     let me = tf.translation.xz();
     let to_safe = (me.distance(zone.target_center) - zone.target_radius).max(0.0);
     let here = layout.pois.iter().find(|p| p.center.xz().distance(me) < p.radius).map(|p| p.name.as_str()).unwrap_or("Bharat");
-    let safe = if to_safe > 1.0 { format!("Safe ground {to_safe:.0} m away") } else { "Inside safe ground".into() };
+    let safe = if to_safe > 1.0 { format!("Safe zone {to_safe:.0} m door") } else { "Safe zone mein ho".into() };
     for mut s in &mut q {
         **s = format!("{here}\nAlive {}   Kills {}\n{zone_line}\n{safe}", m.alive, w.kills);
     }
@@ -441,12 +441,12 @@ fn overlay(
 ) {
     let Ok((me, elim, w)) = local.single() else { return };
     let msg = if m.state == MatchState::Ended && m.winner == Some(me) {
-        Some(format!("VIJAYI!\n#1 of {}   Kills {}\n\nPress R to fight again", m.total, w.kills))
+        Some(format!("PANGA KING!\n#1 of {}   Kills {}\n\nR dabao, phir se panga lo", m.total, w.kills))
     } else if let Some(e) = elim {
-        let by = e.by.and_then(|b| names.get(b).ok()).map(|k| format!(" by {}", k.name)).unwrap_or_default();
+        let by = e.by.and_then(|b| names.get(b).ok()).map(|k| format!("{} ne tapka diya", k.name)).unwrap_or_else(|| "Tapak gaye".into());
         // Online, the next match starts for everyone at once, when this one is over.
-        let next = if peers.all.len() > 1 && m.state != MatchState::Ended { "The fight goes on without you" } else { "Press R to fight again" };
-        Some(format!("Eliminated{by}\n#{} of {}   Kills {}\n\n{next}", e.placement, m.total, w.kills))
+        let next = if peers.all.len() > 1 && m.state != MatchState::Ended { "Panga tumhare bina chalu hai" } else { "R dabao, phir se panga lo" };
+        Some(format!("{by}\n#{} of {}   Kills {}\n\n{next}", e.placement, m.total, w.kills))
     } else {
         None
     };

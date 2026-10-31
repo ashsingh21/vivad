@@ -67,9 +67,8 @@ impl Plugin for FlowPlugin {
 }
 
 const BOT_NAMES: [&str; 23] = [
-    "Abhimanyu", "Bhima", "Draupadi", "Eklavya", "Ghatotkacha", "Karna", "Lakshmana", "Nakula", "Sahadeva",
-    "Satyaki", "Shikhandi", "Sugriva", "Angada", "Jambavan", "Vibhishana", "Rani Durgavati", "Prithviraj",
-    "Hadi Rani", "Chand Bibi", "Velu Nachiyar", "Rudrama Devi", "Banda", "Tara",
+    "Pappu", "Bunty", "Chintu", "Golu", "Munna", "Raju", "Babloo", "Guddu", "Sonu", "Monu", "Tinku", "Rinku",
+    "Pinky", "Dolly", "Sweety", "Bittu", "Chotu", "Lallan", "Babli", "Chikki", "Laddoo", "Jhumri", "Bobby",
 ];
 
 fn start_match_on_startup(world: &mut World) {
@@ -240,7 +239,7 @@ fn check_winner(
         m.state = MatchState::Ended;
         m.winner = alive.iter().next();
         if let Some(w) = m.winner.and_then(|e| names.get(e).ok()) {
-            feed.write(FeedMsg(format!("{} is the last warrior standing. Vijayi bhava!", w.name)));
+            feed.write(FeedMsg(if w.name == "You" { "Tumne Panga jeet liya!".to_string() } else { format!("{} ne Panga jeet liya!", w.name) }));
         }
     }
 }

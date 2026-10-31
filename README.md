@@ -1,4 +1,4 @@
-# Vivad: battle arena (ancient India vs ancient China)
+# Panga: desi battle royale (branch `panga`; `main` is Vivad, the ancient-India version)
 
 Rust + Bevy 0.20 (pinned), assets scripted in Blender 5.2 and exported as GLB.
 

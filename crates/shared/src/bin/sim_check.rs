@@ -69,7 +69,7 @@ fn main() {
             let mut feed: Vec<String> = world.resource_mut::<Messages<FeedMsg>>().drain().map(|f| f.0).collect();
             for f in feed.drain(..) {
                 feed_seen += 1;
-                if f.contains("Pralaya") { kills_by_zone += 1 } else if f.contains("felled") { kills_by_weapon += 1 }
+                if f.contains("Aandhi") { kills_by_zone += 1 } else if f.contains("tapka") { kills_by_weapon += 1 }
                 println!("  [feed] {f}");
             }
             let m = world.resource::<Match>().clone();
@@ -107,7 +107,7 @@ fn main() {
             if m.state == MatchState::Ended || m.elapsed > 1200.0 {
                 let winner = m.winner.and_then(|w| world.get::<Warrior>(w)).map(|w| (w.name.clone(), w.kills));
                 println!(
-                    "match {} ended at {:.0}s sim ({:.1}s wall): winner {:?}, {} weapon kills, {} Pralaya, {} feed lines",
+                    "match {} ended at {:.0}s sim ({:.1}s wall): winner {:?}, {} weapon kills, {} Aandhi, {} feed lines",
                     n + 1, m.elapsed, wall.elapsed().as_secs_f32(), winner, kills_by_weapon, kills_by_zone, feed_seen
                 );
                 results.push((m.elapsed, kills_by_weapon, kills_by_zone, m.state == MatchState::Ended));
@@ -116,7 +116,7 @@ fn main() {
         }
     }
     let ended = results.iter().filter(|r| r.3).count();
-    println!("\nSUMMARY: {ended}/{} matches finished; mean length {:.0}s; weapon kills/match {:.1}; Pralaya kills/match {:.1}",
+    println!("\nSUMMARY: {ended}/{} matches finished; mean length {:.0}s; weapon kills/match {:.1}; Aandhi kills/match {:.1}",
         results.len(),
         results.iter().map(|r| r.0).sum::<f32>() / results.len() as f32,
         results.iter().map(|r| r.1 as f32).sum::<f32>() / results.len() as f32,
