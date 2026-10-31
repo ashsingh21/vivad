@@ -2,6 +2,9 @@
 //! per 64 m chunk per material) with metric world-space UVs, so tiling building textures (plaster,
 //! ashlar, brick, granite, wood, thatch) line up across blocks without stretching. Colliders stay
 //! on the simulation's per-block entities.
+//!
+//! Each chunk is built twice: in full, and for past `FAR_CHUNK` with coarser domes and columns and
+//! without the smallest trim blocks.
 
 use std::collections::HashMap;
 
@@ -12,6 +15,10 @@ use bevy::prelude::*;
 use shared::map::{Block, MapLayout, Mat, Shape};
 
 const CHUNK: f32 = 64.0;
+/// Where a chunk's coarse LOD takes over, from its centre (scaled by quality: crate::quality::LodScale).
+const FAR_CHUNK: f32 = 150.0;
+/// Blocks no larger than this in any direction are left out of the coarse LOD.
+const TRIM: f32 = 0.35;
 /// Metres per texture repeat.
 const TILE: f32 = 2.0;
 
@@ -82,6 +89,8 @@ fn material_for(mat: Mat, sets: &HashMap<&'static str, TexSet>, materials: &mut 
 
 #[derive(Default)]
 struct MeshBuf {
+    /// Built for distance: fewer segments round curves.
+    coarse: bool,
     pos: Vec<[f32; 3]>,
     nrm: Vec<[f32; 3]>,
     uv: Vec<[f32; 2]>,
@@ -124,7 +133,14 @@ impl MeshBuf {
     }
 
     fn add_cylinder(&mut self, b: &Block, radius: f32, height: f32) {
-        let seg = if radius > 1.5 { 32 } else if radius > 0.4 { 20 } else { 10 };
+        let seg = match (self.coarse, radius > 1.5, radius > 0.4) {
+            (false, true, _) => 32,
+            (false, _, true) => 20,
+            (false, ..) => 10,
+            (true, true, _) => 12,
+            (true, _, true) => 8,
+            (true, ..) => 6,
+        };
         let hh = height * 0.5;
         let circ = std::f32::consts::TAU * radius;
         // Whole number of texture repeats around so the seam is invisible.
@@ -168,7 +184,12 @@ impl MeshBuf {
     }
 
     fn add_sphere(&mut self, b: &Block, r: f32) {
-        let (seg, rings) = if r > 3.0 { (36, 18) } else { (20, 12) };
+        let (seg, rings) = match (self.coarse, r > 3.0) {
+            (false, true) => (36, 18),
+            (false, false) => (20, 12),
+            (true, true) => (14, 7),
+            (true, false) => (8, 5),
+        };
         let reps = (std::f32::consts::TAU * r / TILE).round().max(1.0);
         let vert = |i: usize, k: usize| -> (Vec3, Vec2) {
             let lat = std::f32::consts::PI * (i as f32 / rings as f32 - 0.5);
@@ -213,23 +234,45 @@ fn build_chunks(
     for name in ["sandstone", "plaster", "brick", "granite", "wood", "thatch"] {
         sets.insert(name, load_set(&assets, &mut pending, name));
     }
-    let mut groups: HashMap<(i32, i32, Mat), MeshBuf> = HashMap::new();
+    let mut groups: HashMap<(i32, i32, Mat, bool), MeshBuf> = HashMap::new();
     for b in layout.blocks.iter().filter(|b| is_static_visual(b)) {
-        let key = ((b.pos.x / CHUNK).floor() as i32, (b.pos.z / CHUNK).floor() as i32, b.mat);
-        let buf = groups.entry(key).or_default();
-        match b.shape {
-            Shape::Box(s) => buf.add_box(b, s),
-            Shape::Cylinder { radius, height } => buf.add_cylinder(b, radius, height),
-            Shape::Sphere(r) => buf.add_sphere(b, r),
+        for coarse in [false, true] {
+            let small = match b.shape {
+                Shape::Box(s) => s.max_element() <= TRIM,
+                Shape::Cylinder { radius, height } => (radius * 2.0).max(height) <= TRIM,
+                Shape::Sphere(r) => r * 2.0 <= TRIM,
+            };
+            if coarse && small {
+                continue;
+            }
+            let key = ((b.pos.x / CHUNK).floor() as i32, (b.pos.z / CHUNK).floor() as i32, b.mat, coarse);
+            let buf = groups.entry(key).or_insert_with(|| MeshBuf { coarse, ..default() });
+            match b.shape {
+                Shape::Box(s) => buf.add_box(b, s),
+                Shape::Cylinder { radius, height } => buf.add_cylinder(b, radius, height),
+                Shape::Sphere(r) => buf.add_sphere(b, r),
+            }
         }
     }
     let mut mat_cache: HashMap<Mat, Handle<StandardMaterial>> = HashMap::new();
     let n = groups.len();
-    for ((_, _, mat), buf) in groups {
+    // Distances from the chunk mesh's bounding-box centre (its vertices are in world space).
+    let near = bevy::camera::visibility::VisibilityRange { start_margin: 0.0..0.0, end_margin: FAR_CHUNK..FAR_CHUNK + 10.0, use_aabb: true };
+    let far = bevy::camera::visibility::VisibilityRange { start_margin: FAR_CHUNK..FAR_CHUNK + 10.0, end_margin: 1.0e5..1.0e5, use_aabb: true };
+    for ((_, _, mat, coarse), buf) in groups {
         let handle = mat_cache.entry(mat).or_insert_with(|| material_for(mat, &sets, &mut materials)).clone();
-        let mut e = commands.spawn((Mesh3d(meshes.add(buf.into_mesh())), MeshMaterial3d(handle), Transform::default()));
+        let range = crate::characters::LodRange(if coarse { far.clone() } else { near.clone() }, coarse as usize);
+        let mut e = commands.spawn((
+            Mesh3d(meshes.add(buf.into_mesh())),
+            MeshMaterial3d(handle),
+            Transform::default(),
+            range.0.clone(),
+            range,
+        ));
         if matches!(mat, Mat::Foliage | Mat::Cloth) {
             e.insert(bevy::light::NotShadowCaster);
+        } else {
+            e.insert(crate::quality::LodShadow);
         }
     }
     info!("architecture: {} static blocks merged into {} chunk meshes", layout.blocks.iter().filter(|b| is_static_visual(b)).count(), n);

@@ -343,55 +343,104 @@ fn resolve_gltf_materials(
 }
 
 /// Terrain mesh from the shared heightfield, painted by `grass::paint`.
+/// Terrain tile side in grid cells, and each LOD's step through the grid with where it gives way
+/// to the next (m, from the tile's centre; scaled by quality, crate::quality::LodScale).
+const TERRAIN_TILE: usize = 32;
+const TERRAIN_LODS: [(usize, f32); 3] = [(1, 90.0), (2, 220.0), (4, 1.0e5)];
+
+/// The ground, in tiles (culled off screen) of three LODs. Each tile hangs a skirt from its edges
+/// so a coarser neighbour's edge never shows a crack.
 fn dress_terrain(
     mut commands: Commands,
     q: Query<Entity, Added<shared::sim::MapTerrain>>,
     layout: Res<shared::map::MapLayout>,
+    scale: Res<crate::quality::LodScale>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     use bevy::asset::RenderAssetUsages;
+    use bevy::camera::visibility::VisibilityRange;
     use bevy::mesh::{Indices, PrimitiveTopology};
     for e in &q {
         let t = &layout.terrain;
         let n = t.n;
-        let mut pos = Vec::with_capacity(n * n);
-        let mut nrm = Vec::with_capacity(n * n);
-        let mut col = Vec::with_capacity(n * n);
-        let mut uv = Vec::with_capacity(n * n);
-        for i in 0..n {
-            for j in 0..n {
-                let (x, z) = (t.coord(i), t.coord(j));
-                let h = t.at(i, j);
-                let nn = t.normal(x, z);
-                pos.push([x, h, z]);
-                nrm.push(nn.to_array());
-                uv.push([x / 4.0, z / 4.0]);
-                let (c, _) = crate::grass::paint(x, z, h, nn, t.road_d[i * n + j]);
-                col.push([c.red, c.green, c.blue, 1.0]);
+        let material = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.95, ..default() });
+        commands.entity(e).insert(Visibility::default());
+        // Grid indices a tile samples from `a` to `b` (inclusive) every `step`, always ending on `b`.
+        let samples = |a: usize, b: usize, step: usize| -> Vec<usize> {
+            let mut v: Vec<usize> = (a..b).step_by(step).collect();
+            v.push(b);
+            v
+        };
+        let mut start = 0.0;
+        for (lod, &(step, end)) in TERRAIN_LODS.iter().enumerate() {
+            for ti in (0..n - 1).step_by(TERRAIN_TILE) {
+                for tj in (0..n - 1).step_by(TERRAIN_TILE) {
+                    let (is, js) = (samples(ti, (ti + TERRAIN_TILE).min(n - 1), step), samples(tj, (tj + TERRAIN_TILE).min(n - 1), step));
+                    let (mut pos, mut nrm, mut col, mut uv, mut idx) = (vec![], vec![], vec![], vec![], vec![]);
+                    let mut vert = |i: usize, j: usize, drop: f32| -> u32 {
+                        let (x, z) = (t.coord(i), t.coord(j));
+                        let h = t.at(i, j);
+                        let nn = t.normal(x, z);
+                        let (c, _) = crate::grass::paint(x, z, h, nn, t.road_d[i * n + j]);
+                        pos.push([x, h - drop, z]);
+                        nrm.push(nn.to_array());
+                        uv.push([x / 4.0, z / 4.0]);
+                        col.push([c.red, c.green, c.blue, 1.0]);
+                        pos.len() as u32 - 1
+                    };
+                    let w = js.len() as u32;
+                    for &i in &is {
+                        for &j in &js {
+                            vert(i, j, 0.0);
+                        }
+                    }
+                    for a in 0..is.len() as u32 - 1 {
+                        for b in 0..w - 1 {
+                            let (p, q, r, s) = (a * w + b, (a + 1) * w + b, (a + 1) * w + b + 1, a * w + b + 1);
+                            idx.extend_from_slice(&[p, s, r, p, r, q]);
+                        }
+                    }
+                    // Skirts: each edge copied a little lower and joined to it, wound both ways.
+                    let skirt = 0.6 * step as f32;
+                    let edges: [Vec<(usize, usize)>; 4] = [
+                        js.iter().map(|&j| (is[0], j)).collect(),
+                        js.iter().map(|&j| (*is.last().unwrap(), j)).collect(),
+                        is.iter().map(|&i| (i, js[0])).collect(),
+                        is.iter().map(|&i| (i, *js.last().unwrap())).collect(),
+                    ];
+                    for edge in edges {
+                        let top: Vec<u32> = edge.iter().map(|&(i, j)| vert(i, j, 0.0)).collect();
+                        let low: Vec<u32> = edge.iter().map(|&(i, j)| vert(i, j, skirt)).collect();
+                        for k in 0..top.len() - 1 {
+                            let (a, b, c, d) = (top[k], top[k + 1], low[k + 1], low[k]);
+                            idx.extend_from_slice(&[a, b, c, a, c, d, a, c, b, a, d, c]);
+                        }
+                    }
+                    let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+                        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
+                        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nrm)
+                        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
+                        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, col)
+                        .with_inserted_indices(Indices::U32(idx));
+                    // Distances from the tile's bounding-box centre (its vertices are in world space).
+                    let base = crate::characters::LodRange(
+                        VisibilityRange { start_margin: start..start + 10.0 * (lod > 0) as u8 as f32, end_margin: end..end + 10.0, use_aabb: true },
+                        lod,
+                    );
+                    commands.spawn((
+                        Mesh3d(meshes.add(mesh)),
+                        MeshMaterial3d(material.clone()),
+                        Transform::default(),
+                        base.scaled(scale.0),
+                        base,
+                        crate::quality::LodShadow,
+                        ChildOf(e),
+                    ));
+                }
             }
+            start = end;
         }
-        let mut idx: Vec<u32> = Vec::with_capacity((n - 1) * (n - 1) * 6);
-        for i in 0..n - 1 {
-            for j in 0..n - 1 {
-                let a = (i * n + j) as u32;
-                let b = ((i + 1) * n + j) as u32;
-                let c = ((i + 1) * n + j + 1) as u32;
-                let d = (i * n + j + 1) as u32;
-                idx.extend_from_slice(&[a, d, c, a, c, b]);
-            }
-        }
-        let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
-            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
-            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nrm)
-            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
-            .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, col)
-            .with_inserted_indices(Indices::U32(idx));
-        commands.entity(e).insert((
-            Mesh3d(meshes.add(mesh)),
-            MeshMaterial3d(materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.95, ..default() })),
-            Visibility::default(),
-        ));
     }
 }
 

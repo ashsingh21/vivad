@@ -160,7 +160,7 @@ impl Plugin for QualityPlugin {
         app.add_systems(Startup, spawn_view.after(crate::camera::spawn_camera))
             .add_systems(Update, (choose.run_if(resource_exists::<Undecided>), cycle, fit_view, apply.run_if(resource_changed::<Quality>), far_shadows).chain());
         if std::env::var("VIVAD_TRIS").is_ok() {
-            app.add_systems(Last, tri_report);
+            app.add_systems(Last, (tri_report, entity_report));
         }
     }
 }
@@ -360,4 +360,28 @@ fn far_shadows(mut commands: Commands, q: Res<Quality>, added: Query<(Entity, &c
             commands.entity(e).insert(bevy::light::NotShadowCaster);
         }
     }
+}
+
+/// VIVAD_TRIS=1 also: how many entities of the kinds that cost CPU every frame.
+pub fn entity_report(
+    time: Res<Time>,
+    mut next: Local<f32>,
+    all: Query<()>,
+    meshes: Query<(), With<Mesh3d>>,
+    pickups: Query<(), With<shared::sim::loot::Pickup>>,
+    chests: Query<(), With<shared::sim::loot::Chest>>,
+    targets: Query<(), With<bevy::animation::AnimationTargetId>>,
+    blocks: Query<(), With<shared::sim::MapBlock>>,
+    changed: Query<(), Changed<Transform>>,
+    colliders: Query<(), With<avian3d::prelude::Collider>>,
+) {
+    if time.elapsed_secs() < *next {
+        return;
+    }
+    *next = time.elapsed_secs() + 5.0;
+    info!(
+        "[ents] {} entities: {} meshes, {} pickups, {} chests, {} animated bones, {} map blocks, {} colliders; {} transforms changed this frame",
+        all.iter().count(), meshes.iter().count(), pickups.iter().count(), chests.iter().count(), targets.iter().count(),
+        blocks.iter().count(), colliders.iter().count(), changed.iter().count()
+    );
 }
