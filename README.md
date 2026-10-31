@@ -34,6 +34,7 @@ WASD move, mouse look, Space jump / leap from the Vimana / open Garuda wings,
 LMB attack / draw (hold for Pinaka), RMB aim, E open chest / pick up, R reload (R restarts after a match),
 1-6 or mouse wheel hotbar, Shift sprint, F3 performance overlay, F4 cycles quality (Low / Medium / High),
 Esc releases the mouse. Quality is picked from the GPU at start; `VIVAD_QUALITY=low just play` forces one.
+`VIVAD_NO_POST=1` turns off the bloom and vignette, for comparisons.
 Maps, all from OpenStreetMap at real scale: Connaught Place (`just play`), Chandni Chowk (`just play map=chandni`),
 Hauz Khas (`map=hauzkhas`), India Gate (`map=indiagate`); `map=bharat` is the ancient-India one. Hosting with
 `just host Arjuna map=chandni` gives a room code that tells joiners the map. In Chandni Chowk and Hauz Khas up to
@@ -50,7 +51,8 @@ Then `just web` builds it and serves it at http://localhost:8080/: a menu to pla
 made in either can be joined from the other (through iroh's relays; a room only just made can take
 10-15 s to be found). The menu only sets the address, which can be used directly: `?solo&map=chandni`,
 `?host&name=Ashu&map=hauzkhas` (`?host=4` starts at 4 players; otherwise Enter starts),
-`?join=chai-tota-ludo-42&name=Ashu`, `&bots=6` for bots online.
+`?join=chai-tota-ludo-42&name=Ashu`, `&bots=6` for bots online. The browser starts on High quality
+and steps down while it measures under 45 fps; `&quality=low|medium|high` fixes it.
 
 Blender path comes from `.env` (`BLENDER=...`, see `.env.example`).
 Weapon axis convention and all reference dimensions: `docs/references.md`.

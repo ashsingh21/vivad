@@ -39,6 +39,10 @@ pub fn spawn_camera(mut commands: Commands) {
         bevy::camera::Exposure { ev100: std::env::var("VIVAD_EV").ok().and_then(|s| s.parse().ok()).unwrap_or(10.8) },
         Msaa::Off,
         grading(),
+        // A soft glow round the sun's glints, lamps and muzzle flashes, and the frame's edges
+        // darkened a little to draw the eye to the middle: cheap, and most of what reads as a
+        // "finished" look. VIVAD_NO_POST=1 turns both off, for comparisons.
+        post(),
         AtmosphereSettings::default(),
         DistanceFog {
             color: Color::srgba(0.78, 0.74, 0.68, 1.0),
@@ -48,6 +52,14 @@ pub fn spawn_camera(mut commands: Commands) {
         },
         Transform::from_xyz(0.0, 140.0, 60.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
+}
+
+fn post() -> (bevy::post_process::bloom::Bloom, bevy::post_process::effect_stack::Vignette) {
+    use bevy::post_process::{bloom::Bloom, effect_stack::Vignette};
+    if std::env::var("VIVAD_NO_POST").is_ok() {
+        return (Bloom { intensity: 0.0, ..Bloom::NATURAL }, Vignette { intensity: 0.0, ..default() });
+    }
+    (Bloom { intensity: 0.07, ..Bloom::NATURAL }, Vignette { intensity: 0.22, radius: 0.9, smoothness: 2.5, ..default() })
 }
 
 /// AgX alone leaves the sunlit ground chalky: a little more saturation, midtone and highlight
@@ -63,6 +75,8 @@ fn grading() -> bevy::render::view::ColorGrading {
     g.midtones.contrast = con;
     g.highlights.contrast = con;
     g.highlights.gain = hi;
+    // A touch of afternoon warmth over the whole frame.
+    g.global.temperature = 0.015;
     g
 }
 

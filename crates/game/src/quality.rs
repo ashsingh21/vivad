@@ -1,7 +1,8 @@
 //! Quality levels: how much of the frame goes to resolution, shadows, ambient occlusion,
 //! anti-aliasing and grass. Picked from the GPU at start (a discrete GPU gets High, an integrated
-//! one such as a MacBook's gets Medium, anything else Low), forced with VIVAD_QUALITY=low|medium|high,
-//! and cycled in play with F4.
+//! one such as a MacBook's gets Medium, anything else Low; in the browser, which won't say, by the
+//! frame rate measured on High), forced with VIVAD_QUALITY=low|medium|high (in the browser
+//! ?quality=), and cycled in play with F4.
 //!
 //! The 3D view renders into an image no taller than the level allows and is stretched over the
 //! window, so a Retina screen doesn't shade four pixels for every one a 1080p screen does; the HUD
@@ -151,14 +152,21 @@ pub struct QualityPlugin;
 
 impl Plugin for QualityPlugin {
     fn build(&self, app: &mut App) {
+        // VIVAD_QUALITY natively; in the browser ?quality= in the page's address.
+        #[cfg(not(target_arch = "wasm32"))]
         let forced = std::env::var("VIVAD_QUALITY").ok().and_then(|s| Quality::parse(&s));
+        #[cfg(target_arch = "wasm32")]
+        let forced = web_sys::window()
+            .and_then(|w| w.location().search().ok())
+            .and_then(|q| web_sys::UrlSearchParams::new_with_str(&q).ok()?.get("quality"))
+            .and_then(|s| Quality::parse(&s));
         let first = forced.unwrap_or(Quality::High);
         app.insert_resource(first).insert_resource(ViewScale(1.0)).insert_resource(LodScale(first.lod_scale()));
         if forced.is_none() {
             app.insert_resource(Undecided);
         }
         app.add_systems(Startup, spawn_view.after(crate::camera::spawn_camera))
-            .add_systems(Update, (choose.run_if(resource_exists::<Undecided>), cycle, fit_view, apply.run_if(resource_changed::<Quality>), far_shadows).chain());
+            .add_systems(Update, (choose.run_if(resource_exists::<Undecided>), settle.run_if(resource_exists::<Settle>), cycle, fit_view, apply.run_if(resource_changed::<Quality>), far_shadows).chain());
         if std::env::var("VIVAD_TRIS").is_ok() {
             app.add_systems(Last, (tri_report, entity_report));
         }
@@ -166,8 +174,10 @@ impl Plugin for QualityPlugin {
 }
 
 fn choose(mut commands: Commands, info: Option<Res<RenderAdapterInfo>>, mut q: ResMut<Quality>) {
+    // A browser doesn't say what GPU it has: start high and let `settle` step down if it's slow.
     let level = if cfg!(target_arch = "wasm32") {
-        Quality::Low
+        commands.insert_resource(Settle::default());
+        Quality::High
     } else {
         let Some(info) = info else { return };
         match format!("{:?}", info.device_type).as_str() {
@@ -179,6 +189,54 @@ fn choose(mut commands: Commands, info: Option<Res<RenderAdapterInfo>>, mut q: R
     info!("quality {level:?} (VIVAD_QUALITY=low|medium|high to choose, F4 to cycle)");
     *q = level;
     commands.remove_resource::<Undecided>();
+}
+
+/// The browser's level, found by measuring: frames are timed for a few seconds once the game
+/// has settled (shaders compiled, map built), and the level steps down while they average under
+/// `MIN_FPS`.
+#[derive(Resource, Default)]
+struct Settle {
+    /// Seconds into the current measurement (negative: still waiting for things to settle).
+    t: f32,
+    frames: u32,
+}
+
+const MIN_FPS: f32 = 45.0;
+/// Seconds to wait after a change before measuring, then to measure for.
+const SETTLE_WAIT: f32 = 6.0;
+const SETTLE_MEASURE: f32 = 4.0;
+
+fn settle(mut commands: Commands, time: Res<Time<Real>>, mut s: ResMut<Settle>, mut q: ResMut<Quality>, state: Res<ActionState>) {
+    // Choosing by hand ends it.
+    if state.just_pressed(Act::CycleQuality) {
+        commands.remove_resource::<Settle>();
+        return;
+    }
+    // A long hitch is something loading, not the level's cost: measure again from scratch.
+    if time.delta_secs() > 0.25 && s.t > SETTLE_WAIT {
+        *s = Settle { t: SETTLE_WAIT - 1.0, frames: 0 };
+    }
+    s.t += time.delta_secs();
+    if s.t < SETTLE_WAIT {
+        return;
+    }
+    s.frames += 1;
+    let measured = s.t - SETTLE_WAIT;
+    if measured < SETTLE_MEASURE {
+        return;
+    }
+    let fps = s.frames as f32 / measured;
+    if fps < MIN_FPS && *q != Quality::Low {
+        *q = match *q {
+            Quality::High => Quality::Medium,
+            _ => Quality::Low,
+        };
+        info!("{fps:.0} fps: quality down to {:?}", *q);
+        *s = Settle::default();
+    } else {
+        info!("{fps:.0} fps: quality stays {:?}", *q);
+        commands.remove_resource::<Settle>();
+    }
 }
 
 fn cycle(state: Res<ActionState>, mut q: ResMut<Quality>) {
@@ -277,7 +335,8 @@ fn apply(
                 c.insert((TemporalAntiAliasing::default(), ContrastAdaptiveSharpening { enabled: true, sharpening_strength: 0.45, ..default() }));
             }
             _ => {
-                c.insert(Fxaa::default());
+                // Sharpening matters most here: the low level's view is the most stretched.
+                c.insert((Fxaa::default(), ContrastAdaptiveSharpening { enabled: true, sharpening_strength: 0.6, ..default() }));
             }
         }
     }

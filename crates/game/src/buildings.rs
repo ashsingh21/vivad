@@ -96,6 +96,8 @@ struct MeshBuf {
     pos: Vec<[f32; 3]>,
     nrm: Vec<[f32; 3]>,
     uv: Vec<[f32; 2]>,
+    /// Per-vertex colour (linear), when the buffer has one: tint and baked shading.
+    col: Vec<[f32; 4]>,
     idx: Vec<u32>,
 }
 
@@ -108,6 +110,48 @@ impl MeshBuf {
             self.uv.push(uv[k].to_array());
         }
         self.idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    /// A quad with a colour per corner.
+    fn quad_col(&mut self, p: [Vec3; 4], n: Vec3, uv: [Vec2; 4], col: [[f32; 4]; 4]) {
+        self.quad(p, n, uv);
+        self.col.extend_from_slice(&col);
+    }
+
+    /// A box of one colour, for clutter: centre, rotation about Y, full size.
+    fn solid_box(&mut self, c: Vec3, rot: Quat, size: Vec3, col: [f32; 4]) {
+        let h = size * 0.5;
+        for (n, u, v) in [(Vec3::X, Vec3::NEG_Z, Vec3::Y), (Vec3::NEG_X, Vec3::Z, Vec3::Y), (Vec3::Y, Vec3::X, Vec3::NEG_Z), (Vec3::NEG_Y, Vec3::X, Vec3::Z), (Vec3::Z, Vec3::X, Vec3::Y), (Vec3::NEG_Z, Vec3::NEG_X, Vec3::Y)] {
+            let (cn, eu, ev) = (n * h, u * u.abs().dot(h), v * v.abs().dot(h));
+            let p = [cn - eu - ev, cn + eu - ev, cn + eu + ev, cn - eu + ev].map(|q| c + rot * q);
+            self.quad_col(p, rot * n, [Vec2::ZERO; 4], [col; 4]);
+        }
+    }
+
+    /// An upright cylinder of one colour (sides and top), for clutter.
+    fn solid_cylinder(&mut self, c: Vec3, r: f32, h: f32, col: [f32; 4]) {
+        let seg = 10;
+        for k in 0..seg {
+            let (a0, a1) = (std::f32::consts::TAU * k as f32 / seg as f32, std::f32::consts::TAU * (k + 1) as f32 / seg as f32);
+            let (d0, d1) = (Vec3::new(a0.cos(), 0.0, -a0.sin()), Vec3::new(a1.cos(), 0.0, -a1.sin()));
+            let (lo, hi) = (c - Vec3::Y * h * 0.5, c + Vec3::Y * h * 0.5);
+            let base = self.pos.len() as u32;
+            for (p, n) in [(lo + d0 * r, d0), (lo + d1 * r, d1), (hi + d1 * r, d1), (hi + d0 * r, d0)] {
+                self.pos.push(p.to_array());
+                self.nrm.push(n.to_array());
+                self.uv.push([0.0, 0.0]);
+                self.col.push(col);
+            }
+            self.idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+            let base = self.pos.len() as u32;
+            for p in [hi, hi + d0 * r, hi + d1 * r] {
+                self.pos.push(p.to_array());
+                self.nrm.push([0.0, 1.0, 0.0]);
+                self.uv.push([0.0, 0.0]);
+                self.col.push(col);
+            }
+            self.idx.extend_from_slice(&[base, base + 1, base + 2]);
+        }
     }
 
     fn add_box(&mut self, b: &Block, size: Vec3) {
@@ -224,43 +268,160 @@ impl MeshBuf {
             .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.nrm)
             .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, self.uv)
             .with_inserted_indices(Indices::U32(self.idx));
+        if !self.col.is_empty() {
+            m.insert_attribute(Mesh::ATTRIBUTE_COLOR, self.col);
+        }
         let _ = m.generate_tangents();
         (m, c)
     }
 }
 
-/// One repeat of a city facade: a bay `BAY` m wide and a storey `STOREY` m tall, a window in a
-/// pale frame over a sill, a thin band at the floor line. Near-white, tinted per material.
-const BAY: f32 = 3.2;
-const STOREY: f32 = 3.4;
+/// A city facade's bay width and storey height, in metres.
+pub(crate) const BAY: f32 = 3.2;
+/// How far signs, cables and roof tanks are drawn (scaled by quality like the chunks' LODs).
+const CLUTTER_FAR: f32 = 130.0;
+/// Signboard colours: the bazaar's reds, yellows, blues and greens, and some white.
+const SIGNS: [[f32; 3]; 8] = [
+    [0.78, 0.12, 0.10],
+    [0.95, 0.78, 0.12],
+    [0.10, 0.32, 0.65],
+    [0.12, 0.50, 0.25],
+    [0.92, 0.90, 0.86],
+    [0.90, 0.42, 0.10],
+    [0.55, 0.10, 0.35],
+    [0.15, 0.15, 0.18],
+];
+pub(crate) const STOREY: f32 = 3.4;
 
-fn facade_image() -> Image {
+/// A cheap hash of a few integers to 0..1, for texture detail that doesn't repeat by the pixel.
+fn hash01(a: u32, b: u32, c: u32) -> f32 {
+    let mut h = a.wrapping_mul(0x9e37_79b1) ^ b.wrapping_mul(0x85eb_ca77) ^ c.wrapping_mul(0xc2b2_ae3d);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x2c1b_3c6d);
+    h ^= h >> 12;
+    (h & 0xffff) as f32 / 65535.0
+}
+
+/// Pixels of an image built cell by cell, written as sRGB bytes.
+fn image_from(w: usize, h: usize, px: impl Fn(usize, usize) -> [f32; 3]) -> Image {
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-    let n = 128usize;
-    let mut data = Vec::with_capacity(n * n * 4);
-    for y in 0..n {
-        for x in 0..n {
-            let (u, v) = (x as f32 / n as f32, y as f32 / n as f32);
-            let window = (0.28..0.72).contains(&u) && (0.18..0.72).contains(&v);
-            let frame = (0.25..0.75).contains(&u) && (0.15..0.75).contains(&v);
-            let sill = (0.22..0.78).contains(&u) && (0.75..0.8).contains(&v);
-            let band = v > 0.95;
-            let px: [u8; 3] = if window {
-                // Glass: dark, a little bluer toward the top where it catches the sky.
-                let k = 1.0 - (v - 0.18) / 0.54;
-                [(38.0 + 22.0 * k) as u8, (46.0 + 26.0 * k) as u8, (56.0 + 34.0 * k) as u8]
-            } else if frame || sill {
-                [208, 204, 196]
-            } else if band {
-                [196, 190, 180]
-            } else {
-                [238, 234, 226]
-            };
-            data.extend_from_slice(&[px[0], px[1], px[2], 255]);
+    let mut data = Vec::with_capacity(w * h * 4);
+    for y in 0..h {
+        for x in 0..w {
+            let c = px(x, y);
+            data.extend_from_slice(&[(c[0].clamp(0.0, 1.0) * 255.0) as u8, (c[1].clamp(0.0, 1.0) * 255.0) as u8, (c[2].clamp(0.0, 1.0) * 255.0) as u8, 255]);
         }
     }
-    Image::new(Extent3d { width: n as u32, height: n as u32, depth_or_array_layers: 1 }, TextureDimension::D2, data,
+    Image::new(Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 }, TextureDimension::D2, data,
                TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::default())
+}
+
+/// The upper storeys: two bays by two storeys, each window different (plain, shuttered, with an AC
+/// unit under it, behind a balcony rail), with rain stains running down from the sills. Near-white,
+/// tinted per material and per building.
+pub(crate) fn facade_image() -> Image {
+    let n = 128usize;
+    image_from(2 * n, 2 * n, |x, y| {
+        let (cx, cy) = (x / n, y / n);
+        let kind = [[0, 2], [3, 1]][cy][cx];
+        let (u, v) = ((x % n) as f32 / n as f32, (y % n) as f32 / n as f32);
+        // Plaster with blotches, a little darker in streaks under the sill.
+        let grain = 0.94 + 0.06 * hash01(x as u32 / 3, y as u32 / 3, 1);
+        let stain = if (0.30..0.70).contains(&u) && v > 0.80 { 1.0 - 0.18 * (1.0 - (v - 0.80) / 0.20) * (0.5 + hash01(x as u32 / 2, 0, 2)) } else { 1.0 };
+        let wall = [0.93 * grain * stain, 0.91 * grain * stain, 0.88 * grain * stain];
+        let window = (0.28..0.72).contains(&u) && (0.16..0.70).contains(&v);
+        let frame = (0.25..0.75).contains(&u) && (0.13..0.73).contains(&v);
+        let sill = (0.22..0.78).contains(&u) && (0.73..0.78).contains(&v);
+        let band = v > 0.95;
+        match kind {
+            // Shutters either side, painted green.
+            1 if ((0.10..0.25).contains(&u) || (0.75..0.90).contains(&u)) && (0.13..0.73).contains(&v) => {
+                let slat = if (y % 5) < 2 { 0.8 } else { 1.0 };
+                return [0.30 * slat, 0.50 * slat, 0.38 * slat];
+            }
+            // An AC unit hung under the window: a grey box with a grille, and its drip stain.
+            2 if (0.34..0.66).contains(&u) && (0.79..0.94).contains(&v) => {
+                let grille = (0.38..0.55).contains(&u) && (x % 3 == 0);
+                return if grille { [0.45, 0.46, 0.47] } else { [0.78, 0.78, 0.76] };
+            }
+            // A balcony rail across the bottom of a door-height opening.
+            3 if (0.20..0.80).contains(&u) && (0.52..0.80).contains(&v) => {
+                let bar = (x % 7) < 2 || (0.52..0.56).contains(&v);
+                if bar {
+                    return [0.22, 0.20, 0.19];
+                }
+            }
+            _ => {}
+        }
+        if window || (kind == 3 && (0.28..0.72).contains(&u) && (0.16..0.80).contains(&v)) {
+            // Glass: dark, bluer toward the top where it catches the sky; a curtain in some.
+            let k = 1.0 - (v - 0.16) / 0.54;
+            let curtain = kind == 0 && u > 0.5;
+            if curtain {
+                return [0.55, 0.32, 0.26];
+            }
+            [0.15 + 0.09 * k, 0.18 + 0.10 * k, 0.22 + 0.13 * k]
+        } else if frame || sill {
+            [0.82, 0.80, 0.77]
+        } else if band {
+            [0.77, 0.75, 0.71]
+        } else {
+            wall
+        }
+    })
+}
+
+/// The ground storey: two bays of shopfront under a beam, one shuttered, one open onto shelves.
+fn shop_image() -> Image {
+    let n = 128usize;
+    image_from(2 * n, n, |x, y| {
+        let bay = x / n;
+        let (u, v) = ((x % n) as f32 / n as f32, y as f32 / n as f32);
+        let grain = 0.94 + 0.06 * hash01(x as u32 / 3, y as u32 / 3, 7);
+        // Piers between shops, and the beam the signboards hang on.
+        if !(0.06..0.94).contains(&u) || v < 0.20 {
+            let dirt = if v > 0.8 { 0.75 + 0.25 * (1.0 - (v - 0.8) / 0.2) } else { 1.0 };
+            return [0.86 * grain * dirt, 0.84 * grain * dirt, 0.80 * grain * dirt];
+        }
+        if bay == 0 {
+            // A rolling shutter: ribbed grey steel, rustier toward the bottom.
+            let rib = if (y % 4) == 0 { 0.72 } else { 1.0 };
+            let rust = ((v - 0.2) / 0.8).max(0.0);
+            [(0.58 + 0.10 * rust) * rib * grain, (0.58 - 0.05 * rust) * rib * grain, (0.58 - 0.12 * rust) * rib * grain]
+        } else {
+            // An open shop: dark inside, shelves of goods in every colour.
+            let shelf = ((v - 0.20) / 0.80 * 4.0).fract();
+            if shelf < 0.08 {
+                return [0.35, 0.28, 0.22];
+            }
+            if shelf > 0.35 && v < 0.85 {
+                let item = hash01(x as u32 / 6, (((v - 0.20) / 0.80) * 4.0) as u32, 3);
+                let c = [[0.75, 0.20, 0.18], [0.90, 0.70, 0.20], [0.20, 0.45, 0.70], [0.85, 0.85, 0.80], [0.25, 0.55, 0.30]][(item * 4.99) as usize];
+                let gap = (x % 6) == 0;
+                if !gap {
+                    return c.map(|k| k * 0.6);
+                }
+            }
+            [0.10, 0.09, 0.08]
+        }
+    })
+}
+
+/// A sagging cable from `a` to `b`: a thin square tube in a few straight pieces.
+fn wire(buf: &mut MeshBuf, a: Vec3, b: Vec3, sag: f32) {
+    let col = [0.02, 0.02, 0.02, 1.0];
+    let pieces = 6;
+    let at = |t: f32| a.lerp(b, t) - Vec3::Y * sag * 4.0 * t * (1.0 - t);
+    for k in 0..pieces {
+        let (p, q) = (at(k as f32 / pieces as f32), at((k + 1) as f32 / pieces as f32));
+        let Ok(dir) = Dir3::new(q - p) else { continue };
+        let side = dir.cross(Vec3::Y).normalize_or(Vec3::X) * 0.018;
+        let up = side.cross(*dir).normalize() * 0.018;
+        for (u, v) in [(side, up), (up, -side), (-side, -up), (-up, side)] {
+            let n = (u + v).normalize();
+            buf.quad_col([p + u, q + u, q + v, p + v], n, [Vec2::ZERO; 4], [col; 4]);
+        }
+    }
 }
 
 /// A city map's buildings (MapLayout::footprints), merged per chunk and material: walls in the
@@ -278,7 +439,37 @@ fn build_footprints(
         return;
     }
     let facade = images.add(facade_image());
+    let shopfront = images.add(shop_image());
     pending.0.push(facade.clone());
+    pending.0.push(shopfront.clone());
+    // Where buildings stand, a metre a cell: whether a wall faces the street or a neighbour, and
+    // how far across the lane the building opposite is.
+    let span = layout.terrain.size.max(2.0 * layout.half_extent);
+    let cells = span.ceil() as usize;
+    let mut solid = vec![false; cells * cells];
+    let to_cell = |p: Vec2| -> Option<usize> {
+        let (i, j) = ((p.x + span * 0.5).floor(), (p.y + span * 0.5).floor());
+        (i >= 0.0 && j >= 0.0 && (i as usize) < cells && (j as usize) < cells).then(|| j as usize * cells + i as usize)
+    };
+    for fp in layout.footprints.iter().filter(|f| f.mat != Mat::Water) {
+        let (lo, hi) = fp.pts.iter().fold((Vec2::MAX, Vec2::MIN), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+        for j in lo.y.floor() as i32..=hi.y.ceil() as i32 {
+            for i in lo.x.floor() as i32..=hi.x.ceil() as i32 {
+                let p = Vec2::new(i as f32 + 0.5, j as f32 + 0.5);
+                if shared::map::footprint::contains(&fp.pts, p)
+                    && let Some(k) = to_cell(p)
+                {
+                    solid[k] = true;
+                }
+            }
+        }
+    }
+    let occupied = |p: Vec2| to_cell(p).is_some_and(|k| solid[k]);
+    let lin = |c: [f32; 3]| {
+        let l = Color::srgb(c[0], c[1], c[2]).to_linear();
+        [l.red, l.green, l.blue, 1.0]
+    };
+    let mut clutter: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     let tint = |m: Mat| match m {
         Mat::PlasterOchre => Color::srgb(0.95, 0.76, 0.48),
         Mat::Sandstone => Color::srgb(0.85, 0.68, 0.50),
@@ -286,7 +477,7 @@ fn build_footprints(
         Mat::Brick => Color::srgb(0.70, 0.40, 0.30),
         _ => Color::srgb(0.97, 0.95, 0.90),
     };
-    let mut walls: HashMap<(i32, i32, Mat), MeshBuf> = HashMap::new();
+    let mut walls: HashMap<(i32, i32, Mat, bool), MeshBuf> = HashMap::new();
     let mut roofs: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     let mut water = MeshBuf::default();
     for fp in &layout.footprints {
@@ -307,7 +498,19 @@ fn build_footprints(
             }
             continue;
         }
-        let w = walls.entry((cx, cz, fp.mat)).or_default();
+        // Each building a little different: lighter or darker, warmer or cooler.
+        let seed = (c.x * 7.3 + c.y * 13.1).to_bits();
+        let r = |k: u32| hash01(seed, k, 11);
+        let v = 0.92 + 0.14 * r(1);
+        let warm = (r(2) - 0.5) * 0.08;
+        let tint_at = |shade: f32| {
+            let l = Color::srgb(v * (1.0 + warm) * shade, v * shade, v * (1.0 - warm) * shade).to_linear();
+            [l.red, l.green, l.blue, 1.0]
+        };
+        let height = fp.top - fp.base;
+        // A row of shops along the street when there's a storey to spare above them.
+        let shops = height > STOREY * 1.6 && r(3) < 0.8;
+        let split = (fp.base + STOREY).min(fp.top);
         let n = fp.pts.len();
         let mut along = 0.0;
         let ccw = fp.pts.iter().zip(fp.pts.iter().cycle().skip(1)).map(|(a, b)| a.x * b.y - b.x * a.y).sum::<f32>() > 0.0;
@@ -320,41 +523,115 @@ fn build_footprints(
             }
             let out2 = if ccw { Vec2::new(e.y, -e.x) } else { Vec2::new(-e.y, e.x) } / len;
             let out = Vec3::new(out2.x, 0.0, out2.y);
-            let (a0, b0) = (Vec3::new(a.x, fp.base, a.y), Vec3::new(b.x, fp.base, b.y));
-            let (a1, b1) = (a0.with_y(fp.top), b0.with_y(fp.top));
-            // Windows run from the ground up in whole storeys; bays from each corner.
-            let (u0, u1) = (along / BAY, (along + len) / BAY);
-            let (v0, v1) = (-fp.base / STOREY, -fp.top / STOREY);
-            let quad = [a0, b0, b1, a1];
-            let uv = [Vec2::new(u0, v0), Vec2::new(u1, v0), Vec2::new(u1, v1), Vec2::new(u0, v1)];
-            if (b0 - a0).cross(b1 - a0).dot(out) >= 0.0 {
-                w.quad(quad, out, uv);
-            } else {
-                w.quad([b0, a0, a1, b1], out, [uv[1], uv[0], uv[3], uv[2]]);
+            let (u0, u1) = (along / (2.0 * BAY), (along + len) / (2.0 * BAY));
+            // Two bands, each with its own texture and shading baked into the vertex colour: the
+            // ground storey dark with street grime at its foot, the rest lighter toward the top.
+            for (lo, hi, shop, (s0, s1)) in [(fp.base, split, shops, (0.74, 0.98)), (split, fp.top, false, (0.98, 1.05))] {
+                if hi - lo < 0.05 {
+                    continue;
+                }
+                let (a0, b0) = (Vec3::new(a.x, lo, a.y), Vec3::new(b.x, lo, b.y));
+                let (a1, b1) = (a0.with_y(hi), b0.with_y(hi));
+                // Storeys counted from the building's foot; a shop band is one storey of its texture.
+                let rows = if shop { STOREY } else { 2.0 * STOREY };
+                let (v0, v1) = (-(lo - fp.base) / rows, -(hi - fp.base) / rows);
+                let uv = [Vec2::new(u0, v0), Vec2::new(u1, v0), Vec2::new(u1, v1), Vec2::new(u0, v1)];
+                let col = [tint_at(s0), tint_at(s0), tint_at(s1), tint_at(s1)];
+                let w = walls.entry((cx, cz, fp.mat, shop)).or_default();
+                if (b0 - a0).cross(b1 - a0).dot(out) >= 0.0 {
+                    w.quad_col([a0, b0, b1, a1], out, uv, col);
+                } else {
+                    w.quad_col([b0, a0, a1, b1], out, [uv[1], uv[0], uv[3], uv[2]], [col[1], col[0], col[3], col[2]]);
+                }
+            }
+            // Clutter on walls that face the street (not a neighbour's wall).
+            let mid = (a + b) * 0.5;
+            let street = !occupied(mid + out2 * 1.0) && !occupied(mid + out2 * 2.5);
+            if street {
+                let k = clutter.entry((cx, cz)).or_default();
+                let dir = Vec3::new(e.x, 0.0, e.y) / len;
+                let rot = Quat::from_rotation_arc(Vec3::X, dir);
+                if shops {
+                    // A signboard over each shop: a coloured board with a pale panel of "lettering".
+                    let pair = 2.0 * BAY;
+                    let first = (along / pair).ceil() as i32;
+                    let last = ((along + len) / pair).floor() as i32;
+                    for s in first..last {
+                        let h = hash01(seed, s as u32, i as u32);
+                        if h > 0.8 {
+                            continue;
+                        }
+                        let at = a + e / len * ((s as f32 + 0.5) * pair - along);
+                        let y = fp.base + STOREY - 0.36;
+                        let board = SIGNS[(h * 41.0) as usize % SIGNS.len()];
+                        let p = Vec3::new(at.x, y, at.y) + out * 0.07;
+                        k.solid_box(p, rot, Vec3::new(pair * 0.86, 0.66, 0.1), lin(board));
+                        let letters = if board[0] + board[1] + board[2] > 2.0 { [0.12, 0.10, 0.10] } else { [0.95, 0.93, 0.86] };
+                        k.solid_box(p + out * 0.055, rot, Vec3::new(pair * 0.86 * (0.4 + 0.3 * hash01(seed, s as u32, 5)), 0.26, 0.02), lin(letters));
+                    }
+                }
+                // Cables slung across the lane to the building opposite.
+                if len > 4.0 && r(20 + i as u32) < 0.35 {
+                    let from = Vec3::new(mid.x, split + 1.2 + 1.5 * r(40 + i as u32), mid.y) + out * 0.1;
+                    let reach = (2..18).find(|&d| occupied(mid + out2 * d as f32)).map(|d| d as f32 - 0.6);
+                    if let Some(d) = reach.filter(|d| *d > 3.0) {
+                        let to = from + out * d + Vec3::Y * (r(60 + i as u32) - 0.5);
+                        for w in 0..2 + (r(80 + i as u32) * 2.0) as usize {
+                            let sag = 0.4 + 0.25 * w as f32 + 0.1 * d;
+                            let shift = dir * (w as f32 * 0.12);
+                            wire(k, from + shift, to + shift, sag);
+                        }
+                    }
+                }
             }
             along += len;
         }
-        let r = roofs.entry((cx, cz)).or_default();
+        // Black water tanks on the roof.
+        if r(30) < 0.55 && height > 3.0 {
+            let k = clutter.entry((cx, cz)).or_default();
+            let (lo, hi) = fp.pts.iter().fold((Vec2::MAX, Vec2::MIN), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+            for t in 0..1 + (r(31) * 2.5) as u32 {
+                let p = c.lerp(lo + (hi - lo) * Vec2::new(r(32 + t), r(36 + t)), 0.5);
+                if shared::map::footprint::contains(&fp.pts, p) {
+                    let (radius, h) = (0.55 + 0.2 * r(33 + t), 1.0 + 0.4 * r(34 + t));
+                    k.solid_cylinder(Vec3::new(p.x, fp.top + h * 0.5, p.y), radius, h, lin([0.07, 0.07, 0.08]));
+                }
+            }
+        }
+        let roof = roofs.entry((cx, cz)).or_default();
         for [i, j, k] in shared::map::footprint::triangulate(&fp.pts) {
             let p = [fp.pts[i as usize], fp.pts[j as usize], fp.pts[k as usize]].map(|q| Vec3::new(q.x, fp.top, q.y));
             let p = if (p[1] - p[0]).cross(p[2] - p[0]).y >= 0.0 { p } else { [p[0], p[2], p[1]] };
-            let base = r.pos.len() as u32;
+            let base = roof.pos.len() as u32;
             for q in p {
-                r.pos.push(q.to_array());
-                r.nrm.push([0.0, 1.0, 0.0]);
-                r.uv.push([q.x / TILE, q.z / TILE]);
+                roof.pos.push(q.to_array());
+                roof.nrm.push([0.0, 1.0, 0.0]);
+                roof.uv.push([q.x / TILE, q.z / TILE]);
+                roof.col.push(tint_at(0.95));
             }
-            r.idx.extend_from_slice(&[base, base + 1, base + 2]);
+            roof.idx.extend_from_slice(&[base, base + 1, base + 2]);
         }
     }
-    let mut facade_mats: HashMap<Mat, Handle<StandardMaterial>> = HashMap::new();
-    for ((_, _, mat), buf) in walls {
+    let mut facade_mats: HashMap<(Mat, bool), Handle<StandardMaterial>> = HashMap::new();
+    for ((_, _, mat, shop), buf) in walls {
+        let texture = if shop { shopfront.clone() } else { facade.clone() };
         let m = facade_mats
-            .entry(mat)
-            .or_insert_with(|| materials.add(StandardMaterial { base_color: tint(mat), base_color_texture: Some(facade.clone()), perceptual_roughness: 0.85, ..default() }))
+            .entry((mat, shop))
+            .or_insert_with(|| materials.add(StandardMaterial { base_color: tint(mat), base_color_texture: Some(texture), perceptual_roughness: 0.85, ..default() }))
             .clone();
         let (mesh, centre) = buf.into_mesh();
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(m), Transform::from_translation(centre), OfMap));
+    }
+    // Signs, cables and tanks are small: drawn near only.
+    let plain = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.7, ..default() });
+    let near = bevy::camera::visibility::VisibilityRange { start_margin: 0.0..0.0, end_margin: CLUTTER_FAR..CLUTTER_FAR + 10.0, use_aabb: false };
+    for (_, buf) in clutter {
+        if buf.idx.is_empty() {
+            continue;
+        }
+        let range = crate::characters::LodRange(near.clone(), 0);
+        let (mesh, centre) = buf.into_mesh();
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(plain.clone()), Transform::from_translation(centre), range.0.clone(), range, OfMap));
     }
     for (_, buf) in roofs {
         let (mesh, centre) = buf.into_mesh();
@@ -458,67 +735,72 @@ fn queue_model_mips(mut events: MessageReader<AssetEvent<Image>>, assets: Res<As
 fn mipmap_textures(mut pending: ResMut<PendingMips>, mut images: ResMut<Assets<Image>>) {
     pending.0.retain(|h| {
         let Some(mut img) = images.get_mut(h) else { return true };
-        let (w, hgt) = (img.width() as usize, img.height() as usize);
-        let Some(data) = img.data.clone() else { return false };
-        if data.len() != w * hgt * 4 {
-            return false; // only RGBA8 sources are handled
-        }
-        let coverage = |px: &[u8], scale: f32| px.chunks_exact(4).filter(|p| p[3] as f32 * scale >= 127.5).count() as f32 / (px.len() / 4) as f32;
-        let full = coverage(&data, 1.0);
-        let cutout = full < 0.98 && data.chunks_exact(4).any(|p| p[3] == 0);
-        // `chain` holds the plain filtered levels; `levels` the ones uploaded (alpha rescaled).
-        let mut chain: Vec<Vec<u8>> = vec![data.clone()];
-        let mut levels: Vec<Vec<u8>> = vec![data];
-        let (mut cw, mut ch) = (w, hgt);
-        while cw > 1 && ch > 1 {
-            let prev = chain.last().unwrap();
-            let (nw, nh) = (cw / 2, ch / 2);
-            let mut next = vec![0u8; nw * nh * 4];
-            for y in 0..nh {
-                for x in 0..nw {
-                    let taps = [(2 * x, 2 * y), (2 * x + 1, 2 * y), (2 * x, 2 * y + 1), (2 * x + 1, 2 * y + 1)].map(|(xx, yy)| ((yy * cw) + xx) * 4);
-                    let alpha: u32 = taps.iter().map(|&i| prev[i + 3] as u32).sum();
-                    let o = (y * nw + x) * 4;
-                    for c in 0..3 {
-                        next[o + c] = if cutout && alpha > 0 {
-                            (taps.iter().map(|&i| prev[i + c] as u32 * prev[i + 3] as u32).sum::<u32>() / alpha) as u8
-                        } else {
-                            (taps.iter().map(|&i| prev[i + c] as u32).sum::<u32>() / 4) as u8
-                        };
-                    }
-                    next[o + 3] = (alpha / 4) as u8;
-                }
-            }
-            let mut out = next.clone();
-            if cutout {
-                // Bisect the alpha scale that restores the full-size coverage.
-                let (mut lo, mut hi) = (0.25f32, 8.0f32);
-                for _ in 0..14 {
-                    let mid = (lo + hi) * 0.5;
-                    if coverage(&next, mid) < full { lo = mid } else { hi = mid }
-                }
-                let scale = (lo + hi) * 0.5;
-                for p in out.chunks_exact_mut(4) {
-                    p[3] = (p[3] as f32 * scale).min(255.0) as u8;
-                }
-            }
-            chain.push(next);
-            levels.push(out);
-            cw = nw;
-            ch = nh;
-        }
-        img.texture_descriptor.mip_level_count = levels.len() as u32;
-        img.data = Some(levels.concat());
-        img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-            address_mode_u: ImageAddressMode::Repeat,
-            address_mode_v: ImageAddressMode::Repeat,
-            address_mode_w: ImageAddressMode::Repeat,
-            mag_filter: ImageFilterMode::Linear,
-            min_filter: ImageFilterMode::Linear,
-            mipmap_filter: ImageFilterMode::Linear,
-            anisotropy_clamp: 8,
-            ..default()
-        });
+        mip_chain(&mut img);
         false
+    });
+}
+
+/// `mipmap_textures` for one image at hand.
+pub(crate) fn mip_chain(img: &mut Image) {
+    let (w, hgt) = (img.width() as usize, img.height() as usize);
+    let Some(data) = img.data.clone() else { return };
+    if data.len() != w * hgt * 4 {
+        return; // only RGBA8 sources are handled
+    }
+    let coverage = |px: &[u8], scale: f32| px.chunks_exact(4).filter(|p| p[3] as f32 * scale >= 127.5).count() as f32 / (px.len() / 4) as f32;
+    let full = coverage(&data, 1.0);
+    let cutout = full < 0.98 && data.chunks_exact(4).any(|p| p[3] == 0);
+    // `chain` holds the plain filtered levels; `levels` the ones uploaded (alpha rescaled).
+    let mut chain: Vec<Vec<u8>> = vec![data.clone()];
+    let mut levels: Vec<Vec<u8>> = vec![data];
+    let (mut cw, mut ch) = (w, hgt);
+    while cw > 1 && ch > 1 {
+        let prev = chain.last().unwrap();
+        let (nw, nh) = (cw / 2, ch / 2);
+        let mut next = vec![0u8; nw * nh * 4];
+        for y in 0..nh {
+            for x in 0..nw {
+                let taps = [(2 * x, 2 * y), (2 * x + 1, 2 * y), (2 * x, 2 * y + 1), (2 * x + 1, 2 * y + 1)].map(|(xx, yy)| ((yy * cw) + xx) * 4);
+                let alpha: u32 = taps.iter().map(|&i| prev[i + 3] as u32).sum();
+                let o = (y * nw + x) * 4;
+                for c in 0..3 {
+                    next[o + c] = if cutout && alpha > 0 {
+                        (taps.iter().map(|&i| prev[i + c] as u32 * prev[i + 3] as u32).sum::<u32>() / alpha) as u8
+                    } else {
+                        (taps.iter().map(|&i| prev[i + c] as u32).sum::<u32>() / 4) as u8
+                    };
+                }
+                next[o + 3] = (alpha / 4) as u8;
+            }
+        }
+        let mut out = next.clone();
+        if cutout {
+            // Bisect the alpha scale that restores the full-size coverage.
+            let (mut lo, mut hi) = (0.25f32, 8.0f32);
+            for _ in 0..14 {
+                let mid = (lo + hi) * 0.5;
+                if coverage(&next, mid) < full { lo = mid } else { hi = mid }
+            }
+            let scale = (lo + hi) * 0.5;
+            for p in out.chunks_exact_mut(4) {
+                p[3] = (p[3] as f32 * scale).min(255.0) as u8;
+            }
+        }
+        chain.push(next);
+        levels.push(out);
+        cw = nw;
+        ch = nh;
+    }
+    img.texture_descriptor.mip_level_count = levels.len() as u32;
+    img.data = Some(levels.concat());
+    img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        address_mode_w: ImageAddressMode::Repeat,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        mipmap_filter: ImageFilterMode::Linear,
+        anisotropy_clamp: 8,
+        ..default()
     });
 }

@@ -1,3 +1,4 @@
+pub mod ambient;
 pub mod animation;
 pub mod arms;
 pub mod audio;
@@ -12,6 +13,7 @@ pub mod hud;
 pub mod input;
 pub mod lamps;
 pub mod quality;
+pub mod skyline;
 pub mod lobby;
 pub mod studio_env;
 pub mod visuals;
