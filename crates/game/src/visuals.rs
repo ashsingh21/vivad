@@ -417,21 +417,25 @@ fn dress_terrain(
                             idx.extend_from_slice(&[a, b, c, a, c, d, a, c, b, a, d, c]);
                         }
                     }
+                    // The tile's origin at its centre: LOD distances (and the crossfade between
+                    // them) are measured from there.
+                    let (lo, hi) = pos.iter().fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| (lo.min(Vec3::from(*p)), hi.max(Vec3::from(*p))));
+                    let centre = (lo + hi) / 2.0;
+                    let pos: Vec<[f32; 3]> = pos.iter().map(|p| (Vec3::from(*p) - centre).to_array()).collect();
                     let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
                         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
                         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nrm)
                         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
                         .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, col)
                         .with_inserted_indices(Indices::U32(idx));
-                    // Distances from the tile's bounding-box centre (its vertices are in world space).
                     let base = crate::characters::LodRange(
-                        VisibilityRange { start_margin: start..start + 10.0 * (lod > 0) as u8 as f32, end_margin: end..end + 10.0, use_aabb: true },
+                        VisibilityRange { start_margin: start..start + 10.0 * (lod > 0) as u8 as f32, end_margin: end..end + 10.0, use_aabb: false },
                         lod,
                     );
                     commands.spawn((
                         Mesh3d(meshes.add(mesh)),
                         MeshMaterial3d(material.clone()),
-                        Transform::default(),
+                        Transform::from_translation(centre),
                         base.scaled(scale.0),
                         base,
                         crate::quality::LodShadow,

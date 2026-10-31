@@ -211,14 +211,19 @@ impl MeshBuf {
         }
     }
 
-    fn into_mesh(self) -> Mesh {
+    /// The mesh, with its vertices relative to the centre of its bounds, and that centre (the
+    /// LOD crossfade measures distance from the mesh's origin, so it must sit in the middle).
+    fn into_mesh(self) -> (Mesh, Vec3) {
+        let (lo, hi) = self.pos.iter().fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| (lo.min(Vec3::from(*p)), hi.max(Vec3::from(*p))));
+        let c = (lo + hi) / 2.0;
+        let pos: Vec<[f32; 3]> = self.pos.iter().map(|p| (Vec3::from(*p) - c).to_array()).collect();
         let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
-            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.pos)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
             .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.nrm)
             .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, self.uv)
             .with_inserted_indices(Indices::U32(self.idx));
         let _ = m.generate_tangents();
-        m
+        (m, c)
     }
 }
 
@@ -256,16 +261,17 @@ fn build_chunks(
     }
     let mut mat_cache: HashMap<Mat, Handle<StandardMaterial>> = HashMap::new();
     let n = groups.len();
-    // Distances from the chunk mesh's bounding-box centre (its vertices are in world space).
-    let near = bevy::camera::visibility::VisibilityRange { start_margin: 0.0..0.0, end_margin: FAR_CHUNK..FAR_CHUNK + 10.0, use_aabb: true };
-    let far = bevy::camera::visibility::VisibilityRange { start_margin: FAR_CHUNK..FAR_CHUNK + 10.0, end_margin: 1.0e5..1.0e5, use_aabb: true };
+    // Distances from the chunk's centre, where its mesh's origin is.
+    let near = bevy::camera::visibility::VisibilityRange { start_margin: 0.0..0.0, end_margin: FAR_CHUNK..FAR_CHUNK + 10.0, use_aabb: false };
+    let far = bevy::camera::visibility::VisibilityRange { start_margin: FAR_CHUNK..FAR_CHUNK + 10.0, end_margin: 1.0e5..1.0e5, use_aabb: false };
     for ((_, _, mat, coarse), buf) in groups {
         let handle = mat_cache.entry(mat).or_insert_with(|| material_for(mat, &sets, &mut materials)).clone();
         let range = crate::characters::LodRange(if coarse { far.clone() } else { near.clone() }, coarse as usize);
+        let (mesh, centre) = buf.into_mesh();
         let mut e = commands.spawn((
-            Mesh3d(meshes.add(buf.into_mesh())),
+            Mesh3d(meshes.add(mesh)),
             MeshMaterial3d(handle),
-            Transform::default(),
+            Transform::from_translation(centre),
             range.0.clone(),
             range,
         ));
