@@ -80,8 +80,15 @@ impl ActionState {
     }
 }
 
-#[derive(Resource, Default)]
+/// The perf overlay (F3); VIVAD_PERF_HUD=1 starts with it shown.
+#[derive(Resource)]
 pub struct ShowPerf(pub bool);
+
+impl Default for ShowPerf {
+    fn default() -> Self {
+        ShowPerf(std::env::var("VIVAD_PERF_HUD").is_ok())
+    }
+}
 
 pub struct InputPlugin;
 

@@ -344,7 +344,7 @@ fn landing_dust(
         if !grounded && kin.grounded && vy < -6.0 {
             let n = (6.0 + -vy).min(20.0) as usize;
             let feet = t.translation - Vec3::Y * shared::sim::HALF_HEIGHT + Vec3::Y * 0.1;
-            billow(&mut commands, &fx, &fx.dust, feet, Vec3::ZERO, n, 2.0 + -vy * 0.12, 0.22);
+            billow(&mut commands, &fx, &fx.dust, feet, Vec3::NEG_Y * 0.5, n, 1.2 + -vy * 0.05, 0.12);
         }
         was.insert(e, (kin.grounded, kin.velocity.y));
     }

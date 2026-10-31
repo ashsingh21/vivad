@@ -492,7 +492,13 @@ fn overlay(
     }
 }
 
-fn perf(show: Res<ShowPerf>, diag: Res<DiagnosticsStore>, quality: Res<crate::quality::Quality>, mut q: Query<(&mut Text, &mut Visibility), With<PerfText>>) {
+fn perf(
+    show: Res<ShowPerf>,
+    diag: Res<DiagnosticsStore>,
+    quality: Res<crate::quality::Quality>,
+    adapter: Option<Res<bevy::render::renderer::RenderAdapterInfo>>,
+    mut q: Query<(&mut Text, &mut Visibility), With<PerfText>>,
+) {
     for (mut t, mut v) in &mut q {
         *v = if show.0 { Visibility::Inherited } else { Visibility::Hidden };
         if !show.0 {
@@ -501,7 +507,25 @@ fn perf(show: Res<ShowPerf>, diag: Res<DiagnosticsStore>, quality: Res<crate::qu
         let fps = diag.get(&FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()).unwrap_or(0.0);
         let ms = diag.get(&FrameTimeDiagnosticsPlugin::FRAME_TIME).and_then(|d| d.smoothed()).unwrap_or(0.0);
         let ents = diag.get(&EntityCountDiagnosticsPlugin::ENTITY_COUNT).and_then(|d| d.value()).unwrap_or(0.0);
-        set_text(&mut t, format!("{fps:.0} fps   {ms:.2} ms   {ents:.0} entities   {quality:?} quality (F4)", quality = *quality));
+        let mut line = format!("{fps:.0} fps   {ms:.2} ms   {ents:.0} entities   {quality:?} quality (F4)", quality = *quality);
+        // The GPU, and the render passes that cost it most (natively; the browser has no timers).
+        if let Some(a) = &adapter {
+            line += &format!("\n{} ({:?})", a.name, a.backend);
+        }
+        let mut passes: Vec<(String, f64)> = diag
+            .iter()
+            .filter(|d| d.path().as_str().ends_with("/elapsed_gpu"))
+            .filter_map(|d| Some((d.path().as_str().trim_start_matches("render/").trim_end_matches("/elapsed_gpu").to_string(), d.smoothed()?)))
+            .collect();
+        if !passes.is_empty() {
+            let total: f64 = passes.iter().map(|p| p.1).sum();
+            passes.sort_by(|a, b| b.1.total_cmp(&a.1));
+            line += &format!("\nGPU {total:.1} ms:");
+            for (name, t) in passes.iter().take(5) {
+                line += &format!("  {name} {t:.1}");
+            }
+        }
+        set_text(&mut t, line);
     }
 }
 

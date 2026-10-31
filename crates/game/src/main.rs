@@ -84,10 +84,10 @@ fn main() {
             ..default()
         });
     app.add_plugins((net::TransportPlugin, game::lobby::LobbyPlugin));
-    // VIVAD_PERF_ALL=1: log every diagnostic, GPU time per render pass among them.
-    if std::env::var("VIVAD_PERF_ALL").is_ok() {
-        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
-    }
+    // GPU time per render pass, for the perf overlay (F3) and VIVAD_PERF_ALL=1's log. The browser
+    // has no GPU timers.
+    #[cfg(not(target_arch = "wasm32"))]
+    app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
     app.run();
 }
 
