@@ -15,7 +15,7 @@ use std::time::Duration;
 use bevy::prelude::*;
 use iroh::endpoint::{Connection, QuicTransportConfig, RecvStream, presets};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
-use iroh::{Endpoint, EndpointAddr, EndpointId, TransportAddr, Watcher};
+use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey, TransportAddr, Watcher};
 use serde::{Deserialize, Serialize};
 use shared::sim::flow::{Match, start_match};
 use shared::sim::{Hold, MatchConfig};
@@ -183,21 +183,77 @@ pub struct Node {
     router: Router,
     mesh: Arc<Mesh>,
     events: UnboundedReceiver<(PeerId, Wire)>,
+    /// The room code we were bound for, if any.
+    room: Option<String>,
+}
+
+/// Words for room codes: desi food, birds and beasts, games, festivals and places (128 of them).
+const WORDS: [&str; 128] = [
+    "chai", "samosa", "jalebi", "kulfi", "lassi", "pakora", "ladoo", "barfi", "rasgulla", "paneer", "dosa", "idli",
+    "vada", "poha", "bhel", "chaat", "kachori", "paratha", "naan", "roti", "biryani", "korma", "tikka", "halwa",
+    "kheer", "imarti", "peda", "gulab", "mango", "guava", "papaya", "litchi", "chikoo", "jamun", "amla", "nimbu",
+    "adrak", "elaichi", "jeera", "haldi", "mirchi", "pudina", "tulsi", "neem", "peepal", "banyan", "gulmohar", "champa",
+    "mogra", "kamal", "tota", "mor", "koel", "maina", "cheetah", "sher", "hathi", "ghoda", "oont", "bandar",
+    "bhalu", "hiran", "kachua", "magar", "chidiya", "titli", "gilehri", "khargosh", "machli", "rickshaw", "tanga", "patang",
+    "lattu", "kanche", "gilli", "danda", "kabaddi", "carrom", "ludo", "sixer", "googly", "yorker", "chakka", "dhoom",
+    "masti", "jugaad", "bindaas", "jhakaas", "dhamaal", "filmy", "tadka", "garam", "thanda", "mithai", "namkeen", "achar",
+    "papad", "raita", "dhaba", "mela", "holi", "diwali", "lohri", "onam", "pongal", "chowk", "gali", "mohalla",
+    "bazaar", "haveli", "ghat", "qila", "mahal", "chhatri", "dilli", "mumbai", "kolkata", "chennai", "jaipur", "lucknow",
+    "patna", "indore", "bhopal", "surat", "pune", "goa", "shimla", "manali",
+];
+
+/// A fresh room code to read out or type: three words and a number, "chai-tiger-kulfi-42".
+pub fn new_room() -> String {
+    use rand::RngExt;
+    let mut rng = rand::rng();
+    let w = |rng: &mut rand::rngs::ThreadRng| WORDS[rng.random_range(0..WORDS.len())];
+    format!("{}-{}-{}-{}", w(&mut rng), w(&mut rng), w(&mut rng), rng.random_range(10..100))
+}
+
+/// A room code as typed (any case, spaces or dashes), or None if it isn't one.
+fn room(code: &str) -> Option<String> {
+    let parts: Vec<String> = code.trim().to_lowercase().split(|c: char| c == '-' || c == ' ' || c == '_').filter(|p| !p.is_empty()).map(str::to_string).collect();
+    let ok = parts.len() == 4 && parts[..3].iter().all(|p| WORDS.contains(&p.as_str())) && parts[3].parse::<u8>().is_ok();
+    ok.then(|| parts.join("-"))
+}
+
+/// The host's key, from its room code: whoever has the code knows whom to dial, and iroh's
+/// address lookup (by key, over DNS) finds where the host is. No server holds the rooms.
+fn room_key(room: &str) -> SecretKey {
+    SecretKey::from_bytes(&blake3::derive_key("panga 2026-10 room key", room.as_bytes()))
+}
+
+/// The map seed every peer in the room plays.
+pub fn room_map_seed(room: &str) -> u64 {
+    let h = blake3::derive_key("panga 2026-10 room map seed", room.as_bytes());
+    u64::from_le_bytes(h[..8].try_into().unwrap()) % 100_000
 }
 
 impl Node {
     /// `relay`: reachable across the internet through iroh's relays (otherwise direct addresses
     /// only, which is enough on one machine or a LAN).
     pub fn bind(name: &str, relay: bool) -> Result<Node, Error> {
+        Node::bind_as(name, relay, None)
+    }
+
+    /// Bound with the key a room code gives, so the code is all a joiner needs (with relays).
+    pub fn bind_room(name: &str, room: &str) -> Result<Node, Error> {
+        let mut node = Node::bind_as(name, true, Some(room_key(room)))?;
+        node.room = Some(room.to_string());
+        Ok(node)
+    }
+
+    fn bind_as(name: &str, relay: bool, key: Option<SecretKey>) -> Result<Node, Error> {
         let runtime = Arc::new(tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?);
         let (events_tx, events) = unbounded_channel();
         let (router, mesh) = runtime.block_on(async {
             let quic = QuicTransportConfig::builder().keep_alive_interval(KEEP_ALIVE).max_idle_timeout(Some(IDLE_TIMEOUT.try_into()?)).build();
-            let endpoint = if relay {
-                Endpoint::builder(presets::N0).transport_config(quic).bind().await?
-            } else {
-                Endpoint::builder(presets::N0DisableRelay).transport_config(quic).bind().await?
+            let builder = if relay { Endpoint::builder(presets::N0) } else { Endpoint::builder(presets::N0DisableRelay) };
+            let builder = match key {
+                Some(k) => builder.secret_key(k),
+                None => builder,
             };
+            let endpoint = builder.transport_config(quic).bind().await?;
             if relay {
                 let _ = tokio::time::timeout(Duration::from_secs(10), endpoint.online()).await;
             } else {
@@ -216,16 +272,19 @@ impl Node {
             let router = Router::builder(endpoint).accept(ALPN, Handler(mesh.clone())).spawn();
             Ok::<_, Error>((router, mesh))
         })?;
-        Ok(Node { relay, runtime, router, mesh, events })
+        Ok(Node { relay, runtime, router, mesh, events, room: None })
     }
 
     pub fn peer(&self) -> PeerId {
         self.mesh.me.peer()
     }
 
-    /// What other players paste to join this one's match on this map: our key, plus our
-    /// addresses when there are no relays to find us by key.
+    /// What other players type or paste to join this one's match on this map: the room code,
+    /// or our key (plus our addresses when there are no relays to find us by key).
     pub fn code(&self, map_seed: u64) -> String {
+        if let Some(r) = &self.room {
+            return r.clone();
+        }
         let mut addr = self.router.endpoint().addr();
         // With relays the key is enough to find us; without, a LAN's IPv4 addresses are.
         addr.addrs.retain(|a| !self.relay && matches!(a, TransportAddr::Ip(ip) if ip.is_ipv4()));
@@ -377,6 +436,9 @@ impl Node {
             steady: 0,
             said_ready: false,
             go: default(),
+            heard: default(),
+            waited: 0.0,
+            ready_for: 0.0,
             conditions: Conditions::from_env(),
         };
         Session { peers, seed, map_seed, bots, transport, gone: vec![] }
@@ -394,8 +456,12 @@ struct Ticket {
     map_seed: u64,
 }
 
-/// The host's address and the map seed in a join code.
+/// The host's address and the map seed in a join code: a room code ("chai-tiger-kulfi-42") or
+/// a long one (with the host's addresses, for LAN play without relays).
 pub fn read_code(code: &str) -> Result<(EndpointAddr, u64), Error> {
+    if let Some(r) = room(code) {
+        return Ok((EndpointAddr::new(room_key(&r).public()), room_map_seed(&r)));
+    }
     let ticket: Ticket = postcard::from_bytes(&unbase32(code.trim()).ok_or("not a join code")?)?;
     Ok((ticket.addr, ticket.map_seed))
 }
@@ -427,6 +493,12 @@ pub struct Transport {
     steady: u32,
     said_ready: bool,
     go: std::sync::atomic::AtomicBool,
+    /// Match traffic has come in for the match we're waiting to begin: whoever sent it has
+    /// begun, so we may too (a lost Go, or a leader that lost sight of us, can't strand us).
+    heard: std::sync::atomic::AtomicBool,
+    /// Seconds spent waiting to begin, and since we said we were ready.
+    waited: f32,
+    ready_for: f32,
     /// Simulated bad network on what arrives (VIVAD_NET_SIM), for testing.
     conditions: Option<Conditions>,
 }
@@ -541,13 +613,24 @@ pub fn begin(world: &mut World, session: Session) {
 }
 
 /// Once our frames run smoothly (the match is loaded), say so; once everyone linked has, go.
+/// Seconds of loading after which we say we're ready even if frames haven't settled, and seconds
+/// after saying so that we begin even without the word to (it was lost, or the leader no longer
+/// sees us: it will once the match's traffic reaches it).
+const READY_ANYWAY: f32 = 15.0;
+const BEGIN_ANYWAY: f32 = 30.0;
+
 fn wait_for_everyone(mut transport: ResMut<Transport>, mut hold: ResMut<Hold>, time: Res<Time<Real>>, peers: Res<Peers>) {
     if !hold.0 {
         return;
     }
     let t = &mut *transport;
     t.steady = if time.delta_secs() < 0.05 { t.steady + 1 } else { 0 };
-    if t.steady >= 20 && !t.said_ready {
+    t.waited += time.delta_secs();
+    if t.said_ready {
+        t.ready_for += time.delta_secs();
+    }
+    // A machine whose frames never settle under 50 ms (a slow one) still says it's ready, late.
+    if (t.steady >= 20 || t.waited > READY_ANYWAY) && !t.said_ready {
         t.said_ready = true;
         let bytes = frame(&Wire::Ready);
         for link in t.mesh.peers.lock().unwrap().values() {
@@ -563,7 +646,7 @@ fn wait_for_everyone(mut transport: ResMut<Transport>, mut hold: ResMut<Hold>, t
     let go = if leads {
         t.said_ready && present().all(|p| p == peers.local || ready.contains(&p))
     } else {
-        t.said_ready && t.go.load(Ordering::Relaxed)
+        t.said_ready && (t.go.load(Ordering::Relaxed) || t.heard.load(Ordering::Relaxed) || t.ready_for > BEGIN_ANYWAY)
     };
     if go {
         if leads {
@@ -600,11 +683,17 @@ pub struct Lobby {
 
 impl Lobby {
     /// Host a match on this map; it starts at `players` (us included), or when `start_now` is called.
-    pub fn host(name: String, relay: bool, players: Option<usize>, bots: u32, map_seed: u64) -> Lobby {
+    /// With relays the match gets a room code (`room`, from `new_room`; the map seed must be
+    /// `room_map_seed` of it); without, a long code carrying our addresses.
+    pub fn host(name: String, relay: bool, room: Option<String>, players: Option<usize>, bots: u32, map_seed: u64) -> Lobby {
         let (lobby, news) = Lobby::new(true);
         let go = lobby.go.clone();
         std::thread::spawn(move || {
-            let result = Node::bind(&name, relay).and_then(|node| {
+            let node = match &room {
+                Some(r) if relay => Node::bind_room(&name, r),
+                _ => Node::bind(&name, relay),
+            };
+            let result = node.and_then(|node| {
                 let _ = news.send(News::Code(node.code(map_seed)));
                 let tell = news.clone();
                 node.host_until(bots, map_seed, &mut |p| drop(tell.send(News::Players(p))), &mut |n| {
@@ -691,7 +780,14 @@ fn receive(transport: Res<Transport>, m: Res<Match>, mut inbox: ResMut<Inbox>, m
     };
     for (from, wire) in arrived {
         match wire {
-            Wire::Game(generation, msg) => queue.push((from, generation, msg)),
+            Wire::Game(generation, msg) => {
+                // A warrior's state only goes out from a match that's running (its owner began);
+                // the rest (inventories, at spawn) can come while everyone still waits.
+                if generation == m.generation && matches!(msg, NetMsg::State(_)) {
+                    transport.heard.store(true, Ordering::Relaxed);
+                }
+                queue.push((from, generation, msg))
+            }
             Wire::Left => {
                 info!("peer {from:016x} left");
                 departures.0.push(from);

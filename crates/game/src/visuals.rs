@@ -39,6 +39,7 @@ impl Plugin for VisualsPlugin {
                     dress_fx,
                     animate_fx,
                     dress_vimana,
+                    warm_up_shaders,
                     sway_vimana,
                     update_zone_wall,
                     cleanup_orphans,
@@ -817,6 +818,58 @@ fn animate_fx(time: Res<Time>, mut q: Query<(&mut Transform, &FxSpin)>) {
             tf.scale = (tf.scale + Vec3::splat(s.0 * 3.0 * time.delta_secs())).min(Vec3::splat(s.0));
         } else {
             tf.scale.y = 0.8 + (t * 9.0).sin() * 0.25;
+        }
+    }
+}
+
+/// Shader warm-up (as Fortnite's "optimising shaders"): a render pipeline is compiled the first
+/// time something is drawn with it, and in the browser that's a hitch mid-fight (the first shot,
+/// the first chest, the first Brahmastra). A couple of seconds in (on the vimana, where a hitch
+/// costs nothing), every material is drawn once for a few seconds, a speck in front of the camera:
+/// the weapons and items on their own meshes, every other untextured material on a sphere. The
+/// browser keeps compiled shaders between visits.
+#[derive(Component)]
+struct WarmUp;
+
+fn warm_up_shaders(
+    mut commands: Commands,
+    mut frame: Local<u32>,
+    palette: Res<Palette>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    cam: Query<Entity, With<crate::camera::MainCamera>>,
+    specks: Query<Entity, With<WarmUp>>,
+) {
+    const START: u32 = 120;
+    const STOP: u32 = START + 200;
+    *frame += 1;
+    if *frame == START {
+        let Ok(cam) = cam.single() else { return };
+        let mut k = 0.0;
+        let mut speck = |commands: &mut Commands, mesh: Handle<Mesh>, mat: Handle<StandardMaterial>| {
+            commands.spawn((WarmUp, Mesh3d(mesh), MeshMaterial3d(mat), bevy::light::NotShadowCaster,
+                            Transform::from_xyz(-0.4 + (k % 40.0) * 0.02, -0.2 + (k / 40.0).floor() * 0.02, -2.0).with_scale(Vec3::splat(0.0004)),
+                            ChildOf(cam)));
+            k += 1.0;
+        };
+        for m in palette.models.values() {
+            speck(&mut commands, m.mesh.clone(), m.mat.clone());
+        }
+        let plain: Vec<_> = materials.iter().filter(|(_, m)| m.normal_map_texture.is_none()).map(|(id, _)| id).collect();
+        for id in plain {
+            if let Some(h) = materials.get_strong_handle(id) {
+                speck(&mut commands, palette.sphere.clone(), h);
+            }
+        }
+        // Shadow-pass pipelines too: one caster per model.
+        for m in palette.models.values() {
+            commands.spawn((WarmUp, Mesh3d(m.mesh.clone()), MeshMaterial3d(m.mat.clone()),
+                            Transform::from_xyz(0.0, -0.3, -2.0).with_scale(Vec3::splat(0.0004)), ChildOf(cam)));
+        }
+        info!("shader warm-up: {} specks", specks.iter().count() + k as usize);
+    }
+    if *frame == STOP {
+        for e in &specks {
+            commands.entity(e).despawn();
         }
     }
 }

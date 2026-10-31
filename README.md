@@ -15,7 +15,7 @@ Rust + Bevy 0.20 (pinned), assets scripted in Blender 5.2 and exported as GLB.
    git clone git@github.com:ashsingh21/vivad.git && cd vivad
    just play                        # alone, with bots
    just host Arjuna                 # online: prints a code, Enter starts the match
-   just join <code> Bhima           # online: join with the host's code (lan=1 on both for one machine / Wi-Fi)
+   just join chai-tiger-kulfi-42 Bhima   # online: join with the host's room code (lan=1 on both for a LAN without internet; then the code is long)
    ```
 
 ```

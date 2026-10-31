@@ -5,7 +5,21 @@ use bevy::prelude::*;
 use game::{animation::WarriorAnimationPlugin, arms::ArmsPlugin, fx::FxPlugin, grass::GrassPlugin, audio::SoundPlugin, autoshot::AutoshotPlugin, buildings::BuildingsPlugin, camera::CameraPlugin, characters::CharacterArtPlugin, hud::HudPlugin, input::InputPlugin, lamps::LampsPlugin, visuals::VisualsPlugin, water::WaterPlugin, quality::QualityPlugin, ASSET_DIR};
 use shared::sim::{MatchConfig, SimPlugin};
 
+/// A clone without Git LFS has text placeholders where the models and textures should be: the
+/// game would start with an empty world (nothing textured ever loads). Say so plainly instead.
+#[cfg(not(target_arch = "wasm32"))]
+fn check_lfs() {
+    let probe = format!("{ASSET_DIR}/models/characters/male.glb");
+    if std::fs::read(&probe).is_ok_and(|b| b.starts_with(b"version https://git-lfs")) {
+        eprintln!("\nThe game's models and textures haven't been downloaded: they're Git LFS placeholders.");
+        eprintln!("In the vivad folder run:\n\n    git lfs install\n    git lfs pull\n\nthen start the game again.\n");
+        std::process::exit(1);
+    }
+}
+
 fn main() {
+    #[cfg(not(target_arch = "wasm32"))]
+    check_lfs();
     // Built in, so the browser build needn't fetch it before the app starts.
     let items_ron = include_str!("../../../assets/data/items.ron").to_string();
     let bots = std::env::var("VIVAD_BOTS").ok().and_then(|s| s.parse().ok()).unwrap_or(15);
@@ -99,7 +113,12 @@ fn online(config: &mut MatchConfig) -> Option<net::Lobby> {
             let players = host.and_then(|h| h.parse::<usize>().ok()).filter(|n| *n > 1);
             // Online, players fight each other: no bots unless the host asks (VIVAD_BOTS=<n>).
             let bots = std::env::var("VIVAD_BOTS").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
-            net::Lobby::host(name, relay, players, bots, config.map_seed)
+            // Across the internet the match gets a room code to read out; its map seed comes with it.
+            let room = relay.then(net::new_room);
+            if let Some(r) = &room {
+                config.map_seed = net::room_map_seed(r);
+            }
+            net::Lobby::host(name, relay, room, players, bots, config.map_seed)
         }
     })
 }
