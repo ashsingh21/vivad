@@ -281,6 +281,7 @@ pub enum SimSet {
 
 #[derive(Resource, Clone, Copy)]
 pub struct MatchConfig {
+    pub map: crate::map::MapId,
     pub map_seed: u64,
     /// Seeds everything random that every peer must agree on (the vimana's path, the zone, the
     /// loot, the chests' contents, bot names). None: a fresh one each match (single player).
@@ -299,7 +300,7 @@ pub struct Hold(pub bool);
 
 impl Default for MatchConfig {
     fn default() -> Self {
-        Self { map_seed: map_seed(), match_seed: None, bots: 15, autopilot: false, bot_skill: BotSkill::from_env(), online: false }
+        Self { map: crate::map::MapId::from_env(), map_seed: map_seed(), match_seed: None, bots: 15, autopilot: false, bot_skill: BotSkill::from_env(), online: false }
     }
 }
 
@@ -363,7 +364,7 @@ impl Plugin for SimPlugin {
     fn build(&self, app: &mut App) {
         let db = ItemDb::load_from_str(&self.items_ron).expect("items.ron");
         let config = app.world().get_resource::<MatchConfig>().copied().unwrap_or_default();
-        let layout = crate::map::generate(config.map_seed);
+        let layout = crate::map::generate(config.map, config.map_seed);
         app.insert_resource(db)
             .insert_resource(config)
             .insert_resource(layout)
@@ -439,6 +440,10 @@ fn spawn_map(mut commands: Commands, layout: Res<MapLayout>) {
     }
     // A city map's buildings: each its real outline, a mesh collider.
     for (index, fp) in layout.footprints.iter().enumerate() {
+        // Water is waded through.
+        if fp.mat == crate::map::Mat::Water {
+            continue;
+        }
         let (pos, tris) = crate::map::footprint::solid(fp);
         commands.spawn((
             MapFootprint(index),

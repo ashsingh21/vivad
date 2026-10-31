@@ -286,9 +286,25 @@ fn build_footprints(
     };
     let mut walls: HashMap<(i32, i32, Mat), MeshBuf> = HashMap::new();
     let mut roofs: HashMap<(i32, i32), MeshBuf> = HashMap::new();
+    let mut water = MeshBuf::default();
     for fp in &layout.footprints {
         let c = fp.pts.iter().sum::<Vec2>() / fp.pts.len() as f32;
         let (cx, cz) = ((c.x / CHUNK).floor() as i32, (c.y / CHUNK).floor() as i32);
+        // Water is only its surface.
+        if fp.mat == Mat::Water {
+            for [i, j, k] in shared::map::footprint::triangulate(&fp.pts) {
+                let p = [fp.pts[i as usize], fp.pts[j as usize], fp.pts[k as usize]].map(|q| Vec3::new(q.x, fp.top, q.y));
+                let p = if (p[1] - p[0]).cross(p[2] - p[0]).y >= 0.0 { p } else { [p[0], p[2], p[1]] };
+                let base = water.pos.len() as u32;
+                for q in p {
+                    water.pos.push(q.to_array());
+                    water.nrm.push([0.0, 1.0, 0.0]);
+                    water.uv.push([q.x / 8.0, q.z / 8.0]);
+                }
+                water.idx.extend_from_slice(&[base, base + 1, base + 2]);
+            }
+            continue;
+        }
         let w = walls.entry((cx, cz, fp.mat)).or_default();
         let n = fp.pts.len();
         let mut along = 0.0;
@@ -341,6 +357,17 @@ fn build_footprints(
     for (_, buf) in roofs {
         let (mesh, centre) = buf.into_mesh();
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(roof.clone()), Transform::from_translation(centre)));
+    }
+    if !water.idx.is_empty() {
+        let (mesh, centre) = water.into_mesh();
+        let m = materials.add(StandardMaterial {
+            base_color: Color::srgba(0.16, 0.32, 0.30, 0.82),
+            alpha_mode: AlphaMode::Blend,
+            perceptual_roughness: 0.05,
+            reflectance: 0.6,
+            ..default()
+        });
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(m), Transform::from_translation(centre), bevy::light::NotShadowCaster));
     }
     info!("city: {} buildings from footprints", layout.footprints.len());
 }

@@ -24,6 +24,9 @@ pub mod ground {
     pub const PARK: u8 = 2;
     pub const PARKING: u8 = 3;
     pub const PLAZA: u8 = 4;
+    pub const WATER: u8 = 5;
+    /// A footpath (a lane in the old city, a path through a park).
+    pub const PATH: u8 = 6;
 }
 
 impl Terrain {

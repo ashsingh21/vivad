@@ -124,6 +124,9 @@ impl Plugin for AutoshotPlugin {
                 shots: vec![
                     ("01_overview", v(-60.0, 260.0, 300.0), v(0.0, 0.0, 0.0)),
                     ("02_bazaar_street", v(-45.0, 4.5, 2.0), v(20.0, 3.0, 0.0)),
+                    // India Gate (VIVAD_MAP=indiagate): from down Kartavya Path, and from the side.
+                    ("ig_gate", v(30.0, 3.0, -4.6), v(115.8, 20.0, -4.6)),
+                    ("ig_gate_side", v(115.8, 8.0, 70.0), v(115.8, 18.0, -4.6)),
                     ("cp_aerial", v(40.0, 20.0, 175.0), v(0.0, 3.0, 118.0)),
                     ("cp_park", v(8.0, 1.7, 103.0), v(-14.0, 5.0, 138.0)),
                     ("cp_street", v(30.0, 2.2, 164.0), v(-2.0, 4.0, 150.0)),

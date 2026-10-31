@@ -96,6 +96,10 @@ pub fn paint_city(x: f32, z: f32, class: u8) -> (LinearRgba, f32) {
         ground::PARKING => (lin([0.27, 0.27, 0.28]), 0.0),
         ground::PLAZA => (mix(lin([0.62, 0.55, 0.47]), lin([0.55, 0.42, 0.36]), fbm(x / 4.0, z / 4.0, 2, 73)), 0.0),
         ground::PARK => (mix(lin([0.30, 0.44, 0.16]), lin([0.23, 0.38, 0.13]), fbm(x / 22.0, z / 22.0, 3, 91) * 1.6 - 0.3), 1.0),
+        // Under the water: silt (seen through the surface).
+        ground::WATER => (mix(lin([0.22, 0.24, 0.18]), lin([0.30, 0.28, 0.20]), fbm(x / 5.0, z / 5.0, 2, 79)), 0.0),
+        // Lanes and park paths: trodden earth and old brick.
+        ground::PATH => (mix(lin([0.55, 0.45, 0.34]), lin([0.50, 0.36, 0.28]), fbm(x / 3.0, z / 3.0, 2, 83)), 0.0),
         // Pavement: worn sandstone-grey slabs, darker where it's dusty.
         _ => (mix(lin([0.55, 0.52, 0.47]), lin([0.47, 0.43, 0.38]), fbm(x / 7.0, z / 7.0, 2, 77) * 1.4 - 0.2), 0.0),
     };

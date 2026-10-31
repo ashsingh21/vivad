@@ -105,7 +105,8 @@ fn online(config: &mut MatchConfig) -> Option<net::Lobby> {
     Some(match join {
         Some(code) => {
             // The code names the map, so it is built before the match starts.
-            let (_, map_seed) = net::read_code(&code).unwrap_or_else(|e| panic!("VIVAD_JOIN: {e}"));
+            let (_, map, map_seed) = net::read_code(&code).unwrap_or_else(|e| panic!("VIVAD_JOIN: {e}"));
+            config.map = map;
             config.map_seed = map_seed;
             net::Lobby::join(name, relay, code)
         }
@@ -113,12 +114,14 @@ fn online(config: &mut MatchConfig) -> Option<net::Lobby> {
             let players = host.and_then(|h| h.parse::<usize>().ok()).filter(|n| *n > 1);
             // Online, players fight each other: no bots unless the host asks (VIVAD_BOTS=<n>).
             let bots = std::env::var("VIVAD_BOTS").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
-            // Across the internet the match gets a room code to read out; its map seed comes with it.
-            let room = relay.then(net::new_room);
+            // Across the internet the match gets a room code to read out, drawn so that it names
+            // the host's map (VIVAD_MAP); its map seed comes with it.
+            let room = relay.then(|| net::new_room_for(config.map));
             if let Some(r) = &room {
+                config.map = net::room_map(r);
                 config.map_seed = net::room_map_seed(r);
             }
-            net::Lobby::host(name, relay, room, players, bots, config.map_seed)
+            net::Lobby::host(name, relay, room, players, bots, config.map, config.map_seed)
         }
     })
 }

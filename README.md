@@ -34,7 +34,9 @@ WASD move, mouse look, Space jump / leap from the Vimana / open Garuda wings,
 LMB attack / draw (hold for Pinaka), RMB aim, E open chest / pick up, R reload (R restarts after a match),
 1-6 or mouse wheel hotbar, Shift sprint, F3 performance overlay, F4 cycles quality (Low / Medium / High),
 Esc releases the mouse. Quality is picked from the GPU at start; `VIVAD_QUALITY=low just play` forces one.
-The map is Delhi (Connaught Place, from OpenStreetMap); `VIVAD_MAP=bharat just play` plays the ancient-India map.
+Maps, all from OpenStreetMap at real scale: Connaught Place (`just play`), Chandni Chowk (`just play map=chandni`),
+Hauz Khas (`map=hauzkhas`), India Gate (`map=indiagate`); `map=bharat` is the ancient-India one. Hosting with
+`just host Arjuna map=chandni` gives a room code that tells joiners the map.
 Gamepad: sticks, A jump, RT fire, LT aim, X interact, Y reload, bumpers cycle.
 
 Blender path comes from `.env` (`BLENDER=...`, see `.env.example`).

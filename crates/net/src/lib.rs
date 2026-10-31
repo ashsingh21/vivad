@@ -18,6 +18,7 @@ use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey, TransportAddr, Watcher};
 use serde::{Deserialize, Serialize};
 use shared::sim::flow::{Match, start_match};
+use shared::map::MapId;
 use shared::sim::{Hold, MatchConfig};
 use shared::sim::net::{Departures, Inbox, NetMsg, Outbox, PeerId, Peers, WarriorState};
 use tokio::runtime::Runtime;
@@ -223,6 +224,24 @@ fn room_key(room: &str) -> SecretKey {
     SecretKey::from_bytes(&blake3::derive_key("panga 2026-10 room key", room.as_bytes()))
 }
 
+/// Which of Panga's maps a room plays: its code says, so the host draws codes until one lands
+/// on the map it chose (`new_room_for`).
+pub fn room_map(room: &str) -> MapId {
+    let h = blake3::derive_key("panga 2026-10 room map", room.as_bytes());
+    MapId::DELHI[h[0] as usize % MapId::DELHI.len()]
+}
+
+/// A fresh room code for a match on `map` (one of Panga's Delhi maps; any other gets a room on
+/// whichever the code lands).
+pub fn new_room_for(map: MapId) -> String {
+    loop {
+        let r = new_room();
+        if room_map(&r) == map || !MapId::DELHI.contains(&map) {
+            return r;
+        }
+    }
+}
+
 /// The map seed every peer in the room plays.
 pub fn room_map_seed(room: &str) -> u64 {
     let h = blake3::derive_key("panga 2026-10 room map seed", room.as_bytes());
@@ -281,14 +300,14 @@ impl Node {
 
     /// What other players type or paste to join this one's match on this map: the room code,
     /// or our key (plus our addresses when there are no relays to find us by key).
-    pub fn code(&self, map_seed: u64) -> String {
+    pub fn code(&self, map: MapId, map_seed: u64) -> String {
         if let Some(r) = &self.room {
             return r.clone();
         }
         let mut addr = self.router.endpoint().addr();
         // With relays the key is enough to find us; without, a LAN's IPv4 addresses are.
         addr.addrs.retain(|a| !self.relay && matches!(a, TransportAddr::Ip(ip) if ip.is_ipv4()));
-        base32(&postcard::to_stdvec(&Ticket { addr, map_seed }).expect("encode"))
+        base32(&postcard::to_stdvec(&Ticket { addr, map_seed, map: map.index() }).expect("encode"))
     }
 
     fn dial(&self, addr: EndpointAddr) {
@@ -362,7 +381,7 @@ impl Node {
     /// Join, telling `report` who is in, for as long as `stay` says so (leaving closes our links,
     /// and the host drops us from the lobby).
     pub fn join_reporting(mut self, code: &str, report: &mut dyn FnMut(Vec<String>), stay: &mut dyn FnMut() -> bool) -> Result<Session, Error> {
-        let (addr, _) = read_code(code)?;
+        let (addr, _, _) = read_code(code)?;
         let host = peer_id(&addr.id);
         self.dial(addr);
         let me = self.peer();
@@ -454,16 +473,17 @@ fn names(members: &[Member]) -> Vec<String> {
 struct Ticket {
     addr: EndpointAddr,
     map_seed: u64,
+    map: u8,
 }
 
 /// The host's address and the map seed in a join code: a room code ("chai-tiger-kulfi-42") or
 /// a long one (with the host's addresses, for LAN play without relays).
-pub fn read_code(code: &str) -> Result<(EndpointAddr, u64), Error> {
+pub fn read_code(code: &str) -> Result<(EndpointAddr, MapId, u64), Error> {
     if let Some(r) = room(code) {
-        return Ok((EndpointAddr::new(room_key(&r).public()), room_map_seed(&r)));
+        return Ok((EndpointAddr::new(room_key(&r).public()), room_map(&r), room_map_seed(&r)));
     }
     let ticket: Ticket = postcard::from_bytes(&unbase32(code.trim()).ok_or("not a join code")?)?;
-    Ok((ticket.addr, ticket.map_seed))
+    Ok((ticket.addr, MapId::from_index(ticket.map), ticket.map_seed))
 }
 
 /// A match that has started: who is in it and what it was seeded with, and the live transport.
@@ -685,7 +705,7 @@ impl Lobby {
     /// Host a match on this map; it starts at `players` (us included), or when `start_now` is called.
     /// With relays the match gets a room code (`room`, from `new_room`; the map seed must be
     /// `room_map_seed` of it); without, a long code carrying our addresses.
-    pub fn host(name: String, relay: bool, room: Option<String>, players: Option<usize>, bots: u32, map_seed: u64) -> Lobby {
+    pub fn host(name: String, relay: bool, room: Option<String>, players: Option<usize>, bots: u32, map: MapId, map_seed: u64) -> Lobby {
         let (lobby, news) = Lobby::new(true);
         let go = lobby.go.clone();
         std::thread::spawn(move || {
@@ -694,7 +714,7 @@ impl Lobby {
                 _ => Node::bind(&name, relay),
             };
             let result = node.and_then(|node| {
-                let _ = news.send(News::Code(node.code(map_seed)));
+                let _ = news.send(News::Code(node.code(map, map_seed)));
                 let tell = news.clone();
                 node.host_until(bots, map_seed, &mut |p| drop(tell.send(News::Players(p))), &mut |n| {
                     players.is_some_and(|p| n >= p) || go.load(Ordering::Relaxed)

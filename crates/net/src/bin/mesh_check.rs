@@ -42,7 +42,7 @@ fn main() {
     // VIVAD_RELAY=1: go through iroh's relays and address lookup, as players across the internet would.
     let relay = std::env::var("VIVAD_RELAY").is_ok();
     let mut nodes: Vec<Node> = (0..n).map(|i| Node::bind(&format!("Player{}", i + 1), relay).expect("bind")).collect();
-    let code = nodes[0].code(7);
+    let code = nodes[0].code(shared::map::MapId::Cp, 7);
     println!("join code: {code} ({} chars)", code.len());
     let host = nodes.remove(0);
     // The host waits for one more than will play: a player who crashes as the match is set.

@@ -1,11 +1,13 @@
-//! Panga's map: Connaught Place and the head of Janpath, New Delhi, at real scale, from
-//! OpenStreetMap (assets/data/maps/delhi_cp.json, written by tools/osm/delhi.py; map data (c)
-//! OpenStreetMap contributors, ODbL 1.0).
+//! Panga's maps: Delhi at real scale, from OpenStreetMap (assets/data/maps/delhi_<area>.json,
+//! written by tools/osm/delhi.py; map data (c) OpenStreetMap contributors, ODbL 1.0): Connaught
+//! Place, Chandni Chowk, Hauz Khas and India Gate.
 //!
-//! The inner circle's blocks are built by crate::map::cp at their real radii, round Central Park
-//! with its flag; every other mapped building is its real outline, extruded (crate::map::footprint);
-//! roads, car parks and parks are painted onto flat ground (`Terrain::ground`). Avenue trees line
-//! the main roads and fill the parks. Axes: x east, z south, metres from the middle of the map.
+//! Every mapped building is its real outline, extruded (crate::map::footprint), as are the houses
+//! the converter fills the old city's and the village's gaps with; roads, lanes, car parks, parks
+//! and water are painted onto flat ground (`Terrain::ground`), the water sunk for wading. Some
+//! landmarks are built here: Connaught Place's inner circle (crate::map::cp, at its real radii,
+//! round Central Park with its flag) and India Gate. Avenue trees line the main roads and fill the
+//! parks. Axes: x east, z south, metres from the middle of the map.
 
 use std::f32::consts::PI;
 
@@ -18,14 +20,26 @@ use super::build::{Builder, Frame};
 use super::terrain::{self, Pad, TerrainSpec, ground};
 use super::{ChestKind, Footprint, MapLayout, Mat, Poi, Prop};
 
-const DATA: &str = include_str!("../../../../assets/data/maps/delhi_cp.json");
+fn data(map: super::MapId) -> &'static str {
+    match map {
+        super::MapId::Chandni => include_str!("../../../../assets/data/maps/delhi_chandni.json"),
+        super::MapId::HauzKhas => include_str!("../../../../assets/data/maps/delhi_hauzkhas.json"),
+        super::MapId::IndiaGate => include_str!("../../../../assets/data/maps/delhi_indiagate.json"),
+        _ => include_str!("../../../../assets/data/maps/delhi_cp.json"),
+    }
+}
 const HALF: f32 = 250.0;
 /// Ground samples per side: about a metre apart, for roads' edges.
 const SAMPLES: usize = 561;
 
 #[derive(Deserialize)]
 struct Data {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
     south_shift: f32,
+    #[serde(default)]
+    landmarks: Vec<Landmark>,
     buildings: Vec<Building>,
     roads: Vec<Road>,
     areas: Vec<Area>,
@@ -53,6 +67,13 @@ struct Road {
 struct Area {
     kind: String,
     pts: Vec<[f32; 2]>,
+}
+
+#[derive(Deserialize)]
+struct Landmark {
+    kind: String,
+    x: f32,
+    z: f32,
 }
 
 #[derive(Deserialize)]
@@ -86,9 +107,9 @@ fn ring(center: Vec3) -> super::cp::Ring {
     }
 }
 
-pub fn generate(seed: u64) -> MapLayout {
-    let data: Data = serde_json::from_str(DATA).expect("assets/data/maps/delhi_cp.json");
-    let mut map = MapLayout { name: "Dilli".into(), half_extent: HALF, ..default() };
+pub fn generate(id: super::MapId, seed: u64) -> MapLayout {
+    let data: Data = serde_json::from_str(data(id)).expect("assets/data/maps/delhi_*.json");
+    let mut map = MapLayout { name: data.title.clone().unwrap_or_else(|| "Dilli".into()), half_extent: HALF, ..default() };
     map.terrain = terrain::generate(&TerrainSpec {
         size: 2.0 * HALF + 60.0,
         n: SAMPLES,
@@ -104,22 +125,80 @@ pub fn generate(seed: u64) -> MapLayout {
     });
     paint_ground(&mut map, &data);
     let cp = Vec3::new(0.0, 0.0, -data.south_shift);
-    let ring = ring(cp);
+    // Only Connaught Place has the ring; elsewhere a ring of no size keeps nothing out.
+    let ring = if id == super::MapId::Cp { ring(cp) } else { super::cp::Ring { ri: 0.0, ro: 0.0, ..self::ring(Vec3::new(1.0e5, 0.0, 1.0e5)) } };
     let mut rng = SmallRng::seed_from_u64(seed);
     let mut b = Builder::new(&mut map);
     boundary(&mut b);
-    super::cp::build(&mut b, &mut rng, &ring);
+    if id == super::MapId::Cp {
+        super::cp::build(&mut b, &mut rng, &ring);
+    }
+    for l in &data.landmarks {
+        if l.kind == "india_gate" {
+            india_gate(&mut b, Vec3::new(l.x, 0.0, l.z));
+        }
+    }
+    water(&mut b, &data);
     footprints(&mut b, &mut rng, &data, &ring);
     trees(&mut b, &mut rng, &data, &ring);
     street_loot(&mut b, &mut rng, &data, &ring);
     map.terrain.settle_under(&map.blocks);
-    map.pois = data
-        .pois
-        .iter()
-        .map(|p| Poi { name: p.name.clone(), center: Vec3::new(p.x, 0.0, p.z), radius: p.r })
-        .chain([Poi { name: "Connaught Place".into(), center: cp, radius: 175.0 }])
-        .collect();
+    map.pois = data.pois.iter().map(|p| Poi { name: p.name.clone(), center: Vec3::new(p.x, 0.0, p.z), radius: p.r }).collect();
+    if id == super::MapId::Cp {
+        map.pois.push(Poi { name: "Connaught Place".into(), center: cp, radius: 175.0 });
+    }
     map
+}
+
+/// The water's depth below the street, and where its surface stands.
+const WATER_BED: f32 = -1.4;
+const WATER_TOP: f32 = -0.35;
+
+/// Ponds, the tank and the canals: the ground under them sunk to a wading depth, and a surface on
+/// top (no collider: you wade).
+fn water(b: &mut Builder, data: &Data) {
+    let t = &mut b.map.terrain;
+    let n = t.n;
+    for (i, j) in (0..n).flat_map(|i| (0..n).map(move |j| (i, j))) {
+        if t.ground[i * n + j] == ground::WATER {
+            t.h[i * n + j] = WATER_BED;
+        }
+    }
+    for a in data.areas.iter().filter(|a| a.kind == "water") {
+        b.map.footprints.push(Footprint { pts: a.pts.iter().map(v2).collect(), base: WATER_BED, top: WATER_TOP, mat: Mat::Water });
+    }
+}
+
+/// India Gate (Lutyens, 1931): a 42 m arch of buff sandstone on a red base, its 9 m opening on the
+/// east-west axis down Kartavya Path; an attic with cornices above, a stepped crown and a shallow
+/// bowl at the top. On a marble plaza.
+fn india_gate(b: &mut Builder, c: Vec3) {
+    let f = Frame::new(c, 0.0);
+    let (depth, half_w, open) = (4.6, 10.6, 4.55);
+    b.bx(f, Vec3::new(0.0, -0.1, 0.0), Vec3::new(36.0, 0.26, 44.0), Mat::Marble);
+    for s in [-1.0f32, 1.0] {
+        let z = s * (open + half_w) / 2.0;
+        let w = half_w - open;
+        // The piers, a red plinth and the buff shaft, with a band at the springing.
+        b.bx(f, Vec3::new(0.0, 1.2, z), Vec3::new(depth * 2.0 + 0.6, 2.4, w + 0.6), Mat::RedSandstone);
+        b.bx(f, Vec3::new(0.0, 2.4 + 8.8, z), Vec3::new(depth * 2.0, 17.6, w), Mat::Sandstone);
+        b.deco(f, Vec3::new(0.0, 15.6, z), Vec3::new(depth * 2.0 + 0.4, 0.6, w + 0.4), Mat::Sandstone);
+        // The arch's curve: steps corbelling in from each pier to the crown of the opening.
+        for k in 0..5 {
+            let y = 16.0 + k as f32 * 0.8;
+            let inset = open - (open * (1.0 - (1.0 - (k as f32 + 1.0) / 5.0).powi(2)).sqrt()).max(0.0);
+            b.bx(f, Vec3::new(0.0, y + 0.4, s * (open - inset / 2.0)), Vec3::new(depth * 2.0, 0.8, inset.max(0.05)), Mat::Sandstone);
+        }
+    }
+    // The attic over the arch, its cornices, the stepped crown and the bowl.
+    b.bx(f, Vec3::new(0.0, 20.0 + 6.5, 0.0), Vec3::new(depth * 2.0, 13.0, half_w * 2.0), Mat::Sandstone);
+    b.deco(f, Vec3::new(0.0, 33.2, 0.0), Vec3::new(depth * 2.0 + 0.8, 0.5, half_w * 2.0 + 0.8), Mat::Sandstone);
+    b.deco(f, Vec3::new(0.0, 22.0, 0.0), Vec3::new(depth * 2.0 + 0.5, 0.4, half_w * 2.0 + 0.5), Mat::Sandstone);
+    b.bx(f, Vec3::new(0.0, 33.45 + 1.6, 0.0), Vec3::new(depth * 1.6, 3.2, half_w * 1.4), Mat::Sandstone);
+    b.bx(f, Vec3::new(0.0, 36.65 + 1.2, 0.0), Vec3::new(depth * 1.2, 2.4, half_w * 0.9), Mat::Sandstone);
+    b.cyl(f, Vec3::new(0.0, 39.05, 0.0), 3.4, 1.0, Mat::Sandstone);
+    b.cyl(f, Vec3::new(0.0, 40.05, 0.0), 4.2, 1.2, Mat::Sandstone);
+    b.map.pois.push(Poi { name: "India Gate".into(), center: c, radius: 30.0 });
 }
 
 /// Invisible walls round the playable square (the city carries on beyond them).
@@ -143,11 +222,15 @@ fn paint_ground(map: &mut MapLayout, data: &Data) {
     let step = t.step();
     let half = t.size * 0.5;
     let idx = |c: f32| (((c + half) / step).floor().max(0.0) as usize).min(n - 1);
-    for a in &data.areas {
+    // Water last of the areas: a lake inside a park is water.
+    let mut areas: Vec<&Area> = data.areas.iter().collect();
+    areas.sort_by_key(|a| a.kind == "water");
+    for a in areas {
         let pts: Vec<Vec2> = a.pts.iter().map(v2).collect();
         let class = match a.kind.as_str() {
             "park" | "pitch" => ground::PARK,
             "parking" => ground::PARKING,
+            "water" => ground::WATER,
             _ => continue,
         };
         let (lo, hi) = pts.iter().fold((Vec2::MAX, Vec2::MIN), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
@@ -160,7 +243,11 @@ fn paint_ground(map: &mut MapLayout, data: &Data) {
         }
     }
     for r in &data.roads {
-        let class = if matches!(r.kind.as_str(), "pedestrian" | "living_street") { ground::PLAZA } else { ground::ROAD };
+        let class = match r.kind.as_str() {
+            "pedestrian" | "living_street" => ground::PLAZA,
+            "path" => ground::PATH,
+            _ => ground::ROAD,
+        };
         for s in r.pts.windows(2) {
             let (a, c) = (v2(&s[0]), v2(&s[1]));
             let hw = r.w * 0.5;
@@ -171,9 +258,12 @@ fn paint_ground(map: &mut MapLayout, data: &Data) {
                     let d = (p - a).reject_from(c - a).length();
                     let along = (p - a).dot((c - a).normalize_or_zero());
                     let inside = if along < 0.0 { p.distance(a) < hw } else if along > a.distance(c) { p.distance(c) < hw } else { d < hw };
-                    if inside {
+                    // Paths don't cross water (a bridge's path would sink it).
+                    if inside && !(class == ground::PATH && t.ground[i * n + j] == ground::WATER) {
                         t.ground[i * n + j] = class;
-                        t.road_d[i * n + j] = 0.0;
+                        if class == ground::ROAD {
+                            t.road_d[i * n + j] = 0.0;
+                        }
                     }
                 }
             }
@@ -185,6 +275,11 @@ fn paint_ground(map: &mut MapLayout, data: &Data) {
 /// White for the colonial blocks and offices, the rest in Delhi's plasters and red sandstone.
 fn footprints(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp::Ring) {
     let palette = [Mat::Plaster, Mat::Plaster, Mat::PlasterOchre, Mat::Sandstone, Mat::RedSandstone, Mat::Brick];
+    // The old city's and the village's houses: limewashed in white, ochre and blue, or bare brick.
+    let houses = [Mat::Plaster, Mat::PlasterOchre, Mat::PlasterBlue, Mat::Brick, Mat::PlasterOchre];
+    // About 110 chests a map, however many buildings it has.
+    let in_play = data.buildings.iter().filter(|b| b.pts.iter().map(v2).sum::<Vec2>().abs().max_element() < (HALF - 8.0) * b.pts.len() as f32).count();
+    let chest_odds = (110.0 / in_play.max(1) as f64).min(0.5);
     for bld in &data.buildings {
         let pts: Vec<Vec2> = bld.pts.iter().map(v2).collect();
         let c = pts.iter().sum::<Vec2>() / pts.len() as f32;
@@ -196,11 +291,13 @@ fn footprints(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp
             "commercial" | "retail" | "cp" => Mat::Plaster,
             "mosque" => Mat::RedSandstone,
             "temple" => Mat::Sandstone,
+            "ruins" => Mat::Granite,
+            "infill" => houses[rng.random_range(0..houses.len())],
             _ => palette[rng.random_range(0..palette.len())],
         };
         b.map.footprints.push(Footprint { pts, base: bld.base.unwrap_or(0.0), top: bld.h, mat });
         // A chest at the foot of every other building inside the play area, on the pavement.
-        if c.abs().max_element() < HALF - 8.0 && rng.random_bool(0.5) {
+        if c.abs().max_element() < HALF - 8.0 && rng.random_bool(chest_odds) {
             let k = rng.random_range(0..bld.pts.len());
             let (p, q) = (v2(&bld.pts[k]), v2(&bld.pts[(k + 1) % bld.pts.len()]));
             let mid = (p + q) * 0.5;
@@ -224,7 +321,7 @@ fn open(map: &MapLayout, ring: &super::cp::Ring, p: Vec2, clear: f32) -> bool {
     if r > ring.ri - 6.0 && r < ring.ro + 3.0 || r < 12.0 {
         return false;
     }
-    if map.terrain.ground_at(p.x, p.y) == Some(ground::ROAD) {
+    if matches!(map.terrain.ground_at(p.x, p.y), Some(ground::ROAD | ground::WATER | ground::PATH)) {
         return false;
     }
     !map.footprints.iter().any(|f| {
@@ -242,14 +339,28 @@ fn trees(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp::Rin
             tree(b, rng, p);
         }
     }
+    // Parks get groves, not forests (a lawn should stay a lawn, and a deer park would otherwise
+    // be thousands): a tree to every 900 square metres, at most 150 a park and 500 a map.
+    let mut planted = 0;
     for a in data.areas.iter().filter(|a| a.kind == "park") {
         let pts: Vec<Vec2> = a.pts.iter().map(v2).collect();
         let (lo, hi) = pts.iter().fold((Vec2::MAX, Vec2::MIN), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
-        let target = ((hi - lo).x * (hi - lo).y / 260.0) as usize;
+        let lo = lo.max(Vec2::splat(-HALF - 40.0));
+        let hi = hi.min(Vec2::splat(HALF + 40.0));
+        if lo.x >= hi.x || lo.y >= hi.y {
+            continue;
+        }
+        let target = (((hi - lo).x * (hi - lo).y / 900.0) as usize).min(150);
+        let mut here = 0;
         for _ in 0..target * 3 {
+            if here >= target || planted >= 500 {
+                break;
+            }
             let p = Vec2::new(rng.random_range(lo.x..hi.x), rng.random_range(lo.y..hi.y));
             if super::footprint::contains(&pts, p) && open(b.map, ring, p, 2.0) {
                 tree(b, rng, p);
+                here += 1;
+                planted += 1;
             }
         }
     }
@@ -272,9 +383,18 @@ fn trees(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp::Rin
     }
 }
 
-/// Loose finds along the pavements and in the parks.
+/// Loose finds along the pavements and in the parks, and chests in the open where a map has too
+/// few buildings to stand them by (India Gate's lawns).
 fn street_loot(b: &mut Builder, rng: &mut SmallRng, _data: &Data, ring: &super::cp::Ring) {
     let w = Frame::new(Vec3::ZERO, 0.0);
+    let mut tries = 0;
+    while b.map.chests.len() < 70 && tries < 5000 {
+        tries += 1;
+        let p = Vec2::new(rng.random_range(-HALF + 8.0..HALF - 8.0), rng.random_range(-HALF + 8.0..HALF - 8.0));
+        if open(b.map, ring, p, 2.0) && !b.map.chests.iter().any(|c| c.pos.xz().distance(p) < 15.0) {
+            b.chest(w, Vec3::new(p.x, 0.0, p.y), rng.random_range(0.0..std::f32::consts::TAU), ChestKind::Peti);
+        }
+    }
     let mut placed = 0;
     let mut tries = 0;
     while placed < 90 && tries < 5000 {

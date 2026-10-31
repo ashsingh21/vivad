@@ -81,10 +81,11 @@ view name:
     cargo run -p game --bin asset_check -- models/weapons/{{name}}.glb previews/{{name}}/bevy_{{name}}.png
 
 
-# Play (release build; first build takes a few minutes). `just play random` for a new map (its
-# seed is printed), `just play 1234` to replay one.
-play seed="7":
-    VIVAD_MAP_SEED={{seed}} cargo run --release -p game --bin game
+# Play (release build; first build takes a few minutes). Maps: cp (Connaught Place), chandni
+# (Chandni Chowk), hauzkhas, indiagate, bharat (ancient India): `just play map=chandni`.
+# `just play random` for a fresh seed (printed), `just play 1234` to replay one.
+play seed="7" map="cp":
+    VIVAD_MAP={{map}} VIVAD_MAP_SEED={{seed}} cargo run --release -p game --bin game
 
 # Headless matches to sanity-check the loop and bots: just sim 5
 sim matches="3" bots="15":
@@ -109,8 +110,8 @@ p2p peers="3" bots="6" seconds="420" speed="4" leave="90" rematch="90":
 # Host an online match: shows the code the others pass to `just join`; Enter starts it (or it starts
 # by itself at `players`, you included). Players only, unless `bots` adds some. lan=1 skips iroh's
 # relays (one machine or a LAN).
-host name="" players="0" bots="0" lan="":
-    VIVAD_HOST={{players}} VIVAD_NAME="{{name}}" VIVAD_BOTS={{bots}} {{ if lan != "" { "VIVAD_LAN=1" } else { "" } }} cargo run --release -p game --bin game
+host name="" players="0" bots="0" lan="" map="cp":
+    VIVAD_MAP={{map}} VIVAD_HOST={{players}} VIVAD_NAME="{{name}}" VIVAD_BOTS={{bots}} {{ if lan != "" { "VIVAD_LAN=1" } else { "" } }} cargo run --release -p game --bin game
 
 # Join an online match by its code (lan=1 if the host used it).
 join code name="" lan="":
