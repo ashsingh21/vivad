@@ -99,6 +99,10 @@ pub(crate) fn apply_lod_ranges(root: Entity, ranges: &[(Range<f32>, Range<f32>)]
 fn dress_props(mut commands: Commands, q: Query<(Entity, &PropIndex), Added<PropIndex>>, layout: Res<MapLayout>, models: Res<Models>) {
     for (e, PropIndex(i)) in &q {
         let prop = &layout.props[*i];
+        // Trees and bushes are drawn merged, per chunk (crate::batch).
+        if crate::batch::batched(prop.model) {
+            continue;
+        }
         let big = ["banyan", "ajanta", "stupa", "gopuram", "temple"].iter().any(|k| prop.model.contains(k));
         let bush = prop.model.contains("bush");
         // Where LOD0 gives way to LOD1, and LOD1 to LOD2 (trees, the stepwell, the fort, the caves).

@@ -18,7 +18,17 @@ fn main() {
     }
     app.insert_resource(config)
         .add_plugins(
-            DefaultPlugins
+            {
+                let plugins = DefaultPlugins.build();
+                // Single-threaded (VIVAD_THREADS=1) also means no render thread, as in the browser.
+                #[cfg(not(target_arch = "wasm32"))]
+                let plugins = if std::env::var("VIVAD_THREADS").as_deref() == Ok("1") {
+                    plugins.disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>()
+                } else {
+                    plugins
+                };
+                plugins
+            }
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         title: "Panga".into(),
@@ -33,12 +43,19 @@ fn main() {
                     ..default()
                 })
                 // No .meta files beside the assets: the browser would fetch (and 404) one for each.
+                // VIVAD_THREADS=1 runs everything on one thread, as the browser does, for measuring.
+                .set(TaskPoolPlugin {
+                    task_pool_options: match std::env::var("VIVAD_THREADS").ok().and_then(|s| s.parse().ok()) {
+                        Some(n) => TaskPoolOptions::with_num_threads(n),
+                        None => TaskPoolOptions::default(),
+                    },
+                })
                 .set(AssetPlugin { file_path: ASSET_DIR.into(), meta_check: bevy::asset::AssetMetaCheck::Never, ..default() }),
         )
         .add_plugins(PhysicsPlugins::default())
         .add_plugins(SimPlugin { items_ron })
         .add_plugins((InputPlugin, VisualsPlugin, ArmsPlugin, FxPlugin, GrassPlugin, LampsPlugin, WarriorAnimationPlugin, SoundPlugin, BuildingsPlugin, CharacterArtPlugin, CameraPlugin, HudPlugin, AutoshotPlugin, WaterPlugin))
-        .add_plugins(QualityPlugin)
+        .add_plugins((QualityPlugin, game::batch::BatchPlugin))
         .add_plugins(bevy::diagnostic::LogDiagnosticsPlugin {
             wait_duration: std::time::Duration::from_secs(10),
             filter: std::env::var("VIVAD_PERF_ALL").is_ok().then(|| None).unwrap_or_else(|| std::env::var("VIVAD_PERF_LOG").is_ok().then(|| {

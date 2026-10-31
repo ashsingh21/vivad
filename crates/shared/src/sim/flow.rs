@@ -140,7 +140,9 @@ pub fn start_match(world: &mut World) {
             Transform::from_translation(Vec3::new(0.0, VIMANA_HEIGHT, 0.0)),
             RigidBody::Kinematic,
             Collider::capsule(CAPSULE_RADIUS, CAPSULE_LENGTH),
-            CollisionLayers::new(Layer::Character, [Layer::World, Layer::Door]),
+            // Found by spatial queries (shots, sweeps, movement), but never paired for contacts:
+            // movement is our own collide-and-slide, and nothing reads contacts.
+            CollisionLayers::new(Layer::Character, LayerMask::NONE),
         ));
         if !local {
             e.insert((Remote, LastUpdate::default(), NetPose::default()));

@@ -192,7 +192,7 @@ fn vitals(
     let Ok(h) = q.single() else { return };
     for mut n in &mut hp { n.width = percent(100.0 * h.hp / h.max_hp); }
     for mut n in &mut sh { n.width = percent(100.0 * h.shield / h.max_shield); }
-    for mut s in &mut t { **s = format!("Jaan {:.0}   Kavach {:.0}", h.hp.ceil(), h.shield.ceil()); }
+    for mut s in &mut t { set_text(&mut s, format!("Jaan {:.0}   Kavach {:.0}", h.hp.ceil(), h.shield.ceil())); }
 }
 
 fn hotbar(
@@ -213,7 +213,7 @@ fn hotbar(
             .unwrap_or(Color::srgba(0.05, 0.04, 0.03, 0.55));
     }
     for (SlotText(i), mut t) in &mut texts {
-        **t = match stack_of(*i) {
+        let new = match stack_of(*i) {
             Some(s) => {
                 let d = db.get(&s.id);
                 match d.kind {
@@ -223,16 +223,18 @@ fn hotbar(
             }
             None => String::new(),
         };
+        set_text(&mut t, new);
     }
     for mut t in &mut ammo {
         let cur = inv.current();
-        **t = match cur.map(|s| (s, &db.get(&s.id).kind)) {
+        let new = match cur.map(|s| (s, &db.get(&s.id).kind)) {
             Some((s, ItemKind::Bow { magazine, .. })) => {
                 let state = if act.reload_left > 0.0 { "  reloading" } else if act.charge > 0.0 { "  drawing" } else { "" };
                 format!("{} / {}   Goli {}{}", s.count, magazine, inv.arrows, state)
             }
             _ => format!("Goli {}", inv.arrows),
         };
+        set_text(&mut t, new);
     }
 }
 
@@ -305,7 +307,7 @@ fn prompts(
     if now < toast.1 {
         s = toast.0.clone();
     }
-    for mut t in &mut prompt { **t = s.clone(); }
+    for mut t in &mut prompt { set_text(&mut t, s.clone()); }
     for mut v in &mut bar { *v = if progress.is_some() { Visibility::Inherited } else { Visibility::Hidden }; }
     for mut n in &mut fill { n.width = percent(100.0 * progress.unwrap_or(0.0)); }
 }
@@ -326,7 +328,7 @@ fn feed(
         f.lines.drain(0..n - 6);
     }
     for mut t in &mut q {
-        **t = f.lines.iter().map(|l| l.0.as_str()).collect::<Vec<_>>().join("\n");
+        set_text(&mut t, f.lines.iter().map(|l| l.0.as_str()).collect::<Vec<_>>().join("\n"));
     }
 }
 
@@ -409,7 +411,7 @@ fn top_right(
     let here = layout.pois.iter().find(|p| p.center.xz().distance(me) < p.radius).map(|p| p.name.as_str()).unwrap_or(layout.name.as_str());
     let safe = if to_safe > 1.0 { format!("Safe zone {to_safe:.0} m door") } else { "Safe zone mein ho".into() };
     for mut s in &mut q {
-        **s = format!("{here}\nAlive {}   Kills {}\n{zone_line}\n{safe}", m.alive, w.kills);
+        set_text(&mut s, format!("{here}\nAlive {}   Kills {}\n{zone_line}\n{safe}", m.alive, w.kills));
     }
 }
 
@@ -466,7 +468,7 @@ fn overlay(
     };
     for mut v in &mut o { *v = if msg.is_some() { Visibility::Inherited } else { Visibility::Hidden }; }
     if let Some(s) = msg {
-        for mut tt in &mut t { **tt = s.clone(); }
+        for mut tt in &mut t { set_text(&mut tt, s.clone()); }
     }
 }
 
@@ -479,7 +481,7 @@ fn perf(show: Res<ShowPerf>, diag: Res<DiagnosticsStore>, quality: Res<crate::qu
         let fps = diag.get(&FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()).unwrap_or(0.0);
         let ms = diag.get(&FrameTimeDiagnosticsPlugin::FRAME_TIME).and_then(|d| d.smoothed()).unwrap_or(0.0);
         let ents = diag.get(&EntityCountDiagnosticsPlugin::ENTITY_COUNT).and_then(|d| d.value()).unwrap_or(0.0);
-        **t = format!("{fps:.0} fps   {ms:.2} ms   {ents:.0} entities   {quality:?} quality (F4)", quality = *quality);
+        set_text(&mut t, format!("{fps:.0} fps   {ms:.2} ms   {ents:.0} entities   {quality:?} quality (F4)", quality = *quality));
     }
 }
 
@@ -540,7 +542,7 @@ fn damage_numbers(
             commands.entity(e).despawn();
             continue;
         }
-        **t = format!("{}", n.amount.round() as i32);
+        set_text(&mut t, format!("{}", n.amount.round() as i32));
         let rise = n.at + Vec3::Y * (n.age * 0.9);
         if let Ok(p) = camera.world_to_viewport(cam_g, rise).map(|p| p * view_scale.0) {
             node.left = px(p.x - 14.0);
@@ -604,5 +606,14 @@ fn hurt_markers(
         node.top = px(centre.y - RADIUS * a.cos() - 3.5);
         ui.rotation = Rot2::radians(a);
         bg.0.set_alpha(0.9 * (1.0 - ((m.age - 0.5) / 0.6).clamp(0.0, 1.0)));
+    }
+}
+
+
+/// Set a text only if it changed: writing the same string still marks it changed, and a changed
+/// text re-measures and re-lays out the UI (on the browser's one thread, every frame).
+fn set_text(t: &mut Mut<Text>, s: String) {
+    if t.as_str() != s {
+        ***t = s;
     }
 }

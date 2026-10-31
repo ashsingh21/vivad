@@ -416,6 +416,15 @@ fn beds(
         } * BED;
         let cur = sink.volume().to_linear();
         let k = (time.delta_secs() * 2.5).min(1.0);
-        sink.set_volume(Volume::Linear(cur + (target - cur) * k));
+        let v = cur + (target - cur) * k;
+        sink.set_volume(Volume::Linear(v));
+        // A silent bed is paused, not mixed (in the browser, mixing runs on the game's one thread).
+        if v < 0.002 && target < 0.002 {
+            if !sink.is_paused() {
+                sink.pause();
+            }
+        } else if sink.is_paused() {
+            sink.play();
+        }
     }
 }

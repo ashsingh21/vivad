@@ -20,7 +20,7 @@ use bevy::gltf::Gltf;
 use bevy::prelude::*;
 use shared::items::{ItemDb, ItemKind};
 use shared::sim::movement::{AIM_SPEED, SPRINT_SPEED, WALK_SPEED};
-use shared::sim::{Action, Eliminated, Inventory, Kinematic, MoveMode, PlayerIntent, PosHistory, Warrior, btn};
+use shared::sim::{Action, Eliminated, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, PosHistory, Warrior, btn};
 
 use crate::visuals::WarriorVisual;
 
@@ -87,6 +87,8 @@ pub struct WarriorAnim {
     swing_lag: f32,
     /// Weight of the bow draw clip: how far the string follows the drawing hand.
     pub bow_weight: f32,
+    /// Seconds since this warrior's pose was last updated (see `due`).
+    since_pose: f32,
     /// How much of the aim pitch the torso takes (eased with the held item).
     pub aim_share: f32,
 }
@@ -178,6 +180,7 @@ pub fn bind(commands: &mut Commands, sets: &AnimSets, variant: usize, rig_root: 
         hit_stop: 0.0,
         swing_lag: 0.0,
         bow_weight: 0.0,
+        since_pose: 0.0,
         aim_share: 0.0,
     })
 }
@@ -263,8 +266,13 @@ fn drive(
     mut players: Query<&mut AnimationPlayer>,
     mut died: Local<HashMap<Entity, f32>>,
     mut steps: MessageWriter<Footstep>,
+    mine: Query<(), With<LocalPlayer>>,
+    cam: Query<&GlobalTransform, With<crate::camera::MainCamera>>,
+    mut frame: Local<u32>,
 ) {
     let dt = time.delta_secs();
+    *frame = frame.wrapping_add(1);
+    let eye = cam.single().ok().map(|g| (g.translation(), g.forward()));
     for (wv, tf, mut anim) in &mut vis {
         let Ok((kin, hist, inv, act, intent, elim)) = sims.get(wv.sim) else { continue };
         let set = &sets.0[anim.variant];
@@ -347,7 +355,8 @@ fn drive(
                         _ => None,
                     };
                     let phase = anim.phase;
-                    for (n, w) in loco {
+                    // Clips that would barely show are left out (each costs a pass over the bones).
+                    for (n, w) in loco.into_iter().filter(|(_, w)| *w >= 0.05) {
                         let t = if n == "idle" { clock % dur(n) } else { phase * dur(n) };
                         want.push((n, action.is_some(), w, t));
                     }
@@ -363,9 +372,38 @@ fn drive(
         let share = if elim.is_some() { 0.0 } else if raised { 1.0 } else { 0.45 };
         anim.aim_share += (share - anim.aim_share) * (dt * 8.0).min(1.0);
 
-        // Ease every node toward its target weight; nodes not wanted fade to zero.
+        // An animation budget: far warriors (and those behind the camera) are posed every few
+        // frames, staggered; between times their clips are stopped, so the bones keep their last
+        // pose and cost nothing to evaluate.
         let Ok(mut player) = players.get_mut(anim.player) else { continue };
-        let k = (dt * FADE_RATE).min(1.0);
+        anim.since_pose += dt;
+        let every = match eye {
+            _ if mine.contains(wv.sim) => 1,
+            Some((at, fwd)) => {
+                let to = tf.translation - at;
+                let d = to.length();
+                if d > 6.0 && to.dot(*fwd) < -0.2 * d {
+                    8
+                } else if d < 20.0 {
+                    1
+                } else if d < 45.0 {
+                    2
+                } else if d < 90.0 {
+                    3
+                } else {
+                    6
+                }
+            }
+            None => 1,
+        };
+        if (*frame).wrapping_add(wv.sim.index_u32()) % every != 0 {
+            if !player.all_finished() {
+                player.stop_all();
+            }
+            continue;
+        }
+        let pose_dt = std::mem::take(&mut anim.since_pose);
+        let k = (pose_dt * FADE_RATE).min(1.0);
         let mut targets: HashMap<AnimationNodeIndex, (f32, f32)> = HashMap::new();
         for (n, masked, w, t) in want {
             let Some(&(full, mask)) = set.nodes.get(n) else { continue };

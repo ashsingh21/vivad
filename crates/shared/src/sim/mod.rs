@@ -369,6 +369,8 @@ impl Plugin for SimPlugin {
             .insert_resource(layout)
             .insert_resource(Time::<Fixed>::from_hz(TICK_HZ))
             .insert_resource(Gravity(Vec3::ZERO))
+            // No dynamic bodies to solve (warriors move by collide-and-slide): one substep.
+            .insert_resource(SubstepCount(1))
             .add_message::<DamageMsg>()
             .add_message::<FeedMsg>()
             .add_message::<HitMsg>()

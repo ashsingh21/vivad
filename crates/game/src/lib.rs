@@ -1,6 +1,7 @@
 pub mod animation;
 pub mod arms;
 pub mod audio;
+pub mod batch;
 pub mod autoshot;
 pub mod buildings;
 pub mod camera;
