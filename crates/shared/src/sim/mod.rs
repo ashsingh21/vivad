@@ -214,6 +214,10 @@ pub struct MapBlock(pub Block);
 #[derive(Component, Clone, Copy, Debug)]
 pub struct MapTerrain;
 
+/// The collider of `MapLayout::footprints[i]`.
+#[derive(Component)]
+pub struct MapFootprint(pub usize);
+
 /// Index into `MapLayout::props`; clients attach the art.
 #[derive(Component, Clone, Copy, Debug)]
 pub struct PropIndex(pub usize);
@@ -359,7 +363,7 @@ impl Plugin for SimPlugin {
     fn build(&self, app: &mut App) {
         let db = ItemDb::load_from_str(&self.items_ron).expect("items.ron");
         let config = app.world().get_resource::<MatchConfig>().copied().unwrap_or_default();
-        let layout = crate::map::india::generate(config.map_seed);
+        let layout = crate::map::generate(config.map_seed);
         app.insert_resource(db)
             .insert_resource(config)
             .insert_resource(layout)
@@ -430,6 +434,17 @@ fn spawn_map(mut commands: Commands, layout: Res<MapLayout>) {
         if block.collide {
             e.insert((RigidBody::Static, collider_for(block), CollisionLayers::new(Layer::World, LayerMask::ALL)));
         }
+    }
+    // A city map's buildings: each its real outline, a mesh collider.
+    for (index, fp) in layout.footprints.iter().enumerate() {
+        let (pos, tris) = crate::map::footprint::solid(fp);
+        commands.spawn((
+            MapFootprint(index),
+            Transform::default(),
+            RigidBody::Static,
+            Collider::trimesh(pos, tris),
+            CollisionLayers::new(Layer::World, LayerMask::ALL),
+        ));
     }
     for (index, door) in layout.doors.iter().enumerate() {
         commands.spawn((

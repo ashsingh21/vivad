@@ -182,3 +182,12 @@ chest creak with coins, and a temple bell (ghanta) for the golden kalash; drinki
 Agni fire and Vayu gusts; a conch (shankha) when the Pralaya starts to close, a bell for kills,
 a low gong on elimination; loops for wind, freefall, the zone wall, the river, a tanpura drone
 aboard the vimana and the day's ambience (wind, koel, sparrows, crows).
+
+## Delhi map (Panga)
+
+Connaught Place and the head of Janpath, New Delhi, from OpenStreetMap: building outlines and
+heights, roads, parks, car parks, trees and place names, converted by `tools/osm/delhi.py` into
+`assets/data/maps/delhi_cp.json`. Map data © OpenStreetMap contributors, available under the Open
+Database License (ODbL 1.0): https://www.openstreetmap.org/copyright. The game must credit this
+wherever the map is shown (credits screen). The inner circle's blocks are generated at the radii
+and radial-road bearings measured from that data (`crates/shared/src/map/delhi.rs`).

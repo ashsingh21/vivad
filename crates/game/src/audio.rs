@@ -166,8 +166,11 @@ fn surface(spatial: &SpatialQuery, blocks: &Query<&MapBlock>, terrain: &Query<()
     }
     if terrain.contains(hit.entity) {
         let p = pos.xz();
-        if p.x > shared::map::india::RIVER_X.0 && p.x < shared::map::india::RIVER_X.1 && pos.y < -0.3 {
+        if layout.river.is_some_and(|(x0, x1)| p.x > x0 && p.x < x1) && pos.y < -0.3 {
             return "water";
+        }
+        if let Some(class) = layout.terrain.ground_at(p.x, p.y) {
+            return if class == shared::map::terrain::ground::PARK { "grass" } else { "stone" };
         }
         // Roads are packed earth; the rest is grass.
         let t = &layout.terrain;
@@ -389,12 +392,17 @@ fn beds(
     time: Res<Time>,
     me: Query<(&Transform, &Kinematic), With<LocalPlayer>>,
     zone: Res<Zone>,
+    layout: Res<MapLayout>,
     mut sinks: Query<(&Bed, &mut AudioSink)>,
 ) {
     let Ok((tf, kin)) = me.single() else { return };
     let p = tf.translation;
-    let (rx0, rx1) = shared::map::india::RIVER_X;
-    let river_d = if p.x < rx0 { rx0 - p.x } else if p.x > rx1 { p.x - rx1 } else { 0.0 };
+    let river_d = match layout.river {
+        Some((rx0, _)) if p.x < rx0 => rx0 - p.x,
+        Some((_, rx1)) if p.x > rx1 => p.x - rx1,
+        Some(_) => 0.0,
+        None => 1.0e4,
+    };
     let wall_d = (p.xz().distance(zone.center) - zone.radius).abs();
     let speed = kin.velocity.length();
     for (bed, mut sink) in &mut sinks {

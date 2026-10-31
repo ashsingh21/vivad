@@ -227,12 +227,131 @@ impl MeshBuf {
     }
 }
 
+/// One repeat of a city facade: a bay `BAY` m wide and a storey `STOREY` m tall, a window in a
+/// pale frame over a sill, a thin band at the floor line. Near-white, tinted per material.
+const BAY: f32 = 3.2;
+const STOREY: f32 = 3.4;
+
+fn facade_image() -> Image {
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    let n = 128usize;
+    let mut data = Vec::with_capacity(n * n * 4);
+    for y in 0..n {
+        for x in 0..n {
+            let (u, v) = (x as f32 / n as f32, y as f32 / n as f32);
+            let window = (0.28..0.72).contains(&u) && (0.18..0.72).contains(&v);
+            let frame = (0.25..0.75).contains(&u) && (0.15..0.75).contains(&v);
+            let sill = (0.22..0.78).contains(&u) && (0.75..0.8).contains(&v);
+            let band = v > 0.95;
+            let px: [u8; 3] = if window {
+                // Glass: dark, a little bluer toward the top where it catches the sky.
+                let k = 1.0 - (v - 0.18) / 0.54;
+                [(38.0 + 22.0 * k) as u8, (46.0 + 26.0 * k) as u8, (56.0 + 34.0 * k) as u8]
+            } else if frame || sill {
+                [208, 204, 196]
+            } else if band {
+                [196, 190, 180]
+            } else {
+                [238, 234, 226]
+            };
+            data.extend_from_slice(&[px[0], px[1], px[2], 255]);
+        }
+    }
+    Image::new(Extent3d { width: n as u32, height: n as u32, depth_or_array_layers: 1 }, TextureDimension::D2, data,
+               TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::default())
+}
+
+/// A city map's buildings (MapLayout::footprints), merged per chunk and material: walls in the
+/// facade, roofs in plain plaster.
+fn build_footprints(
+    commands: &mut Commands,
+    layout: &MapLayout,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    images: &mut Assets<Image>,
+    pending: &mut PendingMips,
+    roof: Handle<StandardMaterial>,
+) {
+    if layout.footprints.is_empty() {
+        return;
+    }
+    let facade = images.add(facade_image());
+    pending.0.push(facade.clone());
+    let tint = |m: Mat| match m {
+        Mat::PlasterOchre => Color::srgb(0.95, 0.76, 0.48),
+        Mat::Sandstone => Color::srgb(0.85, 0.68, 0.50),
+        Mat::RedSandstone => Color::srgb(0.78, 0.45, 0.36),
+        Mat::Brick => Color::srgb(0.70, 0.40, 0.30),
+        _ => Color::srgb(0.97, 0.95, 0.90),
+    };
+    let mut walls: HashMap<(i32, i32, Mat), MeshBuf> = HashMap::new();
+    let mut roofs: HashMap<(i32, i32), MeshBuf> = HashMap::new();
+    for fp in &layout.footprints {
+        let c = fp.pts.iter().sum::<Vec2>() / fp.pts.len() as f32;
+        let (cx, cz) = ((c.x / CHUNK).floor() as i32, (c.y / CHUNK).floor() as i32);
+        let w = walls.entry((cx, cz, fp.mat)).or_default();
+        let n = fp.pts.len();
+        let mut along = 0.0;
+        let ccw = fp.pts.iter().zip(fp.pts.iter().cycle().skip(1)).map(|(a, b)| a.x * b.y - b.x * a.y).sum::<f32>() > 0.0;
+        for i in 0..n {
+            let (a, b) = (fp.pts[i], fp.pts[(i + 1) % n]);
+            let e = b - a;
+            let len = e.length();
+            if len < 1e-3 {
+                continue;
+            }
+            let out2 = if ccw { Vec2::new(e.y, -e.x) } else { Vec2::new(-e.y, e.x) } / len;
+            let out = Vec3::new(out2.x, 0.0, out2.y);
+            let (a0, b0) = (Vec3::new(a.x, fp.base, a.y), Vec3::new(b.x, fp.base, b.y));
+            let (a1, b1) = (a0.with_y(fp.top), b0.with_y(fp.top));
+            // Windows run from the ground up in whole storeys; bays from each corner.
+            let (u0, u1) = (along / BAY, (along + len) / BAY);
+            let (v0, v1) = (-fp.base / STOREY, -fp.top / STOREY);
+            let quad = [a0, b0, b1, a1];
+            let uv = [Vec2::new(u0, v0), Vec2::new(u1, v0), Vec2::new(u1, v1), Vec2::new(u0, v1)];
+            if (b0 - a0).cross(b1 - a0).dot(out) >= 0.0 {
+                w.quad(quad, out, uv);
+            } else {
+                w.quad([b0, a0, a1, b1], out, [uv[1], uv[0], uv[3], uv[2]]);
+            }
+            along += len;
+        }
+        let r = roofs.entry((cx, cz)).or_default();
+        for [i, j, k] in shared::map::footprint::triangulate(&fp.pts) {
+            let p = [fp.pts[i as usize], fp.pts[j as usize], fp.pts[k as usize]].map(|q| Vec3::new(q.x, fp.top, q.y));
+            let p = if (p[1] - p[0]).cross(p[2] - p[0]).y >= 0.0 { p } else { [p[0], p[2], p[1]] };
+            let base = r.pos.len() as u32;
+            for q in p {
+                r.pos.push(q.to_array());
+                r.nrm.push([0.0, 1.0, 0.0]);
+                r.uv.push([q.x / TILE, q.z / TILE]);
+            }
+            r.idx.extend_from_slice(&[base, base + 1, base + 2]);
+        }
+    }
+    let mut facade_mats: HashMap<Mat, Handle<StandardMaterial>> = HashMap::new();
+    for ((_, _, mat), buf) in walls {
+        let m = facade_mats
+            .entry(mat)
+            .or_insert_with(|| materials.add(StandardMaterial { base_color: tint(mat), base_color_texture: Some(facade.clone()), perceptual_roughness: 0.85, ..default() }))
+            .clone();
+        let (mesh, centre) = buf.into_mesh();
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(m), Transform::from_translation(centre)));
+    }
+    for (_, buf) in roofs {
+        let (mesh, centre) = buf.into_mesh();
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(roof.clone()), Transform::from_translation(centre)));
+    }
+    info!("city: {} buildings from footprints", layout.footprints.len());
+}
+
 fn build_chunks(
     mut commands: Commands,
     layout: Res<MapLayout>,
     assets: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let mut pending = PendingMips::default();
     let mut sets = HashMap::new();
@@ -281,6 +400,8 @@ fn build_chunks(
             e.insert(crate::quality::LodShadow);
         }
     }
+    let roof = mat_cache.entry(Mat::Plaster).or_insert_with(|| material_for(Mat::Plaster, &sets, &mut materials)).clone();
+    build_footprints(&mut commands, &layout, &mut meshes, &mut materials, &mut images, &mut pending, roof);
     info!("architecture: {} static blocks merged into {} chunk meshes", layout.blocks.iter().filter(|b| is_static_visual(b)).count(), n);
     commands.insert_resource(pending);
 }

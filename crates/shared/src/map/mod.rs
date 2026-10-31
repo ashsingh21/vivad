@@ -2,8 +2,20 @@
 //! into meshes. Layouts are generated deterministically from a seed so every peer agrees.
 
 pub mod build;
+pub mod cp;
+pub mod delhi;
+pub mod footprint;
 pub mod india;
 pub mod terrain;
+
+/// The map to play: Delhi (Panga's), or VIVAD_MAP=bharat for the ancient-India one. Every peer
+/// must run the same (the default unless they set it alike).
+pub fn generate(seed: u64) -> MapLayout {
+    match std::env::var("VIVAD_MAP").as_deref() {
+        Ok("bharat") | Ok("india") => india::generate(seed),
+        _ => delhi::generate(seed),
+    }
+}
 
 use bevy::prelude::*;
 
@@ -101,6 +113,16 @@ pub struct Lamp {
     pub flames: Option<(f32, u32)>,
 }
 
+/// A building from a map's footprint data: its outline (counter-clockwise seen from above)
+/// extruded from `base` to `top`. Solid; the simulation gives it a mesh collider.
+#[derive(Clone, Debug, Reflect)]
+pub struct Footprint {
+    pub pts: Vec<Vec2>,
+    pub base: f32,
+    pub top: f32,
+    pub mat: Mat,
+}
+
 #[derive(Resource, Clone, Debug, Default)]
 pub struct MapLayout {
     pub name: String,
@@ -115,5 +137,8 @@ pub struct MapLayout {
     pub props: Vec<Prop>,
     pub ornaments: Vec<Ornament>,
     pub lamps: Vec<Lamp>,
+    pub footprints: Vec<Footprint>,
+    /// A river across the map, as its channel's x range (the India map's).
+    pub river: Option<(f32, f32)>,
     pub terrain: terrain::Terrain,
 }

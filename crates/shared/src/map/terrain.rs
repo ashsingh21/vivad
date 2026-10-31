@@ -13,9 +13,29 @@ pub struct Terrain {
     pub h: Vec<f32>,
     /// Distance to the nearest road centreline, per sample (for painting roads).
     pub road_d: Vec<f32>,
+    /// What covers the ground, per sample, on a city map (empty on the India map): see `Ground`.
+    pub ground: Vec<u8>,
+}
+
+/// City ground classes (`Terrain::ground`).
+pub mod ground {
+    pub const PAVEMENT: u8 = 0;
+    pub const ROAD: u8 = 1;
+    pub const PARK: u8 = 2;
+    pub const PARKING: u8 = 3;
+    pub const PLAZA: u8 = 4;
 }
 
 impl Terrain {
+    /// The ground class at the sample nearest (x, z), on a city map.
+    pub fn ground_at(&self, x: f32, z: f32) -> Option<u8> {
+        if self.ground.is_empty() {
+            return None;
+        }
+        let k = |c: f32| (((c + self.size * 0.5) / self.step()).round().max(0.0) as usize).min(self.n - 1);
+        self.ground.get(k(x) * self.n + k(z)).copied()
+    }
+
     pub fn step(&self) -> f32 {
         self.size / (self.n - 1) as f32
     }
@@ -168,7 +188,7 @@ pub struct TerrainSpec {
 
 pub fn generate(spec: &TerrainSpec) -> Terrain {
     let n = spec.n;
-    let mut t = Terrain { n, size: spec.size, h: vec![0.0; n * n], road_d: vec![1e3; n * n] };
+    let mut t = Terrain { n, size: spec.size, h: vec![0.0; n * n], road_d: vec![1e3; n * n], ground: vec![] };
     let seed = spec.seed;
     for i in 0..n {
         for j in 0..n {

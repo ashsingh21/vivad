@@ -85,8 +85,26 @@ fn lin(c: [f32; 3]) -> LinearRgba {
     Color::srgb(c[0], c[1], c[2]).to_linear()
 }
 
+/// Ground colour and grass cover on a city map, by what covers the ground there
+/// (shared::map::terrain::ground): asphalt, pavement, car parks and plazas bare, parks green.
+pub fn paint_city(x: f32, z: f32, class: u8) -> (LinearRgba, f32) {
+    use shared::map::terrain::ground;
+    let mix = |a: LinearRgba, b: LinearRgba, t: f32| a.mix(&b, t.clamp(0.0, 1.0));
+    let n = fbm(x / 3.0, z / 3.0, 2, 5);
+    let (c, cover) = match class {
+        ground::ROAD => (mix(lin([0.16, 0.16, 0.17]), lin([0.24, 0.23, 0.22]), fbm(x / 9.0, z / 9.0, 2, 71) * 1.4 - 0.2), 0.0),
+        ground::PARKING => (lin([0.27, 0.27, 0.28]), 0.0),
+        ground::PLAZA => (mix(lin([0.62, 0.55, 0.47]), lin([0.55, 0.42, 0.36]), fbm(x / 4.0, z / 4.0, 2, 73)), 0.0),
+        ground::PARK => (mix(lin([0.30, 0.44, 0.16]), lin([0.23, 0.38, 0.13]), fbm(x / 22.0, z / 22.0, 3, 91) * 1.6 - 0.3), 1.0),
+        // Pavement: worn sandstone-grey slabs, darker where it's dusty.
+        _ => (mix(lin([0.55, 0.52, 0.47]), lin([0.47, 0.43, 0.38]), fbm(x / 7.0, z / 7.0, 2, 77) * 1.4 - 0.2), 0.0),
+    };
+    let v = 0.92 + 0.16 * n;
+    (LinearRgba::new(c.red * v, c.green * v, c.blue * v, 1.0), cover)
+}
+
 /// Ground colour and grass cover (0 bare .. 1 full) at a point, given its height, normal and
-/// distance to the nearest road.
+/// distance to the nearest road. A city map's ground is painted by `paint_city` instead.
 pub fn paint(x: f32, z: f32, h: f32, n: Vec3, road_d: f32) -> (LinearRgba, f32) {
     let mix = |a: LinearRgba, b: LinearRgba, t: f32| a.mix(&b, t.clamp(0.0, 1.0));
     let (grass, grass2) = (lin([0.30, 0.44, 0.16]), lin([0.23, 0.38, 0.13]));
@@ -354,7 +372,10 @@ fn build_chunk(k: (i32, i32), t: &Terrain, blockers: &Blockers, keep: f32, densi
         let p = x0 + Vec2::new(rng.f(), rng.f()) * CHUNK;
         let (h, rd) = (on_mesh(t, &t.h, p.x, p.y), on_mesh(t, &t.road_d, p.x, p.y));
         let n = t.normal(p.x, p.y);
-        let (ground, cover) = paint(p.x, p.y, h, n, rd);
+        let (ground, cover) = match t.ground_at(p.x, p.y) {
+            Some(class) => paint_city(p.x, p.y, class),
+            None => paint(p.x, p.y, h, n, rd),
+        };
         // Thicker in the lush patches, thin at the edges of dry ground and paths.
         let lush = fbm(p.x / 9.0, p.y / 9.0, 2, 33);
         if rng.f() > cover * (0.55 + 0.9 * lush) || blockers.blocked(Vec3::new(p.x, h, p.y)) {

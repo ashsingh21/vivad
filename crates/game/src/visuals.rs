@@ -389,7 +389,10 @@ fn dress_terrain(
                         let (x, z) = (t.coord(i), t.coord(j));
                         let h = t.at(i, j);
                         let nn = t.normal(x, z);
-                        let (c, _) = crate::grass::paint(x, z, h, nn, t.road_d[i * n + j]);
+                        let (c, _) = match t.ground.get(i * n + j) {
+                            Some(&class) => crate::grass::paint_city(x, z, class),
+                            None => crate::grass::paint(x, z, h, nn, t.road_d[i * n + j]),
+                        };
                         pos.push([x, h - drop, z]);
                         nrm.push(nn.to_array());
                         uv.push([x / 4.0, z / 4.0]);

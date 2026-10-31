@@ -406,7 +406,7 @@ fn top_right(
     };
     let me = tf.translation.xz();
     let to_safe = (me.distance(zone.target_center) - zone.target_radius).max(0.0);
-    let here = layout.pois.iter().find(|p| p.center.xz().distance(me) < p.radius).map(|p| p.name.as_str()).unwrap_or("Bharat");
+    let here = layout.pois.iter().find(|p| p.center.xz().distance(me) < p.radius).map(|p| p.name.as_str()).unwrap_or(layout.name.as_str());
     let safe = if to_safe > 1.0 { format!("Safe zone {to_safe:.0} m door") } else { "Safe zone mein ho".into() };
     for mut s in &mut q {
         **s = format!("{here}\nAlive {}   Kills {}\n{zone_line}\n{safe}", m.alive, w.kills);
