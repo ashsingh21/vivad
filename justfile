@@ -169,3 +169,14 @@ mesh +models:
 # Let a bot play as you and screenshot the match.
 autoplay:
     mkdir -p previews/graybox/match && VIVAD_AUTOPILOT=1 VIVAD_SHOTS=previews/graybox/match cargo run --release -p game --bin game
+
+# The browser build (WebGPU): writes build/web (page, wasm, a link to assets/), serves it on
+# http://localhost:8080. `just web serve=no` only builds.
+web serve="yes":
+    cargo build --release --target wasm32-unknown-unknown -p game --bin game
+    mkdir -p build/web
+    wasm-bindgen --target web --no-typescript --out-dir build/web --out-name game target/wasm32-unknown-unknown/release/game.wasm
+    cp web/index.html build/web/
+    ln -sfn ../../assets build/web/assets
+    @ls -la build/web/game_bg.wasm
+    {{ if serve == "yes" { "cd build/web && python3 -m http.server 8080" } else { "true" } }}

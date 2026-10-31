@@ -6,7 +6,8 @@ use game::{animation::WarriorAnimationPlugin, arms::ArmsPlugin, fx::FxPlugin, gr
 use shared::sim::{MatchConfig, SimPlugin};
 
 fn main() {
-    let items_ron = std::fs::read_to_string(format!("{ASSET_DIR}/data/items.ron")).expect("read items.ron");
+    // Built in, so the browser build needn't fetch it before the app starts.
+    let items_ron = include_str!("../../../assets/data/items.ron").to_string();
     let bots = std::env::var("VIVAD_BOTS").ok().and_then(|s| s.parse().ok()).unwrap_or(15);
     let autopilot = std::env::var("VIVAD_AUTOPILOT").is_ok();
     let mut config = MatchConfig { bots, autopilot, ..default() };
@@ -24,11 +25,15 @@ fn main() {
                         resolution: (1600u32, 900u32).into(),
                         // VIVAD_NO_VSYNC=1 uncaps the frame rate, for measuring.
                         present_mode: if std::env::var("VIVAD_NO_VSYNC").is_ok() { bevy::window::PresentMode::AutoNoVsync } else { default() },
+                        // In the browser: fill the page, and keep the keys and mouse for the game.
+                        fit_canvas_to_parent: true,
+                        prevent_default_event_handling: true,
                         ..default()
                     }),
                     ..default()
                 })
-                .set(AssetPlugin { file_path: ASSET_DIR.into(), ..default() }),
+                // No .meta files beside the assets: the browser would fetch (and 404) one for each.
+                .set(AssetPlugin { file_path: ASSET_DIR.into(), meta_check: bevy::asset::AssetMetaCheck::Never, ..default() }),
         )
         .add_plugins(PhysicsPlugins::default())
         .add_plugins(SimPlugin { items_ron })

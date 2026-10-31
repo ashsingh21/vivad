@@ -16,6 +16,10 @@ pub mod lobby;
 pub mod studio_env;
 pub mod visuals;
 
-/// Repo-level assets/ regardless of how the binary is launched.
+/// Repo-level assets/ regardless of how the binary is launched; in the browser, `assets/` beside
+/// the page.
+#[cfg(not(target_arch = "wasm32"))]
 pub const ASSET_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets");
+#[cfg(target_arch = "wasm32")]
+pub const ASSET_DIR: &str = "assets";
 pub mod water;
