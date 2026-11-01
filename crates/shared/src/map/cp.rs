@@ -158,14 +158,37 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 let o = Opening { at: p.distance(q) / 2.0, ..front };
                 b.wall(w, p, q, 0.0, r.g - SLAB, 0.3, Mat::Rustic, &[o]);
                 // The wall is a chord: mid-segment its face sits inside the arc by the sagitta.
-                let face = rad * ((s1 - s0) / 2.0).cos() + toward * 0.18;
+                let wall_mid = rad * ((s1 - s0) / 2.0).cos();
+                let face = wall_mid + toward * 0.18;
                 let half = front.width / 2.0;
+                // Cladding: a dark backing either side and above, vertical slats over it with
+                // gaps between (the relief catches the light), a slatted fascia up top;
+                // the opening lined in wood too; grey stone skirting along the wall's foot.
+                let slat = face + toward * 0.035;
                 for side in [-1.0f32, 1.0] {
-                    b.deco(radial, Vec3::new(face, 1.85, side * (half + 0.2)), Vec3::new(0.05, 3.7, 0.4), Mat::Wood);
+                    b.deco(radial, Vec3::new(face, 1.85, side * (half + 0.22)), Vec3::new(0.03, 3.7, 0.44), Mat::Wood);
+                    for k in 0..4 {
+                        b.deco(radial, Vec3::new(slat, 1.85, side * (half + 0.075 + 0.105 * k as f32)), Vec3::new(0.04, 3.68, 0.07), Mat::Wood);
+                    }
+                    b.deco(radial, Vec3::new(wall_mid, front.top / 2.0 + front.bottom / 2.0, side * (half + 0.01)), Vec3::new(0.37, front.top - front.bottom, 0.035), Mat::Wood);
                 }
-                b.deco(radial, Vec3::new(face, front.top + 0.25, 0.0), Vec3::new(0.05, 0.5, front.width + 0.8), Mat::Wood);
+                b.deco(radial, Vec3::new(face, front.top + 0.25, 0.0), Vec3::new(0.03, 0.5, front.width + 0.88), Mat::Wood);
+                for k in 0..3 {
+                    b.deco(radial, Vec3::new(slat, front.top + 0.08 + 0.17 * k as f32, 0.0), Vec3::new(0.04, 0.12, front.width + 0.86), Mat::Wood);
+                }
+                b.deco(radial, Vec3::new(wall_mid, front.top + 0.01, 0.0), Vec3::new(0.37, 0.035, front.width + 0.02), Mat::Wood);
+                let chord_mid = chord_at(rad);
+                for side in [-1.0f32, 1.0] {
+                    let (z0, z1) = (half + 0.45, chord_mid / 2.0 - 0.02);
+                    if z1 > z0 {
+                        b.deco(radial, Vec3::new(face - toward * 0.005, 0.18, side * (z0 + z1) / 2.0), Vec3::new(0.035, 0.36, z1 - z0), Mat::Granite);
+                    }
+                }
                 if window {
-                    b.deco(radial, Vec3::new(face, 0.45, 0.0), Vec3::new(0.05, 0.9, front.width), Mat::Wood);
+                    b.deco(radial, Vec3::new(face, 0.45, 0.0), Vec3::new(0.03, 0.9, front.width), Mat::Wood);
+                    for k in 0..5 {
+                        b.deco(radial, Vec3::new(slat, 0.1 + 0.17 * k as f32, 0.0), Vec3::new(0.04, 0.12, front.width - 0.02), Mat::Wood);
+                    }
                     b.map.signs.push(super::ShopSign {
                         pos: r.at(rad, am, (front.bottom + front.top) / 2.0),
                         facing: out_dir(am) * toward,

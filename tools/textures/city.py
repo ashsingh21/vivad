@@ -484,10 +484,14 @@ def rustic():
     L = Layer(n, n, rng)
     y = np.mgrid[0:n, 0:n][0].astype(np.float32)
     fv = (y % (n / 4)) / (n / 4)
-    band = np.clip(np.minimum(fv, 1 - fv) / 0.035, 0, 1)
-    trowel = periodic_noise(n, n, rng, 4, 3)
-    weather = np.clip(periodic_noise(n, n, rng, 3, 3) * 1.5 - 0.4, 0, 1)
-    g = (0.88 - 0.03 * trowel - 0.06 * weather) * (0.80 + 0.20 * band)
+    # A crisp, narrow channel at each joint (painted light puts a highlight on the band below
+    # and a shadow line under the one above), each band a touch different in tone.
+    band = np.clip(np.minimum(fv, 1 - fv) / 0.022, 0, 1) ** 0.6
+    row = (y // (n / 4)).astype(int)
+    tone = np.array([0.0, 0.025, -0.015, 0.012])[row % 4]
+    trowel = periodic_noise(n, n, rng, 3, 2)
+    weather = np.clip(periodic_noise(n, n, rng, 2, 2) * 1.5 - 0.5, 0, 1)
+    g = (0.90 + tone - 0.025 * trowel - 0.04 * weather) * (0.84 + 0.16 * band)
     L.col = np.dstack([g, g * 0.98, g * 0.94]).astype(np.float32)
     L.hgt = 2.0 * band + 0.3 * trowel
     L.rough[:] = 0.9
