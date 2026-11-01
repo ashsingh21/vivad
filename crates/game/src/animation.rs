@@ -36,6 +36,20 @@ impl Plugin for WarriorAnimationPlugin {
 const LOCOMOTION: [&str; 13] =
     ["idle", "walk_f", "walk_b", "walk_l", "walk_r", "run_f", "run_b", "run_l", "run_r", "sprint_f", "crouch_idle", "crouch_f", "slide"];
 const FULL_BODY: [&str; 5] = ["jump", "fall", "freefall", "glide", "death"];
+/// Locomotion the file may or may not have (Mixamo's, tools/blender/characters/anims.py, built where
+/// its downloads are): the crouch's other directions, and whole-body sets for holding a long gun
+/// or a pistol. Picked where present (`AnimSet::has`), else the plain ones.
+const OPTIONAL_LOCOMOTION: [&str; 31] = [
+    "crouch_b", "crouch_l", "crouch_r",
+    "rifle_idle", "rifle_crouch_idle", "rifle_sprint_f",
+    "rifle_walk_f", "rifle_walk_b", "rifle_walk_l", "rifle_walk_r",
+    "rifle_run_f", "rifle_run_b", "rifle_run_l", "rifle_run_r",
+    "rifle_crouch_f", "rifle_crouch_b", "rifle_crouch_l", "rifle_crouch_r",
+    "pistol_idle", "pistol_crouch_idle",
+    "pistol_walk_f", "pistol_walk_b", "pistol_walk_l", "pistol_walk_r",
+    "pistol_run_f", "pistol_run_b", "pistol_run_l", "pistol_run_r",
+    "pistol_sprint_f", "pistol_crouch_f", "pistol_crouch_b",
+];
 const UPPER_BODY: [&str; 6] = ["melee_guard", "melee_swing", "melee_swing_b", "bow_draw", "rifle_aim", "consume"];
 /// Bones driven by the legs layer; everything else is upper body.
 const LOWER_BONES: [&str; 10] = ["Root", "pelvis", "thigh_l", "thigh_r", "calf_l", "calf_r", "foot_l", "foot_r", "ball_l", "ball_r"];
@@ -57,6 +71,27 @@ struct AnimSet {
 
 #[derive(Resource)]
 pub struct AnimSets([AnimSet; 2]);
+
+impl AnimSet {
+    fn has(&self, name: &str) -> bool {
+        self.nodes.contains_key(name)
+    }
+
+    /// `name` in the held weapon's set (`prefix`: "rifle_", "pistol_" or none) where the file has
+    /// it, a pistol's sprint and crouch falling back to its run and the plain crouch.
+    fn pick(&self, prefix: &str, name: &'static str) -> &'static str {
+        if prefix.is_empty() {
+            return name;
+        }
+        let want = format!("{prefix}{name}");
+        let found = self.nodes.keys().find(|k| **k == want).copied();
+        match (found, name) {
+            (Some(n), _) => n,
+            (None, "sprint_f") => self.nodes.keys().find(|k| **k == format!("{prefix}run_f")).copied().unwrap_or(name),
+            _ => name,
+        }
+    }
+}
 
 impl AnimSets {
     pub fn ready(&self, variant: usize) -> bool {
@@ -163,11 +198,12 @@ fn build_graphs(
             graph.add_target_to_mask_group(AnimationTargetId::from_names(path.iter()), group);
         }
         let root = graph.root;
-        for name in all {
+        let present: Vec<&'static str> = OPTIONAL_LOCOMOTION.iter().copied().filter(|n| clip(n).is_some()).collect();
+        for name in all.into_iter().chain(present) {
             let h = clip(name).or_else(|| clip(stand_in(name))).expect("checked above");
             set.durations.insert(name, clips.get(&h).map(|c| c.duration()).unwrap_or(1.0).max(1e-3));
             let full = graph.add_clip(h.clone(), 1.0, root);
-            let masked = if LOCOMOTION.contains(&name) {
+            let masked = if LOCOMOTION.contains(&name) || OPTIONAL_LOCOMOTION.contains(&name) {
                 Some(graph.add_clip_with_mask(h, 1 << UPPER, 1.0, root))
             } else if UPPER_BODY.contains(&name) {
                 Some(graph.add_clip_with_mask(h, 1 << LOWER, 1.0, root))
@@ -270,11 +306,12 @@ pub fn bow_draw(kind: &ItemKind, act: &Action, loaded: bool, aiming: bool) -> Op
 }
 
 fn clip_speed(name: &str) -> f32 {
+    let name = name.trim_start_matches("rifle_").trim_start_matches("pistol_");
     match name {
         n if n.starts_with("walk") => STROLL_SPEED,
         n if n.starts_with("run") => WALK_SPEED,
         "sprint_f" => SPRINT_SPEED,
-        "crouch_f" => CROUCH_SPEED,
+        n if n.starts_with("crouch_") && n != "crouch_idle" => CROUCH_SPEED,
         _ => 0.0,
     }
 }
@@ -331,11 +368,35 @@ fn drive(
                     let loco = if low && speed > CROUCH_SPEED + 1.2 {
                         vec![("slide", 1.0)]
                     } else if low {
+                        // The crouch walk in the direction of travel (two nearest by angle), over
+                        // the crouch idle; forward only where the file has no others.
                         let a = (speed / CROUCH_SPEED).clamp(0.0, 1.0);
-                        vec![("crouch_idle", 1.0 - a), ("crouch_f", a)]
+                        let mut out = vec![("crouch_idle", 1.0 - a)];
+                        if set.has("crouch_b") && speed > 0.05 {
+                            let (f, r) = (forward / speed, right / speed);
+                            for (n, w) in [("crouch_f", f.max(0.0)), ("crouch_b", (-f).max(0.0)), ("crouch_l", (-r).max(0.0)), ("crouch_r", r.max(0.0))] {
+                                if w * w * a > 1e-3 {
+                                    out.push((n, w * w * a));
+                                }
+                            }
+                        } else {
+                            out.push(("crouch_f", a));
+                        }
+                        out
                     } else {
                         locomotion_weights(forward, right)
                     };
+                    // Holding a gun: its own whole-body set (the gun held as you move), where the
+                    // file has it; a bow, the bat and empty hands move with the plain ones.
+                    let prefix = match inv.current() {
+                        Some(st) if matches!(db.get(&st.id).kind, ItemKind::Bow { .. })
+                            && crate::visuals::shot_kind(&st.id) == crate::visuals::Shot::Bullet =>
+                        {
+                            if crate::visuals::long_gun(&st.id) { "rifle_" } else { "pistol_" }
+                        }
+                        _ => "",
+                    };
+                    let loco: Vec<(&'static str, f32)> = loco.into_iter().map(|(n, w)| (set.pick(prefix, n), w)).collect();
                     // Advance the shared cycle at the real ground speed.
                     let speed = forward.hypot(right);
                     let (mut rate, mut wsum) = (0.0, 0.0);

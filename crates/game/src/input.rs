@@ -106,7 +106,7 @@ impl Plugin for InputPlugin {
         app.init_resource::<Bindings>()
             .init_resource::<ActionState>()
             .init_resource::<ShowPerf>()
-            .add_systems(PreUpdate, (scripted_keys, resolve_actions, write_intent, grab_cursor, meta_actions, vote).chain()
+            .add_systems(PreUpdate, (give_item, scripted_keys, resolve_actions, write_intent, grab_cursor, meta_actions, vote).chain()
                 .in_set(LocalInput).after(bevy::input::InputSystems));
     }
 }
@@ -357,4 +357,21 @@ fn scripted_keys(m: Option<Res<Match>>, mut keys: ResMut<ButtonInput<KeyCode>>, 
         if down { keys.press(code) } else { keys.release(code) }
         *next += 1;
     }
+}
+
+/// For testing with an item in hand: VIVAD_GIVE=<item id> puts it (loaded, with spare rounds) in the
+/// local player's first slot and selects it, once they're in the match.
+fn give_item(mut q: Query<&mut shared::sim::Inventory, With<LocalPlayer>>, mut done: Local<bool>) {
+    if *done {
+        return;
+    }
+    let Ok(id) = std::env::var("VIVAD_GIVE") else {
+        *done = true;
+        return;
+    };
+    let Ok(mut inv) = q.single_mut() else { return };
+    inv.slots[0] = Some(shared::items::ItemStack { id, rarity: shared::items::Rarity::Rare, count: 8 });
+    inv.arrows = 60;
+    inv.selected = 1;
+    *done = true;
 }

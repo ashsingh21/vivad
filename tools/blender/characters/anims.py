@@ -371,8 +371,36 @@ MIXAMO_BONES = {
                     ("thigh", "UpLeg"), ("calf", "Leg"), ("foot", "Foot"), ("ball", "ToeBase"))},
 }
 MIXAMO = os.path.join(HERE, "mixamo")
+# (our clip, the file in mixamo/, the speed it's played at, mocap options). Missing files are skipped.
+_R, _P = "rifle/", "pistol/"
+_DIRS = (("f", "forward"), ("b", "backward"), ("l", "left"), ("r", "right"))
 MIXAMO_CLIPS = [
-    ("walk_f", "Walking", 1.8),
+    # Empty-handed (and melee): the walk, the run, the crouch idle; the crouch walk in four
+    # directions on the rifle pack's crouched legs, the arms hanging relaxed.
+    ("walk_f", "Walking", 1.8, {}),
+    ("run_f", "Fast Run", 5.6, {}),
+    ("crouch_idle", "Crouch Idle", 0.0, {}),
+    *[(f"crouch_{d}", f"{_R}walk crouching {w}", 1.4, {"relax": True, "stride": "auto"}) for d, w in _DIRS],
+    # Holding a long gun: the rifle pack, whole-body.
+    ("rifle_idle", f"{_R}idle", 0.0, {}),
+    ("rifle_aim", f"{_R}idle aiming", 0.0, {}),
+    ("rifle_crouch_idle", f"{_R}idle crouching", 0.0, {}),
+    *[(f"rifle_walk_{d}", f"{_R}walk {w}", 1.8, {"stride": "auto"}) for d, w in _DIRS],
+    *[(f"rifle_run_{d}", f"{_R}run {w}", 5.6, {"stride": "auto"}) for d, w in _DIRS],
+    *[(f"rifle_crouch_{d}", f"{_R}walk crouching {w}", 1.4, {"stride": "auto"}) for d, w in _DIRS],
+    ("rifle_sprint_f", f"{_R}sprint forward", 8.6, {"stride": "auto"}),
+    # Holding a pistol: the pistol pack (its strafes for both walking and running sideways).
+    ("pistol_idle", f"{_P}pistol idle", 0.0, {}),
+    ("pistol_crouch_idle", f"{_P}pistol kneeling idle", 0.0, {}),
+    ("pistol_walk_f", f"{_P}pistol walk", 1.8, {"stride": "auto"}),
+    ("pistol_walk_b", f"{_P}pistol walk backward", 1.8, {"stride": "auto"}),
+    ("pistol_walk_l", f"{_P}pistol strafe", 1.8, {"stride": "auto"}),
+    ("pistol_walk_r", f"{_P}pistol strafe (2)", 1.8, {"stride": "auto"}),
+    ("pistol_run_f", f"{_P}pistol run", 5.6, {"stride": "auto"}),
+    ("pistol_run_b", f"{_P}pistol run backward", 5.6, {"stride": "auto"}),
+    # (The strafe is slow: stretched to a run's speed its legs over-reach, so quicker steps.)
+    ("pistol_run_l", f"{_P}pistol strafe", 5.6, {"stride": 1.15}),
+    ("pistol_run_r", f"{_P}pistol strafe (2)", 5.6, {"stride": 1.15}),
 ]
 
 
@@ -401,7 +429,8 @@ def drop_mocap(objs, acts, arm):
     bpy.ops.object.mode_set(mode="POSE")
 
 
-def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, bend=0.0, swing=1.0, spread=0.0, bones=None, src_fps=FPS):
+def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, bend=0.0, swing=1.0, spread=0.0, bones=None, src_fps=FPS,
+          relax=None):
     """Retarget the mocap `clip` onto our rig as `name`, a locomotion cycle at `speed` (m/s; 0 for
     one standing still, or in place). The torso's and head's rotations are copied; the arms aim along
     the source's bones (whatever the two rigs' rest poses and rolls); the legs are put by IK where the
@@ -417,7 +446,9 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, be
     further out to its side (a wider stance), the knee following it out. `bones` maps our bone names
     to the source's (Mixamo's mixamorig:*), whose reference is then its rest pose (a T-pose) rather
     than an A_TPose clip; `src_fps` is the source's frame rate. A clip that travels (not "in place")
-    has its travel taken out."""
+    has its travel taken out. `relax` (default: when `bend` is set) poses the arms hanging relaxed,
+    swinging gently against the legs, instead of the source's (a rifle clip's legs, empty-handed).
+    `stride="auto"` meets the game's speed half by longer steps and half by quicker ones."""
     keep = {**TORSO_KEEP, **(keep or {})}
     if bones:
         bone = lambda n: src.pose.bones.get(bones.get(n, n))
@@ -459,6 +490,28 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, be
     if travel.length < 0.2:
         travel = Vector()
 
+    def finger(s, f):
+        if bones:
+            return bone_of(f"mixamorig:{'Left' if s == 'l' else 'Right'}Hand{f.capitalize()}1")
+        return bone(f"{f}_01_{s}")
+
+    bone_of = lambda n: src.pose.bones.get(n)
+
+    def src_palm(s, hd):
+        """The source hand's palm normal (away from the back of the hand), from its knuckles, as
+        palm_frame finds ours; None if the rig has no fingers."""
+        i, p_, m = finger(s, "index"), finger(s, "pinky"), finger(s, "middle")
+        if not (i and p_ and m):
+            return None
+        h = hd(f"hand_{s}")
+        at = lambda b: W @ b.head
+        fwd = (at(m) - h).normalized()
+        k = at(i) - at(p_)
+        k = (k - fwd * k.dot(fwd)).normalized()
+        arch = at(m) - at(i)
+        arch = arch - k * arch.dot(k) - fwd * arch.dot(fwd)
+        return -arch.normalized()
+
     def sample(t):
         sc.frame_set(f0 + int(t), subframe=t - int(t))
         drift = travel * (t / frames)
@@ -469,7 +522,7 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, be
             rec[s] = dict(hip=hd(f"thigh_{s}"), knee=hd(f"calf_{s}"), ankle=hd(f"foot_{s}"), ball=hd(f"ball_{s}"),
                           foot=tl(f"foot_{s}") - hd(f"foot_{s}"), toe=tl(f"ball_{s}") - hd(f"ball_{s}"),
                           ua=tl(f"upperarm_{s}") - hd(f"upperarm_{s}"), fa=tl(f"lowerarm_{s}") - hd(f"lowerarm_{s}"),
-                          hand=tl(f"hand_{s}") - hd(f"hand_{s}"))
+                          hand=tl(f"hand_{s}") - hd(f"hand_{s}"), palm=src_palm(s, hd))
         return rec
 
     def planted(S):
@@ -490,36 +543,53 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, be
             out.append((a, k))
         return out
 
+    # Along the ground, the planted feet slide back against the direction of travel: forward for
+    # an in-place clip, else the way its hips went. `u` is a point's distance along that backward axis.
+    back = -travel.normalized() if travel.length else -FWD
+    u = lambda p: p.x * back.x + p.y * back.y
     # Retime: the source's own ground speed (its planted feet's), scaled, against `speed`.
     out = max(8, round(frames * FPS / src_fps))
     if speed:
         S = [sample(i) for i in range(frames)]
         down = planted(S)
-        v = sorted((S[(a + k - 1) % frames][s]["ankle"].y - S[a][s]["ankle"].y) / (k - 1) * src_fps
+        v = sorted((u(S[(a + k - 1) % frames][s]["ankle"]) - u(S[a][s]["ankle"])) / (k - 1) * src_fps
                    for s in "lr" for a, k in runs(down[s]) if k > 1)
+        if stride == "auto":
+            stride = (speed / (v[len(v) // 2] * r)) ** 0.5
         natural = v[len(v) // 2] * r * stride
         out = max(8, round(frames * natural / speed * FPS / src_fps))
-        print(f"[anims] {name} from {clip}: natural {natural:.2f} m/s at stride {stride}, {frames} -> {out} frames")
+        print(f"[anims] {name} from {clip}: natural {natural:.2f} m/s at stride {stride:.2f}, {frames} -> {out} frames")
     S = [sample(i * frames / out) for i in range(out)]
     src.animation_data.action = None
     down = planted(S)
+    # Start the cycle as the left foot lands, as every locomotion clip does (the game blends them on
+    # one shared phase, so their steps must line up).
+    if speed:
+        lands = [a for a, _ in runs(down["l"])]
+        if lands:
+            k = lands[0]
+            S = S[k:] + S[:k]
+            down = planted(S)
+    # Each foot's place relative to the hips (scaled): across the travel as the source has it, along
+    # it stretched by `stride` and, planted, locked to slide back at exactly `speed`.
     path = {}
     for s in "lr":
-        ys = [(rec[s]["ankle"].y - src_pelvis.y) * r * stride for rec in S]
+        rel = [(rec[s]["ankle"] - src_pelvis) * r for rec in S]
+        us = [u(p) * (stride if speed else 1.0) for p in rel]
         if speed:
-            locked = list(ys)
+            locked = list(us)
             for a, n in runs(down[s]):
                 for k in range(n):
-                    locked[(a + k) % out] = ys[a] + speed * k / FPS
+                    locked[(a + k) % out] = us[a] + speed * k / FPS
                 # After lift-off, ease the gap to the source's path out over the swing.
-                gap = ys[a] + speed * (n - 1) / FPS - ys[(a + n - 1) % out]
+                gap = us[a] + speed * (n - 1) / FPS - us[(a + n - 1) % out]
                 air = out - n
                 for k in range(air):
                     j = (a + n + k) % out
                     if not down[s][j]:
-                        locked[j] = ys[j] + gap * (1.0 - smooth(k / max(1.0, air * 0.6)))
-            ys = locked
-        path[s] = ys
+                        locked[j] = us[j] + gap * (1.0 - smooth(k / max(1.0, air * 0.6)))
+            us = locked
+        path[s] = [Vector((p.x, p.y, 0.0)) - back * u(p) + back * us[j] for j, p in enumerate(rel)]
     new_action(rig, name)
     for i in range(out + 1):
         rec = S[i % out]
@@ -541,7 +611,7 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, be
         for s in "lr":
             m = rec[s]
             # The mannequin's arms clear its bulky chest: on our slimmer builds the elbows come in.
-            if bend:
+            if bend if relax is None else relax:
                 # Leaning in, the captured arms (an upright walk's) read wrong: relaxed arms as the
                 # crouch idle holds them, swinging gently against the legs (each arm furthest
                 # forward as the other side's foot lands; the left foot lands as the walk begins).
@@ -551,9 +621,19 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, be
                 rig.aim(f"upperarm_{s}", Vector((m["ua"].x * 0.55, m["ua"].y * swing, m["ua"].z)))
                 rig.aim(f"lowerarm_{s}", Vector((m["fa"].x * 0.8, m["fa"].y * swing, m["fa"].z)))
                 rig.aim(f"hand_{s}", m["hand"])
-            relax_fingers(rig, s, 0.5)
+                if m.get("palm") is not None:
+                    # The hand's twist too (what it holds turns with it): its palm faced as the source's.
+                    _, _, palm = palm_frame(rig, s)
+                    axis = (rig.tail(f"hand_{s}") - rig.head(f"hand_{s}")).normalized()
+                    a, b = palm - axis * palm.dot(axis), m["palm"] - axis * m["palm"].dot(axis)
+                    if a.length > 1e-4 and b.length > 1e-4:
+                        a.normalize(); b.normalize()
+                        ang = math.atan2(a.cross(b).dot(axis), a.dot(b))
+                        rig.rotate(f"hand_{s}", axis, ang)
+            relax_fingers(rig, s, 0.85 if name.startswith(("rifle_", "pistol_")) else 0.5)
             side = 1 if s == "l" else -1
-            ankle = Vector(((m["ankle"].x - src_pelvis.x) * r + rig.pelvis_rest.x + side * spread, path[s][i % out] + rig.pelvis_rest.y,
+            g = path[s][i % out]
+            ankle = Vector((g.x + rig.pelvis_rest.x + side * spread, g.y + rig.pelvis_rest.y,
                             rig.ankle_z[s] + (m["ankle"].z - src_ankle_z) * r))
             pole = m["knee"] - (m["hip"] + m["ankle"]) * 0.5 + Vector((side * spread * 0.4, 0, 0))
             rig.leg_ik(s, ankle, pole.normalized() if pole.length > 1e-4 else FWD)
@@ -945,14 +1025,14 @@ def main():
     drop_mocap(objs, acts, arm)
     # Mixamo's clips, where downloaded (tools/blender/characters/mixamo/<file>.fbx), over the
     # library's: (our clip, the file, the speed it's played at).
-    for name, file, speed in MIXAMO_CLIPS:
+    for name, file, speed, opts in MIXAMO_CLIPS:
         got = load_mixamo(file)
         if not got:
             continue
         msrc, mobjs, macts, mfps = got
         bpy.context.view_layer.objects.active = arm
         bpy.ops.object.mode_set(mode="POSE")
-        n = mocap(rig, msrc, macts, name, None, speed, bones=MIXAMO_BONES, src_fps=mfps)
+        n = mocap(rig, msrc, macts, name, None, speed, bones=MIXAMO_BONES, src_fps=mfps, **opts)
         if speed:
             cycles[name] = n
         print(f"[anims] {name} from Mixamo's {file} ({mfps:.0f} fps)")
