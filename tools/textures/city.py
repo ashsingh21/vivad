@@ -14,6 +14,7 @@ Near-white where the wall is, so the game's vertex colours tint each building.
   ground_detail (512, RGBA): asphalt, slab and earth detail for the ground shader.
   wear (512): grime and scratches for the street kit.
   stucco, stone (512): Connaught Place's clean white walls and its stone-tiled verandahs.
+  limewash (512): mottled near-white under the shops' paint colours (Mat::Paint).
 
 python3 tools/textures/city.py   -> assets/textures/panga/{facade,shop,roof}_{basecolor,normal,mr}.png,
                                     assets/textures/panga/ground_detail.png
@@ -264,9 +265,18 @@ def shop():
     shutter = inside * (bay == 0)
     rib = ((y % 9) / 9.0)
     prof = np.sin(rib * np.pi * 2) * 0.5 + 0.5
-    rust = np.clip((v - 0.4) / 0.6, 0, 1) * np.clip(periodic_noise(N, 2 * N, rng, 3, 6) * 1.6 - 0.3, 0, 1)
-    sc = np.dstack([0.55 + 0.06 * prof + 0.15 * rust, 0.56 + 0.06 * prof - 0.05 * rust, 0.57 + 0.06 * prof - 0.14 * rust])
-    L.paint(shutter, col=sc, rough=0.45 + 0.4 * rust, metal=0.8 * (1 - rust))
+    # Rust: patches eating through the galvanising, worst toward the bottom where the rain splashes,
+    # streaks running down from the ribs, and the steel still grey between.
+    patches = np.clip(periodic_noise(N, 2 * N, rng, 4, 7) * 2.2 - 0.75, 0, 1)
+    low = np.clip(0.3 + 0.9 * (v - 0.2) / 0.8, 0, 1)
+    streak = np.clip((periodic_noise(N, 2 * N, rng, 4, 40)[N // 2][None, :] - 0.45) * 3.0, 0, 1) * np.clip((v - 0.25) * 1.5, 0, 1)
+    rib_rust = (rib < 0.2) * 0.5 * patches
+    rust = np.clip(patches * low + 0.6 * streak * low + rib_rust, 0, 1)
+    steel = np.dstack([0.50 + 0.07 * prof] * 3) * np.array([1.0, 1.0, 1.02])
+    rust_col = np.dstack([0.32 + 0.10 * patches, 0.14 + 0.04 * patches, 0.06 + 0.02 * patches])
+    sc = steel * (1 - rust[..., None] * 0.9) + rust_col * rust[..., None] * 0.9
+    L.paint(shutter, col=sc, rough=0.45 + 0.45 * rust, metal=0.8 * (1 - rust))
+    L.hgt += shutter * 0.6 * rust * (rng.random((N, 2 * N)).astype(np.float32) - 0.3)
     L.hgt = L.hgt * (1 - shutter) + shutter * (-1.0 + 1.0 * prof)
     # The bottom bar with its lock, and the handle in the middle.
     bar = box(u, v, 0.06, 0.94, 0.93, 0.97, 0.003) * (bay == 0)
@@ -407,8 +417,9 @@ def stucco():
     soft = periodic_noise(n, n, rng, 2, 2)
     g = 0.86 - 0.03 * trowel - 0.015 * grain - 0.025 * soft
     L.col = np.dstack([g, g * 0.975, g * 0.93]).astype(np.float32)
-    L.hgt = 0.35 * trowel + 0.08 * grain
-    L.rough[:] = 0.85 - 0.04 * trowel
+    # Relief from the trowel only: per-pixel grain in the normals speckles the sheen on paint.
+    L.hgt = 0.35 * trowel
+    L.rough[:] = 0.92 - 0.03 * trowel
     L.save("stucco", 1.2)
 
 
@@ -431,8 +442,46 @@ def stone():
     L.save("stone", 1.4)
 
 
+def limewash():
+    """Limewash, 2 m a repeat, near-white to take the paint's colour: brushed on in coats that
+    fade unevenly in the sun, patches where it's been touched up, a faint damp bloom. The mottle
+    is what makes a painted Delhi wall read as old paint, not plastic."""
+    rng = np.random.default_rng(55)
+    n = 512
+    L = Layer(n, n, rng)
+    coats = periodic_noise(n, n, rng, 5, 3)
+    patches = np.clip((periodic_noise(n, n, rng, 3, 2) - 0.55) * 4, 0, 1)
+    brush = periodic_noise(n, n, rng, 3, 24)
+    damp = np.clip((periodic_noise(n, n, rng, 4, 4) - 0.6) * 3, 0, 1)
+    g = 0.97 - 0.10 * coats + 0.06 * patches - 0.03 * brush - 0.10 * damp
+    L.col = np.dstack([g, g * 0.985, g * 0.96]).astype(np.float32)
+    L.hgt = 0.3 * coats + 0.12 * brush
+    L.rough[:] = 0.95
+    L.save("limewash", 1.0)
+
+
+def rustic():
+    """Rusticated stucco, 2 m a repeat: the stucco cut into horizontal bands 50 cm high by deep
+    V-grooves, the band faces softly weathered, darker in the grooves where dust sits."""
+    rng = np.random.default_rng(57)
+    n = 512
+    L = Layer(n, n, rng)
+    y = np.mgrid[0:n, 0:n][0].astype(np.float32)
+    fv = (y % (n / 4)) / (n / 4)
+    band = np.clip(np.minimum(fv, 1 - fv) / 0.035, 0, 1)
+    trowel = periodic_noise(n, n, rng, 4, 3)
+    weather = np.clip(periodic_noise(n, n, rng, 3, 3) * 1.5 - 0.4, 0, 1)
+    g = (0.88 - 0.03 * trowel - 0.06 * weather) * (0.80 + 0.20 * band)
+    L.col = np.dstack([g, g * 0.98, g * 0.94]).astype(np.float32)
+    L.hgt = 2.0 * band + 0.3 * trowel
+    L.rough[:] = 0.9
+    L.save("rustic", 1.6)
+
+
 facade()
 shop()
+rustic()
+limewash()
 stucco()
 stone()
 roof()

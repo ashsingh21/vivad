@@ -111,7 +111,25 @@ pub enum Mat {
     Stucco,
     /// Floors of square stone tiles (verandahs).
     Stone,
+    /// Stucco painted one of the PAINT colours (shutters).
+    Paint(u8),
+    /// Rusticated stucco: white, cut in horizontal bands (Connaught Place's ground storey).
+    Rustic,
 }
+
+/// Paint colours (sRGB): Delhi's sun-faded limewash, as on Chandni's walls (crate::buildings::
+/// WALLS in the game): dusty rose, ochre, mint, powder blue, cream, terracotta, lilac, and the old
+/// green of shutters.
+pub const PAINT: [[f32; 3]; 8] = [
+    [0.88, 0.64, 0.58],
+    [0.90, 0.72, 0.46],
+    [0.66, 0.80, 0.70],
+    [0.62, 0.74, 0.86],
+    [0.94, 0.88, 0.74],
+    [0.82, 0.54, 0.42],
+    [0.76, 0.68, 0.82],
+    [0.36, 0.52, 0.42],
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Reflect)]
 pub enum Shape {
@@ -187,15 +205,30 @@ pub struct Lamp {
 
 /// A building from a map's footprint data: its outline (counter-clockwise seen from above)
 /// extruded from `base` to `top`. Solid; the simulation gives it a mesh collider.
-/// A shop's signboard, or the shelves of goods at the back of a shop, for the client to draw
-/// (crate::buildings in the game): the centre of its face, the way it faces (x, z), its size.
+/// What a ShopSign is.
+#[derive(Clone, Copy, Debug, PartialEq, Reflect)]
+pub enum SignKind {
+    /// A lettered signboard.
+    Board,
+    /// A wall of shelves stacked with goods.
+    Shelves,
+    /// A glowing tube light under a ceiling, facing down; `facing` is the way it runs.
+    Light,
+    /// A shop window's glass.
+    Glass,
+    /// A small lettered board hung between columns, always red.
+    Hanging,
+}
+
+/// A shop's signboard, its shelves or its lights, for the client to draw (crate::buildings in the
+/// game): the centre of its face, the way it faces (x, z), its size.
 #[derive(Clone, Debug, Reflect)]
 pub struct ShopSign {
     pub pos: Vec3,
     pub facing: Vec2,
     pub width: f32,
     pub height: f32,
-    pub shelves: bool,
+    pub kind: SignKind,
 }
 
 #[derive(Clone, Debug, Reflect)]

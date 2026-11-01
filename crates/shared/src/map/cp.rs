@@ -10,7 +10,7 @@ use rand::RngExt;
 use rand::rngs::SmallRng;
 
 use super::build::{Builder, Frame, Opening};
-use super::{ChestKind, Mat};
+use super::{ChestKind, Mat, SignKind};
 
 /// Slab thickness.
 const SLAB: f32 = 0.35;
@@ -124,19 +124,43 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 if last && i + 1 != n {
                     continue;
                 }
-                for rad in [r.ro - 0.45, r.ri + 0.45] {
+                // Fat Tuscan columns, weathered grey-white: a square plinth, a round moulding at the
+                // foot and a collar under the square abacus.
+                for rad in [r.ro - 0.5, r.ri + 0.5] {
                     let base = r.at(rad, col, 0.0);
-                    b.push(base + Vec3::Y * 0.2, Quat::from_rotation_y(-col), super::Shape::Box(Vec3::new(0.8, 0.4, 0.8)), Mat::Stucco, false, true);
-                    b.push(base + Vec3::Y * (r.g - SLAB) / 2.0, Quat::IDENTITY, super::Shape::Cylinder { radius: 0.3, height: r.g - SLAB }, Mat::Stucco, true, true);
-                    b.push(base + Vec3::Y * (r.g - SLAB - 0.15), Quat::from_rotation_y(-col), super::Shape::Box(Vec3::new(0.78, 0.3, 0.78)), Mat::Stucco, false, true);
+                    b.push(base + Vec3::Y * 0.2, Quat::from_rotation_y(-col), super::Shape::Box(Vec3::new(1.0, 0.4, 1.0)), Mat::Plaster, false, true);
+                    b.deco_cyl(w, base + Vec3::Y * 0.4, 0.5, 0.16, Mat::Plaster);
+                    b.push(base + Vec3::Y * (r.g - SLAB) / 2.0, Quat::IDENTITY, super::Shape::Cylinder { radius: 0.4, height: r.g - SLAB }, Mat::Plaster, true, true);
+                    b.deco_cyl(w, base + Vec3::Y * (r.g - SLAB - 0.55), 0.46, 0.12, Mat::Plaster);
+                    b.push(base + Vec3::Y * (r.g - SLAB - 0.17), Quat::from_rotation_y(-col), super::Shape::Box(Vec3::new(1.0, 0.34, 1.0)), Mat::Plaster, false, true);
                 }
             }
-            // Shop fronts on both faces: an arched opening, or a window over a stall board.
-            let front = if i % 2 == 0 { Opening::arch(0.0, 1.8, 3.2) } else { Opening { at: 0.0, width: 1.6, bottom: 0.9, top: 3.0 } };
-            for rad in [core1, core0] {
+            // Shop fronts on both faces: a doorway, or a shop window over a stall board. Each set in
+            // a frame of dark wood cladding up to the signboard; the windows glazed.
+            let window = i % 2 == 1;
+            let front = if window { Opening { at: 0.0, width: 1.6, bottom: 0.9, top: 3.0 } } else { Opening::arch(0.0, 1.8, 3.2) };
+            let out_dir = |a: f32| Vec2::new(a.cos(), a.sin());
+            for (rad, toward) in [(core1, 1.0f32), (core0, -1.0)] {
                 let (p, q) = (xz(rad, s0), xz(rad, s1));
                 let o = Opening { at: p.distance(q) / 2.0, ..front };
-                b.wall(w, p, q, 0.0, r.g - SLAB, 0.3, Mat::Stucco, &[o]);
+                b.wall(w, p, q, 0.0, r.g - SLAB, 0.3, Mat::Rustic, &[o]);
+                // The wall is a chord: mid-segment its face sits inside the arc by the sagitta.
+                let face = rad * ((s1 - s0) / 2.0).cos() + toward * 0.18;
+                let half = front.width / 2.0;
+                for side in [-1.0f32, 1.0] {
+                    b.deco(radial, Vec3::new(face, 1.85, side * (half + 0.2)), Vec3::new(0.05, 3.7, 0.4), Mat::Wood);
+                }
+                b.deco(radial, Vec3::new(face, front.top + 0.25, 0.0), Vec3::new(0.05, 0.5, front.width + 0.8), Mat::Wood);
+                if window {
+                    b.deco(radial, Vec3::new(face, 0.45, 0.0), Vec3::new(0.05, 0.9, front.width), Mat::Wood);
+                    b.map.signs.push(super::ShopSign {
+                        pos: r.at(rad, am, (front.bottom + front.top) / 2.0),
+                        facing: out_dir(am) * toward,
+                        width: front.width,
+                        height: front.top - front.bottom,
+                        kind: SignKind::Glass,
+                    });
+                }
             }
             // The back-to-back wall between the two rows of shops.
             if split {
@@ -145,25 +169,42 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
             // Each shop's signboard over its front, under the verandah ceiling; shelves of goods
             // on its back wall, seen through the arch. The ring's faces carry bigger boards over
             // the colonnade, under the upper windows, every other bay.
-            let out_dir = |a: f32| Vec2::new(a.cos(), a.sin());
             let chord = chord_at(core0).min(chord_at(core1));
+            // A small red board hung in every bay between the column tops, facing the street.
+            for (rad, toward) in [(r.ro - 0.5, 1.0f32), (r.ri + 0.5, -1.0)] {
+                b.map.signs.push(super::ShopSign { pos: r.at(rad, am, r.g - SLAB - 0.42), facing: out_dir(am) * toward, width: 1.0, height: 0.42, kind: SignKind::Hanging });
+            }
             for (rad, toward) in [(core0 - 0.16, -1.0f32), (core1 + 0.16, 1.0)] {
                 b.map.signs.push(super::ShopSign {
                     pos: r.at(rad, am, (3.35 + r.g - SLAB) / 2.0 + 0.05),
                     facing: out_dir(am) * toward,
                     width: (chord * 0.82).min(3.6),
                     height: 0.78,
-                    shelves: false,
+                    kind: SignKind::Board,
                 });
             }
             if split {
-                for (rad, toward) in [(mid - 0.16, -1.0f32), (mid + 0.16, 1.0)] {
-                    b.map.signs.push(super::ShopSign { pos: r.at(rad, am, 1.35), facing: out_dir(am) * toward, width: chord * 0.8, height: 2.3, shelves: true });
+                // A wall of goods across the back, a tube light down the middle of the ceiling.
+                for (rad, toward, front) in [(mid - 0.16, -1.0f32, core0), (mid + 0.16, 1.0, core1)] {
+                    b.map.signs.push(super::ShopSign { pos: r.at(rad, am, 1.4), facing: out_dir(am) * toward, width: chord_at(rad) * 0.96, height: 2.5, kind: SignKind::Shelves });
+                    b.map.signs.push(super::ShopSign {
+                        pos: r.at((front + mid) / 2.0, am, r.g - SLAB - 0.03),
+                        facing: out_dir(am),
+                        width: 0.12,
+                        height: (mid - front) * 0.55,
+                        kind: SignKind::Light,
+                    });
                 }
             }
             if i % 2 == 0 {
                 for (rad, toward) in [(r.ri + 0.06, -1.0f32), (r.ro - 0.06, 1.0)] {
-                    b.map.signs.push(super::ShopSign { pos: r.at(rad, am, r.g + lift + 0.5), facing: out_dir(am) * toward, width: (chord_at(rad) * 0.9).min(4.2), height: 0.75, shelves: false });
+                    b.map.signs.push(super::ShopSign {
+                        pos: r.at(rad, am, r.g + lift + 0.5),
+                        facing: out_dir(am) * toward,
+                        width: (chord_at(rad) * 0.9).min(4.2),
+                        height: 0.75,
+                        kind: SignKind::Board,
+                    });
                 }
             }
             // Upper storey: a tall window to each segment, front and back, framed outside by a sill,
@@ -179,6 +220,8 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 b.deco(radial, Vec3::new(face + out * 0.09, y0 + 3.24, 0.0), Vec3::new(0.18, 0.08, 2.1), Mat::Stucco);
                 for side in [-0.79f32, 0.79] {
                     b.deco(radial, Vec3::new(face + out * 0.04, y0 + 1.9, side), Vec3::new(0.08, 2.24, 0.16), Mat::Stucco);
+                    // Louvred shutters folded back either side, the ring's green.
+                    b.deco(radial, Vec3::new(face + out * 0.03, y0 + 1.9, side * 1.47), Vec3::new(0.06, 2.1, 0.58), Mat::Paint(7));
                 }
             }
             // A party wall between every pair of shops; the block's ends close the shops and
@@ -187,9 +230,21 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 let col = if i + 1 == n && i % 2 == 1 { s1 } else { s0 };
                 let end = i == 0 || i + 1 == n;
                 for (r0, r1) in if split { vec![(core0, mid), (mid, core1)] } else { vec![(core0, core1)] } {
-                    let (p, q) = (xz(r0, col), xz(r1, col));
+                    // Butting against the walls at its ends, not into them (their faces would share).
+                    let (p, q) = (xz(r0 + 0.15, col), xz(r1 - 0.15, col));
                     let door = if end { vec![Opening::door(p.distance(q) / 2.0)] } else { vec![] };
                     b.wall(w, p, q, 0.0, r.g - SLAB, 0.3, Mat::Stucco, &door);
+                    // Shelves down both faces of the party wall, from the back halfway to the front.
+                    if !end {
+                        // The shop's back is the middle wall: the inner row's far end, the outer row's near one.
+                        let rm = if r1 == mid || !split { r1 - (r1 - r0) * 0.3 } else { r0 + (r1 - r0) * 0.3 };
+                        let span = (r1 - r0) * 0.5;
+                        let tangent = Vec2::new(-col.sin(), col.cos());
+                        for side in [-1.0f32, 1.0] {
+                            let pos = r.at(rm, col, 1.4) + Vec3::new(tangent.x, 0.0, tangent.y) * side * 0.16;
+                            b.map.signs.push(super::ShopSign { pos, facing: tangent * side, width: span, height: 2.5, kind: SignKind::Shelves });
+                        }
+                    }
                 }
                 if end {
                     let (p, q) = (xz(r.ri + 0.2, col), xz(r.ro - 0.2, col));

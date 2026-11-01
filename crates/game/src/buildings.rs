@@ -61,6 +61,15 @@ pub fn is_static_visual(b: &Block) -> bool {
     b.visible && !matches!(b.mat, Mat::Water)
 }
 
+/// Limewash and distemper hardly reflect: the default reflectance gives painted walls a sheen at
+/// grazing angles, banded and blotchy on strong colours.
+fn matte(h: Handle<StandardMaterial>, materials: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
+    if let Some(mut m) = materials.get_mut(&h) {
+        m.reflectance = 0.12;
+    }
+    h
+}
+
 fn material_for(mat: Mat, sets: &HashMap<&'static str, TexSet>, materials: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
     let textured = |set: &str, tint: Color, rough: f32, materials: &mut Assets<StandardMaterial>| {
         let s = &sets[set];
@@ -83,8 +92,14 @@ fn material_for(mat: Mat, sets: &HashMap<&'static str, TexSet>, materials: &mut 
         Mat::Brick => textured("brick", Color::WHITE, 0.9, materials),
         Mat::Wood => textured("wood", Color::WHITE, 0.75, materials),
         Mat::Thatch => textured("thatch", Color::WHITE, 0.95, materials),
-        Mat::Stucco => textured("stucco", Color::WHITE, 0.85, materials),
+        Mat::Stucco => matte(textured("stucco", Color::WHITE, 0.92, materials), materials),
         Mat::Stone => textured("stone", Color::WHITE, 0.6, materials),
+        Mat::Rustic => matte(textured("rustic", Color::WHITE, 0.9, materials), materials),
+        Mat::Paint(k) => {
+            // Over the limewash's near-white mottle (tools/textures/city.py).
+            let c = shared::map::PAINT[k as usize % shared::map::PAINT.len()];
+            matte(textured("limewash", Color::srgb(c[0], c[1], c[2]), 0.95, materials), materials)
+        }
         Mat::Dirt => textured("sandstone", Color::srgb(0.75, 0.62, 0.48), 0.95, materials),
         Mat::Gold => materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.76, 0.34), metallic: 1.0, perceptual_roughness: 0.3, ..default() }),
         Mat::Cloth => materials.add(StandardMaterial { base_color: Color::srgb(0.85, 0.22, 0.32), perceptual_roughness: 0.9, double_sided: true, cull_mode: None, ..default() }),
@@ -869,12 +884,26 @@ fn build_footprints(
     // festival colours lettered from the signs atlas, like the shops' above; shelves of goods from
     // the shopfront texture's open bay.
     let mut shelves: HashMap<(i32, i32), MeshBuf> = HashMap::new();
+    let mut lights: HashMap<(i32, i32), MeshBuf> = HashMap::new();
+    let mut glass: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     for (n, sg) in layout.signs.iter().enumerate() {
         let key = ((sg.pos.x / CHUNK).floor() as i32, (sg.pos.z / CHUNK).floor() as i32);
         let out = Vec3::new(sg.facing.x, 0.0, sg.facing.y).normalize_or(Vec3::X);
         let right = (-out).cross(Vec3::Y) * (sg.width * 0.5);
         let up = Vec3::Y * (sg.height * 0.5);
-        if sg.shelves {
+        if sg.kind == shared::map::SignKind::Light {
+            // A tube under the ceiling, its face down, running along `facing`.
+            let along = out * (sg.height * 0.5);
+            let across = Vec3::Y.cross(out) * (sg.width * 0.5);
+            let p = sg.pos;
+            lights.entry(key).or_default().quad([p - along - across, p - along + across, p + along + across, p + along - across], Vec3::NEG_Y, [Vec2::ZERO; 4]);
+            continue;
+        }
+        if sg.kind == shared::map::SignKind::Glass {
+            glass.entry(key).or_default().quad([sg.pos - right - up, sg.pos + right - up, sg.pos + right + up, sg.pos - right + up], out, [Vec2::ZERO; 4]);
+            continue;
+        }
+        if sg.kind == shared::map::SignKind::Shelves {
             let face = sg.pos + out * 0.005;
             shelves.entry(key).or_default().quad(
                 [face - right - up, face + right - up, face + right + up, face - right + up],
@@ -883,10 +912,16 @@ fn build_footprints(
             );
             continue;
         }
-        let shop = (hash01(n as u32, 17, 23) * SIGN_BOARDS as f32) as usize % SIGN_BOARDS;
+        let mut shop = (hash01(n as u32, 17, 23) * SIGN_BOARDS as f32) as usize % SIGN_BOARDS;
+        if sg.kind == shared::map::SignKind::Hanging {
+            // One of the atlas's red boards (board k is ACCENTS[k % 8]; 4 is sindoor red).
+            shop = shop / ACCENTS.len() * ACCENTS.len() + 4;
+        }
         let p = sg.pos + out * 0.05;
         let rot = Quat::from_rotation_arc(Vec3::X, right.normalize());
-        clutter.entry(key).or_default().solid_box(p, rot, Vec3::new(sg.width + 0.08, sg.height + 0.08, 0.1), lin(ACCENTS[shop % ACCENTS.len()]));
+        // Hung between columns: always red, as Connaught Place's are.
+        let board = if sg.kind == shared::map::SignKind::Hanging { ACCENTS[4] } else { ACCENTS[shop % ACCENTS.len()] };
+        clutter.entry(key).or_default().solid_box(p, rot, Vec3::new(sg.width + 0.08, sg.height + 0.08, 0.1), lin(board));
         let (col, row) = ((shop % 4) as f32, (shop / 4) as f32);
         let (u0, u1, v0, v1) = (col / 4.0, (col + 1.0) / 4.0, row / 8.0, (row + 1.0) / 8.0);
         let face = p + out * 0.051;
@@ -953,6 +988,40 @@ fn build_footprints(
             commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(stock.clone()), Transform::from_translation(centre), range.0.clone(), range, OfMap));
         }
     }
+    if !glass.is_empty() {
+        // Shop windows: faintly tinted, glossy, see-through to the lit shop behind.
+        let pane = materials.add(StandardMaterial {
+            base_color: Color::srgba(0.55, 0.66, 0.70, 0.22),
+            alpha_mode: AlphaMode::Blend,
+            perceptual_roughness: 0.06,
+            reflectance: 0.6,
+            double_sided: true,
+            cull_mode: None,
+            ..default()
+        });
+        for (_, buf) in glass {
+            let range = crate::characters::LodRange(near.clone(), 0);
+            let (mesh, centre) = buf.into_mesh();
+            commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(pane.clone()), Transform::from_translation(centre), range.0.clone(), range, bevy::light::NotShadowCaster, OfMap));
+        }
+    }
+    if !lights.is_empty() {
+        // Warm white, bright enough to bloom: shops lit inside, seen from the verandah. They light
+        // nothing (no light sources): a glow only.
+        let glow = materials.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.97, 0.9),
+            emissive: LinearRgba::new(6.0, 5.6, 4.8, 1.0),
+            unlit: true,
+            double_sided: true,
+            cull_mode: None,
+            ..default()
+        });
+        for (_, buf) in lights {
+            let range = crate::characters::LodRange(near.clone(), 0);
+            let (mesh, centre) = buf.into_mesh();
+            commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(glow.clone()), Transform::from_translation(centre), range.0.clone(), range, bevy::light::NotShadowCaster, OfMap));
+        }
+    }
     let mut trim_tris = 0;
     for (_, buf) in trims {
         trim_tris += buf.idx.len() / 3;
@@ -999,7 +1068,7 @@ fn build_chunks(
     for name in ["sandstone", "plaster", "brick", "granite", "wood", "thatch"] {
         sets.insert(name, load_set(&assets, &mut pending, &format!("india/{name}")));
     }
-    for name in ["stucco", "stone"] {
+    for name in ["stucco", "stone", "limewash", "rustic"] {
         sets.insert(name, load_set(&assets, &mut pending, &format!("panga/{name}")));
     }
     let mut groups: HashMap<(i32, i32, Mat, bool), MeshBuf> = HashMap::new();

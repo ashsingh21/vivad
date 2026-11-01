@@ -112,6 +112,11 @@ fn mat_color(m: Mat) -> (Color, f32, f32) {
         Mat::Thatch => (Color::srgb(0.78, 0.66, 0.38), 0.95, 0.0),
         Mat::Stucco => (Color::srgb(0.97, 0.96, 0.93), 0.85, 0.0),
         Mat::Stone => (Color::srgb(0.80, 0.76, 0.68), 0.7, 0.0),
+        Mat::Rustic => (Color::srgb(0.95, 0.94, 0.90), 0.9, 0.0),
+        Mat::Paint(k) => {
+            let c = shared::map::PAINT[k as usize % shared::map::PAINT.len()];
+            (Color::srgb(c[0], c[1], c[2]), 0.85, 0.0)
+        }
     }
 }
 
@@ -128,7 +133,8 @@ fn setup_assets(
     let all = [
         Mat::Grass, Mat::Dirt, Mat::Sandstone, Mat::RedSandstone, Mat::Granite, Mat::Plaster, Mat::PlasterOchre,
         Mat::PlasterBlue, Mat::Brick, Mat::Wood, Mat::Cloth, Mat::Foliage, Mat::Bark, Mat::Water, Mat::Gold,
-        Mat::Marble, Mat::Thatch, Mat::Stucco, Mat::Stone,
+        Mat::Marble, Mat::Thatch, Mat::Stucco, Mat::Stone, Mat::Rustic,
+        Mat::Paint(0), Mat::Paint(1), Mat::Paint(2), Mat::Paint(3), Mat::Paint(4), Mat::Paint(5), Mat::Paint(6), Mat::Paint(7),
     ];
     for m in all {
         let (c, rough, metal) = mat_color(m);
