@@ -203,6 +203,7 @@ fn dress_warriors(mut commands: Commands, q: Query<(Entity, &WarriorVisual), Add
                 let mut bones = HashMap::new();
                 let mut named = HashMap::new();
                 for e in children.iter_descendants(ready.entity) {
+                    commands.entity(e).insert(crate::rim::RimTarget);
                     if let Ok(n) = names.get(e) {
                         named.entry(n.as_str().to_owned()).or_insert(e);
                         if let Some(b) = BONES.iter().find(|b| **b == n.as_str()) {

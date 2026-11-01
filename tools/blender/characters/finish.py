@@ -89,11 +89,12 @@ def skin_material(variant, img, marks=None):
     # The texture's freckle speckle reads as grain at game scale: keep only part of it.
     ratio = g.mixc(0.3, ratio, (*target, 1))
     base = g.node("ShaderNodeMix", data_type="RGBA", clamp_factor=True)
-    g.set(base.inputs[0], g.mul(g.sub(mottle, 0.5), 0.12))
+    # Polished stylised: an even tone, only a hint of mottling.
+    g.set(base.inputs[0], g.mul(g.sub(mottle, 0.5), 0.05))
     g.set(base.inputs[6], ratio)
     base.inputs[7].default_value = (*srgb_to_lin((0.45, 0.24, 0.16)), 1)
     col = base.outputs[2]
-    rough = g.add(0.5, g.mul(pores, 0.1))
+    rough = g.add(0.55, g.mul(pores, 0.05))
     marks = marks or {}
     if marks.get("beard"):
         # Shaved stubble: fine dark dots over a faint blue-brown shadow.
@@ -120,7 +121,7 @@ def skin_material(variant, img, marks=None):
         dot = g.smooth(d, 0.0036, 0.0029)
         col = g.mixc(dot, col, (*srgb_to_lin((0.55, 0.02, 0.05)), 1))
         rough = g.mix(dot, rough, 0.45)
-    normal = g.bump(g.add(g.mul(pores, 0.6), g.mul(mottle, 0.2)), 0.04, 0.0005)
+    normal = g.bump(g.add(g.mul(pores, 0.6), g.mul(mottle, 0.2)), 0.015, 0.0005)
     g.principled(col, 0.0, rough, normal)
     return m
 
@@ -169,8 +170,9 @@ def cloth_material(name, base_rgb, border_rgb, pattern, border_w):
     weft = g.wave(g.mapping(co, scale=(1, 1, 1)), 1400.0, 0.5, detail=0.0, direction="X")
     weave = g.mul(g.add(warp, weft), 0.5)
     slub = g.noise(g.mapping(co, scale=(1, 1, 6)), 160.0, detail=3.0)
-    col = g.mixc(g.mul(g.sub(slub, 0.5), 0.25), (*base, 1), tuple(x * 0.8 for x in base) + (1,))
-    col = g.mixc(g.mul(weave, 0.08), col, tuple(min(1.0, x * 1.15) for x in base) + (1,))
+    # Crisp, clean cloth (polished stylised): the weave and slub only just there.
+    col = g.mixc(g.mul(g.sub(slub, 0.5), 0.1), (*base, 1), tuple(x * 0.85 for x in base) + (1,))
+    col = g.mixc(g.mul(weave, 0.04), col, tuple(min(1.0, x * 1.1) for x in base) + (1,))
     gold = (*srgb_to_lin((0.80, 0.60, 0.22)), 1)
     metal = g.value(0.0)
     rough = g.add(0.78, g.mul(slub, 0.1))
@@ -210,7 +212,7 @@ def cloth_material(name, base_rgb, border_rgb, pattern, border_w):
         if is_gold:
             metal = g.mix(band, metal, 0.85)
             rough = g.mix(band, rough, 0.32)
-    normal = g.bump(g.add(g.mul(weave, 0.5), g.mul(slub, 0.5)), 0.12, 0.0004)
+    normal = g.bump(g.add(g.mul(weave, 0.5), g.mul(slub, 0.5)), 0.05, 0.0004)
     g.principled(col, metal, rough, normal)
     return m
 

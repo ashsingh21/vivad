@@ -13,6 +13,7 @@ pub mod hud;
 pub mod input;
 pub mod lamps;
 pub mod quality;
+pub mod rim;
 pub mod sky;
 pub mod street;
 pub mod skyline;

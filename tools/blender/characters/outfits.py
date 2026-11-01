@@ -108,12 +108,12 @@ def jewellery(ctx, items, *, armbands=True, kadas=1, anklets=False, neck=False, 
 
 # ------------------------------------------------------------------ Panga: today's street clothes
 
-SHIRT_BLUE = (0.20, 0.33, 0.60)
-DENIM = (0.13, 0.19, 0.33)
-GAMCHHA_RED = (0.78, 0.10, 0.10)
-KAMEEZ_PINK = (0.74, 0.10, 0.38)
+SHIRT_BLUE = (0.12, 0.42, 0.86)
+DENIM = (0.14, 0.22, 0.42)
+GAMCHHA_RED = (0.88, 0.12, 0.10)
+KAMEEZ_PINK = (0.90, 0.12, 0.46)
 SALWAR_CREAM = (0.92, 0.88, 0.78)
-DUPATTA_YELLOW = (0.94, 0.70, 0.12)
+DUPATTA_YELLOW = (0.99, 0.76, 0.10)
 STEEL = (0.72, 0.73, 0.75)
 
 
