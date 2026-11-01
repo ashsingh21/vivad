@@ -246,11 +246,12 @@ RUN_LEG = 0.92
 RUN_SWING = [(-1.0, 0.0), (-0.92, 0.78), (-0.35, 1.0), (0.4, 0.66), (1.0, 0.28), (1.0, 0.0)]
 
 
-def locomotion(rig, name, speed, direction, cadence, duty, lift, crouch, bob, lean, arm, elbow, kick=0.0, arm_back=0.0):
+def locomotion(rig, name, speed, direction, cadence, duty, lift, crouch, bob, lean, arm, elbow, kick=0.0, arm_back=0.0, hips_back=0.0):
     """One cycle (two steps). `direction` in body space (FWD, -FWD, LEFT, -LEFT); cadence in
     steps per second. The planted foot slides back at `speed`, so stride = speed * cycle time.
     `kick` (m): a running stride's swing (RUN_SWING) instead of a walk's low arc; `arm_back`
-    (rad): the arms' swing centred that far behind hanging, as a runner's drive from the shoulder."""
+    (rad): the arms' swing centred that far behind hanging, as a runner's drive from the shoulder.
+    `hips_back` (m): the pelvis sat back behind the feet, as in a crouch."""
     if kick:
         # Running strides scaled to the legs (RUN_LEG's are what the numbers were tuned on): shorter
         # legs take quicker, shorter steps and kick lower, rather than lunging to keep up.
@@ -277,7 +278,7 @@ def locomotion(rig, name, speed, direction, cadence, duty, lift, crouch, bob, le
         # Pelvis: lower for running, bob twice a cycle (lowest mid-stance), sway and twist.
         drop = crouch + bob * (0.5 + 0.5 * math.cos(4 * math.pi * (t - duty / 2)))
         sway = 0.025 * math.sin(2 * math.pi * t) if not sideways else 0.0
-        rig.move("pelvis", (sway, 0, -drop))
+        rig.move("pelvis", (sway, hips_back, -drop))
         twist = 0.12 * math.sin(2 * math.pi * t) * (speed / RUN) if not sideways else 0.0
         rig.rotate("pelvis", UP, twist)
         # The hip over the planted foot rides up, the swinging leg's side drops a little.
@@ -491,23 +492,25 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None):
 
 
 def crouch_idle(rig):
-    """Crouched still, matching the crouch walk: knees bent, the back fairly straight and leaning in,
-    feet a little apart and one ahead, breathing."""
+    """Crouched still, matching the crouch walk: hips sat back, knees bent, the chest leaning in
+    over them and the head up, feet a little apart and one ahead, breathing."""
     frames = 60
     new_action(rig, "crouch_idle")
     for f in range(frames + 1):
         t = f / frames
         b = math.sin(2 * math.pi * t)
         rig.rest()
-        rig.move("pelvis", (0.0, 0.02, -0.34 - 0.008 * b))
-        rig.rotate("spine_01", LEFT, 0.18)
-        rig.rotate("spine_02", LEFT, 0.27 + 0.01 * b)
-        rig.rotate("neck_01", LEFT, -0.22)
-        for s, ahead in (("l", -0.1), ("r", 0.12)):
+        # The hips dropped low between the heels, the knees pushed out over the toes; the back
+        # only a little forward.
+        rig.move("pelvis", (0.0, 0.05, -0.44 - 0.008 * b))
+        rig.rotate("spine_01", LEFT, 0.14)
+        rig.rotate("spine_02", LEFT, 0.22 + 0.01 * b)
+        rig.rotate("neck_01", LEFT, -0.2)
+        for s, ahead in (("l", -0.05), ("r", 0.08)):
             sx = 1 if s == "l" else -1
-            rig.leg_ik(s, (rig.hip_x[s] * 1.35, ahead, rig.ankle_z[s]), FWD + UP * 0.1)
+            rig.leg_ik(s, (rig.hip_x[s] * 1.05, ahead, rig.ankle_z[s]), FWD + UP * 0.1)
             rig.foot_pitch(s, 0.0, yaw=sx * 0.2)
-            arm_swing(rig, s, 0.25 + 0.02 * b, 1.1, out=0.18)
+            arm_swing(rig, s, 0.35 + 0.02 * b, 1.2, out=0.16)
             relax_fingers(rig, s, 0.45)
         rig.key(f + 1)
 
@@ -843,8 +846,8 @@ def main():
                                     bob=0.04, lean=0.28, arm=0.85, elbow=1.5, kick=0.52, arm_back=0.2)
     # The crouch walk: the clip's are slow and short, and stretched to our speed they lunge; ours
     # keeps low and steady with short steps.
-    cycles["crouch_f"] = locomotion(rig, "crouch_f", CROUCH, FWD, cadence=3.8, duty=0.55, lift=0.08, crouch=0.34, bob=0.012,
-                                    lean=0.45, arm=0.15, elbow=1.3)
+    cycles["crouch_f"] = locomotion(rig, "crouch_f", CROUCH, FWD, cadence=4.6, duty=0.6, lift=0.07, crouch=0.42, bob=0.012,
+                                    lean=0.4, arm=0.15, elbow=1.3, hips_back=0.04)
     crouch_idle(rig)
     # The forward run and the sprint (shorter, quicker steps than the clips'), standing, crouching,
     # sliding and jumping, from motion capture.

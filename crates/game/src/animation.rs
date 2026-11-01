@@ -368,9 +368,10 @@ fn drive(
                     let loaded = inv.current().is_some_and(|s| s.count > 0);
                     let action = match held {
                         Some(ItemKind::Melee { .. }) if swung < SWING_TIME => Some((swing, swung / SWING_TIME * dur(swing))),
-                        // On the move and not fighting, the arms swing with the run, the bat in hand;
-                        // standing, aiming or just after a swing, the guard.
-                        Some(ItemKind::Melee { .. }) if speed > AIM_SPEED * 0.7 && act.since_attack > 1.0 && !intent.held(btn::AIM) => None,
+                        // On the move or crouched and not fighting, the body's own pose (the arms
+                        // swinging with the run, the bat in hand; the crouch's lean, which the guard's
+                        // upright back would undo); standing, aiming or just after a swing, the guard.
+                        Some(ItemKind::Melee { .. }) if (speed > AIM_SPEED * 0.7 || low) && act.since_attack > 1.0 && !intent.held(btn::AIM) => None,
                         Some(ItemKind::Melee { .. }) => Some(("melee_guard", clock % dur("melee_guard"))),
                         // A long gun is shouldered; pistols are held up at the start of the draw, both
                         // hands on the gun.
