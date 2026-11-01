@@ -45,10 +45,11 @@ pub fn spawn_camera(mut commands: Commands) {
         post(),
         AtmosphereSettings::default(),
         DistanceFog {
-            color: Color::srgba(0.78, 0.74, 0.68, 1.0),
-            directional_light_color: Color::srgba(1.0, 0.9, 0.7, 0.4),
+            // Neutral, a touch of sky blue: a warm tint here turned the whole distant city orange.
+            color: Color::srgba(0.78, 0.80, 0.84, 1.0),
+            directional_light_color: Color::srgba(1.0, 0.93, 0.82, 0.25),
             directional_light_exponent: 20.0,
-            falloff: FogFalloff::from_visibility_colors(2600.0, Color::srgb(0.62, 0.60, 0.56), Color::srgb(0.85, 0.80, 0.70)),
+            falloff: FogFalloff::from_visibility_colors(2600.0, Color::srgb(0.60, 0.60, 0.60), Color::srgb(0.80, 0.84, 0.90)),
         },
         Transform::from_xyz(0.0, 140.0, 60.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));

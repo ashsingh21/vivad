@@ -537,7 +537,8 @@ fn build_footprints(
     // how far across the lane the building opposite is.
     let span = layout.terrain.size.max(2.0 * layout.half_extent);
     let cells = span.ceil() as usize;
-    let mut solid = vec![false; cells * cells];
+    // The tallest roof over each cell, 0 where nothing stands.
+    let mut solid = vec![0.0f32; cells * cells];
     let to_cell = |p: Vec2| -> Option<usize> {
         let (i, j) = ((p.x + span * 0.5).floor(), (p.y + span * 0.5).floor());
         (i >= 0.0 && j >= 0.0 && (i as usize) < cells && (j as usize) < cells).then(|| j as usize * cells + i as usize)
@@ -550,12 +551,13 @@ fn build_footprints(
                 if shared::map::footprint::contains(&fp.pts, p)
                     && let Some(k) = to_cell(p)
                 {
-                    solid[k] = true;
+                    solid[k] = solid[k].max(fp.top.max(0.1));
                 }
             }
         }
     }
-    let occupied = |p: Vec2| to_cell(p).is_some_and(|k| solid[k]);
+    let roof_at = |p: Vec2| to_cell(p).map_or(0.0, |k| solid[k]);
+    let occupied = |p: Vec2| roof_at(p) > 0.0;
     let lin = |c: [f32; 3]| {
         let l = Color::srgb(c[0], c[1], c[2]).to_linear();
         [l.red, l.green, l.blue, 1.0]
@@ -636,6 +638,8 @@ fn build_footprints(
             let (u0, u1) = (along / (2.0 * BAY), (along + len) / (2.0 * BAY));
             let mid = (a + b) * 0.5;
             let street = !occupied(mid + out2 * 1.0) && !occupied(mid + out2 * 2.5);
+            // How high the neighbour's wall stands against this one: above it, this wall is seen.
+            let screened = roof_at(mid + out2 * 1.0).max(roof_at(mid + out2 * 2.5));
             let dir = Vec3::new(e.x, 0.0, e.y) / len;
             let rot = Quat::from_rotation_arc(Vec3::X, dir);
             let at = |s: f32, y: f32| Vec3::new(a.x, y, a.y) + dir * s;
@@ -660,11 +664,11 @@ fn build_footprints(
                     t.prism(Vec3::new(a.x, fp.base + h * 0.5, a.y), up, Vec3::new(h, 2.0 * PILASTER, 2.0 * PILASTER), 0.08, trim);
                 }
             }
-            // Sills and lintels at each window of the upper storeys, where they face the street,
+            // Sills and lintels at each window of the upper storeys, where they can be seen,
             // where the window texture puts them (crate::buildings::facade_image): a window a bay,
             // its sill 0.75-0.92 m up a storey, its head at 2.9-3.06 m; the balcony's opening goes
             // down to a slab at 0.62 m.
-            if street {
+            if fp.top > screened + STOREY {
                 let k = clutter.entry((cx, cz)).or_default();
                 let first = ((along + 0.6) / BAY).ceil() as i32;
                 let last = ((along + len - 0.6) / BAY).floor() as i32;
@@ -673,6 +677,9 @@ fn build_footprints(
                     let s = (bay as f32 + 0.5) * BAY - along;
                     for st in 1..storeys {
                         let floor = fp.base + st as f32 * STOREY;
+                        if floor < screened {
+                            continue;
+                        }
                         // The texture's two-by-two repeat: which of its windows this is.
                         let kind = [[0, 2], [3, 1]][(st % 2 == 0) as usize][bay.rem_euclid(2) as usize];
                         if kind == 3 {

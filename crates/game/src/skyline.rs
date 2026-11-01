@@ -78,7 +78,10 @@ fn spawn_skyline(mut commands: Commands, layout: Res<MapLayout>, mut meshes: Res
                     let (w, d) = (sub * (0.62 + rnd() * 0.25), sub * (0.62 + rnd() * 0.25));
                     let tall = rnd() < 0.015 + 0.035 * far;
                     let h = if tall { 45.0 + rnd() * 40.0 } else { 7.0 + rnd() * rnd() * (14.0 + 26.0 * far) };
+                    // Paler and bluer the farther off, as distant walls look under a bright sky.
                     let col = colour((rnd() * 100.0) as usize);
+                    let k = 0.2 + 0.35 * far;
+                    let col = (col.0 + (0.74 - col.0) * k, col.1 + (0.78 - col.1) * k, col.2 + (0.85 - col.2) * k);
                     let base = Vec3::new(c.x, floor, c.y);
                     parts.push(paint_keep_uv(block(w, h, d).translated_by(base), col));
                     roof_things(&mut parts, &mut rnd, base, w, d, h, col, tall);
