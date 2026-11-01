@@ -64,6 +64,48 @@ fn main() {
     }
 
     let layout = app.world().resource::<MapLayout>().clone();
+    // A city map (VIVAD_MAP=cp|chandni|...): walk in through every hall's doorway instead.
+    if !layout.entrances.is_empty() {
+        let doors: Vec<Entity> = app.world_mut().query_filtered::<Entity, With<shared::sim::Door>>().iter(app.world()).collect();
+        for d in doors {
+            app.world_mut().despawn(d);
+        }
+        let (mut ok, mut blocked) = (0, vec![]);
+        for &(at, out) in &layout.entrances {
+            let start = at + out * 2.5;
+            let id = app
+                .world_mut()
+                .spawn((
+                    Walker,
+                    Kinematic { mode: MoveMode::Ground, ..default() },
+                    PlayerIntent { move_axis: Vec2::Y, yaw: yaw_for(Vec3::new(-out.x, 0.0, -out.y)), ..default() },
+                    Transform::from_xyz(start.x, layout.terrain.height(start.x, start.y) + HALF_HEIGHT + 0.05, start.y),
+                    RigidBody::Kinematic,
+                    shared::sim::warrior_collider(false),
+                    Health::default(),
+                    Inventory::new("khadga"),
+                    shared::sim::Warrior { name: "visitor".into(), is_bot: false, look: 0, kills: 0 },
+                    CollisionLayers::new(Layer::Character, [Layer::World, Layer::Door]),
+                ))
+                .id();
+            for _ in 0..90 {
+                app.update();
+            }
+            let p = app.world().get::<Transform>(id).unwrap().translation;
+            // Through the doorway: at least a metre inside the wall's line.
+            if (Vec2::new(p.x, p.z) - at).dot(out) < -1.0 {
+                ok += 1;
+            } else {
+                blocked.push(at);
+            }
+            app.world_mut().despawn(id);
+        }
+        println!("halls' doorways: {ok} of {} walked through", layout.entrances.len());
+        for b in blocked.iter().take(12) {
+            println!("  blocked at ({:.1}, {:.1})", b.x, b.y);
+        }
+        std::process::exit(blocked.len() as i32);
+    }
     let ground = |x: f32, z: f32| Vec3::new(x, layout.terrain.height(x, z) + HALF_HEIGHT + 0.3, z);
     let everywhere = || Box::new(|_: Vec3| true) as Box<dyn Fn(Vec3) -> bool>;
     let mut cases = vec![

@@ -258,6 +258,9 @@ pub struct MapLayout {
     pub kit: Vec<kit::KitPiece>,
     /// Signboards and shop shelves set into hand-built blocks (Connaught Place's ring).
     pub signs: Vec<ShopSign>,
+    /// The halls' street doorways (crate::map::delhi): where, on the wall, and outward (x, z).
+    /// Kept clear of street furniture and trees.
+    pub entrances: Vec<(Vec2, Vec2)>,
     /// A river across the map, as its channel's x range (the India map's).
     pub river: Option<(f32, f32)>,
     pub terrain: terrain::Terrain,

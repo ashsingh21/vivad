@@ -100,7 +100,7 @@ fn street_free(map: &MapLayout, houses: &[Vec<Vec2>], p: Vec2, r: f32, half: f32
     if p.x.abs() > half - 6.0 || p.y.abs() > half - 6.0 {
         return false;
     }
-    if matches!(map.terrain.ground_at(p.x, p.y), Some(ground::WATER)) {
+    if matches!(map.terrain.ground_at(p.x, p.y), Some(ground::WATER)) || super::delhi::before_door(map, p, r) {
         return false;
     }
     let near_outline = |pts: &[Vec2]| {

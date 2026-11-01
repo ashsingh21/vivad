@@ -616,7 +616,9 @@ fn hall(b: &mut Builder, rng: &mut SmallRng, pts: &[Vec2], others: &[Vec<Vec2>])
                 let p = a + dir * at;
                 let face = p + out * (T * 0.5 + 0.06);
                 b.map.signs.push(super::ShopSign { pos: Vec3::new(face.x, 3.62, face.y), facing: out, width: 2.6, height: 0.7, kind: super::SignKind::Board });
-                if !door {
+                if door {
+                    b.map.entrances.push((p, out));
+                } else {
                     b.map.signs.push(super::ShopSign { pos: Vec3::new(p.x, 1.95, p.y), facing: out, width: 2.4, height: 2.1, kind: super::SignKind::Glass });
                 }
             }
@@ -729,6 +731,15 @@ fn tree(b: &mut Builder, rng: &mut SmallRng, p: Vec2) {
     b.map.props.push(Prop { model, pos: Vec3::new(p.x, b.map.terrain.height(p.x, p.y), p.y), yaw: rng.random_range(0.0..std::f32::consts::TAU), scale, trunk: Some((0.25, 4.0)) });
 }
 
+/// In front of a hall's doorway (within 3 m out and 1.8 m either side, plus `r`): kept clear.
+pub(super) fn before_door(map: &MapLayout, p: Vec2, r: f32) -> bool {
+    map.entrances.iter().any(|(d, out)| {
+        let v = p - *d;
+        let ahead = v.dot(*out);
+        ahead > -0.5 - r && ahead < 3.0 + r && v.perp_dot(*out).abs() < 1.8 + r
+    })
+}
+
 /// Free of buildings, roads and the blocks' ring: where a tree or a find can go.
 fn open(map: &MapLayout, ring: &super::cp::Ring, houses: &[Vec<Vec2>], p: Vec2, clear: f32) -> bool {
     let r = p.distance(ring.center.xz());
@@ -736,6 +747,9 @@ fn open(map: &MapLayout, ring: &super::cp::Ring, houses: &[Vec<Vec2>], p: Vec2, 
         return false;
     }
     if matches!(map.terrain.ground_at(p.x, p.y), Some(ground::ROAD | ground::WATER | ground::PATH)) {
+        return false;
+    }
+    if before_door(map, p, 0.0) {
         return false;
     }
     !map.footprints.iter().any(|f| {
