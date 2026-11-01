@@ -457,11 +457,11 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, be
                     locked[(a + k) % out] = ys[a] + speed * k / FPS
                 # After lift-off, ease the gap to the source's path out over the swing.
                 gap = ys[a] + speed * (n - 1) / FPS - ys[(a + n - 1) % out]
-                swing = out - n
-                for k in range(swing):
+                air = out - n
+                for k in range(air):
                     j = (a + n + k) % out
                     if not down[s][j]:
-                        locked[j] = ys[j] + gap * (1.0 - smooth(k / max(1.0, swing * 0.6)))
+                        locked[j] = ys[j] + gap * (1.0 - smooth(k / max(1.0, air * 0.6)))
             ys = locked
         path[s] = ys
     new_action(rig, name)
@@ -485,9 +485,16 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, be
         for s in "lr":
             m = rec[s]
             # The mannequin's arms clear its bulky chest: on our slimmer builds the elbows come in.
-            rig.aim(f"upperarm_{s}", Vector((m["ua"].x * 0.55, m["ua"].y * swing, m["ua"].z)))
-            rig.aim(f"lowerarm_{s}", Vector((m["fa"].x * 0.8, m["fa"].y * swing, m["fa"].z)))
-            rig.aim(f"hand_{s}", m["hand"])
+            if bend:
+                # Leaning in, the captured arms (an upright walk's) read wrong: relaxed arms as the
+                # crouch idle holds them, swinging gently against the legs (each arm furthest
+                # forward as the other side's foot lands; the left foot lands as the walk begins).
+                c = math.cos(2 * math.pi * i / out) * (1 if s == "r" else -1)
+                arm_swing(rig, s, 0.12 + 0.2 * swing * c, 0.9 + 0.15 * c, out=0.16)
+            else:
+                rig.aim(f"upperarm_{s}", Vector((m["ua"].x * 0.55, m["ua"].y * swing, m["ua"].z)))
+                rig.aim(f"lowerarm_{s}", Vector((m["fa"].x * 0.8, m["fa"].y * swing, m["fa"].z)))
+                rig.aim(f"hand_{s}", m["hand"])
             relax_fingers(rig, s, 0.5)
             ankle = Vector(((m["ankle"].x - src_pelvis.x) * r + rig.pelvis_rest.x, path[s][i % out] + rig.pelvis_rest.y,
                             rig.ankle_z[s] + (m["ankle"].z - src_ankle_z) * r))
@@ -872,7 +879,7 @@ def main():
     # The crouch walk: the walk itself, the hips lowered to the crouch idle's height and the back
     # leaning in: its heel-to-toe steps and swinging arms, knees bent (the library's crouch walk
     # is a slow creep, its hands hanging, that reads oddly at any speed).
-    cycles["crouch_f"] = mocap(rig, src, acts, "crouch_f", "Walk_Loop", CROUCH, stride=0.75, lift=-0.23 * (rig.leg / 0.923), bend=0.6, swing=1.4)
+    cycles["crouch_f"] = mocap(rig, src, acts, "crouch_f", "Walk_Loop", CROUCH, stride=0.75, lift=-0.23 * (rig.leg / 0.923), bend=0.6)
     mocap(rig, src, acts, "crouch_idle", "Crouch_Idle_Loop", 0.0, keep=crouch_keep, lift=crouch_lift)
     # The game holds the jump at its middle (tucked, rising) and loops the fall.
     mocap(rig, src, acts, "jump", "Jump_Start", 0.0)
