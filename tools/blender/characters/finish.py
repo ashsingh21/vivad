@@ -365,6 +365,29 @@ def hair_flex(obj):
     flex_uvs(obj, flex)
 
 
+def mh_material(name, root):
+    """A MakeHuman library garment in its own textures: its colour (a cleaned copy from
+    tools/textures/mh_clothes.py when there is one) and its normal map, so the bake carries its
+    sculpted folds into the atlas."""
+    lib = os.path.expanduser(f"~/.config/blender/5.2/mpfb/data/clothes/{name}")
+    cleaned = os.path.join(root, "build", "clothes", f"{name}_diffuse.png")
+    diffuse = bpy.data.images.load(cleaned if os.path.exists(cleaned) else os.path.join(lib, f"{name}_diffuse.png"))
+    m = new_material(f"mh_{name}")
+    g = Graph(m)
+    uv = g.node("ShaderNodeUVMap", uv_map="src").outputs["UV"]
+    tex = g.node("ShaderNodeTexImage", {"Vector": uv}, image=diffuse)
+    # Not every garment has a normal map (the shoes don't).
+    nmap = None
+    path = os.path.join(lib, f"{name}_normal.png")
+    if os.path.exists(path):
+        normal = bpy.data.images.load(path)
+        normal.colorspace_settings.name = "Non-Color"
+        ntex = g.node("ShaderNodeTexImage", {"Vector": uv}, image=normal)
+        nmap = g.node("ShaderNodeNormalMap", {"Color": ntex.outputs["Color"]}, uv_map="src").outputs["Normal"]
+    g.principled(tex.outputs["Color"], 0.0, 0.85, nmap)
+    return m
+
+
 def finish_character(variant, rig, proxy, parts, items, root):
     # --- materials per source object
     skin_img = find_image(proxy)
@@ -387,6 +410,8 @@ def finish_character(variant, rig, proxy, parts, items, root):
             obj.data.materials.append(hair_mesh_material(obj.name))
         elif kind == "lacquer":
             obj.data.materials.append(metal_material("lacquer", (0.62, 0.06, 0.08), 0.18, 0.0))
+        elif kind == "mh":
+            obj.data.materials.append(mh_material(obj.name, root))
         else:
             key = next((k for k in CLOTH if obj.name.startswith(k)), "dhoti")
             base, border, pattern, bw = CLOTH[key]

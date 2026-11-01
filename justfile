@@ -51,6 +51,7 @@ figures:
 
 # Characters (needs the MPFB extension + MakeHuman CC0 assets, see docs/references.md)
 characters:
+    python3 tools/textures/mh_clothes.py
     for v in male female; do {{blender}} -b -P tools/blender/characters/human.py -- $v 2>&1 | grep -E '^\[|Error|Traceback' || true; done
 
 # Head shots of the exported characters (front and three-quarter): just faces, or just faces after

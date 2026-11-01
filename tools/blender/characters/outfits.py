@@ -147,96 +147,25 @@ def upper_body(ctx, L, hem, sleeve, neck_front, neck_back, lower_sleeve=0.0):
 
 
 def male_street(ctx):
-    """A half-sleeve mustard shirt worn out over blue jeans and a belt, a chequered gamchha over the
-    right shoulder, a steel kada; his own hair."""
+    """Over the modelled shirt and jeans (tools/blender/characters/human.py "clothes"): a chequered
+    gamchha over the right shoulder and a steel kada; his own hair."""
     L = Landmarks(ctx)
     items = []
-    waistline = L.waist - 0.03
-    shirt_hem = L.hip - 0.07
-    ankle = L.ankle + 0.035
-
-    def jeans_offset(co, n):
-        # Straight-leg, not leggings: room through the thigh and calf, a little more at the hem,
-        # less on the inner thigh (where the two legs would meet).
-        t = (waistline - co.z) / (waistline - ankle)
-        inner = 1.0 - 0.55 * max(0.0, -n.x * math.copysign(1.0, co.x)) * smoothstep(L.hip, L.knee, co.z)
-        return (0.017 + 0.016 * t + 0.008 * smoothstep(0.75, 1.0, t)) * inner
-
-    jeans = g.shell(ctx, "jeans", lambda v: all_in(ctx, v, LEG_GROUPS, ankle, waistline), jeans_offset, smooth=4,
-                    snap=g.z_snap(ankle, waistline))
-    items.append((tag(jeans, DENIM), "cover"))
-    belt = g.shell(ctx, "belt", lambda v: all_in(ctx, v, LEG_GROUPS, waistline - 0.035, waistline), lambda co, n: 0.026, smooth=3,
-                   thickness=0.005, snap=g.z_snap(waistline - 0.035, waistline))
-    items.append((tag(belt, (0.22, 0.12, 0.06)), "accessory"))
-
-    # The shirt, loose, hanging over the belt and the top of the hips.
-    def shirt_offset(co, n):
-        # Hangs from the shoulders and chest: loose through the body, falling away in front below
-        # the chest, fuller at the hem.
-        below = smoothstep(waistline + 0.05, shirt_hem, co.z)
-        front = max(0.0, -n.y) * smoothstep(L.chest, waistline, co.z)
-        return 0.02 + 0.03 * below + 0.018 * front
-    shirt = g.shell(ctx, "shirt", upper_body(ctx, L, shirt_hem, 0.42, 0.06, 0.02), shirt_offset, smooth=3, thickness=0.003,
-                    edge_iters=20)
-    items.append((tag(shirt, SHIRT_MUSTARD), "cover"))
-    # The button placket down the front.
-    top_z = L.clav - 0.06
-    placket = [L.surface(0.0, top_z - (top_z - shirt_hem) * s, push=0.026 + 0.03 * s) for s in [i / 10 for i in range(11)]]
-    items.append((tag(g.strip(ctx, "shirt_placket", placket, [0.028] * 11, thickness=0.003), SHIRT_MUSTARD), "accessory"))
-
     # Gamchha thrown over the right shoulder: one end down the chest, the other down the back.
     for k, front in enumerate((True, False)):
-        top = L.surface(-0.115, L.clav + 0.005, front=front, push=0.03)
+        top = L.surface(-0.115, L.clav + 0.005, front=front, push=0.035)
         length = 0.42 if front else 0.36
         path = [top + Vector((0.01 * s, 0.0, -length * s)) for s in [i / 9 for i in range(10)]]
         items.append((tag(g.strip(ctx, f"gamchha{k}", path, [0.16 + 0.03 * i / 9 for i in range(10)],
                                   normals=[Vector((0, -1 if front else 1, 0))] * 10, thickness=0.003,
-                                  shrink_to=ctx.proxy, shrink_offset=0.045), GAMCHHA_RED), "accessory"))
-
+                                  shrink_to=ctx.proxy, shrink_offset=0.04), GAMCHHA_RED), "accessory"))
     jewellery(ctx, items, armbands=False, kadas=1, neck=False, metal=STEEL, metal_kind="silver")
     return items
 
 
 def female_street(ctx):
-    """A kurti over slim jeans: the kurti fitted through the body, three-quarter sleeves, falling to
-    mid-thigh with slits at the sides; jeans to the ankle; glass bangles."""
-    L = Landmarks(ctx)
+    """Over the modelled tee and jeans: glass bangles."""
     items = []
-    waistline = L.waist - 0.02
-    ankle = L.ankle + 0.035
-
-    def jeans_offset(co, n):
-        t = (waistline - co.z) / (waistline - ankle)
-        return 0.011 + 0.011 * t + 0.008 * smoothstep(0.8, 1.0, t)
-
-    jeans = g.shell(ctx, "jeans", lambda v: all_in(ctx, v, LEG_GROUPS, ankle, waistline), jeans_offset, smooth=4,
-                    snap=g.z_snap(ankle, waistline))
-    items.append((tag(jeans, DENIM), "cover"))
-
-    # The kurti: fitted through the body to the hips...
-    kurti_hem = L.hip - 0.05
-    thigh = (L.hip + L.knee) * 0.5
-
-    def kurti_offset(co, n):
-        # Easy through the body, flaring from the waist.
-        return 0.017 + 0.034 * smoothstep(waistline, kurti_hem, co.z)
-    kurti = g.shell(ctx, "kurti", upper_body(ctx, L, kurti_hem, 1.0, 0.07, 0.03, lower_sleeve=0.45), kurti_offset,
-                    smooth=3, thickness=0.003, edge_iters=20)
-    items.append((tag(kurti, KAMEEZ_PINK), "cover"))
-    # ...then over the jeans (just outside them) to mid-thigh, with a narrow panel front and back
-    # closing the gap between the legs: open at the sides.
-    skirt = g.shell(ctx, "kurti_skirt", lambda v: all_in(ctx, v, LEG_GROUPS, thigh, kurti_hem + 0.03),
-                    lambda co, n: jeans_offset(co, n) + 0.026 + 0.022 * smoothstep(kurti_hem, thigh, co.z), smooth=6,
-                    snap=g.z_snap(thigh, kurti_hem + 0.03))
-    items.append((tag(skirt, KAMEEZ_PINK), "cover"))
-    for k, front in enumerate((True, False)):
-        sgn = -1.0 if front else 1.0
-        top = L.surface(0.0, kurti_hem, front=front) + Vector((0.0, sgn * 0.04, 0.02))
-        drop = kurti_hem - thigh - 0.01
-        path = [top + Vector((0.0, sgn * 0.02 * s, -drop * s)) for s in [i / 7 for i in range(8)]]
-        items.append((tag(g.strip(ctx, f"kurti_panel{k}", path, [0.20 + 0.03 * i / 7 for i in range(8)],
-                                  normals=[Vector((0, -1 if front else 1, 0))] * 8, thickness=0.003), KAMEEZ_PINK), "accessory"))
-
     jewellery(ctx, items, armbands=False, kadas=4, anklets=False, neck=False)
     return items
 

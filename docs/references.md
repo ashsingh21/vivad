@@ -99,7 +99,7 @@ upper limb toward the thumb, edge or bow's back along the hand); see `crates/gam
 | studio_small_09 HDRI (2k) | [Poly Haven](https://polyhaven.com/a/studio_small_09) | CC0 | Preview renders (alternative) |
 
 | MPFB (MakeHuman plugin for Blender) | [extensions.blender.org/add-ons/mpfb](https://extensions.blender.org/add-ons/mpfb/) | GPL (tool only); generated humans are CC0 | Character base bodies, rig (`game_engine`) |
-| MakeHuman system assets (`makehuman_system_assets_cc0.zip`, sha256 `b542127a…0107`) | [makehumancommunity.org](https://static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html) | CC0 | Body proxies, skin detail (re-toned), eyes, brows, lashes, hair (long01, short02) |
+| MakeHuman system assets (`makehuman_system_assets_cc0.zip`, sha256 `b542127a…0107`) | [makehumancommunity.org](https://static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html) | CC0 | Body proxies, skin detail (re-toned), eyes, brows, lashes, hair (long01, short02); clothes: male_casualsuit03 (striped shirt, jeans), female_casualsuit01 (tee, jeans; its logo painted out by tools/textures/mh_clothes.py), shoes05, shoes06 |
 
 All other textures are generated: weapons and characters are baked from procedural Blender
 materials (`tools/blender/lib/`, `tools/blender/characters/finish.py`); leaf and bark textures are

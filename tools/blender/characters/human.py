@@ -50,6 +50,9 @@ VARIANTS = {
                  "nose/nose-hump-incr": 0.5, "nose/nose-scale-vert-incr": 0.4,
                  "mouth/mouth-lowerlip-volume-decr": 0.7, "mouth/mouth-upperlip-volume-decr": 0.6, "mouth/mouth-scale-horiz-decr": 0.3,
                  "eyes/l-eye-height2-incr": 0.7, "eyes/r-eye-height2-incr": 0.7, "eyes/l-eye-scale-incr": 0.3, "eyes/r-eye-scale-incr": 0.3},
+        # Modelled clothes from the MakeHuman library (CC0): a striped shirt over washed jeans,
+        # sneakers.
+        "clothes": ["male_casualsuit03", "shoes06"],
         "outfit": outfits.male_street,
     },
     "female": {
@@ -63,6 +66,8 @@ VARIANTS = {
         "face": {"nose/nose-scale-horiz-decr": 0.7, "nose/nose-flaring-decr": 0.9, "nose/nose-point-width-decr": 0.7,
                  "mouth/mouth-lowerlip-volume-decr": 0.5, "mouth/mouth-upperlip-volume-decr": 0.5, "mouth/mouth-scale-horiz-decr": 0.2,
                  "eyes/l-eye-height2-incr": 0.8, "eyes/r-eye-height2-incr": 0.8, "eyes/l-eye-scale-incr": 0.35, "eyes/r-eye-scale-incr": 0.35},
+        # A tee and jeans (its logo painted out: tools/textures/mh_clothes.py), sneakers.
+        "clothes": ["female_casualsuit01", "shoes05"],
         "outfit": outfits.female_street,
     },
 }
@@ -82,9 +87,19 @@ def build_body(cfg):
     for name, w in cfg.get("face", {}).items():
         TargetService.load_target(body, os.path.join(TARGETS, f"{name}.target.gz"), weight=w)
     rig = hs.add_builtin_rig(body, "game_engine")
+    # Modelled clothes, fitted to the body and rigged by MPFB like the hair. Added before the proxy
+    # body: with one, MPFB's clothes step trips on its own delete-group interpolation (an empty
+    # path); our delete_hidden_body() does that job on the proxy anyway.
+    clothes = {}
+    for name in cfg.get("clothes", []):
+        o = hs.add_mhclo_asset(os.path.join(MPFB_DATA, "clothes", name, f"{name}.mhclo"), body, asset_type="Clothes",
+                               subdiv_levels=0, material_type="MAKESKIN")
+        o.name = name
+        o["kind"] = "mh"
+        clothes[f"clothes:{name}"] = o
     proxy = hs.add_mhclo_asset(os.path.join(MPFB_DATA, cfg["proxy"]), body, asset_type="Proxymeshes", subdiv_levels=0)
     hs.set_character_skin(os.path.join(MPFB_DATA, cfg["skin"]), body, skin_type="GAMEENGINE")
-    parts = {"proxy": proxy}
+    parts = {"proxy": proxy, **clothes}
     for kind, rel in (("Eyes", "eyes/low-poly/low-poly.mhclo"), ("Eyebrows", cfg["brows"]),
                       ("Eyelashes", "eyelashes/eyelashes01/eyelashes01.mhclo"), ("Hair", cfg["hair"])):
         parts[kind.lower()] = hs.add_mhclo_asset(os.path.join(MPFB_DATA, rel), body, asset_type=kind, subdiv_levels=0,
@@ -119,7 +134,8 @@ def delete_hidden_body(proxy, covers, gap=0.09):
     covered = np.zeros(len(me.vertices), dtype=bool)
     for v in me.vertices:
         for t in trees:
-            hit = t.ray_cast(v.co + v.normal * 0.002, v.normal, gap)
+            # From just inside the skin: a tight garment can sit a hair beneath it.
+            hit = t.ray_cast(v.co - v.normal * 0.02, v.normal, gap + 0.02)
             if hit[0] is not None:
                 covered[v.index] = True
                 break
@@ -144,6 +160,7 @@ def main():
     ctx = garments.BodyContext(proxy, rig, bone_weight_map(proxy))
     ctx.brow_top = max((parts["eyebrows"].matrix_world @ v.co).z for v in parts["eyebrows"].data.vertices)
     items = cfg["outfit"](ctx)          # list of (object, role) where role in {"cover", "accessory", "hair_replace"}
+    items += [(o, "cover") for k, o in parts.items() if k.startswith("clothes:")]
     items += face.decorate(variant, proxy, parts, ctx)
     if any(role == "hair_replace" for _, role in items):
         # Short hair shows below the turban's lower edge (no bare scalp); the rest is inside it.
