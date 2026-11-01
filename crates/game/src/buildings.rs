@@ -136,6 +136,54 @@ impl MeshBuf {
         self.idx.drain(n0 + 18..n0 + 24);
     }
 
+    /// A bar of one colour along its local X with its four long edges chamfered `bev` deep, so they
+    /// catch a line of light: trim's rounded look for a handful more triangles than a box.
+    fn prism(&mut self, c: Vec3, rot: Quat, size: Vec3, bev: f32, col: [f32; 4]) {
+        let (l, a, b) = (size.x * 0.5, size.z * 0.5, size.y * 0.5);
+        let e = bev.min(a * 0.9).min(b * 0.9);
+        // The cross-section as (z, y), anticlockwise from the +z face's foot.
+        let sec = [(a, -b + e), (a, b - e), (a - e, b), (-a + e, b), (-a, b - e), (-a, -b + e), (-a + e, -b), (a - e, -b)];
+        let at = |x: f32, (z, y): (f32, f32)| c + rot * Vec3::new(x, y, z);
+        for k in 0..8 {
+            let (s0, s1) = (sec[k], sec[(k + 1) % 8]);
+            let n = rot * Vec3::new(0.0, -(s1.0 - s0.0), s1.1 - s0.1).normalize();
+            self.quad_col([at(-l, s0), at(l, s0), at(l, s1), at(-l, s1)], n, [Vec2::ZERO; 4], [col; 4]);
+        }
+        for (x, n) in [(l, Vec3::X), (-l, Vec3::NEG_X)] {
+            let base = self.pos.len() as u32;
+            for q in sec {
+                self.pos.push(at(x, q).to_array());
+                self.nrm.push((rot * n).to_array());
+                self.uv.push([0.0, 0.0]);
+                self.col.push(col);
+            }
+            for k in 1..7u32 {
+                // Seen from +x the section runs clockwise, from -x anticlockwise.
+                let t = if x > 0.0 { [base, base + k + 1, base + k] } else { [base, base + k, base + k + 1] };
+                self.idx.extend_from_slice(&t);
+            }
+        }
+    }
+
+    /// A flat piece seen from both sides (cloth): a polygon fanned from its first corner, drawn
+    /// twice, once each way round.
+    fn cloth(&mut self, p: &[Vec3], col: [f32; 4]) {
+        let n = (p[1] - p[0]).cross(p[2] - p[0]).normalize_or(Vec3::Y);
+        for (side, flip) in [(n, false), (-n, true)] {
+            let base = self.pos.len() as u32;
+            for q in p {
+                self.pos.push(q.to_array());
+                self.nrm.push(side.to_array());
+                self.uv.push([0.0, 0.0]);
+                self.col.push(col);
+            }
+            for k in 1..p.len() as u32 - 1 {
+                let t = if flip { [base, base + k + 1, base + k] } else { [base, base + k, base + k + 1] };
+                self.idx.extend_from_slice(&t);
+            }
+        }
+    }
+
     /// An upright cylinder of one colour (sides and top), for clutter.
     fn solid_cylinder(&mut self, c: Vec3, r: f32, h: f32, col: [f32; 4]) {
         let seg = 10;
@@ -288,16 +336,18 @@ impl MeshBuf {
 pub(crate) const BAY: f32 = 3.2;
 /// How far signs, cables and roof tanks are drawn (scaled by quality like the chunks' LODs).
 const CLUTTER_FAR: f32 = 130.0;
-/// Signboard colours: the bazaar's reds, yellows, blues and greens, and some white.
-const SIGNS: [[f32; 3]; 8] = [
-    [0.78, 0.12, 0.10],
-    [0.95, 0.78, 0.12],
-    [0.10, 0.32, 0.65],
-    [0.12, 0.50, 0.25],
-    [0.92, 0.90, 0.86],
-    [0.90, 0.42, 0.10],
-    [0.55, 0.10, 0.35],
-    [0.15, 0.15, 0.18],
+/// Festival colours, kept for small things so they pop off the pastel walls: signboards,
+/// awnings, bunting. Marigold, rani pink, peacock blue, parrot green, sindoor red, haldi yellow,
+/// jamun purple, white.
+const ACCENTS: [[f32; 3]; 8] = [
+    [0.98, 0.58, 0.06],
+    [0.90, 0.12, 0.46],
+    [0.04, 0.46, 0.62],
+    [0.18, 0.66, 0.24],
+    [0.86, 0.12, 0.10],
+    [0.99, 0.82, 0.10],
+    [0.46, 0.16, 0.58],
+    [0.97, 0.95, 0.90],
 ];
 pub(crate) const STOREY: f32 = 3.4;
 /// Lime-washed walls, sun-faded: Old Delhi's dusty pinks, ochres, mints and blues, and cream.
@@ -450,6 +500,21 @@ fn wire(buf: &mut MeshBuf, a: Vec3, b: Vec3, sag: f32) {
     }
 }
 
+/// A string of triangular paper flags across a lane, in festival colours.
+fn bunting(buf: &mut MeshBuf, a: Vec3, b: Vec3, sag: f32, seed: u32) {
+    let at = |t: f32| a.lerp(b, t) - Vec3::Y * sag * 4.0 * t * (1.0 - t);
+    let count = ((b - a).length() / 0.55) as u32;
+    wire(buf, a, b, sag);
+    for k in 1..count {
+        let (t0, t1) = ((k as f32 - 0.35) / count as f32, (k as f32 + 0.35) / count as f32);
+        let (p, q) = (at(t0), at(t1));
+        let tip = (p + q) * 0.5 - Vec3::Y * 0.34;
+        let c = ACCENTS[(hash01(seed, k, 9) * ACCENTS.len() as f32) as usize % ACCENTS.len()];
+        let l = Color::srgb(c[0], c[1], c[2]).to_linear();
+        buf.cloth(&[p, q, tip], [l.red, l.green, l.blue, 1.0]);
+    }
+}
+
 /// A city map's buildings (MapLayout::footprints), merged per chunk and material: walls in the
 /// facade, roofs in plain plaster.
 fn build_footprints(
@@ -548,6 +613,17 @@ fn build_footprints(
         let n = fp.pts.len();
         let mut along = 0.0;
         let ccw = fp.pts.iter().zip(fp.pts.iter().cycle().skip(1)).map(|(a, b)| a.x * b.y - b.x * a.y).sum::<f32>() > 0.0;
+        // Which corners stick out (and turn enough to be a corner, not a bend in a curve).
+        let corner: Vec<i8> = (0..n)
+            .map(|i| {
+                let (prev, a, b) = (fp.pts[(i + n - 1) % n], fp.pts[i], fp.pts[(i + 1) % n]);
+                let (e0, e1) = (a - prev, b - a);
+                if e0.length() < 1.0 || e1.length() < 1.0 || e0.normalize().dot(e1.normalize()) > 0.9 {
+                    return 0;
+                }
+                if ((e0.x * e1.y - e0.y * e1.x) > 0.0) == ccw { 1 } else { -1 }
+            })
+            .collect();
         for i in 0..n {
             let (a, b) = (fp.pts[i], fp.pts[(i + 1) % n]);
             let e = b - a;
@@ -568,18 +644,20 @@ fn build_footprints(
                 // The parapet round the roof, and its coping.
                 let (ph, pt) = PARAPET;
                 t.open_box(at(len * 0.5, fp.top + ph * 0.5) - out * pt * 0.5, rot, Vec3::new(len, ph, pt), tint_at(1.06));
-                t.open_box(at(len * 0.5, fp.top + ph + 0.06) - out * 0.15, rot, Vec3::new(len, 0.12, 0.4), trim);
-                // A cornice over the ground storey.
+                t.prism(at(len * 0.5, fp.top + ph + 0.07) - out * 0.15, rot, Vec3::new(len, 0.14, 0.4), 0.05, trim);
+                // A chhajja over the ground storey: a deep sunshade ledge, run on round outside
+                // corners to meet the next wall's and stopped short of inside ones.
                 if fp.top - split > 1.0 {
-                    t.open_box(at(len * 0.5, split + 0.02) + out * 0.03, rot, Vec3::new(len, 0.26, 0.3), trim);
+                    const DEEP: f32 = 0.6;
+                    let ext = |c: i8| c as f32 * DEEP;
+                    let (s0, s1) = (-ext(corner[i]), len + ext(corner[(i + 1) % n]));
+                    t.prism(at((s0 + s1) * 0.5, split + 0.04) + out * (DEEP - 0.1) * 0.5, rot, Vec3::new(s1 - s0, 0.2, DEEP + 0.1), 0.06, trim);
                 }
                 // A pilaster up each outside corner.
-                let prev = fp.pts[(i + n - 1) % n];
-                let e0 = a - prev;
-                let turn = e0.x * e.y - e0.y * e.x;
-                if (turn > 0.0) == ccw && e0.length() > 1.0 && len > 1.0 && e0.normalize().dot(e / len) < 0.9 {
+                if corner[i] > 0 {
                     let h = fp.top - fp.base + ph + 0.3;
-                    t.open_box(Vec3::new(a.x, fp.base + h * 0.5, a.y), rot, Vec3::new(2.0 * PILASTER, h, 2.0 * PILASTER), trim);
+                    let up = rot * Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+                    t.prism(Vec3::new(a.x, fp.base + h * 0.5, a.y), up, Vec3::new(h, 2.0 * PILASTER, 2.0 * PILASTER), 0.08, trim);
                 }
             }
             // Sills and lintels at each window of the upper storeys, where they face the street,
@@ -598,11 +676,11 @@ fn build_footprints(
                         // The texture's two-by-two repeat: which of its windows this is.
                         let kind = [[0, 2], [3, 1]][(st % 2 == 0) as usize][bay.rem_euclid(2) as usize];
                         if kind == 3 {
-                            k.open_box(at(s, floor + 0.62) + out * 0.27, rot, Vec3::new(2.1, 0.14, 0.6), trim);
+                            k.prism(at(s, floor + 0.62) + out * 0.27, rot, Vec3::new(2.1, 0.14, 0.6), 0.04, trim);
                         } else {
-                            k.open_box(at(s, floor + 0.84) + out * 0.08, rot, Vec3::new(1.75, 0.14, 0.24), trim);
+                            k.prism(at(s, floor + 0.84) + out * 0.08, rot, Vec3::new(1.75, 0.14, 0.24), 0.04, trim);
                         }
-                        k.open_box(at(s, floor + 3.0) + out * 0.06, rot, Vec3::new(1.75, 0.16, 0.2), trim);
+                        k.prism(at(s, floor + 3.0) + out * 0.06, rot, Vec3::new(1.75, 0.16, 0.2), 0.04, trim);
                     }
                 }
             }
@@ -641,11 +719,26 @@ fn build_footprints(
                         }
                         let at = a + e / len * ((s as f32 + 0.5) * pair - along);
                         let y = fp.base + STOREY - 0.5;
-                        let board = SIGNS[(h * 41.0) as usize % SIGNS.len()];
+                        let board = ACCENTS[(h * 41.0) as usize % ACCENTS.len()];
                         let p = Vec3::new(at.x, y, at.y) + out * 0.07;
                         k.solid_box(p, rot, Vec3::new(pair * 0.86, 0.66, 0.1), lin(board));
                         let letters = if board[0] + board[1] + board[2] > 2.0 { [0.12, 0.10, 0.10] } else { [0.95, 0.93, 0.86] };
                         k.solid_box(p + out * 0.055, rot, Vec3::new(pair * 0.86 * (0.4 + 0.3 * hash01(seed, s as u32, 5)), 0.26, 0.02), lin(letters));
+                        // Under some, a striped cloth awning with a valance.
+                        if hash01(seed, s as u32, 6) < 0.45 {
+                            let c = lin(ACCENTS[(hash01(seed, s as u32, 7) * 7.0) as usize]);
+                            let w = pair * 0.86;
+                            let stripes = (w / 0.45).round().max(1.0) as i32;
+                            let foot = Vec3::new(at.x, fp.base, at.y);
+                            for k2 in 0..stripes {
+                                let (x0, x1) = (w * (k2 as f32 / stripes as f32 - 0.5), w * ((k2 + 1) as f32 / stripes as f32 - 0.5));
+                                let col = if k2 % 2 == 0 { c } else { lin(TRIM_WHITE) };
+                                let (d0, d1) = (dir * x0, dir * x1);
+                                let (top, lip) = (foot + Vec3::Y * 2.45 + out * 0.05, foot + Vec3::Y * 2.05 + out * 1.05);
+                                k.cloth(&[top + d0, top + d1, lip + d1, lip + d0], col);
+                                k.cloth(&[lip + d0, lip + d1, lip + d1 - Vec3::Y * 0.2, lip + d0 - Vec3::Y * 0.2], col);
+                            }
+                        }
                     }
                 }
                 // Cables slung across the lane to the building opposite.
@@ -654,10 +747,14 @@ fn build_footprints(
                     let reach = (2..18).find(|&d| occupied(mid + out2 * d as f32)).map(|d| d as f32 - 0.6);
                     if let Some(d) = reach.filter(|d| *d > 3.0) {
                         let to = from + out * d + Vec3::Y * (r(60 + i as u32) - 0.5);
-                        for w in 0..2 + (r(80 + i as u32) * 2.0) as usize {
-                            let sag = 0.4 + 0.25 * w as f32 + 0.1 * d;
-                            let shift = dir * (w as f32 * 0.12);
-                            wire(k, from + shift, to + shift, sag);
+                        if r(90 + i as u32) < 0.4 {
+                            bunting(k, from, to, 0.25 + 0.05 * d, seed ^ i as u32);
+                        } else {
+                            for w in 0..2 + (r(80 + i as u32) * 2.0) as usize {
+                                let sag = 0.4 + 0.25 * w as f32 + 0.1 * d;
+                                let shift = dir * (w as f32 * 0.12);
+                                wire(k, from + shift, to + shift, sag);
+                            }
                         }
                     }
                 }

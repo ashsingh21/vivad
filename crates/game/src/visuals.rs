@@ -308,7 +308,7 @@ fn setup_sky(mut commands: Commands, mut media: ResMut<Assets<ScatteringMedium>>
         CascadeShadowConfigBuilder::default().build(),
     ));
     commands.spawn(Atmosphere::earth(media.add(ScatteringMedium::default())));
-    commands.insert_resource(GlobalAmbientLight { color: Color::srgb(0.76, 0.83, 1.0), brightness: 1800.0, ..default() });
+    commands.insert_resource(GlobalAmbientLight { color: Color::srgb(0.82, 0.87, 1.0), brightness: 1800.0, ..default() });
     // The Pralaya wall.
     commands.spawn((
         ZoneWall,
