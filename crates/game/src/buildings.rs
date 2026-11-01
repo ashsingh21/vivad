@@ -83,6 +83,8 @@ fn material_for(mat: Mat, sets: &HashMap<&'static str, TexSet>, materials: &mut 
         Mat::Brick => textured("brick", Color::WHITE, 0.9, materials),
         Mat::Wood => textured("wood", Color::WHITE, 0.75, materials),
         Mat::Thatch => textured("thatch", Color::WHITE, 0.95, materials),
+        Mat::Stucco => textured("stucco", Color::WHITE, 0.85, materials),
+        Mat::Stone => textured("stone", Color::WHITE, 0.6, materials),
         Mat::Dirt => textured("sandstone", Color::srgb(0.75, 0.62, 0.48), 0.95, materials),
         Mat::Gold => materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.76, 0.34), metallic: 1.0, perceptual_roughness: 0.3, ..default() }),
         Mat::Cloth => materials.add(StandardMaterial { base_color: Color::srgb(0.85, 0.22, 0.32), perceptual_roughness: 0.9, double_sided: true, cull_mode: None, ..default() }),
@@ -863,6 +865,40 @@ fn build_footprints(
             roof.idx.extend_from_slice(&[base, base + 1, base + 2]);
         }
     }
+    // Signboards and shelves set into hand-built blocks (Connaught Place's ring): boards in the
+    // festival colours lettered from the signs atlas, like the shops' above; shelves of goods from
+    // the shopfront texture's open bay.
+    let mut shelves: HashMap<(i32, i32), MeshBuf> = HashMap::new();
+    for (n, sg) in layout.signs.iter().enumerate() {
+        let key = ((sg.pos.x / CHUNK).floor() as i32, (sg.pos.z / CHUNK).floor() as i32);
+        let out = Vec3::new(sg.facing.x, 0.0, sg.facing.y).normalize_or(Vec3::X);
+        let right = (-out).cross(Vec3::Y) * (sg.width * 0.5);
+        let up = Vec3::Y * (sg.height * 0.5);
+        if sg.shelves {
+            let face = sg.pos + out * 0.005;
+            shelves.entry(key).or_default().quad(
+                [face - right - up, face + right - up, face + right + up, face - right + up],
+                out,
+                [Vec2::new(0.54, 0.74), Vec2::new(0.96, 0.74), Vec2::new(0.96, 0.22), Vec2::new(0.54, 0.22)],
+            );
+            continue;
+        }
+        let shop = (hash01(n as u32, 17, 23) * SIGN_BOARDS as f32) as usize % SIGN_BOARDS;
+        let p = sg.pos + out * 0.05;
+        let rot = Quat::from_rotation_arc(Vec3::X, right.normalize());
+        clutter.entry(key).or_default().solid_box(p, rot, Vec3::new(sg.width + 0.08, sg.height + 0.08, 0.1), lin(ACCENTS[shop % ACCENTS.len()]));
+        let (col, row) = ((shop % 4) as f32, (shop / 4) as f32);
+        let (u0, u1, v0, v1) = (col / 4.0, (col + 1.0) / 4.0, row / 8.0, (row + 1.0) / 8.0);
+        let face = p + out * 0.051;
+        // The atlas boards are 4:1; a squatter board shows the middle of its lettering.
+        let crop = ((sg.width / sg.height) / 4.0).min(1.0);
+        let (cu0, cu1) = (u0 + (u1 - u0) * (1.0 - crop) * 0.5, u1 - (u1 - u0) * (1.0 - crop) * 0.5);
+        signs.entry(key).or_default().quad(
+            [face - right - up, face + right - up, face + right + up, face - right + up],
+            out,
+            [Vec2::new(cu0, v1), Vec2::new(cu1, v1), Vec2::new(cu1, v0), Vec2::new(cu0, v0)],
+        );
+    }
     let mut facade_mats: HashMap<(Mat, bool), Handle<StandardMaterial>> = HashMap::new();
     for ((_, _, mat, shop), buf) in walls {
         let (set, mr) = if shop { &shopfront } else { &facade };
@@ -900,6 +936,22 @@ fn build_footprints(
         let range = crate::characters::LodRange(near.clone(), 0);
         let (mesh, centre) = buf.into_mesh();
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(lettered.clone()), Transform::from_translation(centre), range.0.clone(), range, OfMap));
+    }
+    if !shelves.is_empty() {
+        let (set, mr) = &shopfront;
+        let stock = materials.add(StandardMaterial {
+            base_color_texture: Some(set.base.clone()),
+            normal_map_texture: Some(set.normal.clone()),
+            metallic_roughness_texture: Some(mr.clone()),
+            perceptual_roughness: 1.0,
+            metallic: 1.0,
+            ..default()
+        });
+        for (_, buf) in shelves {
+            let range = crate::characters::LodRange(near.clone(), 0);
+            let (mesh, centre) = buf.into_mesh();
+            commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(stock.clone()), Transform::from_translation(centre), range.0.clone(), range, OfMap));
+        }
     }
     let mut trim_tris = 0;
     for (_, buf) in trims {
@@ -946,6 +998,9 @@ fn build_chunks(
     let mut sets = HashMap::new();
     for name in ["sandstone", "plaster", "brick", "granite", "wood", "thatch"] {
         sets.insert(name, load_set(&assets, &mut pending, &format!("india/{name}")));
+    }
+    for name in ["stucco", "stone"] {
+        sets.insert(name, load_set(&assets, &mut pending, &format!("panga/{name}")));
     }
     let mut groups: HashMap<(i32, i32, Mat, bool), MeshBuf> = HashMap::new();
     for b in layout.blocks.iter().filter(|b| is_static_visual(b)) {

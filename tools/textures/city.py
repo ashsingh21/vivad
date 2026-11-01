@@ -13,6 +13,7 @@ Near-white where the wall is, so the game's vertex colours tint each building.
   roof (512): clay tiles in cement for the flat roofs.
   ground_detail (512, RGBA): asphalt, slab and earth detail for the ground shader.
   wear (512): grime and scratches for the street kit.
+  stucco, stone (512): Connaught Place's clean white walls and its stone-tiled verandahs.
 
 python3 tools/textures/city.py   -> assets/textures/panga/{facade,shop,roof}_{basecolor,normal,mr}.png,
                                     assets/textures/panga/ground_detail.png
@@ -395,8 +396,45 @@ def wear():
     print("[city] wear: 512x512")
 
 
+def stucco():
+    """Clean lime-washed stucco, 2 m a repeat (crate::buildings::TILE): Connaught Place's white.
+    Soft trowel marks and a fine sand grain; no cracks or grime, just a whisper of warmth."""
+    rng = np.random.default_rng(51)
+    n = 512
+    L = Layer(n, n, rng)
+    trowel = periodic_noise(n, n, rng, 4, 3)
+    grain = rng.random((n, n)).astype(np.float32)
+    soft = periodic_noise(n, n, rng, 2, 2)
+    g = 0.86 - 0.03 * trowel - 0.015 * grain - 0.025 * soft
+    L.col = np.dstack([g, g * 0.975, g * 0.93]).astype(np.float32)
+    L.hgt = 0.35 * trowel + 0.08 * grain
+    L.rough[:] = 0.85 - 0.04 * trowel
+    L.save("stucco", 1.2)
+
+
+def stone():
+    """Square stone floor tiles, 50 cm, 2 m a repeat: buff sandstone, each a shade of its own,
+    thin grout, worn smooth and a little glossy where walked."""
+    rng = np.random.default_rng(53)
+    n = 512
+    L = Layer(n, n, rng)
+    y, x = np.mgrid[0:n, 0:n].astype(np.float32)
+    t = n / 4
+    fu, fv = (x % t) / t, (y % t) / t
+    k = rng.random((4, 4)).astype(np.float32)[(y // t).astype(int), (x // t).astype(int)]
+    tile = bevelled(fu, fv, 0.01, 0.99, 0.01, 0.99, 0.02)
+    mottle = periodic_noise(n, n, rng, 4, 6)
+    g = (0.78 + 0.08 * k + 0.05 * (mottle - 0.5)) * (0.6 + 0.4 * tile)
+    L.col = np.dstack([g, g * 0.95, g * 0.86]).astype(np.float32)
+    L.hgt = 1.0 * tile + 0.15 * mottle
+    L.rough[:] = 0.55 + 0.25 * (1 - tile) + 0.1 * mottle
+    L.save("stone", 1.4)
+
+
 facade()
 shop()
+stucco()
+stone()
 roof()
 ground()
 wear()

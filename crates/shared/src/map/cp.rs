@@ -89,12 +89,12 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
             let radial = Frame::new(c, -am);
             let chord_at = |rad: f32| 2.0 * rad * ((s1 - s0) / 2.0).sin();
             let slab = |b: &mut Builder, r0: f32, r1: f32, top: f32| {
-                b.bx(radial, Vec3::new((r0 + r1) / 2.0, top - SLAB / 2.0, 0.0), Vec3::new(r1 - r0, SLAB, chord_at(r1) + 0.08), Mat::Plaster);
+                b.bx(radial, Vec3::new((r0 + r1) / 2.0, top - SLAB / 2.0, 0.0), Vec3::new(r1 - r0, SLAB, chord_at(r1) + 0.08), Mat::Stucco);
             };
             // Marble underfoot (3 cm proud of the levelled ground: no step to trip on, and no
             // grass through the verandahs), then the first floor (the verandah ceilings and the
             // shops'), with the stair well left open.
-            b.bx(radial, Vec3::new((r.ro + r.ri) / 2.0, -0.1 + lift / 2.0, 0.0), Vec3::new(r.ro - r.ri + 1.2, 0.26, chord_at(r.ro + 0.6) + 0.08), Mat::Marble);
+            b.bx(radial, Vec3::new((r.ro + r.ri) / 2.0, -0.1 + lift / 2.0, 0.0), Vec3::new(r.ro - r.ri + 1.2, 0.26, chord_at(r.ro + 0.6) + 0.08), Mat::Stone);
             slab(b, r.ri - 0.6, core0, r.g + lift);
             slab(b, core1, r.ro + 0.6, r.g + lift);
             let well_to = if split { mid } else { core1 };
@@ -103,12 +103,21 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
             } else {
                 slab(b, core0, core1, r.g + lift);
             }
-            // Roof, its parapets and cornices (their tops 5 cm under the slabs' they run along).
+            // Roof, a stone-tiled terrace, its parapets and cornices (their tops 5 cm under the
+            // slabs' they run along).
             slab(b, r.ri - 0.3, r.ro + 0.3, r.g + r.u + lift);
+            // The terrace's tiles: drawn only, a hair over the slab and inside the parapets, so they
+            // share no face with it.
+            // In four strips across, each as wide as its outer edge, so the curve leaves no gaps
+            // (neighbours' strips sit 2 cm apart in height: `lift`).
+            for k in 0..4 {
+                let (q0, q1) = (r.ri + (r.ro - r.ri) * k as f32 / 4.0, r.ri + (r.ro - r.ri) * (k + 1) as f32 / 4.0);
+                b.deco(radial, Vec3::new((q0 + q1) / 2.0, r.g + r.u + lift + 0.02, 0.0), Vec3::new(q1 - q0 - 0.01, 0.02, chord_at(q1)), Mat::Stone);
+            }
             for (rad, out) in [(r.ro + 0.15, 1.0f32), (r.ri - 0.15, -1.0)] {
-                b.wall(w, xz(rad, s0), xz(rad, s1), r.g + r.u + lift, 1.0, 0.3, Mat::Plaster, &[]);
-                b.deco(radial, Vec3::new(rad + out * 0.25, r.g + r.u - 0.2 + lift, 0.0), Vec3::new(0.5, 0.3, chord_at(rad) + 0.1), Mat::Plaster);
-                b.deco(radial, Vec3::new(rad + out * 0.3, r.g - 0.25 + lift, 0.0), Vec3::new(0.6, 0.4, chord_at(rad) + 0.1), Mat::Plaster);
+                b.wall(w, xz(rad, s0), xz(rad, s1), r.g + r.u + lift, 1.0, 0.3, Mat::Stucco, &[]);
+                b.deco(radial, Vec3::new(rad + out * 0.25, r.g + r.u - 0.2 + lift, 0.0), Vec3::new(0.5, 0.3, chord_at(rad) + 0.1), Mat::Stucco);
+                b.deco(radial, Vec3::new(rad + out * 0.3, r.g - 0.25 + lift, 0.0), Vec3::new(0.6, 0.4, chord_at(rad) + 0.1), Mat::Stucco);
             }
             // Columns at the start of each segment (and the block's last), on both faces.
             for (col, last) in [(s0, false), (s1, true)] {
@@ -117,9 +126,9 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 }
                 for rad in [r.ro - 0.45, r.ri + 0.45] {
                     let base = r.at(rad, col, 0.0);
-                    b.push(base + Vec3::Y * 0.2, Quat::from_rotation_y(-col), super::Shape::Box(Vec3::new(0.8, 0.4, 0.8)), Mat::Plaster, false, true);
-                    b.push(base + Vec3::Y * (r.g - SLAB) / 2.0, Quat::IDENTITY, super::Shape::Cylinder { radius: 0.3, height: r.g - SLAB }, Mat::Plaster, true, true);
-                    b.push(base + Vec3::Y * (r.g - SLAB - 0.15), Quat::from_rotation_y(-col), super::Shape::Box(Vec3::new(0.78, 0.3, 0.78)), Mat::Plaster, false, true);
+                    b.push(base + Vec3::Y * 0.2, Quat::from_rotation_y(-col), super::Shape::Box(Vec3::new(0.8, 0.4, 0.8)), Mat::Stucco, false, true);
+                    b.push(base + Vec3::Y * (r.g - SLAB) / 2.0, Quat::IDENTITY, super::Shape::Cylinder { radius: 0.3, height: r.g - SLAB }, Mat::Stucco, true, true);
+                    b.push(base + Vec3::Y * (r.g - SLAB - 0.15), Quat::from_rotation_y(-col), super::Shape::Box(Vec3::new(0.78, 0.3, 0.78)), Mat::Stucco, false, true);
                 }
             }
             // Shop fronts on both faces: an arched opening, or a window over a stall board.
@@ -127,16 +136,50 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
             for rad in [core1, core0] {
                 let (p, q) = (xz(rad, s0), xz(rad, s1));
                 let o = Opening { at: p.distance(q) / 2.0, ..front };
-                b.wall(w, p, q, 0.0, r.g - SLAB, 0.3, Mat::Plaster, &[o]);
+                b.wall(w, p, q, 0.0, r.g - SLAB, 0.3, Mat::Stucco, &[o]);
             }
             // The back-to-back wall between the two rows of shops.
             if split {
-                b.wall(w, xz(mid, s0), xz(mid, s1), 0.0, r.g - SLAB, 0.3, Mat::Plaster, &[]);
+                b.wall(w, xz(mid, s0), xz(mid, s1), 0.0, r.g - SLAB, 0.3, Mat::Stucco, &[]);
             }
-            // Upper storey: a window to each segment, front and back.
-            for rad in [r.ro - 0.2, r.ri + 0.2] {
+            // Each shop's signboard over its front, under the verandah ceiling; shelves of goods
+            // on its back wall, seen through the arch. The ring's faces carry bigger boards over
+            // the colonnade, under the upper windows, every other bay.
+            let out_dir = |a: f32| Vec2::new(a.cos(), a.sin());
+            let chord = chord_at(core0).min(chord_at(core1));
+            for (rad, toward) in [(core0 - 0.16, -1.0f32), (core1 + 0.16, 1.0)] {
+                b.map.signs.push(super::ShopSign {
+                    pos: r.at(rad, am, (3.35 + r.g - SLAB) / 2.0 + 0.05),
+                    facing: out_dir(am) * toward,
+                    width: (chord * 0.82).min(3.6),
+                    height: 0.78,
+                    shelves: false,
+                });
+            }
+            if split {
+                for (rad, toward) in [(mid - 0.16, -1.0f32), (mid + 0.16, 1.0)] {
+                    b.map.signs.push(super::ShopSign { pos: r.at(rad, am, 1.35), facing: out_dir(am) * toward, width: chord * 0.8, height: 2.3, shelves: true });
+                }
+            }
+            if i % 2 == 0 {
+                for (rad, toward) in [(r.ri + 0.06, -1.0f32), (r.ro - 0.06, 1.0)] {
+                    b.map.signs.push(super::ShopSign { pos: r.at(rad, am, r.g + lift + 0.5), facing: out_dir(am) * toward, width: (chord_at(rad) * 0.9).min(4.2), height: 0.75, shelves: false });
+                }
+            }
+            // Upper storey: a tall window to each segment, front and back, framed outside by a sill,
+            // side mouldings and a hood.
+            let tall = |at: f32| Opening { at, width: 1.4, bottom: 0.8, top: 3.0 };
+            for (rad, out) in [(r.ro - 0.2, 1.0f32), (r.ri + 0.2, -1.0)] {
                 let (p, q) = (xz(rad, s0), xz(rad, s1));
-                b.wall(w, p, q, r.g + lift, r.u - SLAB, 0.3, Mat::Plaster, &[Opening::window(p.distance(q) / 2.0)]);
+                b.wall(w, p, q, r.g + lift, r.u - SLAB, 0.3, Mat::Stucco, &[tall(p.distance(q) / 2.0)]);
+                let face = rad + out * 0.15;
+                let y0 = r.g + lift;
+                b.deco(radial, Vec3::new(face + out * 0.06, y0 + 0.74, 0.0), Vec3::new(0.12, 0.1, 1.75), Mat::Stucco);
+                b.deco(radial, Vec3::new(face + out * 0.05, y0 + 3.12, 0.0), Vec3::new(0.1, 0.16, 1.95), Mat::Stucco);
+                b.deco(radial, Vec3::new(face + out * 0.09, y0 + 3.24, 0.0), Vec3::new(0.18, 0.08, 2.1), Mat::Stucco);
+                for side in [-0.79f32, 0.79] {
+                    b.deco(radial, Vec3::new(face + out * 0.04, y0 + 1.9, side), Vec3::new(0.08, 2.24, 0.16), Mat::Stucco);
+                }
             }
             // A party wall between every pair of shops; the block's ends close the shops and
             // the upper storey off from the street, each with a door.
@@ -146,16 +189,16 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 for (r0, r1) in if split { vec![(core0, mid), (mid, core1)] } else { vec![(core0, core1)] } {
                     let (p, q) = (xz(r0, col), xz(r1, col));
                     let door = if end { vec![Opening::door(p.distance(q) / 2.0)] } else { vec![] };
-                    b.wall(w, p, q, 0.0, r.g - SLAB, 0.3, Mat::Plaster, &door);
+                    b.wall(w, p, q, 0.0, r.g - SLAB, 0.3, Mat::Stucco, &door);
                 }
                 if end {
                     let (p, q) = (xz(r.ri + 0.2, col), xz(r.ro - 0.2, col));
-                    b.wall(w, p, q, r.g, r.u - SLAB, 0.3, Mat::Plaster, &[Opening::window(p.distance(q) / 2.0)]);
+                    b.wall(w, p, q, r.g, r.u - SLAB, 0.3, Mat::Stucco, &[Opening::window(p.distance(q) / 2.0)]);
                 }
             }
             // Stairs up through the shop, climbing outwards onto the floor beyond the well.
             if stairs(i) {
-                b.stairs(radial, Vec3::new(core0 + 0.5, 0.0, 0.0), well_to - core0 - 0.5, r.g, 1.6, Mat::Plaster);
+                b.stairs(radial, Vec3::new(core0 + 0.5, 0.0, 0.0), well_to - core0 - 0.5, r.g, 1.6, Mat::Stucco);
             }
             // Loot: a chest in every third shop (the back row too, in deep blocks), an urn
             // upstairs now and then, loose finds on the verandahs.

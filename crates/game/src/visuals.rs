@@ -110,6 +110,8 @@ fn mat_color(m: Mat) -> (Color, f32, f32) {
         Mat::Gold => (Color::srgb(1.0, 0.78, 0.34), 0.3, 1.0),
         Mat::Marble => (Color::srgb(0.95, 0.94, 0.92), 0.3, 0.0),
         Mat::Thatch => (Color::srgb(0.78, 0.66, 0.38), 0.95, 0.0),
+        Mat::Stucco => (Color::srgb(0.97, 0.96, 0.93), 0.85, 0.0),
+        Mat::Stone => (Color::srgb(0.80, 0.76, 0.68), 0.7, 0.0),
     }
 }
 
@@ -126,7 +128,7 @@ fn setup_assets(
     let all = [
         Mat::Grass, Mat::Dirt, Mat::Sandstone, Mat::RedSandstone, Mat::Granite, Mat::Plaster, Mat::PlasterOchre,
         Mat::PlasterBlue, Mat::Brick, Mat::Wood, Mat::Cloth, Mat::Foliage, Mat::Bark, Mat::Water, Mat::Gold,
-        Mat::Marble, Mat::Thatch,
+        Mat::Marble, Mat::Thatch, Mat::Stucco, Mat::Stone,
     ];
     for m in all {
         let (c, rough, metal) = mat_color(m);

@@ -107,6 +107,10 @@ pub enum Mat {
     Gold,
     Marble,
     Thatch,
+    /// Clean lime-washed stucco (Connaught Place's white).
+    Stucco,
+    /// Floors of square stone tiles (verandahs).
+    Stone,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Reflect)]
@@ -183,6 +187,17 @@ pub struct Lamp {
 
 /// A building from a map's footprint data: its outline (counter-clockwise seen from above)
 /// extruded from `base` to `top`. Solid; the simulation gives it a mesh collider.
+/// A shop's signboard, or the shelves of goods at the back of a shop, for the client to draw
+/// (crate::buildings in the game): the centre of its face, the way it faces (x, z), its size.
+#[derive(Clone, Debug, Reflect)]
+pub struct ShopSign {
+    pub pos: Vec3,
+    pub facing: Vec2,
+    pub width: f32,
+    pub height: f32,
+    pub shelves: bool,
+}
+
 #[derive(Clone, Debug, Reflect)]
 pub struct Footprint {
     pub pts: Vec<Vec2>,
@@ -208,6 +223,8 @@ pub struct MapLayout {
     pub footprints: Vec<Footprint>,
     /// The street kit's pieces on a city map (crate::map::kit); drawn by the client, merged.
     pub kit: Vec<kit::KitPiece>,
+    /// Signboards and shop shelves set into hand-built blocks (Connaught Place's ring).
+    pub signs: Vec<ShopSign>,
     /// A river across the map, as its channel's x range (the India map's).
     pub river: Option<(f32, f32)>,
     pub terrain: terrain::Terrain,
