@@ -111,7 +111,7 @@ fn street_free(map: &MapLayout, houses: &[Vec<Vec2>], p: Vec2, r: f32, half: f32
             Shape::Cylinder { radius, .. } => radius,
             Shape::Sphere(r) => r,
         };
-        b.pos.xz().distance(p) < ext + r + 0.3 && b.pos.y < 6.0
+        b.pos.xz().distance(p) < ext + r + 0.3 && b.pos.y < map.terrain.height(b.pos.x, b.pos.z) + 6.0
     }) {
         return false;
     }
@@ -214,8 +214,15 @@ pub fn open_spaces(b: &mut Builder, rng: &mut SmallRng, houses: &[Vec<Vec2>], ha
                 roll -= w;
                 roll < 0.0
             }).map_or("bench", |(n, _)| *n);
-            // Room round it, beyond its own footprint: space to walk past and fight round.
-            if street_free(b.map, houses, p, reach(name) + room, half) {
+            // Level ground only (a park's swells and hills would leave it floating), and room round
+            // it, beyond its own footprint: space to walk past and fight round.
+            let t = &b.map.terrain;
+            let r = reach(name);
+            let hs = [Vec2::ZERO, Vec2::X, -Vec2::X, Vec2::Y, -Vec2::Y].map(|o| t.height(p.x + o.x * r, p.y + o.y * r));
+            if hs.iter().cloned().fold(f32::MIN, f32::max) - hs.iter().cloned().fold(f32::MAX, f32::min) > 0.12 {
+                continue;
+            }
+            if street_free(b.map, houses, p, r + room, half) {
                 let yaw = rng.random_range(0.0..std::f32::consts::TAU);
                 place(b, name, Vec3::new(p.x, b.map.terrain.height(p.x, p.y), p.y), yaw);
             }

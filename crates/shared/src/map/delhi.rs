@@ -128,11 +128,14 @@ pub fn generate(id: super::MapId, seed: u64) -> MapLayout {
     let cp = Vec3::new(0.0, 0.0, -data.south_shift);
     // Only Connaught Place has the ring; elsewhere a ring of no size keeps nothing out.
     let ring = if id == super::MapId::Cp { ring(cp) } else { super::cp::Ring { ri: 0.0, ro: 0.0, ..self::ring(Vec3::new(1.0e5, 0.0, 1.0e5)) } };
+    let made = if id == super::MapId::Cp { CP_HILLS.iter().map(|h| h.at(&ring)).collect() } else { vec![] };
+    hills(&mut map, &data, &ring, &made, seed as u32);
     let mut rng = SmallRng::seed_from_u64(seed);
     let mut b = Builder::new(&mut map);
     boundary(&mut b);
     if id == super::MapId::Cp {
         super::cp::build(&mut b, &mut rng, &ring);
+        dress_hills(&mut b, &mut rng, &made);
     }
     for l in &data.landmarks {
         if l.kind == "india_gate" {
@@ -142,6 +145,8 @@ pub fn generate(id: super::MapId, seed: u64) -> MapLayout {
     water(&mut b, &data);
     let houses = footprints(&mut b, &mut rng, &data, &ring, id);
     trees(&mut b, &mut rng, &data, &ring, &houses);
+    // No trees on the made hills' tops: they're for seeing from.
+    b.map.props.retain(|p| !made.iter().any(|h| p.pos.xz().distance(h.center) < h.plateau + 3.0));
     let roads: Vec<(Vec<Vec2>, f32, bool)> = data
         .roads
         .iter()
@@ -158,6 +163,172 @@ pub fn generate(id: super::MapId, seed: u64) -> MapLayout {
         map.pois.push(Poi { name: "Connaught Place".into(), center: cp, radius: 175.0 });
     }
     map
+}
+
+/// A hill made in Central Park: where (degrees from east toward south, metres from the middle),
+/// its flat top's radius, its height and the width of its slopes.
+struct MadeHill {
+    bearing: f32,
+    r: f32,
+    plateau: f32,
+    top: f32,
+    skirt: f32,
+    /// What crowns it: a lookout pavilion, a pile of rocks, or nothing.
+    crown: Crown,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Crown {
+    Lookout,
+    Rocks,
+    Bare,
+}
+
+/// A made hill placed on the map.
+struct Hill {
+    center: Vec2,
+    plateau: f32,
+    top: f32,
+    skirt: f32,
+    crown: Crown,
+}
+
+impl MadeHill {
+    fn at(&self, ring: &super::cp::Ring) -> Hill {
+        Hill { center: ring.at(self.r, self.bearing.to_radians(), 0.0).xz(), plateau: self.plateau, top: self.top, skirt: self.skirt, crown: self.crown }
+    }
+}
+
+/// Central Park's hills, each in a wedge between two radial paths: the big one (higher than the
+/// blocks' roofs, to see over them) with a lookout on top, a rocky one across the park from it,
+/// and a pair of low mounds to the west. Slopes stay under 35 degrees (walkable to 48).
+const CP_HILLS: [MadeHill; 4] = [
+    MadeHill { bearing: 243.0, r: 72.0, plateau: 7.0, top: 11.0, skirt: 24.0, crown: Crown::Lookout },
+    MadeHill { bearing: 3.0, r: 72.0, plateau: 4.0, top: 7.0, skirt: 20.0, crown: Crown::Rocks },
+    MadeHill { bearing: 178.0, r: 52.0, plateau: 3.0, top: 4.5, skirt: 14.0, crown: Crown::Bare },
+    MadeHill { bearing: 186.0, r: 88.0, plateau: 3.0, top: 4.0, skirt: 13.0, crown: Crown::Rocks },
+];
+
+/// High ground to fight over (creative liberty: Delhi's lawns are near flat). Every park rolls in
+/// low swells, rising away from its edges, the buildings in it and its paths, to hide behind;
+/// on Connaught Place, Central Park's fountain and radial paths stay level, and its made hills
+/// rise between them.
+fn hills(map: &mut MapLayout, data: &Data, ring: &super::cp::Ring, made: &[Hill], seed: u32) {
+    let t = &mut map.terrain;
+    let n = t.n;
+    let step = t.step();
+    // Where hills may rise: park, not under a building.
+    let mut open: Vec<bool> = t.ground.iter().map(|&g| g == ground::PARK).collect();
+    let idx = |c: f32| (((c + t.size * 0.5) / step).floor().max(0.0) as usize).min(n - 1);
+    for bld in &data.buildings {
+        let pts: Vec<Vec2> = bld.pts.iter().map(v2).collect();
+        let (lo, hi) = pts.iter().fold((Vec2::MAX, Vec2::MIN), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+        for i in idx(lo.x - 2.0)..=idx(hi.x + 2.0) {
+            for j in idx(lo.y - 2.0)..=idx(hi.y + 2.0) {
+                let p = Vec2::new(t.coord(i), t.coord(j));
+                if super::footprint::contains(&pts, p) || pts.iter().any(|q| q.distance(p) < 2.0) {
+                    open[i * n + j] = false;
+                }
+            }
+        }
+    }
+    // Distance to the nearest sample that must stay level (two-pass chamfer).
+    let mut d: Vec<f32> = open.iter().map(|&o| if o { 1.0e4 } else { 0.0 }).collect();
+    let diag = step * std::f32::consts::SQRT_2;
+    for i in 0..n {
+        for j in 0..n {
+            let mut v = d[i * n + j];
+            if i > 0 { v = v.min(d[(i - 1) * n + j] + step); }
+            if j > 0 { v = v.min(d[i * n + j - 1] + step); }
+            if i > 0 && j > 0 { v = v.min(d[(i - 1) * n + j - 1] + diag); }
+            if i > 0 && j + 1 < n { v = v.min(d[(i - 1) * n + j + 1] + diag); }
+            d[i * n + j] = v;
+        }
+    }
+    for i in (0..n).rev() {
+        for j in (0..n).rev() {
+            let mut v = d[i * n + j];
+            if i + 1 < n { v = v.min(d[(i + 1) * n + j] + step); }
+            if j + 1 < n { v = v.min(d[i * n + j + 1] + step); }
+            if i + 1 < n && j + 1 < n { v = v.min(d[(i + 1) * n + j + 1] + diag); }
+            if i + 1 < n && j > 0 { v = v.min(d[(i + 1) * n + j - 1] + diag); }
+            d[i * n + j] = v;
+        }
+    }
+    let c = ring.center.xz();
+    let radials: Vec<(Vec2, Vec2)> = ring.streets.iter().map(|&a| (c, ring.at(ring.park, a, 0.0).xz())).collect();
+    for i in 0..n {
+        for j in 0..n {
+            let e = d[i * n + j];
+            if e <= 0.0 {
+                continue;
+            }
+            let p = Vec2::new(t.coord(i), t.coord(j));
+            // Swells: broad and mostly low (waist-high cover), now and then a knoll of 4 to 6 m.
+            let swell = (terrain::fbm(p.x / 48.0, p.y / 48.0, 3, seed + 101) - 0.42).max(0.0) * 16.0 + terrain::fbm(p.x / 12.0, p.y / 12.0, 2, seed + 103) * 0.8;
+            let mut h = swell * smooth(5.0, 24.0, e);
+            for hill in made {
+                let out = (p.distance(hill.center) - hill.plateau).max(0.0);
+                h = h.max(hill.top * (1.0 - smooth(0.0, hill.skirt, out)) * smooth(1.0, 6.0, e));
+            }
+            // Central Park's fountain and the paths out from it stay level.
+            if p.distance(c) < ring.park + 4.0 {
+                let path = radials.iter().map(|(a, b)| seg_dist(p, *a, *b)).fold(f32::MAX, f32::min);
+                h *= smooth(24.0, 36.0, p.distance(c)) * smooth(4.5, 12.0, path);
+            }
+            t.h[i * n + j] = h;
+        }
+    }
+}
+
+fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn seg_dist(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+    let ab = b - a;
+    let t = ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
+    p.distance(a + ab * t)
+}
+
+/// What's on the made hills: a chhatri to look out from on the big one, with a kalash (worth the
+/// climb) under it; boulders to hide behind on the rocky ones' tops and down every hill's slopes.
+fn dress_hills(b: &mut Builder, rng: &mut SmallRng, made: &[Hill]) {
+    let w = Frame::new(Vec3::ZERO, 0.0);
+    let ground = |b: &Builder, p: Vec2| b.map.terrain.height(p.x, p.y);
+    let rock = |b: &mut Builder, rng: &mut SmallRng, p: Vec2, r: f32| {
+        let at = Vec3::new(p.x, ground(b, p) + r * 0.3, p.y);
+        b.push(at, Quat::IDENTITY, super::Shape::Sphere(r * 0.92), Mat::Granite, true, false);
+        let model = super::india::ROCKS[rng.random_range(0..super::india::ROCKS.len())];
+        b.ornament(w, at, rng.random_range(0.0..std::f32::consts::TAU), model, Vec3::splat(r));
+    };
+    for h in made {
+        let top = Vec3::new(h.center.x, ground(b, h.center), h.center.y);
+        match h.crown {
+            Crown::Lookout => {
+                b.chhatri(w, top, 4.2, Mat::Sandstone);
+                b.chest(w, top, rng.random_range(0.0..std::f32::consts::TAU), ChestKind::Kalash);
+            }
+            Crown::Rocks => {
+                for k in 0..4 {
+                    let a = std::f32::consts::TAU * (k as f32 + rng.random_range(0.0..0.5)) / 4.0;
+                    let p = h.center + Vec2::from_angle(a) * h.plateau * rng.random_range(0.4..0.9);
+                    let r = rng.random_range(1.1..1.8);
+                    rock(b, rng, p, r);
+                }
+                b.loot(w, top + Vec3::Y * 0.3);
+            }
+            Crown::Bare => b.loot(w, top + Vec3::Y * 0.3),
+        }
+        // Boulders half way down, scattered round.
+        for _ in 0..(h.skirt / 4.0) as usize {
+            let a = rng.random_range(0.0..std::f32::consts::TAU);
+            let p = h.center + Vec2::from_angle(a) * (h.plateau + h.skirt * rng.random_range(0.25..0.6));
+            let r = rng.random_range(0.8..1.5);
+            rock(b, rng, p, r);
+        }
+    }
 }
 
 /// The water's depth below the street, and where its surface stands.
@@ -376,7 +547,7 @@ fn enterable(pts: &[Vec2], map: &MapLayout) -> Option<(Vec2, f32, f32)> {
 fn tree(b: &mut Builder, rng: &mut SmallRng, p: Vec2) {
     let model = [super::india::TREE_NEEM, super::india::TREE_PEEPAL, super::india::TREE_NEEM][rng.random_range(0..3)];
     let scale = rng.random_range(0.85..1.2);
-    b.map.props.push(Prop { model, pos: Vec3::new(p.x, 0.0, p.y), yaw: rng.random_range(0.0..std::f32::consts::TAU), scale, trunk: Some((0.25, 4.0)) });
+    b.map.props.push(Prop { model, pos: Vec3::new(p.x, b.map.terrain.height(p.x, p.y), p.y), yaw: rng.random_range(0.0..std::f32::consts::TAU), scale, trunk: Some((0.25, 4.0)) });
 }
 
 /// Free of buildings, roads and the blocks' ring: where a tree or a find can go.
@@ -458,7 +629,7 @@ fn street_loot(b: &mut Builder, rng: &mut SmallRng, _data: &Data, ring: &super::
         tries += 1;
         let p = Vec2::new(rng.random_range(-HALF + 8.0..HALF - 8.0), rng.random_range(-HALF + 8.0..HALF - 8.0));
         if open(b.map, ring, houses, p, 2.0) && !b.map.chests.iter().any(|c| c.pos.xz().distance(p) < 15.0) {
-            b.chest(w, Vec3::new(p.x, 0.0, p.y), rng.random_range(0.0..std::f32::consts::TAU), ChestKind::Peti);
+            b.chest(w, Vec3::new(p.x, b.map.terrain.height(p.x, p.y), p.y), rng.random_range(0.0..std::f32::consts::TAU), ChestKind::Peti);
         }
     }
     let mut placed = 0;
@@ -467,7 +638,7 @@ fn street_loot(b: &mut Builder, rng: &mut SmallRng, _data: &Data, ring: &super::
         tries += 1;
         let p = Vec2::new(rng.random_range(-HALF + 6.0..HALF - 6.0), rng.random_range(-HALF + 6.0..HALF - 6.0));
         if open(b.map, ring, houses, p, 1.0) {
-            b.loot(w, Vec3::new(p.x, 0.3, p.y));
+            b.loot(w, Vec3::new(p.x, b.map.terrain.height(p.x, p.y) + 0.3, p.y));
             placed += 1;
         }
     }

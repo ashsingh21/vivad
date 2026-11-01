@@ -64,7 +64,8 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                super::Shape::Box(Vec3::new(6.6 * k, 1.3 * k, 0.06)), mat, false, true);
     }
     for i in 0..4 {
-        b.loot(w, r.at(r.park * 0.6, tau * (i as f32 + 0.5) / 4.0, 0.3));
+        let p = r.at(r.park * 0.6, tau * (i as f32 + 0.5) / 4.0, 0.0);
+        b.loot(w, p + Vec3::Y * (b.map.terrain.height(p.x, p.z) + 0.3));
     }
     park(b, rng, r);
     let mut streets = r.streets.clone();
@@ -362,14 +363,22 @@ fn park(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
             d += 14.0;
         }
     }
-    // A ring path at two thirds out, in short chords; flower beds round it between the roads.
+    // A ring path at two thirds out, in short chords; flower beds round it between the roads. It
+    // stops at the foot of any hill in its way (flat pieces would float on a slope).
     let ring_r = r.park * 0.62;
     let n = (std::f32::consts::TAU * ring_r / 3.5) as usize;
+    let level = |b: &Builder, p: Vec3, reach: f32| {
+        let hs = [Vec3::ZERO, Vec3::X, -Vec3::X, Vec3::Z, -Vec3::Z].map(|o| ground(b, p + o * reach));
+        hs.iter().cloned().fold(f32::MIN, f32::max) - hs.iter().cloned().fold(f32::MAX, f32::min) < 0.03
+    };
     for k in 0..n {
         let a = std::f32::consts::TAU * (k as f32 + 0.5) / n as f32;
         let p = r.at(ring_r, a, 0.0);
+        if !level(b, p, 2.0) {
+            continue;
+        }
         b.deco(Frame::new(Vec3::new(p.x, ground(b, p), p.z), -a), Vec3::new(0.0, 0.016 + 0.002 * (k % 2) as f32, 0.0), Vec3::new(3.0, 0.03, 3.7), Mat::Stone);
-        if k % 4 == 2 && rng.random_bool(0.7) {
+        if k % 4 == 2 && rng.random_bool(0.7) && level(b, r.at(ring_r + 4.0, a, 0.0), 1.0) {
             let q = r.at(ring_r + 4.0, a, 0.0);
             super::kit::place(b, "planter", Vec3::new(q.x, ground(b, q), q.z), 0.0);
         }
