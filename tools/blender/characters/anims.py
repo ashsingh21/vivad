@@ -370,6 +370,9 @@ MIXAMO_BONES = {
        for a, b in (("clavicle", "Shoulder"), ("upperarm", "Arm"), ("lowerarm", "ForeArm"), ("hand", "Hand"),
                     ("thigh", "UpLeg"), ("calf", "Leg"), ("foot", "Foot"), ("ball", "ToeBase"))},
 }
+MIXAMO_BONES.update({f"{f}_0{k}_{s}": f"mixamorig:{S}Hand{F}{k}" for s, S in (("l", "Left"), ("r", "Right"))
+                     for f, F in (("index", "Index"), ("middle", "Middle"), ("ring", "Ring"), ("pinky", "Pinky"), ("thumb", "Thumb"))
+                     for k in (1, 2, 3)})
 MIXAMO = os.path.join(HERE, "mixamo")
 # (our clip, the file in mixamo/, the speed it's played at, mocap options). Missing files are skipped.
 _R, _P = "rifle/", "pistol/"
@@ -379,29 +382,31 @@ MIXAMO_CLIPS = [
     # directions on the rifle pack's crouched legs, the arms hanging relaxed.
     ("walk_f", "Walking", 1.8, {}),
     ("crouch_idle", "Crouch Idle", 0.0, {}),
-    *[(f"crouch_{d}", f"{_R}walk crouching {w}", 1.4, {"relax": True, "stride": "auto"}) for d, w in _DIRS],
+    ("crouch_f", f"{_R}walk crouching forward", 1.4, {"relax": True}),
+    ("crouch_b", "Walk Crouching Backward", 1.4, {}),
+    ("crouch_l", "Walk Crouching Left", 1.4, {}),
+    ("crouch_r", "Walk Crouching Right", 1.4, {}),
     # Holding a long gun: the rifle pack, whole-body.
     ("rifle_idle", f"{_R}idle", 0.0, {}),
     ("rifle_aim", f"{_R}idle aiming", 0.0, {}),
     ("rifle_crouch_idle", f"{_R}idle crouching", 0.0, {}),
-    *[(f"rifle_walk_{d}", f"{_R}walk {w}", 1.8, {"stride": "auto"}) for d, w in _DIRS],
-    *[(f"rifle_run_{d}", f"{_R}run {w}", 5.6, {"stride": "auto"}) for d, w in _DIRS],
-    *[(f"rifle_crouch_{d}", f"{_R}walk crouching {w}", 1.4, {"stride": "auto"}) for d, w in _DIRS],
-    ("rifle_sprint_f", f"{_R}sprint forward", 8.6, {"stride": "auto"}),
+    *[(f"rifle_walk_{d}", f"{_R}walk {w}", 1.8, {}) for d, w in _DIRS],
+    *[(f"rifle_run_{d}", f"{_R}run {w}", 5.6, {}) for d, w in _DIRS],
+    *[(f"rifle_crouch_{d}", f"{_R}walk crouching {w}", 1.4, {}) for d, w in _DIRS],
+    ("rifle_sprint_f", f"{_R}sprint forward", 8.6, {}),
     # Holding a pistol: the pistol pack (its strafes for both walking and running sideways).
     ("pistol_idle", f"{_P}pistol idle", 0.0, {}),
     # Aiming or firing a pistol: its idle's two-handed hold, laid over the legs.
     ("pistol_aim", f"{_P}pistol idle", 0.0, {}),
     ("pistol_crouch_idle", f"{_P}pistol kneeling idle", 0.0, {}),
-    ("pistol_walk_f", f"{_P}pistol walk", 1.8, {"stride": "auto"}),
-    ("pistol_walk_b", f"{_P}pistol walk backward", 1.8, {"stride": "auto"}),
-    ("pistol_walk_l", f"{_P}pistol strafe", 1.8, {"stride": "auto"}),
-    ("pistol_walk_r", f"{_P}pistol strafe (2)", 1.8, {"stride": "auto"}),
-    ("pistol_run_f", f"{_P}pistol run", 5.6, {"stride": "auto"}),
-    ("pistol_run_b", f"{_P}pistol run backward", 5.6, {"stride": "auto"}),
-    # (The strafe is slow: stretched to a run's speed its legs over-reach, so quicker steps.)
-    ("pistol_run_l", f"{_P}pistol strafe", 5.6, {"stride": 1.15}),
-    ("pistol_run_r", f"{_P}pistol strafe (2)", 5.6, {"stride": 1.15}),
+    ("pistol_walk_f", f"{_P}pistol walk", 1.8, {}),
+    ("pistol_walk_b", f"{_P}pistol walk backward", 1.8, {}),
+    ("pistol_walk_l", f"{_P}pistol strafe", 1.8, {}),
+    ("pistol_walk_r", f"{_P}pistol strafe (2)", 1.8, {}),
+    ("pistol_run_f", f"{_P}pistol run", 5.6, {}),
+    ("pistol_run_b", f"{_P}pistol run backward", 5.6, {}),
+    ("pistol_run_l", f"{_P}pistol strafe", 5.6, {}),
+    ("pistol_run_r", f"{_P}pistol strafe (2)", 5.6, {}),
 ]
 
 
@@ -666,6 +671,112 @@ def crouch_idle(rig):
             arm_swing(rig, s, 0.35 + 0.02 * b, 1.2, out=0.16)
             relax_fingers(rig, s, 0.45)
         rig.key(f + 1)
+
+
+def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_TPose", relax=False, keep=None):
+    """Retarget a clip bone by bone: every joint's rotation copied from the source, as a turn from
+    its rest in world space, onto ours (each source bone first aligned to our rest's direction, so
+    the rigs' different rest poses don't matter: a T-pose's arms onto our A). Twists, shoulders,
+    hips and the timing between them come through as captured. The pelvis moves as the source's,
+    scaled by leg length, its travel taken out (in place). A moving clip is retimed (steps quicker
+    or slower, not longer) so its feet cover the ground at `speed`, and starts as the left foot
+    lands. `bones` maps our names to the source's; `ref` names the source's rest clip (None: its
+    rest pose, as Mixamo's T). `relax`: the arms hang relaxed, swinging gently against the legs,
+    instead of the source's (a rifle clip's legs, empty-handed). `keep` softens the torso's turns
+    (how much of each bone's world turn from rest is kept: TORSO_KEEP for the library's stylised
+    hunch)."""
+    bmap = bones or {}
+    sb = lambda n: src.pose.bones.get(bmap.get(n, n)) or next((b for b in src.pose.bones if b.name.lower() == n), None)
+    ours = [b.name for b in rig.obj.data.bones if b.name in rig.pb and b.name != "Root" and sb(b.name)]
+    find = lambda c: acts[0] if c is None else next(a for a in acts if a.name.split("|")[-1] == c)
+    W = src.matrix_world
+    M = rig.obj.matrix_world
+    sc = bpy.context.scene
+    rig.obj.animation_data.action = None
+    # The source's rest.
+    if ref:
+        src.animation_data.action = find(ref)
+        sc.frame_set(int(src.animation_data.action.frame_range[0]))
+    else:
+        src.animation_data.action = None
+        for pb in src.pose.bones:
+            pb.matrix_basis = Matrix.Identity(4)
+    bpy.context.view_layer.update()
+    s_rot = {n: (W @ sb(n).matrix).to_quaternion() for n in ours}
+    s_dir = {n: ((W @ sb(n).tail) - (W @ sb(n).head)).normalized() for n in ours}
+    s_pelvis = W @ sb("pelvis").head
+    s_leg = ((W @ sb("calf_l").head) - (W @ sb("thigh_l").head)).length + ((W @ sb("foot_l").head) - (W @ sb("calf_l").head)).length
+    rig.rest()
+    t_rot = {n: (M @ rig.obj.data.bones[n].matrix_local).to_quaternion() for n in ours}
+    t_dir = {n: (M.to_3x3() @ (rig.obj.data.bones[n].tail_local - rig.obj.data.bones[n].head_local)).normalized() for n in ours}
+    # Per bone: rest turn out of the source frame, aligned onto ours.
+    corr = {n: s_rot[n].inverted() @ s_dir[n].rotation_difference(t_dir[n]).inverted() @ t_rot[n] for n in ours}
+    r = rig.leg / s_leg
+    act = find(clip)
+    src.animation_data.action = act
+    f0, f1 = map(int, act.frame_range)
+    frames = f1 - f0
+    sc.frame_set(f0)
+    p0 = W @ sb("pelvis").head
+    sc.frame_set(f1)
+    p1 = W @ sb("pelvis").head
+    travel = Vector((p1.x - p0.x, p1.y - p0.y, 0.0))
+    if travel.length < 0.2:
+        travel = Vector()
+
+    def sample(t):
+        sc.frame_set(f0 + int(t), subframe=t - int(t))
+        drift = travel * (t / frames)
+        return ({n: (W @ sb(n).matrix).to_quaternion() for n in ours}, W @ sb("pelvis").head - drift,
+                {s: W @ sb(f"ball_{s}").head - drift for s in "lr"}, {s: W @ sb(f"foot_{s}").head - drift for s in "lr"})
+
+    out = max(8, round(frames * FPS / src_fps))
+    if speed:
+        # The source's own ground speed: its planted feet's, sliding back against the travel.
+        back = -travel.normalized() if travel.length else -FWD
+        S = [sample(i) for i in range(frames)]
+        v = []
+        for s in "lr":
+            zmin = min(x[2][s].z for x in S)
+            down = [x[2][s].z < zmin + 0.025 for x in S]
+            for i in range(frames):
+                j = (i + 1) % frames
+                if down[i] and down[j] and j:
+                    v.append((S[j][3][s] - S[i][3][s]).dot(back) * src_fps)
+        v.sort()
+        natural = v[len(v) // 2] * r if v else speed
+        out = max(8, round(frames * natural / speed * FPS / src_fps))
+        print(f"[anims] {name} from {clip}: natural {natural:.2f} m/s, {frames} -> {out} frames")
+    S = [sample(i * frames / out) for i in range(out)]
+    src.animation_data.action = None
+    if speed:
+        zmin = min(x[2]["l"].z for x in S)
+        down = [x[2]["l"].z < zmin + 0.025 for x in S]
+        lands = [i for i in range(out) if down[i] and not down[i - 1]]
+        if lands:
+            S = S[lands[0]:] + S[:lands[0]]
+    new_action(rig, name)
+    depth = lambda n: len(rig.obj.data.bones[n].parent_recursive)
+    order = sorted(ours, key=depth)
+    for i in range(out + 1):
+        rots, pelvis, _, _ = S[i % out]
+        rig.rest()
+        rig.move("pelvis", rig.pelvis_rest + (pelvis - s_pelvis) * r - rig.head("pelvis"))
+        for n in order:
+            if relax and n.split("_")[0] in ("upperarm", "lowerarm", "hand", "index", "middle", "ring", "pinky", "thumb"):
+                continue
+            q = rots[n] @ corr[n]
+            if keep and n in keep:
+                # Part of the turn from our rest, in world space.
+                q = Quaternion().slerp(q @ t_rot[n].inverted(), keep[n]) @ t_rot[n]
+            rig.set_world_rot(n, q)
+        if relax:
+            for s in "lr":
+                c = math.cos(2 * math.pi * i / out) * (1 if s == "r" else -1)
+                arm_swing(rig, s, 0.12 + 0.2 * c, 0.9 + 0.15 * c, out=0.16)
+                relax_fingers(rig, s, 0.5)
+        rig.key(i + 1)
+    return out
 
 
 def idle(rig):
@@ -1002,9 +1113,9 @@ def main():
     src, objs, acts = load_mocap("ual")
     bpy.context.view_layer.objects.active = arm
     bpy.ops.object.mode_set(mode="POSE")
-    cycles["run_f"] = mocap(rig, src, acts, "run_f", "Jog_Fwd_Loop", RUN, stride=0.82)
-    cycles["sprint_f"] = mocap(rig, src, acts, "sprint_f", "Sprint_Loop", SPRINT, stride=0.85)
-    mocap(rig, src, acts, "idle", "Idle_Loop", 0.0)
+    cycles["run_f"] = transfer(rig, src, acts, "run_f", "Jog_Fwd_Loop", RUN, keep=TORSO_KEEP)
+    cycles["sprint_f"] = transfer(rig, src, acts, "sprint_f", "Sprint_Loop", SPRINT, keep=TORSO_KEEP)
+    transfer(rig, src, acts, "idle", "Idle_Loop", 0.0, keep=TORSO_KEEP)
     # A stroll, its steps a little longer than the clip's (it walks slowly).
     cycles["walk_f"] = mocap(rig, src, acts, "walk_f", "Walk_Loop", WALK, stride=1.4)
     # Crouching: the clips' own motion, their deep hunch eased to a fairly upright back with the
@@ -1033,7 +1144,7 @@ def main():
         msrc, mobjs, macts, mfps = got
         bpy.context.view_layer.objects.active = arm
         bpy.ops.object.mode_set(mode="POSE")
-        n = mocap(rig, msrc, macts, name, None, speed, bones=MIXAMO_BONES, src_fps=mfps, **opts)
+        n = transfer(rig, msrc, macts, name, None, speed, bones=MIXAMO_BONES, src_fps=mfps, ref=None, relax=opts.get("relax", False))
         if speed:
             cycles[name] = n
         print(f"[anims] {name} from Mixamo's {file} ({mfps:.0f} fps)")
