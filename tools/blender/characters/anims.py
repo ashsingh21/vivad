@@ -361,6 +361,36 @@ def load_mocap(pack):
     return next(o for o in new if o.type == "ARMATURE"), new, [a for a in bpy.data.actions if a not in acts]
 
 
+# Mixamo (tools/blender/characters/mixamo, not in the repository: Adobe's terms): our bones' names
+# in its rig.
+MIXAMO_BONES = {
+    "pelvis": "mixamorig:Hips", "spine_01": "mixamorig:Spine", "spine_02": "mixamorig:Spine1", "spine_03": "mixamorig:Spine2",
+    "neck_01": "mixamorig:Neck", "head": "mixamorig:Head",
+    **{f"{a}_{s}": f"mixamorig:{S}{b}" for s, S in (("l", "Left"), ("r", "Right"))
+       for a, b in (("clavicle", "Shoulder"), ("upperarm", "Arm"), ("lowerarm", "ForeArm"), ("hand", "Hand"),
+                    ("thigh", "UpLeg"), ("calf", "Leg"), ("foot", "Foot"), ("ball", "ToeBase"))},
+}
+MIXAMO = os.path.join(HERE, "mixamo")
+MIXAMO_CLIPS = [
+    ("walk_f", "Walking", 1.8),
+]
+
+
+def load_mixamo(name):
+    """Import one Mixamo download (mixamo/<name>.fbx): its armature, objects, actions and frame rate,
+    or None if it isn't there."""
+    path = os.path.join(MIXAMO, f"{name}.fbx")
+    if not os.path.exists(path):
+        return None
+    objs, acts = set(bpy.data.objects), set(bpy.data.actions)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.ops.import_scene.fbx(filepath=path)
+    fps = bpy.context.scene.render.fps / bpy.context.scene.render.fps_base
+    bpy.context.scene.render.fps, bpy.context.scene.render.fps_base = FPS, 1.0
+    new = [o for o in bpy.data.objects if o not in objs]
+    return next(o for o in new if o.type == "ARMATURE"), new, [a for a in bpy.data.actions if a not in acts], fps
+
+
 def drop_mocap(objs, acts, arm):
     bpy.ops.object.mode_set(mode="OBJECT")
     for o in objs:
@@ -371,7 +401,7 @@ def drop_mocap(objs, acts, arm):
     bpy.ops.object.mode_set(mode="POSE")
 
 
-def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, bend=0.0, swing=1.0, spread=0.0):
+def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, bend=0.0, swing=1.0, spread=0.0, bones=None, src_fps=FPS):
     """Retarget the mocap `clip` onto our rig as `name`, a locomotion cycle at `speed` (m/s; 0 for
     one standing still, or in place). The torso's and head's rotations are copied; the arms aim along
     the source's bones (whatever the two rigs' rest poses and rolls); the legs are put by IK where the
@@ -384,17 +414,31 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, be
     the pelvis over the clip's (a shallower crouch; negative, lower: a walk made a crouch walk), the
     feet staying on their paths; `bend` (rad) leans the back that much further forward, the head
     kept up; `swing` scales the arms' swing fore and aft; `spread` (m) sets each foot that much
-    further out to its side (a wider stance), the knee following it out."""
+    further out to its side (a wider stance), the knee following it out. `bones` maps our bone names
+    to the source's (Mixamo's mixamorig:*), whose reference is then its rest pose (a T-pose) rather
+    than an A_TPose clip; `src_fps` is the source's frame rate. A clip that travels (not "in place")
+    has its travel taken out."""
     keep = {**TORSO_KEEP, **(keep or {})}
-    bone = lambda n: next((b for b in src.pose.bones if b.name.lower() == n), None)
-    find = lambda c: next(a for a in acts if a.name.split("|")[-1] == c)
+    if bones:
+        bone = lambda n: src.pose.bones.get(bones.get(n, n))
+        find = lambda c: acts[0] if c is None else next(a for a in acts if a.name.split("|")[-1] == c)
+    else:
+        bone = lambda n: next((b for b in src.pose.bones if b.name.lower() == n), None)
+        find = lambda c: next(a for a in acts if a.name.split("|")[-1] == c)
     W = src.matrix_world
     sc = bpy.context.scene
     rig.obj.animation_data.action = None
-    # The source's reference: its A-pose clip, standing straight as our rig's rest does (its bind
-    # pose isn't a standing pose).
-    src.animation_data.action = find("A_TPose")
-    sc.frame_set(int(src.animation_data.action.frame_range[0]))
+    if bones:
+        # Mixamo's reference: its rest pose, standing straight in a T.
+        src.animation_data.action = None
+        for pb in src.pose.bones:
+            pb.matrix_basis = Matrix.Identity(4)
+        bpy.context.view_layer.update()
+    else:
+        # The source's reference: its A-pose clip, standing straight as our rig's rest does (its bind
+        # pose isn't a standing pose).
+        src.animation_data.action = find("A_TPose")
+        sc.frame_set(int(src.animation_data.action.frame_range[0]))
     rest = {n: (W @ bone(n).matrix).copy() for n in TORSO + ["thigh_l", "foot_l", "calf_l"] if bone(n)}
     act = find(clip)
     src.animation_data.action = act
@@ -405,10 +449,21 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, be
     src_ankle_z = rest["foot_l"].translation.z
     src_pelvis = rest["pelvis"].translation
 
+    # The clip's travel over the loop (its hips' from first frame to last, along the ground), taken
+    # out evenly: in place.
+    sc.frame_set(f0)
+    p0 = W @ bone("pelvis").head
+    sc.frame_set(f1)
+    p1 = W @ bone("pelvis").head
+    travel = Vector((p1.x - p0.x, p1.y - p0.y, 0.0))
+    if travel.length < 0.2:
+        travel = Vector()
+
     def sample(t):
         sc.frame_set(f0 + int(t), subframe=t - int(t))
-        hd = lambda n: W @ bone(n).head
-        tl = lambda n: W @ bone(n).tail
+        drift = travel * (t / frames)
+        hd = lambda n: W @ bone(n).head - drift
+        tl = lambda n: W @ bone(n).tail - drift
         rec = {"rot": {n: (W @ bone(n).matrix).to_quaternion() for n in TORSO if bone(n)}, "pelvis": hd("pelvis")}
         for s in "lr":
             rec[s] = dict(hip=hd(f"thigh_{s}"), knee=hd(f"calf_{s}"), ankle=hd(f"foot_{s}"), ball=hd(f"ball_{s}"),
@@ -436,14 +491,14 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, be
         return out
 
     # Retime: the source's own ground speed (its planted feet's), scaled, against `speed`.
-    out = frames
+    out = max(8, round(frames * FPS / src_fps))
     if speed:
         S = [sample(i) for i in range(frames)]
         down = planted(S)
-        v = sorted((S[(a + k - 1) % frames][s]["ankle"].y - S[a][s]["ankle"].y) / (k - 1) * FPS
+        v = sorted((S[(a + k - 1) % frames][s]["ankle"].y - S[a][s]["ankle"].y) / (k - 1) * src_fps
                    for s in "lr" for a, k in runs(down[s]) if k > 1)
         natural = v[len(v) // 2] * r * stride
-        out = max(8, round(frames * natural / speed))
+        out = max(8, round(frames * natural / speed * FPS / src_fps))
         print(f"[anims] {name} from {clip}: natural {natural:.2f} m/s at stride {stride}, {frames} -> {out} frames")
     S = [sample(i * frames / out) for i in range(out)]
     src.animation_data.action = None
@@ -888,6 +943,20 @@ def main():
     mocap(rig, src, acts, "jump", "Jump_Start", 0.0)
     mocap(rig, src, acts, "fall", "Jump_Loop", 0.0)
     drop_mocap(objs, acts, arm)
+    # Mixamo's clips, where downloaded (tools/blender/characters/mixamo/<file>.fbx), over the
+    # library's: (our clip, the file, the speed it's played at).
+    for name, file, speed in MIXAMO_CLIPS:
+        got = load_mixamo(file)
+        if not got:
+            continue
+        msrc, mobjs, macts, mfps = got
+        bpy.context.view_layer.objects.active = arm
+        bpy.ops.object.mode_set(mode="POSE")
+        n = mocap(rig, msrc, macts, name, None, speed, bones=MIXAMO_BONES, src_fps=mfps)
+        if speed:
+            cycles[name] = n
+        print(f"[anims] {name} from Mixamo's {file} ({mfps:.0f} fps)")
+        drop_mocap(mobjs, macts, arm)
     src, objs, acts = load_mocap("ual2")
     bpy.context.view_layer.objects.active = arm
     bpy.ops.object.mode_set(mode="POSE")
