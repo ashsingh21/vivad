@@ -97,9 +97,9 @@ view name:
     cargo run -p game --bin asset_check -- models/weapons/{{name}}.glb previews/{{name}}/bevy_{{name}}.png
 
 
-# Play (release build; first build takes a few minutes). Maps: cp (Connaught Place), chandni
-# (Chandni Chowk), hauzkhas, indiagate, bharat (ancient India): `just play map=chandni`.
-# `just play random` for a fresh seed (printed), `just play 1234` to replay one.
+# Play (release build; first build takes a few minutes). Arguments in order, seed then map. Maps:
+# cp (Connaught Place), chandni (Chandni Chowk), hauzkhas, indiagate, bharat (ancient India):
+# `just play 7 chandni`. `just play random` for a fresh seed (printed), `just play 1234` to replay one.
 play seed="7" map="cp":
     VIVAD_MAP={{map}} VIVAD_MAP_SEED={{seed}} cargo run --release -p game --bin game
 
