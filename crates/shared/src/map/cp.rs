@@ -123,7 +123,7 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
             // A beam across each verandah from every column to the shop wall, under the ceiling: the
             // colonnade's rhythm of light and shade; and a light in the ceiling of every bay.
             for (c0, c1) in [(r.ri + 0.5, core0 - 0.15), (core1 + 0.15, r.ro - 0.5)] {
-                b.deco(Frame::new(c, -s0), Vec3::new((c0 + c1) / 2.0, r.g - SLAB - 0.16 + lift, 0.0), Vec3::new(c1 - c0, 0.32, 0.36), Mat::Stucco);
+                b.deco(Frame::new(c, -s0), Vec3::new((c0 + c1) / 2.0, r.g - SLAB - 0.25 + lift, 0.0), Vec3::new(c1 - c0, 0.5, 0.42), Mat::Stucco);
                 b.map.signs.push(super::ShopSign {
                     pos: r.at((c0 + c1) / 2.0, am, r.g - SLAB - 0.03 + lift),
                     facing: Vec2::new(am.cos(), am.sin()),
