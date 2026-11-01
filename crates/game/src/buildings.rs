@@ -147,7 +147,10 @@ impl MeshBuf {
         for k in 0..8 {
             let (s0, s1) = (sec[k], sec[(k + 1) % 8]);
             let n = rot * Vec3::new(0.0, -(s1.0 - s0.0), s1.1 - s0.1).normalize();
-            self.quad_col([at(-l, s0), at(l, s0), at(l, s1), at(-l, s1)], n, [Vec2::ZERO; 4], [col; 4]);
+            // Undersides in their own shadow (baked occlusion): a ledge reads as a ledge.
+            let k = if n.y < -0.5 { 0.6 } else if n.y < -0.1 { 0.8 } else { 1.0 };
+            let c = [col[0] * k, col[1] * k, col[2] * k, col[3]];
+            self.quad_col([at(-l, s0), at(l, s0), at(l, s1), at(-l, s1)], n, [Vec2::ZERO; 4], [c; 4]);
         }
         for (x, n) in [(l, Vec3::X), (-l, Vec3::NEG_X)] {
             let base = self.pos.len() as u32;
@@ -698,17 +701,39 @@ fn build_footprints(
                     continue;
                 }
                 let (a0, b0) = (Vec3::new(a.x, lo, a.y), Vec3::new(b.x, lo, b.y));
-                let (a1, b1) = (a0.with_y(hi), b0.with_y(hi));
+                let b1 = b0.with_y(hi);
                 // Storeys counted from the building's foot; a shop band is one storey of its texture.
                 let rows = if shop { STOREY } else { 2.0 * STOREY };
                 let (v0, v1) = (-(lo - fp.base) / rows, -(hi - fp.base) / rows);
-                let uv = [Vec2::new(u0, v0), Vec2::new(u1, v0), Vec2::new(u1, v1), Vec2::new(u0, v1)];
-                let col = [tint_at(s0), tint_at(s0), tint_at(s1), tint_at(s1)];
                 let w = walls.entry((cx, cz, fp.mat, shop)).or_default();
-                if (b0 - a0).cross(b1 - a0).dot(out) >= 0.0 {
-                    w.quad_col([a0, b0, b1, a1], out, uv, col);
-                } else {
-                    w.quad_col([b0, a0, a1, b1], out, [uv[1], uv[0], uv[3], uv[2]], [col[1], col[0], col[3], col[2]]);
+                // Inside corners in shadow (baked occlusion): the wall is cut 1.5 m from each one
+                // and darkened toward it.
+                const DIM: f32 = 1.5;
+                let cut0 = if corner[i] < 0 { DIM.min(len * 0.5) } else { 0.0 };
+                let cut1 = if corner[(i + 1) % n] < 0 { DIM.min(len * 0.5) } else { 0.0 };
+                let mut stops = vec![(0.0, if cut0 > 0.0 { 0.62 } else { 1.0 })];
+                if cut0 > 0.0 {
+                    stops.push((cut0, 1.0));
+                }
+                if cut1 > 0.0 {
+                    stops.push((len - cut1, 1.0));
+                }
+                stops.push((len, if cut1 > 0.0 { 0.62 } else { 1.0 }));
+                stops.dedup_by(|x, y| (x.0 - y.0).abs() < 1e-3);
+                let flip = (b0 - a0).cross(b1 - a0).dot(out) < 0.0;
+                for pair in stops.windows(2) {
+                    let ((d0, k0), (d1, k1)) = (pair[0], pair[1]);
+                    let (p0, p1) = (a0 + (b0 - a0) * (d0 / len), a0 + (b0 - a0) * (d1 / len));
+                    let (q0, q1) = (p0.with_y(hi), p1.with_y(hi));
+                    let (e0, e1) = (u0 + (u1 - u0) * d0 / len, u0 + (u1 - u0) * d1 / len);
+                    let uv = [Vec2::new(e0, v0), Vec2::new(e1, v0), Vec2::new(e1, v1), Vec2::new(e0, v1)];
+                    let dim = |c: [f32; 4], k: f32| [c[0] * k, c[1] * k, c[2] * k, c[3]];
+                    let col = [dim(tint_at(s0), k0), dim(tint_at(s0), k1), dim(tint_at(s1), k1), dim(tint_at(s1), k0)];
+                    if !flip {
+                        w.quad_col([p0, p1, q1, q0], out, uv, col);
+                    } else {
+                        w.quad_col([p1, p0, q0, q1], out, [uv[1], uv[0], uv[3], uv[2]], [col[1], col[0], col[3], col[2]]);
+                    }
                 }
             }
             // Clutter on walls that face the street (not a neighbour's wall).

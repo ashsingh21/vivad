@@ -358,6 +358,55 @@ const TERRAIN_LODS: [(usize, f32); 3] = [(1, 90.0), (2, 220.0), (4, 1.0e5)];
 
 /// The ground, in tiles (culled off screen) of three LODs. Each tile hangs a skirt from its edges
 /// so a coarser neighbour's edge never shows a crack.
+/// Baked contact shadow on a city map's ground: darker in a band round each building's foot, as
+/// ambient occlusion would make it (no SSAO needed: docs/rendering-guidelines.md section 4). One
+/// factor per terrain vertex; empty off city maps.
+fn contact_shade(layout: &shared::map::MapLayout) -> Vec<f32> {
+    let t = &layout.terrain;
+    let n = t.n;
+    if layout.footprints.is_empty() {
+        return vec![];
+    }
+    let half = t.size * 0.5;
+    let step = t.step();
+    let mut inside = vec![false; n * n];
+    for fp in layout.footprints.iter().filter(|f| f.mat != Mat::Water) {
+        let (lo, hi) = fp.pts.iter().fold((Vec2::MAX, Vec2::MIN), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+        let idx = |c: f32| (((c + half) / step).round().max(0.0) as usize).min(n - 1);
+        for i in idx(lo.x)..=idx(hi.x) {
+            for j in idx(lo.y)..=idx(hi.y) {
+                if shared::map::footprint::contains(&fp.pts, Vec2::new(t.coord(i), t.coord(j))) {
+                    inside[i * n + j] = true;
+                }
+            }
+        }
+    }
+    // Within ~2.5 m of a wall: darkest at its foot.
+    let reach = (2.5 / step).ceil() as i32;
+    let mut shade = vec![1.0; n * n];
+    for i in 0..n as i32 {
+        for j in 0..n as i32 {
+            if inside[i as usize * n + j as usize] {
+                continue;
+            }
+            let mut near = f32::MAX;
+            for di in -reach..=reach {
+                for dj in -reach..=reach {
+                    let (a, b) = (i + di, j + dj);
+                    if a >= 0 && b >= 0 && (a as usize) < n && (b as usize) < n && inside[a as usize * n + b as usize] {
+                        near = near.min(((di * di + dj * dj) as f32).sqrt() * step);
+                    }
+                }
+            }
+            if near < 2.5 {
+                let k = 1.0 - near / 2.5;
+                shade[i as usize * n + j as usize] = 1.0 - 0.38 * k * k;
+            }
+        }
+    }
+    shade
+}
+
 fn dress_terrain(
     mut commands: Commands,
     q: Query<Entity, Added<shared::sim::MapTerrain>>,
@@ -374,6 +423,7 @@ fn dress_terrain(
         let n = t.n;
         let material = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.95, ..default() });
         commands.entity(e).insert(Visibility::default());
+        let contact = contact_shade(&layout);
         // Grid indices a tile samples from `a` to `b` (inclusive) every `step`, always ending on `b`.
         let samples = |a: usize, b: usize, step: usize| -> Vec<usize> {
             let mut v: Vec<usize> = (a..b).step_by(step).collect();
@@ -397,7 +447,8 @@ fn dress_terrain(
                         pos.push([x, h - drop, z]);
                         nrm.push(nn.to_array());
                         uv.push([x / 4.0, z / 4.0]);
-                        col.push([c.red, c.green, c.blue, 1.0]);
+                        let k = contact.get(i * n + j).copied().unwrap_or(1.0);
+                        col.push([c.red * k, c.green * k, c.blue * k, 1.0]);
                         pos.len() as u32 - 1
                     };
                     let w = js.len() as u32;
