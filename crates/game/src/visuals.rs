@@ -291,13 +291,14 @@ pub(crate) fn setup_sky(mut commands: Commands, palette: Res<Palette>, mut meshe
         Sun,
         // About 34 degrees up and only a little warm: high enough that the walls keep their own
         // colours, low enough for long shadows down the lanes.
-        DirectionalLight { illuminance: 27_000.0, shadow_maps_enabled: std::env::var("VIVAD_NO_SHADOWS").is_err(), color: Color::srgb(1.0, 0.91, 0.78), ..default() },
+        DirectionalLight { illuminance: 29_000.0, shadow_maps_enabled: std::env::var("VIVAD_NO_SHADOWS").is_err(), color: Color::srgb(1.0, 0.87, 0.70), ..default() },
         Transform::from_xyz(1.0, 0.75, 0.45).looking_at(Vec3::ZERO, Vec3::Y),
         // Cascades and reach are the quality level's (crate::quality): the shadow pass is the
         // frame's largest GPU cost.
         CascadeShadowConfigBuilder::default().build(),
     ));
-    commands.insert_resource(GlobalAmbientLight { color: Color::srgb(0.82, 0.87, 1.0), brightness: 1800.0, ..default() });
+    // Sky fill, clearly blue: shade reads cool against the warm sun, the stylised contrast, not grey.
+    commands.insert_resource(GlobalAmbientLight { color: Color::srgb(0.76, 0.83, 1.0), brightness: 1650.0, ..default() });
     // The Pralaya wall.
     commands.spawn((
         ZoneWall,

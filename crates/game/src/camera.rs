@@ -33,10 +33,10 @@ pub fn spawn_camera(mut commands: Commands) {
         MainCamera { distance: CAMERA_DISTANCE },
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection { fov: 70f32.to_radians(), near: 0.05, ..default() }),
-        Tonemapping::AgX,
+        tonemapping(),
         // Most of a stop under Bevy's default (9.7): the afternoon sun and sky were washing out the
         // ground and plaster. VIVAD_EV overrides for tuning.
-        bevy::camera::Exposure { ev100: std::env::var("VIVAD_EV").ok().and_then(|s| s.parse().ok()).unwrap_or(10.8) },
+        bevy::camera::Exposure { ev100: std::env::var("VIVAD_EV").ok().and_then(|s| s.parse().ok()).unwrap_or(11.1) },
         Msaa::Off,
         grading(),
         // A soft glow round the sun's glints, lamps and muzzle flashes, and the frame's edges
@@ -55,12 +55,24 @@ pub fn spawn_camera(mut commands: Commands) {
     ));
 }
 
+/// The tone curve. AgX (the old default) is filmic: it desaturates and softens, a photographic
+/// look; TonyMcMapface keeps colour rich through the highlights, the stylised look. VIVAD_TONEMAP
+/// (agx, tony, aces, blender) overrides for comparisons.
+fn tonemapping() -> Tonemapping {
+    match std::env::var("VIVAD_TONEMAP").as_deref() {
+        Ok("agx") => Tonemapping::AgX,
+        Ok("aces") => Tonemapping::AcesFitted,
+        Ok("blender") => Tonemapping::BlenderFilmic,
+        _ => Tonemapping::TonyMcMapface,
+    }
+}
+
 fn post() -> (bevy::post_process::bloom::Bloom, bevy::post_process::effect_stack::Vignette) {
     use bevy::post_process::{bloom::Bloom, effect_stack::Vignette};
     if std::env::var("VIVAD_NO_POST").is_ok() {
         return (Bloom { intensity: 0.0, ..Bloom::NATURAL }, Vignette { intensity: 0.0, ..default() });
     }
-    (Bloom { intensity: 0.07, ..Bloom::NATURAL }, Vignette { intensity: 0.22, radius: 0.9, smoothness: 2.5, ..default() })
+    (Bloom { intensity: 0.1, ..Bloom::NATURAL }, Vignette { intensity: 0.22, radius: 0.9, smoothness: 2.5, ..default() })
 }
 
 /// AgX alone leaves the sunlit ground chalky: a little more saturation, midtone and highlight
@@ -68,7 +80,7 @@ fn post() -> (bevy::post_process::bloom::Bloom, bevy::post_process::effect_stack
 /// pulled down. VIVAD_GRADE="saturation,contrast,highlight gain" overrides for tuning.
 fn grading() -> bevy::render::view::ColorGrading {
     let v: Vec<f32> = std::env::var("VIVAD_GRADE").unwrap_or_default().split(',').filter_map(|s| s.parse().ok()).collect();
-    let (sat, con, hi) = (v.first().copied().unwrap_or(1.1), v.get(1).copied().unwrap_or(1.06), v.get(2).copied().unwrap_or(0.85));
+    let (sat, con, hi) = (v.first().copied().unwrap_or(1.22), v.get(1).copied().unwrap_or(1.1), v.get(2).copied().unwrap_or(0.9));
     let mut g = bevy::render::view::ColorGrading::default();
     for s in [&mut g.shadows, &mut g.midtones, &mut g.highlights] {
         s.saturation = sat;
