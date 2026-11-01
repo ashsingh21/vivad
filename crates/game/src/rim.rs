@@ -4,6 +4,7 @@
 //! - cloth that moves: loose garments (the kurti's skirt and panels, the gamchha's ends, shirt
 //!   hems; their vertex colour's alpha says how loose, tools/blender/characters/finish.py) trail
 //!   behind the warrior's motion, lift when it falls and flutter, from its velocity each frame.
+//!
 //! A few vertex and fragment instructions on the characters only: on at every quality level.
 
 use std::collections::HashMap;
@@ -59,9 +60,11 @@ pub struct RimTarget(pub Entity);
 #[derive(Resource, Default)]
 struct Converted(HashMap<(Entity, AssetId<StandardMaterial>), Handle<RimMaterial>>);
 
-/// Each warrior's materials, its last position and its smoothed velocity.
+/// A warrior's materials, its last position and its smoothed velocity.
+type Swaying = (Vec<Handle<RimMaterial>>, Option<Vec3>, Vec3);
+
 #[derive(Resource, Default)]
-struct Cloth(HashMap<Entity, (Vec<Handle<RimMaterial>>, Option<Vec3>, Vec3)>);
+struct Cloth(HashMap<Entity, Swaying>);
 
 /// A pale sky-warm white: reads as light, not as a coloured outline.
 const RIM: Vec4 = Vec4::new(1.0, 0.95, 0.88, 0.22);
