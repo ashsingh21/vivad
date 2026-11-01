@@ -157,6 +157,9 @@ def build(tex_dir=TEX, prefix="auto"):
     lod0.data.materials.clear()
     lod0.data.materials.append(export.game_material(prefix, images))
     export.strip_bake_data(lod0)
+    # The colours are in the texture now: no vertex colour layers to export.
+    for c in list(lod0.data.color_attributes):
+        lod0.data.color_attributes.remove(c)
     return lod0
 
 
