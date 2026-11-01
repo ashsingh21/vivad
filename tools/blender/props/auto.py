@@ -136,8 +136,8 @@ def detail_material():
     return m
 
 
-def main():
-    export.reset_scene()
+def build(tex_dir=TEX, prefix="auto"):
+    """The auto's body, unwrapped, with its baked texture set as its material (LOD0 only)."""
     bake.setup_cycles(16)
     lod0, lod1 = street_kit.auto()
     bpy.data.objects.remove(lod1, do_unlink=True)
@@ -153,13 +153,20 @@ def main():
     bpy.ops.object.mode_set(mode="OBJECT")
     lod0.data.uv_layers[0].name = "UVMap"
     export.pack_uvs(lod0)
-    images = bake.bake_texture_set(lod0, TEX, "auto", res=RES)
+    images = bake.bake_texture_set(lod0, tex_dir, prefix, res=RES)
     lod0.data.materials.clear()
-    lod0.data.materials.append(export.game_material("auto", images))
+    lod0.data.materials.append(export.game_material(prefix, images))
     export.strip_bake_data(lod0)
+    return lod0
+
+
+def main():
+    export.reset_scene()
+    lod0 = build()
     lods = export.make_lods(lod0, (0.4,))
     tris = export.export_glb(lods, OUT)
     print(f"[auto] {OUT}: {tris}")
 
 
-main()
+if __name__ == "__main__":
+    main()

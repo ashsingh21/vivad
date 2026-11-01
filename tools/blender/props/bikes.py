@@ -76,20 +76,32 @@ def arc_band(p, y, z, r0, r1, a0, a1, hw, colour, seg=10):
 
 
 def _spline(secs, steps):
-    """Sections resampled along a Catmull-Rom spline (centre, half-width, half-height and
-    squareness alike): `steps` rings per span, so a body curves smoothly through its sections
-    instead of kinking at each one."""
+    """Sections resampled along a Hermite spline (centre, half-width, half-height and squareness
+    alike): `steps` rings per span, so a body curves smoothly through its sections instead of
+    kinking at each one. Each span's tangents are Catmull-Rom's, clamped to that span's own
+    length, so a short span next to a long one doesn't overshoot (it buried the auto's tail lamps
+    inside its tub)."""
     vals = [(Vector(c), hw, hh, sq) for c, hw, hh, sq in secs]
     if len(vals) < 3 or steps <= 1:
         return vals
+
+    def tangent(a, b, span):
+        m = (b - a) * 0.5
+        size = m.length if isinstance(m, Vector) else abs(m)
+        limit = span.length if isinstance(span, Vector) else abs(span)
+        return m * (limit / size) if size > limit and size > 0 else m
+
     out = []
     for i in range(len(vals) - 1):
-        p0, p1, p2, p3 = vals[max(i - 1, 0)], vals[i], vals[i + 1], vals[min(i + 2, len(vals) - 1)]
+        v0, v1, v2, v3 = vals[max(i - 1, 0)], vals[i], vals[i + 1], vals[min(i + 2, len(vals) - 1)]
         for k in range(steps):
             t = k / steps
             t2, t3 = t * t, t * t * t
-            w = (-0.5 * t3 + t2 - 0.5 * t, 1.5 * t3 - 2.5 * t2 + 1, -1.5 * t3 + 2 * t2 + 0.5 * t, 0.5 * t3 - 0.5 * t2)
-            mix = lambda j: p0[j] * w[0] + p1[j] * w[1] + p2[j] * w[2] + p3[j] * w[3]
+            h00, h10, h01, h11 = 2 * t3 - 3 * t2 + 1, t3 - 2 * t2 + t, -2 * t3 + 3 * t2, t3 - t2
+
+            def mix(j):
+                span = v2[j] - v1[j]
+                return h00 * v1[j] + h10 * tangent(v0[j], v2[j], span) + h01 * v2[j] + h11 * tangent(v1[j], v3[j], span)
             out.append((mix(0), max(mix(1), 0.001), max(mix(2), 0.001), min(max(mix(3), 0.2), 1.0)))
     out.append(vals[-1])
     return out
