@@ -521,7 +521,10 @@ fn footprints(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp
             "infill" => houses[rng.random_range(0..houses.len())],
             _ => palette[rng.random_range(0..palette.len())],
         };
-        b.map.footprints.push(Footprint { pts, base: bld.base.unwrap_or(0.0), top: bld.h, mat });
+        // A kiosk or a guard hut mapped with a tall building's levels would stand as a thin
+        // tower: anything under 4.5 m across is one storey.
+        let top = if narrow(&pts) < 4.5 { bld.h.min(3.6) } else { bld.h };
+        b.map.footprints.push(Footprint { pts, base: bld.base.unwrap_or(0.0), top, mat });
         // A chest at the foot of every other building inside the play area, on the pavement.
         if c.abs().max_element() < HALF - 8.0 && rng.random_bool(chest_odds) {
             let k = rng.random_range(0..bld.pts.len());
@@ -534,6 +537,15 @@ fn footprints(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp
         }
     }
     entered
+}
+
+/// About how wide an outline is across its narrow side: the short side of the rectangle with its
+/// area and perimeter.
+fn narrow(pts: &[Vec2]) -> f32 {
+    let n = pts.len();
+    let area = (0..n).map(|k| pts[k].perp_dot(pts[(k + 1) % n])).sum::<f32>().abs() * 0.5;
+    let perim: f32 = (0..n).map(|k| pts[k].distance(pts[(k + 1) % n])).sum();
+    (perim - (perim * perim - 16.0 * area).max(0.0).sqrt()) / 4.0
 }
 
 /// Houses built to enter, at most, a map: each is a few hundred pieces and a chest or two.

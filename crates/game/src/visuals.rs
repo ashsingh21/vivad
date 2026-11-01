@@ -291,7 +291,7 @@ pub(crate) fn setup_sky(mut commands: Commands, palette: Res<Palette>, mut meshe
         Sun,
         // About 34 degrees up and only a little warm: high enough that the walls keep their own
         // colours, low enough for long shadows down the lanes.
-        DirectionalLight { illuminance: 29_000.0, shadow_maps_enabled: std::env::var("VIVAD_NO_SHADOWS").is_err(), color: Color::srgb(1.0, 0.87, 0.70), ..default() },
+        DirectionalLight { illuminance: 25_500.0, shadow_maps_enabled: std::env::var("VIVAD_NO_SHADOWS").is_err(), color: Color::srgb(1.0, 0.9, 0.77), ..default() },
         Transform::from_xyz(1.0, 0.75, 0.45).looking_at(Vec3::ZERO, Vec3::Y),
         // Cascades and reach are the quality level's (crate::quality): the shadow pass is the
         // frame's largest GPU cost.

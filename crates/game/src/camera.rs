@@ -77,10 +77,10 @@ fn post() -> (bevy::post_process::bloom::Bloom, bevy::post_process::effect_stack
 
 /// AgX alone leaves the sunlit ground chalky: a little more saturation, midtone and highlight
 /// contrast (not in the shadows, which would crush the characters' brown skin), and highlights
-/// pulled down. VIVAD_GRADE="saturation,contrast,highlight gain" overrides for tuning.
+/// pulled down. Kept gentle: more read as toy-bright. VIVAD_GRADE="saturation,contrast,highlight gain" overrides for tuning.
 fn grading() -> bevy::render::view::ColorGrading {
     let v: Vec<f32> = std::env::var("VIVAD_GRADE").unwrap_or_default().split(',').filter_map(|s| s.parse().ok()).collect();
-    let (sat, con, hi) = (v.first().copied().unwrap_or(1.22), v.get(1).copied().unwrap_or(1.1), v.get(2).copied().unwrap_or(0.9));
+    let (sat, con, hi) = (v.first().copied().unwrap_or(1.1), v.get(1).copied().unwrap_or(1.08), v.get(2).copied().unwrap_or(0.86));
     let mut g = bevy::render::view::ColorGrading::default();
     for s in [&mut g.shadows, &mut g.midtones, &mut g.highlights] {
         s.saturation = sat;

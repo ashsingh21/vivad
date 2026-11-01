@@ -15,6 +15,7 @@ blender -b --factory-startup -P tools/blender/props/street_kit.py
 """
 
 import math
+import random
 import os
 import sys
 
@@ -62,6 +63,8 @@ class Piece:
         self.col = self.bm.loops.layers.float_color.new("Col")
         # Only the shells' edges are rounded (boxes, hulls); rods, wheels and fruit stay as they are.
         self.bw = self.bm.edges.layers.float.new("bevel_weight_edge")
+        # Faces shaded smooth whatever their angles (foliage), not split at sharp edges.
+        self.soft = self.bm.faces.layers.int.new("soft")
 
     def paint(self, colour, round=False):
         """`colour`: a name in C, or an sRGB triple."""
@@ -99,8 +102,12 @@ class Piece:
                               matrix=Matrix.Translation(a + d / 2) @ rot)
         self.paint(colour)
 
-    def ball(self, c, r, colour, sub=1, squash=1.0):
+    def ball(self, c, r, colour, sub=1, squash=1.0, soft=False):
         bmesh.ops.create_icosphere(self.bm, subdivisions=sub, radius=r, matrix=Matrix.Translation(Vector(c)) @ Matrix.Diagonal((1, 1, squash, 1)))
+        if soft:
+            for f in self.bm.faces:
+                if not f.tag:
+                    f[self.soft] = 1
         self.paint(colour)
 
     def quad(self, pts, colour):
@@ -144,6 +151,16 @@ class Piece:
         for p in me.polygons:
             p.use_smooth = True
         me.set_sharp_from_angle(angle=math.radians(40))
+        soft = me.attributes.get("soft")
+        if soft is not None:
+            if any(v.value for v in soft.data):
+                sharp = me.attributes["sharp_edge"].data
+                keys = {e.key: e.index for e in me.edges}
+                for poly in me.polygons:
+                    if soft.data[poly.index].value:
+                        for k in poly.edge_keys:
+                            sharp[keys[k]].value = False
+            me.attributes.remove(soft)
         export.triangulate(o)
         bake_ao(o)
         lod1 = o.copy()
@@ -497,15 +514,12 @@ def lamp():
 
 
 def planter():
-    """A round concrete planter with a flowering bush."""
+    """A round concrete planter, a lip round its rim, filled with dark soil. Its bush is the
+    nature set's bougainvillea or lantana, set in by crate::map::kit::place."""
     p = Piece("planter")
-    bikes.loft(p, [((0, 0, 0.0), 0.62, 0.62, 1.0), ((0, 0, 0.55), 0.68, 0.68, 1.0), ((0, 0, 0.62), 0.66, 0.66, 1.0)], C["concrete"])
-    for k, (dx, dy, r) in enumerate(((0, 0, 0.42), (0.25, 0.15, 0.3), (-0.22, 0.2, 0.28), (0.05, -0.28, 0.3))):
-        p.ball((dx, dy, 0.82 + 0.1 * (k == 0)), r, (0.18, 0.50, 0.20) if k % 2 == 0 else (0.24, 0.58, 0.22), 2, 0.85)
-    for k in range(9):
-        a = k * 2.4
-        p.ball((0.38 * math.cos(a), 0.38 * math.sin(a), 0.95 + 0.12 * math.sin(a * 1.7)), 0.07,
-               [(0.98, 0.30, 0.45), (0.99, 0.80, 0.15), (0.98, 0.50, 0.08)][k % 3], 1)
+    bikes.loft(p, [((0, 0, 0.0), 0.56, 0.56, 1.0), ((0, 0, 0.5), 0.64, 0.64, 1.0), ((0, 0, 0.53), 0.7, 0.7, 1.0),
+                   ((0, 0, 0.6), 0.7, 0.7, 1.0)], C["concrete"])
+    p.cyl((0, 0, 0.56), (0, 0, 0.6), 0.62, (0.16, 0.11, 0.08), 16)
     return p.finish(0.0)
 
 
