@@ -61,7 +61,9 @@ fn spawn_sky(mut commands: Commands, sun: Query<&Transform, With<Sun>>, mut mesh
         bevy::light::NotShadowReceiver,
         ChildOf(rig),
     ));
-    let cloud = materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.99, 0.97), perceptual_roughness: 1.0, reflectance: 0.0, fog_enabled: false, ..default() });
+    // Painted, not lit: the shading is in the vertex colours (clouds()), so they stay soft and
+    // luminous rather than plastic lumps with hard dark undersides.
+    let cloud = materials.add(StandardMaterial { base_color: Color::WHITE, unlit: true, fog_enabled: false, ..default() });
     commands.spawn((Mesh3d(meshes.add(clouds(to_sun))), MeshMaterial3d(cloud), sky_flags(), ChildOf(rig)));
 }
 
@@ -111,8 +113,10 @@ fn dome(to_sun: Vec3) -> Mesh {
         .with_inserted_indices(Indices::U32(idx))
 }
 
-/// Cumulus round the horizon: each a heap of flattened balls on a flat base, fewer toward the sun
-/// (so the glow stays clear), one merged mesh.
+/// Cumulus round the horizon, painted: each a heap of many puffs on a broad flat base, smaller
+/// toward the top, shaded in their vertex colours (lit warm white toward the sun and on top, a
+/// soft lavender-grey underneath, hazier near the horizon) and drawn unlit. Fewer toward the sun
+/// so its glow stays clear. One merged mesh.
 fn clouds(to_sun: Vec3) -> Mesh {
     let mut s = 0x2545_f491u32;
     let mut rnd = move || {
@@ -122,6 +126,8 @@ fn clouds(to_sun: Vec3) -> Mesh {
         (s % 10_000) as f32 / 10_000.0
     };
     let ball = Sphere::new(1.0).mesh().ico(2).expect("ico");
+    // Brighter than white: unlit, they'd otherwise sit dimmer than the sky they hang in.
+    let (lit, shade, haze) = (Vec3::new(1.0, 0.97, 0.92) * 2.0, Vec3::new(0.86, 0.87, 0.98) * 1.35, Vec3::from(lin(HORIZON)) * 1.2);
     let mut out: Option<Mesh> = None;
     let sun_az = to_sun.z.atan2(to_sun.x);
     for k in 0..22 {
@@ -137,19 +143,43 @@ fn clouds(to_sun: Vec3) -> Mesh {
         let across = Vec3::new(-az.sin(), 0.0, az.cos());
         let toward = -Vec3::new(az.cos(), 0.0, az.sin());
         let size = 30.0 + rnd() * 40.0;
-        let puffs = 5 + (rnd() * 5.0) as usize;
+        let base = centre.y - size * 0.15;
+        // Hazier the lower it sits.
+        let fade = (1.0 - (elev - 0.05) / 0.15).clamp(0.0, 1.0) * 0.25;
+        let puffs = 10 + (rnd() * 6.0) as usize;
         for p in 0..puffs {
-            let t = (p as f32 + 0.5) / puffs as f32 - 0.5;
-            // Biggest in the middle, a heap rather than a row.
-            let r = size * (0.55 + 0.45 * (1.0 - (2.0 * t).abs())) * (0.7 + 0.5 * rnd());
-            let at = centre + across * t * size * 2.6 + Vec3::Y * r * (0.15 + 0.3 * rnd()) + toward * (rnd() - 0.5) * size * 0.6;
-            let mut m = ball.clone().scaled_by(Vec3::new(r, r * 0.72, r)).translated_by(at);
-            // A flat underside, as cumulus have.
+            // A heap: the first puffs a wide base along the horizon, later ones smaller and higher,
+            // drawn toward the middle.
+            let tier = p as f32 / puffs as f32;
+            let spread = 1.25 * (1.0 - 0.65 * tier);
+            let t = (rnd() - 0.5) * 2.0 * spread;
+            let r = size * (0.68 - 0.28 * tier) * (0.75 + 0.5 * rnd()) * (1.0 - 0.3 * t.abs());
+            let at = centre + across * t * size + Vec3::Y * (size * 0.55 * tier + r * 0.2) + toward * (rnd() - 0.5) * size * 0.5;
+            let mut m = ball.clone().scaled_by(Vec3::new(r, r * 0.8, r)).translated_by(at);
             if let Some(VertexAttributeValues::Float32x3(ps)) = m.attribute_mut(Mesh::ATTRIBUTE_POSITION) {
+                // A flat underside, as cumulus have.
                 for q in ps.iter_mut() {
-                    q[1] = q[1].max(centre.y - size * 0.15);
+                    q[1] = q[1].max(base);
                 }
             }
+            let ps: Vec<Vec3> = match m.attribute(Mesh::ATTRIBUTE_POSITION) {
+                Some(VertexAttributeValues::Float32x3(ps)) => ps.iter().map(|q| Vec3::from(*q)).collect(),
+                _ => vec![],
+            };
+            let col: Vec<[f32; 4]> = ps
+                .iter()
+                .map(|q| {
+                    // The puff's own normal (a sphere's), the sun's side and the top lit, the
+                    // underside in soft shade; then haze near the horizon.
+                    let n = ((*q - at) / Vec3::new(r, r * 0.8, r)).normalize_or(Vec3::Y);
+                    let sun = 0.5 + 0.5 * n.dot(to_sun);
+                    let up = ((q.y - base) / (size * 0.9)).clamp(0.0, 1.0);
+                    let k = (0.45 * sun + 0.55 * up.powf(0.6)).clamp(0.0, 1.0);
+                    let c = shade.lerp(lit, k).lerp(haze, fade);
+                    [c.x, c.y, c.z, 1.0]
+                })
+                .collect();
+            m.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
             match &mut out {
                 Some(o) => o.merge(&m).expect("same attributes"),
                 None => out = Some(m),
@@ -159,7 +189,6 @@ fn clouds(to_sun: Vec3) -> Mesh {
     let mut m = out.expect("clouds");
     m.remove_attribute(Mesh::ATTRIBUTE_UV_0);
     m.remove_attribute(Mesh::ATTRIBUTE_TANGENT);
-    m.compute_smooth_normals();
     m
 }
 
