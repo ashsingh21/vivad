@@ -149,7 +149,7 @@ pub struct Block {
     pub visible: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Reflect)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Reflect)]
 pub enum ChestKind {
     /// Carved wooden temple chest.
     Peti,

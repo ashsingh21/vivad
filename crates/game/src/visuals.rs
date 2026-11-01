@@ -79,8 +79,6 @@ pub struct Palette {
     rarity_beam: HashMap<Rarity, Handle<StandardMaterial>>,
     pool_mesh: Handle<Mesh>,
     beam_mesh: Handle<Mesh>,
-    wood: Handle<StandardMaterial>,
-    gold: Handle<StandardMaterial>,
     pub(crate) string: Handle<StandardMaterial>,
     fire: Handle<StandardMaterial>,
     wind: Handle<StandardMaterial>,
@@ -88,6 +86,9 @@ pub struct Palette {
     glint: Handle<StandardMaterial>,
     zone: Handle<StandardMaterial>,
     pub(crate) models: HashMap<&'static str, ModelHandles>,
+    /// The chests (tools/blender/props/chests.py): body and lid (its origin on the hinge). Their
+    /// material is in `models`, as "chest_peti" and "chest_kalash".
+    chests: HashMap<ChestKind, (Handle<Mesh>, Handle<Mesh>)>,
 }
 
 fn mat_color(m: Mat) -> (Color, f32, f32) {
@@ -237,8 +238,6 @@ fn setup_assets(
         rarity_beam,
         pool_mesh: meshes.add(Plane3d::default().mesh().size(1.3, 1.3)),
         beam_mesh: meshes.add(beam_mesh),
-        wood: materials.add(StandardMaterial { base_color: Color::srgb(0.40, 0.24, 0.12), perceptual_roughness: 0.7, ..default() }),
-        gold: materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.78, 0.34), metallic: 1.0, perceptual_roughness: 0.3, ..default() }),
         glint: materials.add(StandardMaterial {
             base_color: Color::srgb(1.0, 0.95, 0.8),
             emissive: LinearRgba::rgb(6.0, 5.0, 3.2),
@@ -268,8 +267,9 @@ fn setup_assets(
         }),
         models: WEAPON_MODELS
             .iter()
-            .map(|&id| {
-                let path = format!("models/weapons/{id}.glb");
+            .map(|&id| (id, format!("models/weapons/{id}.glb")))
+            .chain(["chest_peti", "chest_kalash"].map(|id| (id, format!("models/props/{id}.glb"))))
+            .map(|(id, path)| {
                 (id, ModelHandles {
                     mesh: assets.load(format!("{path}#Mesh0/Primitive0")),
                     // Neutral placeholder until the glTF material loads; then it's replaced in place.
@@ -279,6 +279,13 @@ fn setup_assets(
             })
             .collect(),
         string: materials.add(StandardMaterial { base_color: Color::srgb(0.86, 0.82, 0.70), perceptual_roughness: 0.8, ..default() }),
+        chests: [(ChestKind::Peti, "peti"), (ChestKind::Kalash, "kalash")]
+            .into_iter()
+            .map(|(kind, name)| {
+                let path = format!("models/props/chest_{name}.glb");
+                (kind, (assets.load(format!("{path}#Mesh0/Primitive0")), assets.load(format!("{path}#Mesh1/Primitive0"))))
+            })
+            .collect(),
     });
 }
 
@@ -715,6 +722,14 @@ pub fn spawn_weapon_model(commands: &mut Commands, parent: Entity, id: &str, _ra
 #[derive(Component)]
 struct ChestLid;
 
+/// Where each chest's lid hinges, in the chest's frame: the peti's back top edge, the kalash's mouth.
+fn lid_hinge(kind: ChestKind) -> Vec3 {
+    match kind {
+        ChestKind::Peti => Vec3::new(0.0, 0.5, -0.324),
+        ChestKind::Kalash => Vec3::new(0.0, 0.764, 0.0),
+    }
+}
+
 fn dress_chests(
     mut commands: Commands,
     added: Query<(Entity, &Chest), Added<Chest>>,
@@ -723,24 +738,15 @@ fn dress_chests(
     palette: Res<Palette>,
 ) {
     for (e, c) in &added {
-        commands.entity(e).insert(Visibility::default()).with_children(|p| match c.kind {
-            ChestKind::Peti => {
-                p.spawn((Mesh3d(palette.cube.clone()), MeshMaterial3d(palette.wood.clone()),
-                         Transform::from_xyz(0.0, 0.3, 0.0).with_scale(Vec3::new(1.1, 0.6, 0.65))));
-                for x in [-0.45, 0.45] {
-                    p.spawn((Mesh3d(palette.cube.clone()), MeshMaterial3d(palette.gold.clone()),
-                             Transform::from_xyz(x, 0.3, 0.0).with_scale(Vec3::new(0.06, 0.62, 0.67))));
-                }
-                p.spawn((ChestLid, Mesh3d(palette.cube.clone()), MeshMaterial3d(palette.gold.clone()),
-                         Transform::from_xyz(0.0, 0.64, 0.0).with_scale(Vec3::new(1.12, 0.1, 0.68))));
-            }
-            ChestKind::Kalash => {
-                p.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(palette.gold.clone()),
-                         Transform::from_xyz(0.0, 0.42, 0.0).with_scale(Vec3::new(0.42, 0.4, 0.42))));
-                p.spawn((Mesh3d(palette.cylinder.clone()), MeshMaterial3d(palette.gold.clone()),
-                         Transform::from_xyz(0.0, 0.85, 0.0).with_scale(Vec3::new(0.3, 0.2, 0.3))));
-                p.spawn((ChestLid, Mesh3d(palette.sphere.clone()), MeshMaterial3d(palette.rarity_glow[&Rarity::Divya].clone()),
-                         Transform::from_xyz(0.0, 1.05, 0.0).with_scale(Vec3::splat(0.16))));
+        let (body, lid) = palette.chests[&c.kind].clone();
+        let mat = palette.models[if c.kind == ChestKind::Peti { "chest_peti" } else { "chest_kalash" }].mat.clone();
+        commands.entity(e).insert(Visibility::default()).with_children(|p| {
+            p.spawn((Mesh3d(body), MeshMaterial3d(mat.clone())));
+            p.spawn((ChestLid, Mesh3d(lid), MeshMaterial3d(mat), Transform::from_translation(lid_hinge(c.kind))));
+            // The kalash marked out from afar: a pool of divine light round its foot.
+            if c.kind == ChestKind::Kalash {
+                p.spawn((Mesh3d(palette.pool_mesh.clone()), MeshMaterial3d(palette.rarity_pool[&Rarity::Divya].clone()),
+                         Transform::from_xyz(0.0, 0.03, 0.0).with_scale(Vec3::splat(1.6)), bevy::light::NotShadowCaster));
             }
         });
     }
@@ -750,8 +756,13 @@ fn dress_chests(
         }
         for ch in children.iter() {
             if let Ok(mut t) = lids.get_mut(ch) {
-                t.rotation = Quat::from_rotation_x(-1.9);
-                t.translation += Vec3::new(0.0, 0.3, -0.35);
+                // The peti's lid swung back on its hinge; the kalash's coconut and leaves lifted off
+                // and tipped back.
+                let hinge = lid_hinge(c.kind);
+                (t.translation, t.rotation) = match c.kind {
+                    ChestKind::Peti => (hinge, Quat::from_rotation_x(-1.9)),
+                    ChestKind::Kalash => (hinge + Vec3::new(0.0, 0.12, -0.42), Quat::from_rotation_x(-1.2)),
+                };
             }
         }
     }
