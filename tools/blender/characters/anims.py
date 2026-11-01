@@ -216,9 +216,35 @@ def roll_hand(rig, s, angle):
 
 # ------------------------------------------------------------------ locomotion
 
-def locomotion(rig, name, speed, direction, cadence, duty, lift, crouch, bob, lean, arm, elbow):
+def catmull(points, k):
+    """A point on the Catmull-Rom curve through `points` (evenly spaced in k, 0..1)."""
+    n = len(points) - 1
+    x = min(max(k, 0.0), 1.0) * n
+    i = min(int(x), n - 1)
+    u = x - i
+    p0, p1, p2, p3 = (points[max(0, min(n, j))] for j in (i - 1, i, i + 1, i + 2))
+    return tuple(0.5 * (2 * b + (-a + c) * u + (2 * a - 5 * b + 4 * c - d) * u * u + (-a + 3 * b - 3 * c + d) * u ** 3)
+                 for a, b, c, d in zip(p0, p1, p2, p3))
+
+
+# A running stride's swing, as (along the travel in half-stances, height in `kick`s), evenly in
+# time from toe-off to touchdown: the heel flicks up behind, the knee drives through high with the
+# foot tucked under the seat, the shin swings out ahead, and the foot paws down and back to land.
+# The male rig's leg (hip to ankle, m), on which the running numbers were tuned.
+RUN_LEG = 0.92
+RUN_SWING = [(-1.0, 0.0), (-0.92, 0.78), (-0.35, 1.0), (0.4, 0.66), (1.0, 0.28), (1.0, 0.0)]
+
+
+def locomotion(rig, name, speed, direction, cadence, duty, lift, crouch, bob, lean, arm, elbow, kick=0.0, arm_back=0.0):
     """One cycle (two steps). `direction` in body space (FWD, -FWD, LEFT, -LEFT); cadence in
-    steps per second. The planted foot slides back at `speed`, so stride = speed * cycle time."""
+    steps per second. The planted foot slides back at `speed`, so stride = speed * cycle time.
+    `kick` (m): a running stride's swing (RUN_SWING) instead of a walk's low arc; `arm_back`
+    (rad): the arms' swing centred that far behind hanging, as a runner's drive from the shoulder."""
+    if kick:
+        # Running strides scaled to the legs (RUN_LEG's are what the numbers were tuned on): shorter
+        # legs take quicker, shorter steps and kick lower, rather than lunging to keep up.
+        cadence *= (RUN_LEG / rig.leg) ** 0.5
+        kick *= rig.leg / RUN_LEG
     period = 2.0 / cadence
     frames = max(8, round(period * FPS))
     period = frames / FPS
@@ -243,6 +269,10 @@ def locomotion(rig, name, speed, direction, cadence, duty, lift, crouch, bob, le
         rig.move("pelvis", (sway, 0, -drop))
         twist = 0.12 * math.sin(2 * math.pi * t) * (speed / RUN) if not sideways else 0.0
         rig.rotate("pelvis", UP, twist)
+        # The hip over the planted foot rides up, the swinging leg's side drops a little.
+        if not sideways:
+            rig.rotate("pelvis", FWD, 0.045 * math.cos(2 * math.pi * (t - duty / 2)))
+            rig.rotate("spine_01", FWD, -0.03 * math.cos(2 * math.pi * (t - duty / 2)))
         rig.rotate("spine_01", LEFT, lean * 0.4)
         rig.rotate("spine_02", LEFT, lean * 0.6)
         rig.rotate("spine_02", UP, -twist * 1.8)
@@ -260,18 +290,33 @@ def locomotion(rig, name, speed, direction, cadence, duty, lift, crouch, bob, le
             else:
                 # Swing: back to front on an arc, lifted most just after passing under the hip.
                 k = (ph - duty) / (1 - duty)
-                e = smooth(k)
-                g = d * lerp(-stance / 2, stance / 2, e)
-                z = rig.ankle_z[s] + lift * math.sin(math.pi * min(1.0, k * 1.15))
-                pitch = lerp(-0.5, 0.15, smooth((k - 0.1) / 0.8))
+                if kick:
+                    u, h = catmull(RUN_SWING, k)
+                    g = d * (u * stance / 2)
+                    z = rig.ankle_z[s] + h * kick
+                    # Toes pointed as the heel flicks up, drawn up as the foot reaches to land.
+                    pitch = lerp(-0.75, 0.12, smooth((k - 0.25) / 0.6))
+                else:
+                    e = smooth(k)
+                    g = d * lerp(-stance / 2, stance / 2, e)
+                    z = rig.ankle_z[s] + lift * math.sin(math.pi * min(1.0, k * 1.15))
+                    pitch = lerp(-0.5, 0.15, smooth((k - 0.1) / 0.8))
             rig.leg_ik(s, base + g + Vector((0, 0, z)), FWD + UP * 0.1)
             rig.foot_pitch(s, pitch)
         # Arms swing against the legs: the left arm furthest back as the left foot lands in front
         # (t = 0), furthest forward as the right one does (t = 0.5).
         for s, sign in (("l", 1), ("r", -1)):
-            a = -arm * math.cos(2 * math.pi * t) * sign * (-1 if d.y > 0.5 else 1)
-            arm_swing(rig, s, a if not sideways else 0.25 * a, elbow)
-            relax_fingers(rig, s)
+            c = -math.cos(2 * math.pi * t) * sign * (-1 if d.y > 0.5 else 1)
+            a = arm * c
+            if sideways:
+                arm_swing(rig, s, 0.25 * a, elbow)
+            elif arm_back:
+                # A runner's arms: driven from the shoulder, the hand back past the hip and forward
+                # to the chest, the elbow closing as it comes forward and the hand crossing in a little.
+                arm_swing(rig, s, a - arm_back, elbow + 0.3 * c, out=0.12 - 0.08 * max(0.0, c))
+            else:
+                arm_swing(rig, s, a, elbow)
+            relax_fingers(rig, s, 0.55 if arm_back else 0.35)
         # Keep the head level and looking ahead.
         rig.rotate("neck_01", LEFT, -lean * 0.5)
         rig.rotate("head", UP, twist * 0.8)
@@ -555,7 +600,8 @@ def consume_pose(rig, t):
 # ------------------------------------------------------------------ export
 
 def render_previews(arm, out_dir):
-    """Small workbench renders of each clip at four points in its cycle, side view and front."""
+    """Small workbench renders of each clip at four (--frames n: n) points in its cycle, side view
+    and front."""
     os.makedirs(out_dir, exist_ok=True)
     bpy.ops.object.mode_set(mode="OBJECT")
     sc = bpy.context.scene
@@ -570,14 +616,15 @@ def render_previews(arm, out_dir):
     cam.data.type = "ORTHO"
     cam.data.ortho_scale = 2.3
     clips = sys.argv[sys.argv.index("--clips") + 1].split(",") if "--clips" in sys.argv else [a.name for a in bpy.data.actions]
+    n = int(sys.argv[sys.argv.index("--frames") + 1]) if "--frames" in sys.argv else 4
     for name in clips:
         act = bpy.data.actions[name]
         arm.animation_data.action = act
         f0, f1 = act.frame_range
         for view, loc, rot in (("side", (3.5, 0, 0.95), (math.pi / 2, 0, math.pi / 2)), ("front", (0, -3.5, 0.95), (math.pi / 2, 0, 0))):
             cam.location, cam.rotation_euler = loc, rot
-            for k in range(4):
-                sc.frame_set(int(f0 + (f1 - f0) * k / 4))
+            for k in range(n):
+                sc.frame_set(int(f0 + (f1 - f0) * k / n))
                 sc.render.filepath = os.path.join(out_dir, f"{name}_{view}_{k}.png")
                 bpy.ops.render.render(write_still=True)
 
@@ -600,9 +647,13 @@ def main():
                  arm=0.45 if speed == WALK else 0.6, elbow=1.2 if speed == WALK else 1.5)
         for suf, dvec in (("f", FWD), ("b", -FWD), ("l", LEFT), ("r", -LEFT)):
             lean = (0.1 if speed == WALK else 0.18) * (1 if suf == "f" else -0.4 if suf == "b" else 0.3)
-            cycles[f"{name}_{suf}"] = locomotion(rig, f"{name}_{suf}", speed, dvec, lean=lean, **p)
-    cycles["sprint_f"] = locomotion(rig, "sprint_f", SPRINT, FWD, cadence=3.45, duty=0.29, lift=0.32, crouch=0.11,
-                                    bob=0.04, lean=0.3, arm=0.85, elbow=1.6)
+            q = dict(p)
+            if speed == RUN and suf == "f":
+                # Running forward: a real running stride (shorter contact, a flight, the heel kick).
+                q.update(cadence=3.1, duty=0.28, crouch=0.045, bob=0.035, arm=0.62, elbow=1.45, kick=0.4, arm_back=0.18)
+            cycles[f"{name}_{suf}"] = locomotion(rig, f"{name}_{suf}", speed, dvec, lean=lean, **q)
+    cycles["sprint_f"] = locomotion(rig, "sprint_f", SPRINT, FWD, cadence=3.45, duty=0.25, lift=0.32, crouch=0.05,
+                                    bob=0.04, lean=0.28, arm=0.85, elbow=1.5, kick=0.52, arm_back=0.2)
     idle(rig)
     hold_pose(rig, "jump", 12, jump_pose)
     hold_pose(rig, "fall", 30, fall_pose)
@@ -615,7 +666,7 @@ def main():
     hold_pose(rig, "bow_draw", 20, bow_draw_pose)
     hold_pose(rig, "rifle_aim", 10, rifle_aim_pose)
     hold_pose(rig, "consume", 30, consume_pose)
-    print(f"[anims] {variant}: cycles {cycles}, IK reach clamped on {rig.clamped} leg poses")
+    print(f"[anims] {variant}: leg {rig.leg:.3f} m, cycles {cycles}, IK reach clamped on {rig.clamped} leg poses")
     print(f"[anims] stance duty: {rig.duty}")
     print("[anims] worst ankle shortfall (m): " + ", ".join(f"{k} {v:.3f}" for k, v in sorted(rig.worst.items())))
 
