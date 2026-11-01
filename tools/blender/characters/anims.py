@@ -369,7 +369,7 @@ def drop_mocap(objs, acts, arm):
     bpy.ops.object.mode_set(mode="POSE")
 
 
-def mocap(rig, src, acts, name, clip, speed, stride=1.0):
+def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None):
     """Retarget the mocap `clip` onto our rig as `name`, a locomotion cycle at `speed` (m/s; 0 for
     one standing still, or in place). The torso's and head's rotations are copied; the arms aim along
     the source's bones (whatever the two rigs' rest poses and rolls); the legs are put by IK where the
@@ -377,7 +377,9 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0):
     retimed so its stride, scaled by leg length and by `stride` (under 1: shorter, quicker steps),
     covers the ground at `speed`; a planted foot is then locked sliding back at exactly `speed`, so
     with the game advancing the cycle at the character's real speed it doesn't skate, and after
-    lift-off what's left of the difference from the source eases out over the swing."""
+    lift-off what's left of the difference from the source eases out over the swing. `keep`
+    overrides TORSO_KEEP (how much of each torso bone's turn is kept) for this clip."""
+    keep = {**TORSO_KEEP, **(keep or {})}
     bone = lambda n: next((b for b in src.pose.bones if b.name.lower() == n), None)
     find = lambda c: next(a for a in acts if a.name.split("|")[-1] == c)
     W = src.matrix_world
@@ -468,7 +470,7 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0):
                 d = rec["rot"][n] @ rest[n].to_quaternion().inverted()
                 # Softened up the back (the clips' stylised hunch reads heavier on our builds), and
                 # the head kept nearer level, looking where it's going.
-                d = Quaternion().slerp(d, TORSO_KEEP.get(n, 1.0))
+                d = Quaternion().slerp(d, keep.get(n, 1.0))
                 q = d @ (rig.obj.matrix_world @ rig.obj.data.bones[n].matrix_local).to_quaternion()
                 rig.set_world_rot(n, q)
         for s in "lr":
@@ -486,6 +488,28 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0):
             rig.aim(f"ball_{s}", m["toe"])
         rig.key(i + 1)
     return out
+
+
+def crouch_idle(rig):
+    """Crouched still, matching the crouch walk: knees bent, the back fairly straight and leaning in,
+    feet a little apart and one ahead, breathing."""
+    frames = 60
+    new_action(rig, "crouch_idle")
+    for f in range(frames + 1):
+        t = f / frames
+        b = math.sin(2 * math.pi * t)
+        rig.rest()
+        rig.move("pelvis", (0.0, 0.02, -0.34 - 0.008 * b))
+        rig.rotate("spine_01", LEFT, 0.18)
+        rig.rotate("spine_02", LEFT, 0.27 + 0.01 * b)
+        rig.rotate("neck_01", LEFT, -0.22)
+        for s, ahead in (("l", -0.1), ("r", 0.12)):
+            sx = 1 if s == "l" else -1
+            rig.leg_ik(s, (rig.hip_x[s] * 1.35, ahead, rig.ankle_z[s]), FWD + UP * 0.1)
+            rig.foot_pitch(s, 0.0, yaw=sx * 0.2)
+            arm_swing(rig, s, 0.25 + 0.02 * b, 1.1, out=0.18)
+            relax_fingers(rig, s, 0.45)
+        rig.key(f + 1)
 
 
 def idle(rig):
@@ -817,6 +841,11 @@ def main():
             cycles[f"{name}_{suf}"] = locomotion(rig, f"{name}_{suf}", speed, dvec, lean=lean, **q)
     cycles["sprint_f"] = locomotion(rig, "sprint_f", SPRINT, FWD, cadence=3.45, duty=0.25, lift=0.32, crouch=0.05,
                                     bob=0.04, lean=0.28, arm=0.85, elbow=1.5, kick=0.52, arm_back=0.2)
+    # The crouch walk: the clip's are slow and short, and stretched to our speed they lunge; ours
+    # keeps low and steady with short steps.
+    cycles["crouch_f"] = locomotion(rig, "crouch_f", CROUCH, FWD, cadence=3.8, duty=0.55, lift=0.08, crouch=0.34, bob=0.012,
+                                    lean=0.45, arm=0.15, elbow=1.3)
+    crouch_idle(rig)
     # The forward run and the sprint (shorter, quicker steps than the clips'), standing, crouching,
     # sliding and jumping, from motion capture.
     src, objs, acts = load_mocap("ual")
@@ -824,10 +853,7 @@ def main():
     bpy.ops.object.mode_set(mode="POSE")
     cycles["run_f"] = mocap(rig, src, acts, "run_f", "Jog_Fwd_Loop", RUN, stride=0.82)
     cycles["sprint_f"] = mocap(rig, src, acts, "sprint_f", "Sprint_Loop", SPRINT, stride=0.85)
-    # The crouch walk's own steps are short and slow: longer ones, so it isn't hurried to keep up.
-    cycles["crouch_f"] = mocap(rig, src, acts, "crouch_f", "Crouch_Fwd_Loop", CROUCH, stride=1.45)
     mocap(rig, src, acts, "idle", "Idle_Loop", 0.0)
-    mocap(rig, src, acts, "crouch_idle", "Crouch_Idle_Loop", 0.0)
     # The game holds the jump at its middle (tucked, rising) and loops the fall.
     mocap(rig, src, acts, "jump", "Jump_Start", 0.0)
     mocap(rig, src, acts, "fall", "Jump_Loop", 0.0)
@@ -835,7 +861,8 @@ def main():
     src, objs, acts = load_mocap("ual2")
     bpy.context.view_layer.objects.active = arm
     bpy.ops.object.mode_set(mode="POSE")
-    mocap(rig, src, acts, "slide", "Slide_Loop", 0.0)
+    # Sitting up in the slide, head level, as you can shoot from it (the clip lies far back).
+    mocap(rig, src, acts, "slide", "Slide_Loop", 0.0, keep={"pelvis": 0.45, "spine_01": 0.3, "spine_02": 0.25, "spine_03": 0.25, "neck_01": 0.15, "head": 0.0})
     drop_mocap(objs, acts, arm)
     hold_pose(rig, "freefall", 40, freefall_pose)
     hold_pose(rig, "glide", 40, glide_pose)
