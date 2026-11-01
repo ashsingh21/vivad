@@ -68,29 +68,6 @@ impl Quality {
         }
     }
 
-    /// The sky's lookup tables, rebuilt every frame: smaller and fewer samples below High (the sky
-    /// is a smooth gradient, and the sun never moves).
-    fn atmosphere(self) -> bevy::pbr::AtmosphereSettings {
-        let full = bevy::pbr::AtmosphereSettings::default();
-        let k = match self {
-            Quality::Low => 2,
-            Quality::Medium => 1,
-            Quality::High => return full,
-        };
-        let half = |n: u32| (n >> k).max(4);
-        bevy::pbr::AtmosphereSettings {
-            transmittance_lut_size: full.transmittance_lut_size.map(half),
-            transmittance_lut_samples: half(full.transmittance_lut_samples),
-            multiscattering_lut_dirs: half(full.multiscattering_lut_dirs),
-            multiscattering_lut_samples: half(full.multiscattering_lut_samples),
-            sky_view_lut_size: full.sky_view_lut_size.map(half),
-            sky_view_lut_samples: half(full.sky_view_lut_samples),
-            aerial_view_lut_size: full.aerial_view_lut_size.map(|n| (n >> (k - 1).min(1)).max(8)),
-            aerial_view_lut_samples: half(full.aerial_view_lut_samples),
-            ..full
-        }
-    }
-
     /// Whether a prop's far LODs (LOD1 and up) cast shadows.
     fn far_lod_shadows(self) -> bool {
         self != Quality::Low
@@ -315,7 +292,6 @@ fn apply(
     let env = |k: &str| std::env::var(k).ok();
     for e in &cam {
         let mut c = commands.entity(e);
-        c.insert(q.atmosphere());
         c.remove::<(ScreenSpaceAmbientOcclusion, TemporalAntiAliasing, ContrastAdaptiveSharpening, Smaa, Fxaa)>();
         if q.ssao() && env("VIVAD_NO_SSAO").is_none() {
             // Contact shadows in corners, under eaves and between blocks.

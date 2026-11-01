@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::f32::consts::FRAC_PI_2;
 
-use bevy::light::{Atmosphere, CascadeShadowConfigBuilder, atmosphere::ScatteringMedium};
+use bevy::light::CascadeShadowConfigBuilder;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 use shared::items::{ItemDb, ItemKind, Rarity};
@@ -276,7 +276,7 @@ fn setup_assets(
 #[derive(Component)]
 pub struct Sun;
 
-fn setup_sky(mut commands: Commands, mut media: ResMut<Assets<ScatteringMedium>>, palette: Res<Palette>, mut meshes: ResMut<Assets<Mesh>>) {
+pub(crate) fn setup_sky(mut commands: Commands, palette: Res<Palette>, mut meshes: ResMut<Assets<Mesh>>) {
     // Low morning sun from the east-south-east: the ghats and the Ajanta cliff both face east.
     commands.spawn((
         Sun,
@@ -288,12 +288,11 @@ fn setup_sky(mut commands: Commands, mut media: ResMut<Assets<ScatteringMedium>>
         // frame's largest GPU cost.
         CascadeShadowConfigBuilder::default().build(),
     ));
-    commands.spawn(Atmosphere::earth(media.add(ScatteringMedium::default())));
     commands.insert_resource(GlobalAmbientLight { color: Color::srgb(0.82, 0.87, 1.0), brightness: 1800.0, ..default() });
     // The Pralaya wall.
     commands.spawn((
         ZoneWall,
-        Mesh3d(meshes.add(Cylinder::new(1.0, 1.0).mesh().resolution(128).segments(1))),
+        Mesh3d(meshes.add(zone_wall_mesh())),
         MeshMaterial3d(palette.zone.clone()),
         Transform::from_scale(Vec3::new(360.0, 400.0, 360.0)),
         bevy::light::NotShadowCaster,
@@ -302,6 +301,26 @@ fn setup_sky(mut commands: Commands, mut media: ResMut<Assets<ScatteringMedium>>
 
 #[derive(Component)]
 struct ZoneWall;
+
+/// The Aandhi's wall: a unit cylinder (scaled by `update_zone_wall` to 400 m, its middle 100 m up)
+/// whose dust is thick at street level and thins to nothing 150 m up, so it walls the streets
+/// without tinting the whole sky.
+fn zone_wall_mesh() -> Mesh {
+    use bevy::mesh::VertexAttributeValues;
+    let mut m = Cylinder::new(1.0, 1.0).mesh().resolution(128).segments(16).build();
+    let Some(VertexAttributeValues::Float32x3(pos)) = m.attribute(Mesh::ATTRIBUTE_POSITION) else { return m };
+    let colours: Vec<[f32; 4]> = pos
+        .iter()
+        .map(|p| {
+            // Local y -0.5..0.5 is world -100..300 m.
+            let world_y = p[1] * 400.0 + 100.0;
+            let a = (1.0 - (world_y - 20.0) / 130.0).clamp(0.0, 1.0);
+            [1.0, 1.0, 1.0, a * a]
+        })
+        .collect();
+    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, colours);
+    m
+}
 
 fn update_zone_wall(zone: Res<Zone>, mut q: Query<&mut Transform, With<ZoneWall>>) {
     for mut t in &mut q {

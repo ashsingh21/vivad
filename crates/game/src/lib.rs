@@ -13,6 +13,7 @@ pub mod hud;
 pub mod input;
 pub mod lamps;
 pub mod quality;
+pub mod sky;
 pub mod skyline;
 pub mod lobby;
 pub mod studio_env;

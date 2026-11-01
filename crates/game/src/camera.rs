@@ -3,7 +3,7 @@
 
 use avian3d::prelude::*;
 use bevy::core_pipeline::tonemapping::Tonemapping;
-use bevy::pbr::{AtmosphereSettings, DistanceFog, FogFalloff};
+use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use shared::sim::flow::Match;
 use shared::sim::{CAMERA_DISTANCE, CAMERA_SHOULDER, EYE_OFFSET, Kinematic, LocalPlayer, MoveMode, PlayerIntent, btn, solid_mask};
@@ -43,10 +43,10 @@ pub fn spawn_camera(mut commands: Commands) {
         // darkened a little to draw the eye to the middle: cheap, and most of what reads as a
         // "finished" look. VIVAD_NO_POST=1 turns both off, for comparisons.
         post(),
-        AtmosphereSettings::default(),
         DistanceFog {
-            // Neutral, a touch of sky blue: a warm tint here turned the whole distant city orange.
-            color: Color::srgba(0.78, 0.80, 0.84, 1.0),
+            // The sky's horizon haze (crate::sky), so the far city fades into it. (A warm tint here
+            // once turned the whole distant city orange.)
+            color: Color::srgb(crate::sky::HORIZON[0], crate::sky::HORIZON[1], crate::sky::HORIZON[2]),
             directional_light_color: Color::srgba(1.0, 0.93, 0.82, 0.25),
             directional_light_exponent: 20.0,
             falloff: FogFalloff::from_visibility_colors(2600.0, Color::srgb(0.60, 0.60, 0.60), Color::srgb(0.80, 0.84, 0.90)),
