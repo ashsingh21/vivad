@@ -457,7 +457,7 @@ fn dress_terrain(
                         let nn = t.normal(x, z);
                         kind.push(crate::ground::weights(t.ground.get(i * n + j).copied()));
                         let (c, _) = match t.ground.get(i * n + j) {
-                            Some(&class) => crate::grass::paint_city(x, z, class),
+                            Some(&class) => crate::grass::paint_city(x, z, h, nn, class),
                             None => crate::grass::paint(x, z, h, nn, t.road_d[i * n + j]),
                         };
                         pos.push([x, h - drop, z]);

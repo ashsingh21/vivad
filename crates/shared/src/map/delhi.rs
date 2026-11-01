@@ -281,6 +281,10 @@ fn hills(map: &mut MapLayout, data: &Data, ring: &super::cp::Ring, made: &[Hill]
                 h *= smooth(24.0, 36.0, p.distance(c)) * smooth(4.5, 12.0, path);
             }
             t.h[i * n + j] = h;
+            // A footpath over a made hill gives out at its foot: the hill's grass climbs over it.
+            if t.ground[i * n + j] == ground::PATH && h > 0.6 {
+                t.ground[i * n + j] = ground::PARK;
+            }
         }
     }
 }
@@ -324,6 +328,22 @@ fn dress_hills(b: &mut Builder, rng: &mut SmallRng, made: &[Hill]) {
                 b.loot(w, top + Vec3::Y * 0.3);
             }
             Crown::Bare => b.loot(w, top + Vec3::Y * 0.3),
+        }
+        // Outcrops: big boulders sunk into the slopes in twos and threes, a ledge to stand on
+        // and a wall to hide behind (the higher hills only).
+        if h.top > 5.0 {
+            for k in 0..3 {
+                let a = std::f32::consts::TAU * (k as f32 + rng.random_range(0.0..0.6)) / 3.0;
+                let c = h.center + Vec2::from_angle(a) * (h.plateau + h.skirt * rng.random_range(0.3..0.5));
+                for _ in 0..rng.random_range(2..4) {
+                    let p = c + Vec2::new(rng.random_range(-2.5..2.5), rng.random_range(-2.5..2.5));
+                    let r = rng.random_range(2.2..3.4);
+                    let at = Vec3::new(p.x, ground(b, p) - r * 0.15, p.y);
+                    b.push(at, Quat::IDENTITY, super::Shape::Sphere(r * 0.92), Mat::Granite, true, false);
+                    let model = super::india::ROCKS[rng.random_range(0..super::india::ROCKS.len())];
+                    b.ornament(w, at, rng.random_range(0.0..std::f32::consts::TAU), model, Vec3::splat(r));
+                }
+            }
         }
         // Boulders half way down, scattered round.
         for _ in 0..(h.skirt / 4.0) as usize {

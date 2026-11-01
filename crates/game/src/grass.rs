@@ -87,7 +87,7 @@ fn lin(c: [f32; 3]) -> LinearRgba {
 
 /// Ground colour and grass cover on a city map, by what covers the ground there
 /// (shared::map::terrain::ground): asphalt, pavement, car parks and plazas bare, parks green.
-pub fn paint_city(x: f32, z: f32, class: u8) -> (LinearRgba, f32) {
+pub fn paint_city(x: f32, z: f32, h: f32, normal: Vec3, class: u8) -> (LinearRgba, f32) {
     use shared::map::terrain::ground;
     let mix = |a: LinearRgba, b: LinearRgba, t: f32| a.mix(&b, t.clamp(0.0, 1.0));
     let n = fbm(x / 3.0, z / 3.0, 2, 5);
@@ -95,7 +95,16 @@ pub fn paint_city(x: f32, z: f32, class: u8) -> (LinearRgba, f32) {
         ground::ROAD => (mix(lin([0.34, 0.33, 0.34]), lin([0.42, 0.40, 0.38]), fbm(x / 9.0, z / 9.0, 2, 71) * 1.4 - 0.2), 0.0),
         ground::PARKING => (lin([0.42, 0.41, 0.42]), 0.0),
         ground::PLAZA => (mix(lin([0.62, 0.55, 0.47]), lin([0.55, 0.42, 0.36]), fbm(x / 4.0, z / 4.0, 2, 73)), 0.0),
-        ground::PARK => (mix(lin([0.30, 0.44, 0.16]), lin([0.23, 0.38, 0.13]), fbm(x / 22.0, z / 22.0, 3, 91) * 1.6 - 0.3), 1.0),
+        ground::PARK => {
+            let mut c = mix(lin([0.30, 0.44, 0.16]), lin([0.23, 0.38, 0.13]), fbm(x / 22.0, z / 22.0, 3, 91) * 1.6 - 0.3);
+            // Hills read from afar: their tops sun-dried to a warm yellow-green, their steepest
+            // faces worn to bare earth in patches (thin grass there).
+            let crest = ((h - 2.0) / 8.0).clamp(0.0, 1.0);
+            c = mix(c, lin([0.44, 0.50, 0.19]), crest * 0.65);
+            let worn = ((0.9 - normal.y) * 6.0 + (fbm(x / 6.0, z / 6.0, 2, 95) - 0.5) * 1.6).clamp(0.0, 1.0);
+            c = mix(c, mix(lin([0.50, 0.38, 0.26]), lin([0.44, 0.34, 0.25]), fbm(x / 3.0, z / 3.0, 2, 97)), worn);
+            (c, 1.0 - worn * 0.9)
+        }
         // Under the water: silt (seen through the surface).
         ground::WATER => (mix(lin([0.22, 0.24, 0.18]), lin([0.30, 0.28, 0.20]), fbm(x / 5.0, z / 5.0, 2, 79)), 0.0),
         // Lanes and park paths: trodden earth and old brick.
@@ -385,7 +394,7 @@ fn build_chunk(k: (i32, i32), t: &Terrain, blockers: &Blockers, keep: f32, densi
         let (h, rd) = (on_mesh(t, &t.h, p.x, p.y), on_mesh(t, &t.road_d, p.x, p.y));
         let n = t.normal(p.x, p.y);
         let (ground, cover) = match t.ground_at(p.x, p.y) {
-            Some(class) => paint_city(p.x, p.y, class),
+            Some(class) => paint_city(p.x, p.y, h, n, class),
             None => paint(p.x, p.y, h, n, rd),
         };
         // Thicker in the lush patches, thin at the edges of dry ground and paths.
