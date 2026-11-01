@@ -184,7 +184,7 @@ fn segment(a: Vec3, b: Vec3) -> Transform {
 /// carried, a long gun from the right hand toward the left (both hands on it), a pistol along
 /// the forearm. Runs after transform propagation and rewrites the weapon's and its socket's global
 /// transforms for this frame (their local transforms keep the grip).
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn orient_bows(
     rigs: Query<(Entity, &BowRig)>,
     parents: Query<&ChildOf>,
