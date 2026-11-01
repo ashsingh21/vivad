@@ -72,6 +72,11 @@ face-lab variant opts="":
 anims:
     for v in male female; do {{blender}} -b -P tools/blender/characters/anims.py -- $v 2>&1 | grep -E '^\[|Error|Traceback' || true; done
 
+# Check every clip by the numbers (feet skating or sinking, knees and elbows, hands, pops), one
+# text line each: just animcheck, or just animcheck female, or just animcheck male run_f,slide
+animcheck variant="male" clips="":
+    {{blender}} -b -P tools/blender/characters/anim_check.py -- {{variant}} {{clips}} 2>&1 | grep -E '^\[check|^clip|^[a-z_]+ +[0-9]|Error|Traceback' || true
+
 # Every sound effect, synthesized (prints level, length, brightness and loop-seam numbers).
 sfx:
     python3 tools/audio/sfx.py --report

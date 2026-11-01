@@ -765,6 +765,9 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
     if pingpong:
         S = S + [sample(frames)] + S[:0:-1]
         out = len(S)
+    elif window:
+        # A one-way stretch ends on its own last frame, not wrapping back to its first.
+        S.append(sample(frames))
     src.animation_data.action = None
     if speed:
         zmin = min(x[2]["l"].z for x in S)
@@ -776,7 +779,7 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
     depth = lambda n: len(rig.obj.data.bones[n].parent_recursive)
     order = sorted(ours, key=depth)
     for i in range(out + 1):
-        rots, pelvis, _, _ = S[i % out]
+        rots, pelvis, _, _ = S[i] if i < len(S) else S[i % out]
         rig.rest()
         off = (pelvis - s_pelvis) * r
         if air:
