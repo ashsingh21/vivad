@@ -120,7 +120,25 @@ fn build_graphs(
         }
         let Some(gltf) = gltfs.get(&set.gltf) else { continue };
         let all: Vec<&'static str> = LOCOMOTION.iter().chain(&FULL_BODY).chain(&UPPER_BODY).copied().collect();
-        if all.iter().any(|n| gltf.named_animations.get(*n).and_then(|h| clips.get(h)).is_none()) {
+        // Wait for every clip the file has to load; one it lacks (an animations file older than
+        // the code: the clip came later) stands in with a near one, rather than leaving every
+        // warrior unanimated.
+        let clip = |n: &str| gltf.named_animations.get(n).filter(|h| clips.get(*h).is_some()).cloned();
+        if gltf.named_animations.values().any(|h| clips.get(h).is_none()) {
+            continue;
+        }
+        let stand_in = |n: &str| match n {
+            "crouch_idle" => "idle",
+            "crouch_f" => "walk_f",
+            "slide" | "sprint_f" => "run_f",
+            _ => "idle",
+        };
+        let missing: Vec<&str> = all.iter().copied().filter(|n| clip(n).is_none()).collect();
+        if !missing.is_empty() {
+            warn!("animations file lacks {missing:?}: standing in with near clips (rebuild with `just anims`, or `git lfs pull`)");
+        }
+        if missing.iter().any(|n| clip(stand_in(n)).is_none()) {
+            error!("animations file lacks {missing:?} and their stand-ins: warriors won't animate");
             continue;
         }
         // Name paths from the rig root, as the loader computes AnimationTargetIds.
@@ -142,7 +160,7 @@ fn build_graphs(
         }
         let root = graph.root;
         for name in all {
-            let h = gltf.named_animations[name].clone();
+            let h = clip(name).or_else(|| clip(stand_in(name))).expect("checked above");
             set.durations.insert(name, clips.get(&h).map(|c| c.duration()).unwrap_or(1.0).max(1e-3));
             let full = graph.add_clip(h.clone(), 1.0, root);
             let masked = if LOCOMOTION.contains(&name) {
