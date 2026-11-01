@@ -191,3 +191,11 @@ heights, roads, parks, car parks, trees and place names, converted by `tools/osm
 Database License (ODbL 1.0): https://www.openstreetmap.org/copyright. The game must credit this
 wherever the map is shown (credits screen). The inner circle's blocks are generated at the radii
 and radial-road bearings measured from that data (`crates/shared/src/map/delhi.rs`).
+
+## Shop sign lettering
+
+`assets/textures/panga/signs.png` (made by `tools/textures/signs.py`) is lettered in Noto Sans
+Bold and Noto Sans Devanagari Bold, by Google and the Noto project, under the SIL Open Font
+License 1.1 (https://openfontlicense.org). The OFL allows text rendered in the fonts to be used in
+any work; the font files themselves aren't shipped. The shop names are made up: no real brands or
+businesses.

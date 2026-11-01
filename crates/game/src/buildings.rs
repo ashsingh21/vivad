@@ -149,7 +149,9 @@ impl MeshBuf {
             let n = rot * Vec3::new(0.0, -(s1.0 - s0.0), s1.1 - s0.1).normalize();
             // Undersides in their own shadow (baked occlusion): a ledge reads as a ledge.
             let k = if n.y < -0.5 { 0.6 } else if n.y < -0.1 { 0.8 } else { 1.0 };
-            let c = [col[0] * k, col[1] * k, col[2] * k, col[3]];
+            // Warmed a touch as it darkens: lit only by the blue sky, it would read as blue paint.
+            let w = 1.0 - k;
+            let c = [col[0] * k * (1.0 + 0.3 * w), col[1] * k, col[2] * k * (1.0 - 0.4 * w), col[3]];
             self.quad_col([at(-l, s0), at(l, s0), at(l, s1), at(-l, s1)], n, [Vec2::ZERO; 4], [c; 4]);
         }
         for (x, n) in [(l, Vec3::X), (-l, Vec3::NEG_X)] {
@@ -365,6 +367,9 @@ pub(crate) const WALLS: [[f32; 3]; 9] = [
     [0.97, 0.84, 0.48],
     [0.48, 0.75, 0.78],
 ];
+/// Boards in the signs atlas (4 x 8), and a board's width (its height is a quarter and a bit).
+const SIGN_BOARDS: usize = 32;
+const SIGN_W: f32 = 3.6;
 /// Off-white trim: parapet coping, cornices, pilasters, sills.
 const TRIM_WHITE: [f32; 3] = [0.97, 0.94, 0.88];
 /// How high a roof's parapet stands, and how thick it is.
@@ -520,6 +525,7 @@ fn bunting(buf: &mut MeshBuf, a: Vec3, b: Vec3, sag: f32, seed: u32) {
 
 /// A city map's buildings (MapLayout::footprints), merged per chunk and material: walls in the
 /// facade, roofs in plain plaster.
+#[allow(clippy::too_many_arguments)]
 fn build_footprints(
     commands: &mut Commands,
     layout: &MapLayout,
@@ -528,6 +534,7 @@ fn build_footprints(
     images: &mut Assets<Image>,
     pending: &mut PendingMips,
     roof: Handle<StandardMaterial>,
+    signs_tex: Handle<Image>,
 ) {
     if layout.footprints.is_empty() {
         return;
@@ -567,6 +574,7 @@ fn build_footprints(
     };
     let mut clutter: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     let mut trims: HashMap<(i32, i32), MeshBuf> = HashMap::new();
+    let mut signs: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     let tint = |m: Mat| match m {
         Mat::PlasterOchre => Color::srgb(0.95, 0.76, 0.48),
         Mat::Sandstone => Color::srgb(0.85, 0.68, 0.50),
@@ -751,11 +759,23 @@ fn build_footprints(
                         }
                         let at = a + e / len * ((s as f32 + 0.5) * pair - along);
                         let y = fp.base + STOREY - 0.5;
-                        let board = ACCENTS[(h * 41.0) as usize % ACCENTS.len()];
+                        // One of the shops in the signs atlas (tools/textures/signs.py), on a board of
+                        // its own colour: the face lettered, the edges plain.
+                        let shop = (hash01(seed, s as u32, 5) * SIGN_BOARDS as f32) as usize % SIGN_BOARDS;
+                        let board = ACCENTS[shop % ACCENTS.len()];
                         let p = Vec3::new(at.x, y, at.y) + out * 0.07;
-                        k.solid_box(p, rot, Vec3::new(pair * 0.86, 0.66, 0.1), lin(board));
-                        let letters = if board[0] + board[1] + board[2] > 2.0 { [0.12, 0.10, 0.10] } else { [0.95, 0.93, 0.86] };
-                        k.solid_box(p + out * 0.055, rot, Vec3::new(pair * 0.86 * (0.4 + 0.3 * hash01(seed, s as u32, 5)), 0.26, 0.02), lin(letters));
+                        let (bw, bh) = (SIGN_W, SIGN_W / 4.2);
+                        k.solid_box(p, rot, Vec3::new(bw + 0.08, bh + 0.08, 0.1), lin(board));
+                        let (col, row) = ((shop % 4) as f32, (shop / 4) as f32);
+                        let (u0, u1, v0, v1) = (col / 4.0, (col + 1.0) / 4.0, row / 8.0, (row + 1.0) / 8.0);
+                        let face = p + out * 0.051;
+                        let right = (-out).cross(Vec3::Y) * (bw * 0.5);
+                        let up = Vec3::Y * (bh * 0.5);
+                        signs.entry((cx, cz)).or_default().quad(
+                            [face - right - up, face + right - up, face + right + up, face - right + up],
+                            out,
+                            [Vec2::new(u0, v1), Vec2::new(u1, v1), Vec2::new(u1, v0), Vec2::new(u0, v0)],
+                        );
                         // Under some, a striped cloth awning with a valance.
                         if hash01(seed, s as u32, 6) < 0.45 {
                             let c = lin(ACCENTS[(hash01(seed, s as u32, 7) * 7.0) as usize]);
@@ -842,6 +862,12 @@ fn build_footprints(
         let (mesh, centre) = buf.into_mesh();
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(plain.clone()), Transform::from_translation(centre), range.0.clone(), range, OfMap));
     }
+    let lettered = materials.add(StandardMaterial { base_color: Color::WHITE, base_color_texture: Some(signs_tex), perceptual_roughness: 0.6, ..default() });
+    for (_, buf) in signs {
+        let range = crate::characters::LodRange(near.clone(), 0);
+        let (mesh, centre) = buf.into_mesh();
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(lettered.clone()), Transform::from_translation(centre), range.0.clone(), range, OfMap));
+    }
     let mut trim_tris = 0;
     for (_, buf) in trims {
         trim_tris += buf.idx.len() / 3;
@@ -924,7 +950,9 @@ fn build_chunks(
         }
     }
     let roof = mat_cache.entry(Mat::Plaster).or_insert_with(|| material_for(Mat::Plaster, &sets, &mut materials)).clone();
-    build_footprints(&mut commands, &layout, &mut meshes, &mut materials, &mut images, &mut pending, roof);
+    let signs_tex = assets.load("textures/panga/signs.png");
+    pending.0.push(signs_tex.clone());
+    build_footprints(&mut commands, &layout, &mut meshes, &mut materials, &mut images, &mut pending, roof, signs_tex);
     info!("architecture: {} static blocks merged into {} chunk meshes", layout.blocks.iter().filter(|b| is_static_visual(b)).count(), n);
     commands.insert_resource(pending);
 }
