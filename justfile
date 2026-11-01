@@ -94,7 +94,7 @@ view name:
 
 
 # Play (release build; first build takes a few minutes). Maps: cp (Connaught Place), chandni
-# (Chandni Chowk), hauzkhas, indiagate, bharat (ancient India): `just play map=chandni`.
+# (Chandni Chowk), hauzkhas, indiagate: `just play map=chandni`.
 # `just play random` for a fresh seed (printed), `just play 1234` to replay one.
 play seed="7" map="cp":
     VIVAD_MAP={{map}} VIVAD_MAP_SEED={{seed}} cargo run --release -p game --bin game
@@ -103,7 +103,6 @@ play seed="7" map="cp":
 sim matches="3" bots="15":
     cargo run --release -p shared --bin sim_check -- {{matches}} {{bots}}
 
-# Walk a test character up the stairs, into the caves and over roofs; fails on a stuck walker.
 # Peers agree without a host: the same match seed builds the same match in separate processes.
 peers seed="1234":
     cargo run --release -p shared --bin peer_check -- {{seed}}
@@ -128,9 +127,6 @@ host name="" players="0" bots="0" lan="" map="cp":
 # Join an online match by its code (lan=1 if the host used it).
 join code name="" lan="":
     VIVAD_JOIN={{code}} VIVAD_NAME="{{name}}" {{ if lan != "" { "VIVAD_LAN=1" } else { "" } }} cargo run --release -p game --bin game
-
-walk:
-    cargo run --release -p shared --bin walk_check
 
 # Fly the camera over every landmark and screenshot it.
 tour:

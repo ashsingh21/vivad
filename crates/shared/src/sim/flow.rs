@@ -86,7 +86,7 @@ impl MapVotes {
     }
 }
 
-/// The maps that take turns after `current`: Delhi's, in order. The ancient-India map stays put.
+/// The maps that take turns after `current`: Delhi's, in order. Any other map stays put.
 pub fn rotation(current: MapId) -> &'static [MapId] {
     if MapId::DELHI.contains(&current) { &MapId::DELHI } else { &[] }
 }

@@ -58,7 +58,6 @@ fn density(level: f32) -> f32 {
 
 /// Share of blades that are dry straw.
 const DRY: f32 = 0.06;
-const RIVER: (f32, f32) = shared::map::india::RIVER_X;
 
 pub type GrassMaterial = ExtendedMaterial<StandardMaterial, GrassWind>;
 
@@ -112,32 +111,23 @@ pub fn paint_city(x: f32, z: f32, class: u8) -> (LinearRgba, f32) {
 pub fn paint(x: f32, z: f32, h: f32, n: Vec3, road_d: f32) -> (LinearRgba, f32) {
     let mix = |a: LinearRgba, b: LinearRgba, t: f32| a.mix(&b, t.clamp(0.0, 1.0));
     let (grass, grass2) = (lin([0.30, 0.44, 0.16]), lin([0.23, 0.38, 0.13]));
-    let (dry, rock, dirt, sand) = (lin([0.62, 0.56, 0.32]), lin([0.50, 0.45, 0.40]), lin([0.60, 0.47, 0.32]), lin([0.74, 0.66, 0.50]));
+    let (dry, rock, dirt) = (lin([0.62, 0.56, 0.32]), lin([0.50, 0.45, 0.40]), lin([0.60, 0.47, 0.32]));
     let patch = fbm(x / 22.0, z / 22.0, 3, 91);
     let mut c = mix(grass, grass2, patch * 1.6 - 0.3);
     // Sun-dried grass on the high hills and in a few patches.
     let w_dry = ((h - 13.0) / 14.0 + (fbm(x / 60.0, z / 60.0, 2, 17) - 0.6) * 1.6).clamp(0.0, 1.0);
     c = mix(c, dry, w_dry);
-    // Hampi: dry, rocky red-brown ground round the ruins, a few tufts of sun-bleached grass.
-    let hampi = shared::map::india::HAMPI_C;
-    let w_hampi = (1.0 - (Vec2::new(x, z).distance(hampi.xz()) - 55.0) / 30.0).clamp(0.0, 1.0)
-        * (0.75 + 0.5 * fbm(x / 14.0, z / 14.0, 2, 61)).min(1.0);
-    c = mix(c, mix(lin([0.58, 0.42, 0.30]), lin([0.66, 0.58, 0.44]), fbm(x / 7.0, z / 7.0, 2, 63) * 1.5 - 0.25), w_hampi);
     // Chandni Bazaar: trodden dust between the houses, grass only at the town's edge.
     let w_town = (1.0 - (Vec2::new(x, z).length() - 50.0) / 16.0).clamp(0.0, 1.0);
     c = mix(c, mix(lin([0.63, 0.53, 0.40]), lin([0.55, 0.45, 0.33]), fbm(x / 6.0, z / 6.0, 2, 67) * 1.4 - 0.2), w_town);
     // Rock on steep slopes.
     let w_rock = ((0.86 - n.y) * 6.0).clamp(0.0, 1.0);
     c = mix(c, rock, w_rock);
-    // Sandy river banks.
-    let rd = if x < RIVER.0 { RIVER.0 - x } else if x > RIVER.1 { x - RIVER.1 } else { 0.0 };
-    let w_sand = (1.0 - rd / 9.0).clamp(0.0, 1.0);
-    c = mix(c, sand, w_sand);
     // Roads.
     let w_road = ((5.0 - road_d) / 2.5).clamp(0.0, 1.0);
     c = mix(c, dirt, w_road);
     let v = 0.92 + 0.16 * fbm(x / 3.0, z / 3.0, 2, 5);
-    let cover = (1.0 - w_hampi * 0.85) * (1.0 - w_town * 0.92) * (1.0 - w_dry * 1.4).max(0.0) * (1.0 - w_rock * 1.5).max(0.0) * (1.0 - w_sand * 1.3).max(0.0) * (1.0 - w_road * 1.2).max(0.0);
+    let cover = (1.0 - w_town * 0.92) * (1.0 - w_dry * 1.4).max(0.0) * (1.0 - w_rock * 1.5).max(0.0) * (1.0 - w_road * 1.2).max(0.0);
     (LinearRgba::new(c.red * v, c.green * v, c.blue * v, 1.0), cover)
 }
 

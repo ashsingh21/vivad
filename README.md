@@ -38,7 +38,7 @@ Esc releases the mouse. Quality is picked from the GPU at start; `VIVAD_QUALITY=
 
 `VIVAD_VIMANA=pushpaka` brings back the Pushpaka Vimana as the drop ride instead of the Udta Auto (the default).
 Maps, all from OpenStreetMap at real scale: Connaught Place (`just play`), Chandni Chowk (`just play map=chandni`),
-Hauz Khas (`map=hauzkhas`), India Gate (`map=indiagate`); `map=bharat` is the ancient-India one. Hosting with
+Hauz Khas (`map=hauzkhas`), India Gate (`map=indiagate`). Hosting with
 `just host Arjuna map=chandni` gives a room code that tells joiners the map. In Chandni Chowk and Hauz Khas up to
 50 houses can be entered (break the door): rooms on every floor, stairs to the roof, chests inside.
 Each match is on the next Delhi map in turn, unless the players vote: once out of a match (or when it ends), keys

@@ -9,7 +9,7 @@ pub mod india;
 pub mod kit;
 pub mod terrain;
 
-/// The maps: Panga's four from Delhi, and Vivad's ancient India.
+/// The maps: Panga's four from Delhi.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum MapId {
     /// Connaught Place and the head of Janpath.
@@ -21,12 +21,10 @@ pub enum MapId {
     HauzKhas,
     /// India Gate, its lawns and canals, Kartavya Path.
     IndiaGate,
-    /// The ancient-India map (Vivad's).
-    Bharat,
 }
 
 impl MapId {
-    pub const ALL: [MapId; 5] = [MapId::Cp, MapId::Chandni, MapId::HauzKhas, MapId::IndiaGate, MapId::Bharat];
+    pub const ALL: [MapId; 4] = [MapId::Cp, MapId::Chandni, MapId::HauzKhas, MapId::IndiaGate];
     /// Panga's maps, the ones a room is drawn on.
     pub const DELHI: [MapId; 4] = [MapId::Cp, MapId::Chandni, MapId::HauzKhas, MapId::IndiaGate];
 
@@ -36,7 +34,6 @@ impl MapId {
             MapId::Chandni => "chandni",
             MapId::HauzKhas => "hauzkhas",
             MapId::IndiaGate => "indiagate",
-            MapId::Bharat => "bharat",
         }
     }
 
@@ -47,14 +44,12 @@ impl MapId {
             MapId::Chandni => "Chandni Chowk",
             MapId::HauzKhas => "Hauz Khas",
             MapId::IndiaGate => "India Gate",
-            MapId::Bharat => "Bharat",
         }
     }
 
     pub fn parse(s: &str) -> Option<MapId> {
         let s = s.trim().to_lowercase();
         MapId::ALL.into_iter().find(|m| m.name() == s).or(match s.as_str() {
-            "india" | "vivad" => Some(MapId::Bharat),
             "hauz-khas" | "hauz_khas" => Some(MapId::HauzKhas),
             "india-gate" | "india_gate" => Some(MapId::IndiaGate),
             "chandni-chowk" | "chandnichowk" => Some(MapId::Chandni),
@@ -63,7 +58,7 @@ impl MapId {
         })
     }
 
-    /// VIVAD_MAP=cp|chandni|hauzkhas|indiagate|bharat, else Connaught Place.
+    /// VIVAD_MAP=cp|chandni|hauzkhas|indiagate, else Connaught Place.
     pub fn from_env() -> MapId {
         std::env::var("VIVAD_MAP").ok().and_then(|s| MapId::parse(&s)).unwrap_or_default()
     }
@@ -80,7 +75,6 @@ impl MapId {
 /// Build a map. Every peer in a match builds the same one from the same id and seed.
 pub fn generate(map: MapId, seed: u64) -> MapLayout {
     match map {
-        MapId::Bharat => india::generate(seed),
         _ => delhi::generate(map, seed),
     }
 }
@@ -208,7 +202,7 @@ pub struct MapLayout {
     pub footprints: Vec<Footprint>,
     /// The street kit's pieces on a city map (crate::map::kit); drawn by the client, merged.
     pub kit: Vec<kit::KitPiece>,
-    /// A river across the map, as its channel's x range (the India map's).
+    /// A river across the map, as its channel's x range.
     pub river: Option<(f32, f32)>,
     pub terrain: terrain::Terrain,
 }
