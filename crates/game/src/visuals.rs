@@ -423,17 +423,7 @@ fn dress_terrain(
     for e in &q {
         let t = &layout.terrain;
         let n = t.n;
-        let detail = assets
-            .load_builder()
-            .with_settings(|s: &mut bevy::image::ImageLoaderSettings| {
-                s.is_srgb = false;
-                s.sampler = bevy::image::ImageSampler::Descriptor(bevy::image::ImageSamplerDescriptor {
-                    address_mode_u: bevy::image::ImageAddressMode::Repeat,
-                    address_mode_v: bevy::image::ImageAddressMode::Repeat,
-                    ..bevy::image::ImageSamplerDescriptor::linear()
-                });
-            })
-            .load(crate::ground::DETAIL);
+        let detail = crate::ground::load_detail(&assets, crate::ground::DETAIL, false);
         let material = materials.add(bevy::pbr::ExtendedMaterial {
             base: StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.95, ..default() },
             extension: crate::ground::GroundDetail::new(detail),

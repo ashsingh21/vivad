@@ -45,7 +45,9 @@ fn fragment(vertex_output: VertexOutput, @builtin(front_facing) is_front: bool) 
     let r2 = cross(n, dpx);
     let det = dot(dpx, r1);
     let grad = sign(det) * (dpdx(height) * r1 + dpdy(height) * r2);
-    pbr_input.N = normalize(abs(det) * n - grad);
+    // Seen edge-on the two can cancel to nothing: keep the plain normal there (no NaN).
+    let bent = abs(det) * n - grad;
+    pbr_input.N = select(n, normalize(bent), dot(bent, bent) > 1e-24);
 
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr_input);

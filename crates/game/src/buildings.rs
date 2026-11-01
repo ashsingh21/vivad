@@ -722,6 +722,48 @@ fn build_footprints(
                         w.quad_col([p1, p0, q0, q1], out, [uv[1], uv[0], uv[3], uv[2]], [col[1], col[0], col[3], col[2]]);
                     }
                 }
+                // The wall's colour is for its plaster: over each window, AC unit, balcony and
+                // shop front (where tools/textures/city.py paints them in each one-bay, one-storey
+                // cell) the same texture again, a hair proud of the wall, shaded but not tinted.
+                // Only where it can be seen over the neighbour.
+                const KINDS: [&[[f32; 4]]; 4] = [
+                    &[[0.25, 0.75, 0.13, 0.73]],
+                    &[[0.10, 0.90, 0.13, 0.73]],
+                    &[[0.25, 0.75, 0.13, 0.73], [0.34, 0.66, 0.79, 0.94]],
+                    &[[0.25, 0.75, 0.13, 0.73], [0.20, 0.80, 0.73, 0.80]],
+                ];
+                const SHOP: &[[f32; 4]] = &[[0.06, 0.94, 0.20, 1.0]];
+                const PROUD: f32 = 0.015;
+                let grey = |c: [f32; 4]| {
+                    let l = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+                    [l, l, l, 1.0]
+                };
+                let storeys = ((hi - fp.base) / STOREY + 0.01).floor() as i32;
+                for st in ((lo - fp.base) / STOREY + 0.01).floor() as i32..storeys {
+                    let floor = fp.base + st as f32 * STOREY;
+                    if floor + STOREY < screened {
+                        continue;
+                    }
+                    for bay in (along / BAY).ceil() as i32..((along + len) / BAY).floor() as i32 {
+                        let rects = if shop { SHOP } else { KINDS[[[0, 2], [3, 1]][(st % 2 == 0) as usize][bay.rem_euclid(2) as usize]] };
+                        for &[ru0, ru1, rv0, rv1] in rects {
+                            let (sa, sb) = ((bay as f32 + ru0) * BAY - along, (bay as f32 + ru1) * BAY - along);
+                            // The cell's v runs from its top (0) to the floor (1).
+                            let (ya, yb) = (floor + (1.0 - rv1) * STOREY, floor + (1.0 - rv0) * STOREY);
+                            let at = |s: f32, y: f32| Vec3::new(a.x, y, a.y) + dir * s + out * PROUD;
+                            let uv = |s: f32, y: f32| Vec2::new((along + s) / (2.0 * BAY), -(y - fp.base) / rows);
+                            let shade = |y: f32| grey(tint_at(s0 + (s1 - s0) * ((y - lo) / (hi - lo)).clamp(0.0, 1.0)));
+                            let (p0, p1, q1, q0) = (at(sa, ya), at(sb, ya), at(sb, yb), at(sa, yb));
+                            let (t0, t1, t2, t3) = (uv(sa, ya), uv(sb, ya), uv(sb, yb), uv(sa, yb));
+                            let (c0, c1) = (shade(ya), shade(yb));
+                            if !flip {
+                                w.quad_col([p0, p1, q1, q0], out, [t0, t1, t2, t3], [c0, c0, c1, c1]);
+                            } else {
+                                w.quad_col([p1, p0, q0, q1], out, [t1, t0, t3, t2], [c0, c0, c1, c1]);
+                            }
+                        }
+                    }
+                }
             }
             // Clutter on walls that face the street (not a neighbour's wall).
             if street {

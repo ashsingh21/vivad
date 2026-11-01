@@ -12,6 +12,7 @@ Near-white where the wall is, so the game's vertex colours tint each building.
 
   roof (512): clay tiles in cement for the flat roofs.
   ground_detail (512, RGBA): asphalt, slab and earth detail for the ground shader.
+  wear (512): grime and scratches for the street kit.
 
 python3 tools/textures/city.py   -> assets/textures/panga/{facade,shop,roof}_{basecolor,normal,mr}.png,
                                     assets/textures/panga/ground_detail.png
@@ -360,7 +361,42 @@ def ground():
     print("[city] ground_detail: 512x512")
 
 
+
+def wear():
+    """Wear for the street kit (crate::street), 1.5 m a repeat on UVs the game projects in the world:
+    grime in blotches and finer dirt, scratches and chips through the paint. A grey multiplier
+    (0.8 clean, which the material lifts back to 1) and a normal map."""
+    rng = np.random.default_rng(49)
+    n = 512
+    blot = periodic_noise(n, n, rng, 4, 3)
+    fine = periodic_noise(n, n, rng, 3, 24)
+    grime = np.clip(np.clip((blot - 0.45) * 2.2, 0, 1) * 0.7 + 0.24 * (fine - 0.5), 0, 1)
+    y, x = np.mgrid[0:n, 0:n].astype(np.float32)
+    scratch = np.zeros((n, n), np.float32)
+    for _ in range(90):
+        x0, y0 = rng.uniform(0, n, 2)
+        a = rng.uniform(0, np.pi)
+        ln = rng.uniform(8, 50)
+        dx, dy = np.cos(a), np.sin(a)
+        # Distance to the segment, wrapped so it tiles.
+        px, py = (x - x0 + n / 2) % n - n / 2, (y - y0 + n / 2) % n - n / 2
+        t = np.clip(px * dx + py * dy, 0, ln)
+        d = np.hypot(px - t * dx, py - t * dy)
+        scratch = np.maximum(scratch, np.clip(1 - d / 0.9, 0, 1))
+    chips = np.clip((periodic_noise(n, n, rng, 2, 30) - 0.82) * 8, 0, 1)
+    marks = np.maximum(scratch * 0.8, chips)
+    L = Layer(n, n, rng)
+    g = 0.8 * (1 - 0.3 * grime) + 0.12 * marks
+    L.col = np.dstack([g, g, g]).astype(np.float32)
+    L.hgt = 0.6 * grime - 1.5 * marks
+    os.makedirs(OUT, exist_ok=True)
+    Image.fromarray((np.clip(L.col, 0, 1) ** (1 / 2.2) * 255 + 0.5).astype(np.uint8)).save(os.path.join(OUT, "wear_basecolor.png"))
+    Image.fromarray((normal_from_height(L.hgt, 1.2) * 255 + 0.5).astype(np.uint8)).save(os.path.join(OUT, "wear_normal.png"))
+    print("[city] wear: 512x512")
+
+
 facade()
 shop()
 roof()
 ground()
+wear()

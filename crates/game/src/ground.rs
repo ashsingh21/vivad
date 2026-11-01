@@ -19,7 +19,26 @@ impl Plugin for GroundPlugin {
     }
 }
 
-/// The detail texture, once loaded, given its mip chain and a repeating sampler.
+/// A texture that repeats over the world (colour, or data such as normals), with a repeating
+/// sampler, given its mip chain once it arrives (`mip_detail`).
+pub fn load_detail(assets: &AssetServer, path: &'static str, srgb: bool) -> Handle<Image> {
+    assets
+        .load_builder()
+        .with_settings(move |s: &mut bevy::image::ImageLoaderSettings| {
+            s.is_srgb = srgb;
+            s.sampler = bevy::image::ImageSampler::Descriptor(bevy::image::ImageSamplerDescriptor {
+                address_mode_u: bevy::image::ImageAddressMode::Repeat,
+                address_mode_v: bevy::image::ImageAddressMode::Repeat,
+                ..bevy::image::ImageSamplerDescriptor::linear()
+            });
+        })
+        .load(path)
+}
+
+/// The detail textures that `load_detail` loads.
+const DETAILS: [&str; 3] = [DETAIL, crate::street::WEAR, crate::street::WEAR_NORMAL];
+
+/// The detail textures, once loaded, given their mip chains.
 fn mip_detail(mut events: MessageReader<AssetEvent<Image>>, assets: Res<AssetServer>, mut images: ResMut<Assets<Image>>) {
     let ids: Vec<AssetId<Image>> = events
         .read()
@@ -27,7 +46,7 @@ fn mip_detail(mut events: MessageReader<AssetEvent<Image>>, assets: Res<AssetSer
             AssetEvent::Added { id } => Some(*id),
             _ => None,
         })
-        .filter(|id| assets.get_path(*id).is_some_and(|p| p.path() == std::path::Path::new(DETAIL)))
+        .filter(|id| assets.get_path(*id).is_some_and(|p| DETAILS.iter().any(|d| p.path() == std::path::Path::new(d))))
         .collect();
     for id in ids {
         if let Some(mut img) = images.get_mut(id) {

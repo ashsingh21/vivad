@@ -25,7 +25,9 @@ import bmesh  # noqa: E402
 import bpy  # noqa: E402
 from mathutils import Matrix, Vector  # noqa: E402
 
+import bake  # noqa: E402
 import export  # noqa: E402
+import numpy as np  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 OUT = os.path.join(ROOT, "assets", "models", "props", "street_kit.glb")
@@ -140,6 +142,7 @@ class Piece:
             p.use_smooth = True
         me.set_sharp_from_angle(angle=math.radians(40))
         export.triangulate(o)
+        bake_ao(o)
         lod1 = o.copy()
         lod1.data = o.data.copy()
         lod1.name = lod1.data.name = f"{self.name}_LOD1"
@@ -149,6 +152,39 @@ class Piece:
         bpy.context.view_layer.objects.active = lod1
         bpy.ops.object.modifier_apply(modifier=d.name)
         return [o, lod1]
+
+
+def bake_ao(o, strength=0.7):
+    """Ambient occlusion into the piece's vertex colours: dark inside the auto's cab, under a
+    stall's counter, where parts meet and where it stands on the road (a ground plane, there only
+    for the bake). The other pieces are hidden from it. Costs nothing in the game."""
+    others = [x for x in bpy.context.scene.objects if x is not o]
+    for x in others:
+        x.hide_render = True
+    bpy.ops.mesh.primitive_plane_add(size=20, location=(0, 0, 0))
+    ground = bpy.context.active_object
+    me = o.data
+    ao = me.color_attributes.new("AO", "FLOAT_COLOR", "CORNER")
+    me.color_attributes.active_color = ao
+    bpy.ops.object.select_all(action="DESELECT")
+    o.select_set(True)
+    bpy.context.view_layer.objects.active = o
+    bpy.ops.object.bake(type="AO", target="VERTEX_COLORS")
+    k = np.empty(len(me.loops) * 4, np.float32)
+    ao.data.foreach_get("color", k)
+    col = me.color_attributes["Col"]
+    c = np.empty(len(me.loops) * 4, np.float32)
+    col.data.foreach_get("color", c)
+    occ = 1.0 - strength * (1.0 - k.reshape(-1, 4)[:, :1])
+    c = c.reshape(-1, 4)
+    c[:, :3] *= occ
+    col.data.foreach_set("color", c.ravel())
+    me.color_attributes.remove(me.color_attributes["AO"])
+    me.color_attributes.active_color = me.color_attributes["Col"]
+    me.color_attributes.render_color_index = me.color_attributes.active_color_index
+    bpy.data.objects.remove(ground, do_unlink=True)
+    for x in others:
+        x.hide_render = False
 
 
 # ------------------------------------------------------------------ street
@@ -352,6 +388,9 @@ def mumty():
 
 def main():
     export.reset_scene()
+    bake.setup_cycles(32)
+    bpy.context.scene.world = bpy.context.scene.world or bpy.data.worlds.new("World")
+    bpy.context.scene.world.light_settings.distance = 0.6
     objs = []
     for build in (auto, scooter, thela, chai, pole, drum, crates, chairs, pot, cooler, dish, solar, clothesline, mumty):
         objs += build()
