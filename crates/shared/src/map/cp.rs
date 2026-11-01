@@ -124,15 +124,15 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 if last && i + 1 != n {
                     continue;
                 }
-                // Fat Tuscan columns, weathered grey-white: a square plinth, a round moulding at the
+                // Fat Tuscan columns, white: a square plinth, a round moulding at the
                 // foot and a collar under the square abacus.
                 for rad in [r.ro - 0.5, r.ri + 0.5] {
                     let base = r.at(rad, col, 0.0);
-                    b.push(base + Vec3::Y * 0.2, Quat::from_rotation_y(-col), super::Shape::Box(Vec3::new(1.0, 0.4, 1.0)), Mat::Plaster, false, true);
-                    b.deco_cyl(w, base + Vec3::Y * 0.4, 0.5, 0.16, Mat::Plaster);
-                    b.push(base + Vec3::Y * (r.g - SLAB) / 2.0, Quat::IDENTITY, super::Shape::Cylinder { radius: 0.4, height: r.g - SLAB }, Mat::Plaster, true, true);
-                    b.deco_cyl(w, base + Vec3::Y * (r.g - SLAB - 0.55), 0.46, 0.12, Mat::Plaster);
-                    b.push(base + Vec3::Y * (r.g - SLAB - 0.17), Quat::from_rotation_y(-col), super::Shape::Box(Vec3::new(1.0, 0.34, 1.0)), Mat::Plaster, false, true);
+                    b.push(base + Vec3::Y * 0.2, Quat::from_rotation_y(-col), super::Shape::Box(Vec3::new(1.0, 0.4, 1.0)), Mat::Stucco, false, true);
+                    b.deco_cyl(w, base + Vec3::Y * 0.4, 0.5, 0.16, Mat::Stucco);
+                    b.push(base + Vec3::Y * (r.g - SLAB) / 2.0, Quat::IDENTITY, super::Shape::Cylinder { radius: 0.4, height: r.g - SLAB }, Mat::Stucco, true, true);
+                    b.deco_cyl(w, base + Vec3::Y * (r.g - SLAB - 0.55), 0.46, 0.12, Mat::Stucco);
+                    b.push(base + Vec3::Y * (r.g - SLAB - 0.17), Quat::from_rotation_y(-col), super::Shape::Box(Vec3::new(1.0, 0.34, 1.0)), Mat::Stucco, false, true);
                 }
             }
             // Shop fronts on both faces: a doorway, or a shop window over a stall board. Each set in

@@ -72,13 +72,18 @@ class Layer:
         if metal is not None:
             self.metal = self.metal * (1 - mask) + mask * metal
 
-    def save(self, name, strength):
+    def save(self, name, strength, paint=0.45):
+        """Write the set. Painted, as a stylised game's textures are: the relief smoothed of pixel
+        noise, crevices darkened, and light painted in from the top left (edges facing up and
+        left lit, edges facing down shadowed) so every frame, sill and band reads in any light."""
         os.makedirs(OUT, exist_ok=True)
-        # Crevices and recesses darker: baked occlusion in the colour, for every quality level.
-        occ = 1 - 0.55 * cavity(self.hgt, 5)
-        col = np.clip(self.col * occ[..., None], 0, 1)
+        hgt = soften(self.hgt, 1)
+        occ = 1 - 0.55 * cavity(hgt, 5)
+        n = normal_from_height(hgt, strength) * 2 - 1
+        lit = np.clip((0.85 * n[..., 1] - 0.35 * n[..., 0]) * 4.0, -1, 1)
+        col = np.clip(self.col * (occ * (1 + paint * lit))[..., None], 0, 1)
         Image.fromarray((col ** (1 / 2.2) * 255 + 0.5).astype(np.uint8)).save(os.path.join(OUT, f"{name}_basecolor.png"))
-        nrm = normal_from_height(self.hgt, strength)
+        nrm = (n + 1) * 0.5
         Image.fromarray((nrm * 255 + 0.5).astype(np.uint8)).save(os.path.join(OUT, f"{name}_normal.png"))
         # glTF / Bevy metallic-roughness: G roughness, B metal; half size is plenty.
         mr = np.dstack([np.zeros_like(self.rough), self.rough, self.metal])
@@ -87,23 +92,32 @@ class Layer:
         print(f"[city] {name}: {self.w}x{self.h}")
 
 
+def soften(a, r):
+    """A wrapping box blur `r` pixels each way: takes the pixel noise out of a height field."""
+    out = a.copy()
+    for axis in (0, 1):
+        acc = np.zeros_like(out)
+        for d in range(-r, r + 1):
+            acc += np.roll(out, d, axis=axis)
+        out = acc / (2 * r + 1)
+    return out
+
+
 def lin(c):
     """sRGB to linear, so the colours below read as picked."""
     return [x ** 2.2 for x in c]
 
 
 def plaster(L, grime):
-    """Lime plaster over the whole sheet: trowel waves, speckle, hairline cracks, patches of damp."""
+    """Lime plaster over the whole sheet, painted: broad soft trowel waves and patches of damp,
+    no speckle or hairline cracks (pixel detail reads as noise, not as wall)."""
     rng = L.rng
-    trowel = periodic_noise(L.h, L.w, rng, 4, 4)
-    speck = rng.random((L.h, L.w)).astype(np.float32)
-    cracks = periodic_noise(L.h, L.w, rng, 6, 6)
-    crack = np.clip(1 - np.abs(cracks - 0.5) / 0.01, 0, 1) * (periodic_noise(L.h, L.w, rng, 2, 3) > 0.62)
-    damp = np.clip(periodic_noise(L.h, L.w, rng, 3, 3) * 1.8 - 0.8, 0, 1)
-    L.hgt += 0.25 * trowel + 0.06 * speck - 0.6 * crack
-    g = 0.95 - 0.05 * trowel - 0.03 * speck - 0.25 * crack - grime * damp
+    trowel = periodic_noise(L.h, L.w, rng, 3, 2)
+    damp = np.clip(periodic_noise(L.h, L.w, rng, 2, 2) * 1.8 - 0.8, 0, 1)
+    L.hgt += 0.2 * trowel
+    g = 0.95 - 0.04 * trowel - grime * damp
     L.col = np.dstack([g, g * 0.985, g * 0.965]).astype(np.float32)
-    L.rough[:] = 0.92 - 0.05 * trowel
+    L.rough[:] = 0.92 - 0.04 * trowel
 
 
 def bricks(L, x0, y0, w, h, ppm_x, ppm_y):
@@ -220,6 +234,8 @@ def facade():
                 C.paint(r, col=lin([0.15, 0.16, 0.16]), rough=0.45, metal=0.7)
                 C.hgt += 4.0 * r
 
+            # Painted light: each storey a touch lighter at the top, darker at its foot.
+            C.col *= (1.04 - 0.1 * v)[..., None]
             # Grime gathering under the frame's sill (the game puts a sill ledge just here).
             C.col *= (1 - 0.18 * box(u, v, 0.24, 0.76, 0.73, 0.79, 0.01))[..., None]
             L.hgt[sl], L.col[sl], L.rough[sl], L.metal[sl] = C.hgt, C.col, C.rough, C.metal
@@ -333,7 +349,7 @@ def roof():
     stain = np.clip(periodic_noise(n, n, rng, 3, 2) * 2.2 - 1.3, 0, 1)
     g = (0.80 + 0.12 * k - 0.10 * dust) * (0.55 + 0.45 * tile) * (1 - 0.5 * crack_line)
     L.col = np.dstack([g, g * 0.98, g * 0.95]).astype(np.float32) * (1 - 0.55 * stain[..., None])
-    L.hgt = 1.2 * tile + 0.3 * dust - 0.8 * crack_line + 0.15 * rng.random((n, n)).astype(np.float32)
+    L.hgt = 1.2 * tile + 0.3 * dust - 0.8 * crack_line
     L.rough[:] = 0.85 - 0.25 * stain
     L.save("roof", 1.6)
 

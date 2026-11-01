@@ -1114,7 +1114,8 @@ fn build_chunks(
             e.insert(crate::quality::LodShadow);
         }
     }
-    let roof = mat_cache.entry(Mat::Plaster).or_insert_with(|| material_for(Mat::Plaster, &sets, &mut materials)).clone();
+    // City trim (parapets, ledges, pilasters) in the clean stucco.
+    let roof = mat_cache.entry(Mat::Stucco).or_insert_with(|| material_for(Mat::Stucco, &sets, &mut materials)).clone();
     build_footprints(&mut commands, &layout, &mut meshes, &mut materials, &assets, &mut pending, roof);
     info!("architecture: {} static blocks merged into {} chunk meshes", layout.blocks.iter().filter(|b| is_static_visual(b)).count(), n);
     commands.insert_resource(pending);
