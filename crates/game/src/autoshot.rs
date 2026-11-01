@@ -150,6 +150,8 @@ impl Plugin for AutoshotPlugin {
                     ("cp_verandah", v(73.2, 1.7, 77.1), v(51.7, 2.2, 88.0)),
                     ("cp_outer", v(93.3, 1.8, 109.3), v(58.1, 4.0, 119.7)),
                     ("cp_upper", v(71.4, 6.8, 94.2), v(56.9, 6.5, 100.9)),
+                    ("cp_central", v(50.2, 1.8, 15.7), v(3.4, 3.0, -30.6)),
+                    ("cp_park_air", v(-20.8, 55.0, 78.2), v(5.0, 0.0, -31.3)),
                     // Shop fronts under the verandahs, straight on and along.
                     ("cp_shop", v(68.4, 1.7, 78.5), v(74.3, 1.9, 90.3)),
                     ("cp_shops_along", v(74.6, 1.7, 74.9), v(65.1, 2.4, 85.1)),
