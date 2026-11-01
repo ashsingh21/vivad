@@ -24,10 +24,11 @@ import os
 import bmesh
 import bpy
 from mathutils import Matrix, Vector
+from bl_ext.blender_org.mpfb.services.locationservice import LocationService
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "figures")
-MPFB_DATA = os.path.expanduser("~/.config/blender/5.2/mpfb/data")
+MPFB_DATA = LocationService.get_user_data()
 
 FEMALE = {"gender": 0.0, "age": 0.4, "muscle": 0.35, "weight": 0.55, "proportions": 0.9, "height": 0.45,
           "cupsize": 0.65, "firmness": 0.6, "race": {"asian": 0.4, "caucasian": 0.3, "african": 0.3}}

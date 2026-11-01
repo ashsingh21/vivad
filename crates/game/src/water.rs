@@ -1,6 +1,8 @@
 //! Water surfaces (the river, the stepwell's pool, the fort's channels): a murky green-brown
 //! surface with a generated ripple normal map that drifts slowly, instead of a glassy slab that
-//! mirrors the sky.
+//! mirrors the sky. On Ultra crate::surfaces gives each one a finer ripple map and a cleaner
+//! surface, which then does mirror the sky: alpha-blended, so forward, with no screen-space
+//! reflections of the city (crate::surfaces says why).
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
@@ -10,24 +12,27 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use shared::map::{Mat, Shape};
 use shared::sim::MapBlock;
 
+use crate::surfaces::{Surface, UltraSurfaces, WATER_TILE};
+
 pub struct WaterPlugin;
 
 impl Plugin for WaterPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup).add_systems(Update, (dress_water, flow));
+        // After the buildings, whose rebuild on a new map starts crate::surfaces' list afresh.
+        app.add_systems(Startup, setup).add_systems(Update, (dress_water.after(crate::buildings::build_chunks), flow));
     }
 }
 
 /// Metres per repeat of the ripple map.
-const TILE: f32 = 7.0;
+pub(crate) const TILE: f32 = 7.0;
 const SIZE: usize = 256;
 
 #[derive(Resource)]
 struct Ripples(Handle<Image>);
 
-/// Each water surface's material and how many ripple tiles it spans.
+/// Each water surface's material and how many ripple tiles (of `TILE` metres) it spans per UV.
 #[derive(Component)]
-struct Flowing(Handle<StandardMaterial>, Vec2);
+pub(crate) struct Flowing(pub(crate) Handle<StandardMaterial>, pub(crate) Vec2);
 
 fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     commands.insert_resource(Ripples(images.add(ripple_map())));
@@ -95,11 +100,13 @@ fn ripple_map() -> Image {
 }
 
 fn dress_water(
+    layout: Res<shared::map::MapLayout>,
     mut commands: Commands,
     q: Query<(Entity, &MapBlock), Added<MapBlock>>,
     ripples: Option<Res<Ripples>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut ultra: Option<ResMut<UltraSurfaces>>,
 ) {
     let Some(ripples) = ripples else { return };
     for (e, MapBlock(b)) in &q {
@@ -111,13 +118,16 @@ fn dress_water(
         let _ = mesh.generate_tangents();
         let mat = materials.add(StandardMaterial {
             // Ganga green-brown: silty, not see-through far, a soft sheen rather than a mirror.
-            base_color: Color::srgba(0.13, 0.17, 0.12, 0.9),
+            base_color: if layout.style == shared::map::MapStyle::Ncr {Color::srgba(0.05,0.30,0.34,0.98)} else {Color::srgba(0.13, 0.17, 0.12, 0.9)},
             alpha_mode: AlphaMode::Blend,
             perceptual_roughness: 0.14,
             reflectance: 0.35,
             normal_map_texture: Some(ripples.0.clone()),
             ..default()
         });
+        if let Some(ultra) = &mut ultra {
+            ultra.add(mat.clone(), Surface::Water);
+        }
         let tiles = Vec2::new(s.x, s.z) / TILE;
         commands.spawn((
             Mesh3d(meshes.add(mesh)),
@@ -131,11 +141,13 @@ fn dress_water(
 }
 
 /// The ripples drift downstream (+Z) and a little across.
-fn flow(time: Res<Time>, q: Query<&Flowing>, mut materials: ResMut<Assets<StandardMaterial>>) {
+fn flow(time: Res<Time>, q: Query<&Flowing>, mut materials: ResMut<Assets<StandardMaterial>>, ultra: Option<Res<UltraSurfaces>>) {
     let t = time.elapsed_secs();
+    // Ultra's ripple map covers more water a repeat, and moves at the same speed in metres.
+    let span = if ultra.is_some_and(|u| u.showing()) { TILE / WATER_TILE } else { 1.0 };
     for Flowing(h, tiles) in &q {
         if let Some(mut m) = materials.get_mut(h) {
-            m.uv_transform = Affine2::from_scale_angle_translation(*tiles, 0.0, Vec2::new(t * 0.004, t * 0.012));
+            m.uv_transform = Affine2::from_scale_angle_translation(*tiles * span, 0.0, Vec2::new(t * 0.004, t * 0.012) * span);
         }
     }
 }

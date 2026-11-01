@@ -5,6 +5,10 @@
 //!
 //! Each chunk is built twice: in full, and for past `FAR_CHUNK` with coarser domes and columns and
 //! without the smallest trim blocks.
+//!
+//! The materials made here are the lower levels' look; the ones with an Ultra look are registered
+//! with crate::surfaces, which changes them when that level shows. Every merged mesh has tangents
+//! (`MeshBuf::into_mesh`), and real UVs wherever Ultra puts a normal map (`MeshBuf::box_uv` for trim).
 
 use std::collections::HashMap;
 
@@ -15,19 +19,32 @@ use bevy::prelude::*;
 use shared::map::{Block, MapLayout, Mat, Shape};
 use shared::sim::{OfMap, map_reloaded};
 
+use crate::surfaces::{Surface, SurfacesPlugin, UltraSurfaces};
+
 const CHUNK: f32 = 64.0;
 /// Where a chunk's coarse LOD takes over, from its centre (scaled by quality: crate::quality::LodScale).
 const FAR_CHUNK: f32 = 150.0;
 /// Blocks no larger than this in any direction are left out of the coarse LOD.
 const TRIM: f32 = 0.35;
 /// Metres per texture repeat.
-const TILE: f32 = 2.0;
+pub(crate) const TILE: f32 = 2.0;
 
 pub struct BuildingsPlugin;
 
+/// Texture filtering for standalone scenes that do not use map chunks.
+pub struct MaterialMipsPlugin;
+
+impl Plugin for MaterialMipsPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<PendingMips>()
+            .add_systems(Update, (queue_model_mips, mipmap_textures).chain());
+    }
+}
+
 impl Plugin for BuildingsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, build_chunks)
+        app.add_plugins(SurfacesPlugin)
+            .add_systems(Startup, build_chunks)
             .add_systems(Update, (build_chunks.run_if(map_reloaded), queue_model_mips, mipmap_textures).chain());
     }
 }
@@ -39,6 +56,7 @@ struct PendingMips(Vec<Handle<Image>>);
 struct TexSet {
     base: Handle<Image>,
     normal: Handle<Image>,
+    mr: Option<Handle<Image>>,
 }
 
 fn load_set(assets: &AssetServer, pending: &mut PendingMips, name: &str) -> TexSet {
@@ -49,7 +67,15 @@ fn load_set(assets: &AssetServer, pending: &mut PendingMips, name: &str) -> TexS
         .load(format!("textures/india/{name}_normal.png"));
     pending.0.push(base.clone());
     pending.0.push(normal.clone());
-    TexSet { base, normal }
+    TexSet { base, normal, mr: None }
+}
+
+fn load_urban(assets: &AssetServer, pending: &mut PendingMips, name: &str) -> TexSet {
+    let base=assets.load(format!("textures/ncr/{name}_basecolor.png"));
+    let data=|suffix: &str| assets.load_builder().with_settings(|s: &mut ImageLoaderSettings| s.is_srgb=false).load(format!("textures/ncr/{name}_{suffix}.png"));
+    let normal=data("normal"); let mr=data("mr");
+    pending.0.extend([base.clone(),normal.clone(),mr.clone()]);
+    TexSet {base,normal,mr:Some(mr)}
 }
 
 /// Which blocks the batcher draws (doors are dynamic and drawn per entity).
@@ -69,6 +95,17 @@ fn material_for(mat: Mat, sets: &HashMap<&'static str, TexSet>, materials: &mut 
         })
     };
     match mat {
+        Mat::ContainerRed => materials.add(StandardMaterial { base_color: Color::srgb(0.55,0.16,0.10), metallic: 0.35, perceptual_roughness: 0.65, ..default() }),
+        Mat::Concrete | Mat::Asphalt | Mat::Glass | Mat::Steel | Mat::Pavers => {
+            let key=match mat {Mat::Concrete=>"urban_concrete",Mat::Asphalt=>"urban_asphalt",Mat::Glass=>"urban_glass",Mat::Steel=>"urban_steel",_=>"urban_pavers"};
+            let s=&sets[key];
+            materials.add(StandardMaterial {base_color:Color::WHITE,base_color_texture:Some(s.base.clone()),normal_map_texture:Some(s.normal.clone()),metallic_roughness_texture:s.mr.clone(),perceptual_roughness:1.0,metallic:1.0,reflectance:0.5,..default()})
+        },
+        Mat::Rubber => materials.add(StandardMaterial {base_color:Color::srgb(0.035,0.04,0.045),perceptual_roughness:0.94,..default()}),
+        Mat::PaintWhite => materials.add(StandardMaterial {base_color:Color::srgb(0.78,0.81,0.79),metallic:0.25,perceptual_roughness:0.32,..default()}),
+        Mat::ShopSign | Mat::MetroSign => materials.add(StandardMaterial {base_color:Color::WHITE,base_color_texture:Some(sets[if mat==Mat::ShopSign {"shop"}else{"metro"}].base.clone()),perceptual_roughness:0.7,..default()}),
+        Mat::TransitBlue => materials.add(StandardMaterial { base_color: Color::srgb(0.08,0.55,0.8), emissive: LinearRgba::rgb(0.02,0.2,0.4), ..default() }),
+        Mat::TransitYellow => materials.add(StandardMaterial { base_color: Color::srgb(0.95,0.7,0.15), ..default() }),
         Mat::Sandstone => textured("sandstone", Color::WHITE, 0.85, materials),
         Mat::RedSandstone => textured("sandstone", Color::srgb(0.86, 0.50, 0.40), 0.85, materials),
         Mat::Granite => textured("granite", Color::WHITE, 0.8, materials),
@@ -234,7 +271,9 @@ impl MeshBuf {
             let world: [Vec3; 4] = corners.map(|p| b.pos + b.rot * p);
             let wu = b.rot * u;
             let wv = b.rot * v;
-            let uv = world.map(|p| Vec2::new(p.dot(wu), p.dot(wv)) / TILE);
+            let uv = if matches!(b.mat,Mat::ShopSign|Mat::MetroSign) {
+                [Vec2::new(0.0,1.0),Vec2::new(1.0,1.0),Vec2::new(1.0,0.0),Vec2::new(0.0,0.0)]
+            } else {world.map(|p| Vec2::new(p.dot(wu), p.dot(wv)) / TILE)};
             self.quad(world, b.rot * n, uv);
         }
     }
@@ -315,6 +354,23 @@ impl MeshBuf {
                 }
                 self.idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
             }
+        }
+    }
+
+    /// World-mapped UVs for a buffer of trim, whose pieces are built without any: each face is
+    /// projected along its normal's main axis, in the same metric as `add_box`, so that up a wall
+    /// v is height. For a normal map on Ultra, which needs real tangents, and so real UVs.
+    fn box_uv(&mut self) {
+        for ((p, n), uv) in self.pos.iter().zip(&self.nrm).zip(&mut self.uv) {
+            let a = Vec3::from(*n).abs();
+            let flat = if a.y >= a.x && a.y >= a.z {
+                [p[0], p[2]]
+            } else if a.x >= a.z {
+                [p[2], p[1]]
+            } else {
+                [p[0], p[1]]
+            };
+            *uv = [flat[0] / TILE, flat[1] / TILE];
         }
     }
 
@@ -535,6 +591,7 @@ fn build_footprints(
     pending: &mut PendingMips,
     roof: Handle<StandardMaterial>,
     signs_tex: Handle<Image>,
+    ultra: &mut UltraSurfaces,
 ) {
     if layout.footprints.is_empty() {
         return;
@@ -846,7 +903,17 @@ fn build_footprints(
         let texture = if shop { shopfront.clone() } else { facade.clone() };
         let m = facade_mats
             .entry((mat, shop))
-            .or_insert_with(|| materials.add(StandardMaterial { base_color: if matches!(mat, Mat::Brick | Mat::RedSandstone | Mat::Sandstone) { tint(mat) } else { Color::WHITE }, base_color_texture: Some(texture), perceptual_roughness: 0.85, ..default() }))
+            .or_insert_with(|| {
+                let bare = matches!(mat, Mat::Brick | Mat::RedSandstone | Mat::Sandstone);
+                let handle = materials.add(StandardMaterial { base_color: if bare { tint(mat) } else { Color::WHITE }, base_color_texture: Some(texture), perceptual_roughness: 0.85, ..default() });
+                // Brick and stone facades wait for the other maps (docs/PLAN.md, phase 2).
+                if shop {
+                    ultra.add(handle.clone(), Surface::Shop);
+                } else if !bare {
+                    ultra.add(handle.clone(), Surface::Facade);
+                }
+                handle
+            })
             .clone();
         let (mesh, centre) = buf.into_mesh();
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(m), Transform::from_translation(centre), OfMap));
@@ -869,10 +936,14 @@ fn build_footprints(
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(lettered.clone()), Transform::from_translation(centre), range.0.clone(), range, OfMap));
     }
     let mut trim_tris = 0;
-    for (_, buf) in trims {
+    // `plain` by another handle, so Ultra can plaster the trim and leave the clutter painted.
+    let trim_mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.7, ..default() });
+    ultra.add(trim_mat.clone(), Surface::Plaster);
+    for (_, mut buf) in trims {
         trim_tris += buf.idx.len() / 3;
+        buf.box_uv();
         let (mesh, centre) = buf.into_mesh();
-        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(plain.clone()), Transform::from_translation(centre), OfMap));
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(trim_mat.clone()), Transform::from_translation(centre), OfMap));
     }
     info!("city: trim {trim_tris} triangles");
     for (_, buf) in roofs {
@@ -888,23 +959,38 @@ fn build_footprints(
             reflectance: 0.6,
             ..default()
         });
-        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(m), Transform::from_translation(centre), bevy::light::NotShadowCaster, OfMap));
+        ultra.add(m.clone(), Surface::Water);
+        // Its UVs are 8 m a repeat (above); nothing below Ultra has a map to move.
+        let flowing = crate::water::Flowing(m.clone(), Vec2::splat(8.0 / crate::water::TILE));
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(m), Transform::from_translation(centre), bevy::light::NotShadowCaster, flowing, OfMap));
     }
     info!("city: {} buildings from footprints", layout.footprints.len());
 }
 
-fn build_chunks(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_chunks(
     mut commands: Commands,
     layout: Res<MapLayout>,
     assets: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    mut ultra: ResMut<UltraSurfaces>,
 ) {
+    ultra.clear();
     let mut pending = PendingMips::default();
     let mut sets = HashMap::new();
     for name in ["sandstone", "plaster", "brick", "granite", "wood", "thatch"] {
         sets.insert(name, load_set(&assets, &mut pending, name));
+    }
+    // The NCR arena's surfaces (assets/textures/ncr, tools/materials/ncr_surfaces.py) and signs.
+    for (key, name) in [("urban_concrete", "concrete"), ("urban_asphalt", "asphalt"), ("urban_glass", "glass"), ("urban_steel", "steel"), ("urban_pavers", "pavers"), ("urban_ground", "ground")] {
+        sets.insert(key, load_urban(&assets, &mut pending, name));
+    }
+    for name in ["shop", "metro"] {
+        let base = assets.load(format!("textures/ncr/{name}_basecolor.png"));
+        pending.0.push(base.clone());
+        sets.insert(name, TexSet { base, normal: Handle::default(), mr: None });
     }
     let mut groups: HashMap<(i32, i32, Mat, bool), MeshBuf> = HashMap::new();
     for b in layout.blocks.iter().filter(|b| is_static_visual(b)) {
@@ -950,9 +1036,18 @@ fn build_chunks(
         }
     }
     let roof = mat_cache.entry(Mat::Plaster).or_insert_with(|| material_for(Mat::Plaster, &sets, &mut materials)).clone();
+    for (mat, handle) in &mat_cache {
+        let surface = match mat {
+            Mat::Plaster | Mat::PlasterOchre | Mat::PlasterBlue => Surface::Plaster,
+            Mat::Marble => Surface::Marble,
+            Mat::Glass => Surface::Glass,
+            _ => continue,
+        };
+        ultra.add(handle.clone(), surface);
+    }
     let signs_tex = assets.load("textures/panga/signs.png");
     pending.0.push(signs_tex.clone());
-    build_footprints(&mut commands, &layout, &mut meshes, &mut materials, &mut images, &mut pending, roof, signs_tex);
+    build_footprints(&mut commands, &layout, &mut meshes, &mut materials, &mut images, &mut pending, roof, signs_tex, &mut ultra);
     info!("architecture: {} static blocks merged into {} chunk meshes", layout.blocks.iter().filter(|b| is_static_visual(b)).count(), n);
     commands.insert_resource(pending);
 }
@@ -962,7 +1057,7 @@ fn build_chunks(
 fn queue_model_mips(mut events: MessageReader<AssetEvent<Image>>, assets: Res<AssetServer>, mut pending: ResMut<PendingMips>) {
     for ev in events.read() {
         if let AssetEvent::Added { id } = ev
-            && assets.get_path(*id).is_some_and(|p| p.path().starts_with("models/textures"))
+            && assets.get_path(*id).is_some_and(|p| p.path().starts_with("models/textures") || p.path().starts_with("models/samples/delhi_street/textures"))
             && let Some(h) = assets.get_id_handle(*id)
         {
             pending.0.push(h);
@@ -1047,4 +1142,56 @@ pub(crate) fn mip_chain(img: &mut Image) {
         anisotropy_clamp: 8,
         ..default()
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::mesh::VertexAttributeValues;
+
+    /// Unit tangents at right angles to the normals, on every vertex.
+    fn assert_tangents(mesh: &Mesh, what: &str) {
+        let Some(VertexAttributeValues::Float32x4(tangents)) = mesh.attribute(Mesh::ATTRIBUTE_TANGENT) else { panic!("{what}: no tangents") };
+        let Some(VertexAttributeValues::Float32x3(normals)) = mesh.attribute(Mesh::ATTRIBUTE_NORMAL) else { panic!("{what}: no normals") };
+        assert_eq!(tangents.len(), normals.len(), "{what}");
+        // By index: `open_box` leaves its dropped face's corners in the buffer, used by nothing.
+        let Some(Indices::U32(indices)) = mesh.indices() else { panic!("{what}: no indices") };
+        for &i in indices {
+            let (t, n) = (tangents[i as usize], normals[i as usize]);
+            let (t3, n3) = (Vec3::new(t[0], t[1], t[2]), Vec3::from(n));
+            assert!((t3.length() - 1.0).abs() < 0.01, "{what}: tangent {t3} is not unit length");
+            assert!(t3.dot(n3).abs() < 0.01, "{what}: tangent {t3} off the plane of {n3}");
+        }
+    }
+
+    fn block(shape: Shape, pos: Vec3, yaw: f32) -> Block {
+        Block { pos, rot: Quat::from_rotation_y(yaw), shape, mat: Mat::Plaster, collide: false, visible: true }
+    }
+
+    #[test]
+    fn world_mapped_blocks_have_tangents() {
+        let mut buf = MeshBuf::default();
+        buf.add_box(&block(Shape::Box(Vec3::new(4.0, 3.0, 0.3)), Vec3::new(10.0, 1.5, -7.0), 0.4), Vec3::new(4.0, 3.0, 0.3));
+        buf.add_cylinder(&block(Shape::Cylinder { radius: 0.3, height: 5.0 }, Vec3::new(2.0, 2.5, 3.0), 0.0), 0.3, 5.0);
+        assert_tangents(&buf.into_mesh().0, "blocks");
+    }
+
+    #[test]
+    fn trim_has_tangents_once_mapped() {
+        let mut buf = MeshBuf::default();
+        let rot = Quat::from_rotation_y(0.7);
+        buf.prism(Vec3::new(3.0, 5.0, 2.0), rot, Vec3::new(6.0, 0.2, 0.7), 0.06, [1.0; 4]);
+        buf.open_box(Vec3::new(3.0, 8.0, 2.0), rot, Vec3::new(6.0, 0.9, 0.3), [1.0; 4]);
+        buf.prism(Vec3::new(1.0, 4.0, 1.0), rot * Quat::from_rotation_z(std::f32::consts::FRAC_PI_2), Vec3::new(8.0, 0.76, 0.76), 0.08, [1.0; 4]);
+        buf.box_uv();
+        assert_tangents(&buf.into_mesh().0, "trim");
+    }
+
+    #[test]
+    fn box_uv_runs_height_up_walls() {
+        let mut buf = MeshBuf::default();
+        buf.quad_col([Vec3::new(0.0, 1.0, 0.0), Vec3::new(1.0, 1.0, 0.0), Vec3::new(1.0, 3.0, 0.0), Vec3::new(0.0, 3.0, 0.0)], Vec3::Z, [Vec2::ZERO; 4], [[1.0; 4]; 4]);
+        buf.box_uv();
+        assert_eq!(buf.uv[2], [1.0 / TILE, 3.0 / TILE]);
+    }
 }

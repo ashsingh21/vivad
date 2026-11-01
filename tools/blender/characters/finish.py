@@ -1,17 +1,26 @@
-"""Finish a character: procedural materials -> one baked opaque texture set (+ alpha hair cards)
--> LODs -> skinned GLB.
+"""Finish a character: procedural materials -> one baked texture set per part (+ alpha hair cards)
+-> four LODs -> skinned GLB, <variant>_parts.glb.
 
-Opaque parts (skin, eyes, garments, jewellery, turban) are joined into one mesh with one material.
-Hair, brows and lashes stay as alpha-tested cards with their own small textures.
+Parts: head (with any sculpted facial hair), body (the skin below the neck), outfit (garments and
+jewellery), eyes, cornea (a glass cap, unbaked), mouth (teeth and tongue). Each is its own mesh and material on each LOD, named
+<variant>_<part>_LOD<k>, all skinned to the one rig. Hair, brows and lashes stay alpha-tested cards
+with their own small textures, named the same way.
+
+Head and body are one surface, so they are decimated together and only cut apart afterwards, with
+the welded surface's normals frozen into them: the neck has no crack and no shading seam on any LOD.
 """
 
 import os
+import time
 
+import bmesh
 import bpy
 import numpy as np
+from mathutils.bvhtree import BVHTree
 
 import bake
 import export
+import head as head_build
 from nodes import Graph, new_material
 
 # Target skin tone (sRGB) for South Asian warm brown, per variant.
@@ -19,6 +28,7 @@ from nodes import Graph, new_material
 CARDS = (("hair", (0.045, 0.032, 0.026), 0.7), ("eyebrows", (0.035, 0.025, 0.02), 0.85), ("eyelashes", (0.03, 0.02, 0.02), 0.6))
 
 SKIN_TONE = {"male": (0.66, 0.44, 0.31), "female": (0.71, 0.48, 0.35)}
+LIP_TONE = {"male": (0.42, 0.22, 0.20), "female": (0.48, 0.19, 0.20)}
 
 CLOTH = {
     # name prefix: (base sRGB, border sRGB or None, pattern, border width m). Longer prefixes first:
@@ -71,37 +81,83 @@ def find_image(obj):
 
 # ------------------------------------------------------------------ materials
 
-def skin_material(variant, img, marks=None):
-    """The MakeHuman skin texture re-centred on our tone, with pores, mottling and the face marks
-    `face.decorate` stored on the proxy (`marks`): stubble (the `beard` attribute), kajal round
-    the eyes, a bindi."""
-    m = new_material(f"{variant}_skin")
-    g = Graph(m)
+def skin_base(g, variant, img, keep=0.7):
+    """The MakeHuman skin texture re-centred on our tone: its local variation (lips, cheeks,
+    creases) stays, `keep` of it; the rest of its freckle speckle would read as grain."""
     uv = g.node("ShaderNodeUVMap", uv_map="src").outputs["UV"]
     tex = g.node("ShaderNodeTexImage", {"Vector": uv}, image=img)
     mean = image_mean(img)
     target = srgb_to_lin(SKIN_TONE[variant])
-    # Keep the texture's local variation (lips, cheeks, creases) but re-centre it on our tone.
     ratio = g.vec("MULTIPLY", tex.outputs["Color"], g.combine(*(t / max(mu, 1e-3) for t, mu in zip(target, mean))))
+    return g.mixc(1.0 - keep, ratio, (*target, 1))
+
+
+def pore_height(g, co, scale):
+    """Skin relief: pits at about 1.3 mm over fine crosshatched creases. 1 at the skin's top."""
+    pits = g.smooth(g.voronoi(co, 760.0 * scale, randomness=0.9), 0.06, 0.34)
+    a = g.noise(g.mapping(co, scale=(1, 1, 0.3)), 1500.0 * scale, detail=1.0)
+    b = g.noise(g.mapping(co, scale=(0.3, 1, 1)), 1500.0 * scale, detail=1.0)
+    return pits, g.mul(g.add(a, b), 0.5)
+
+
+def stubble(g, co, col, rough):
+    """Shaved stubble over `col` and `rough`, from the `beard` attribute: fine dark dots over a
+    faint blue-brown shadow. It runs past the cut between head and body."""
+    dots = g.smooth(g.noise(co, 2600.0, detail=0.0), 0.5, 0.62)
+    amount = g.mul(g.attr("beard"), g.add(0.5, g.mul(dots, 0.4)))
+    return g.mixc(amount, col, (*srgb_to_lin((0.075, 0.058, 0.055)), 1)), g.add(rough, g.mul(g.attr("beard"), 0.1))
+
+
+def body_material(variant, img, marks=None):
+    """Skin below the neck: tone, a hint of mottling, finer pores than the face."""
+    m = new_material(f"{variant}_body_skin")
+    g = Graph(m)
     co = g.texcoord("Object")
-    pores = g.noise(co, 900.0, detail=2.0, rough=0.6)
     mottle = g.noise(co, 25.0, detail=3.0)
-    # The texture's freckle speckle reads as grain at game scale: keep only part of it.
-    ratio = g.mixc(0.3, ratio, (*target, 1))
-    base = g.node("ShaderNodeMix", data_type="RGBA", clamp_factor=True)
-    # Polished stylised: an even tone, only a hint of mottling.
-    g.set(base.inputs[0], g.mul(g.sub(mottle, 0.5), 0.05))
-    g.set(base.inputs[6], ratio)
-    base.inputs[7].default_value = (*srgb_to_lin((0.45, 0.24, 0.16)), 1)
-    col = base.outputs[2]
-    rough = g.add(0.55, g.mul(pores, 0.05))
+    col = g.mixc(g.mul(g.sub(mottle, 0.5), 0.05), skin_base(g, variant, img), (*srgb_to_lin((0.45, 0.24, 0.16)), 1))
+    pits, creases = pore_height(g, co, 1.2)
+    rough = g.add(0.52, g.mul(creases, 0.08))
+    if (marks or {}).get("beard"):
+        col, rough = stubble(g, co, col, rough)
+    g.principled(col, 0.0, rough, g.bump(g.add(g.mul(pits, 0.5), g.mul(creases, 0.3)), 0.15, 0.0004))
+    return m
+
+
+def age_lines(age):
+    """How much the face's creases show, from the MakeHuman age macro (0.5 is 25 years, 1 is 90)."""
+    return 0.2 + 0.8 * min(1.0, max(0.0, (age - 0.5) / 0.4))
+
+
+def head_material(variant, img, marks=None, age=0.5):
+    """The face: `skin_base` and the region masks of `face.regions` (lips, blush over the blood-rich
+    parts, darker sockets, shine on the T zone, pores coarse on the nose and cheeks and all but gone
+    on the lids), then the marks `face.decorate` stored on the proxy (`marks`): stubble, kajal round
+    the eyes, a bindi."""
+    m = new_material(f"{variant}_head_skin")
+    g = Graph(m)
+    co = g.texcoord("Object")
+    mottle = g.noise(co, 25.0, detail=3.0)
+    col = g.mixc(g.mul(g.sub(mottle, 0.5), 0.06), skin_base(g, variant, img), (*srgb_to_lin((0.45, 0.24, 0.16)), 1))
+    col = g.mixc(g.mul(g.attr("blush"), 0.22), col, (*srgb_to_lin((0.72, 0.30, 0.22)), 1))
+    col = g.mixc(g.mul(g.attr("socket"), 0.32), col, (*srgb_to_lin((0.26, 0.16, 0.15)), 1))
+    lines = g.mul(g.attr("lines"), age_lines(age))
+    col = g.mixc(g.mul(lines, 0.3), col, (*srgb_to_lin((0.30, 0.17, 0.13)), 1))
+    lip = g.attr("lip")
+    col = g.mixc(g.mul(lip, 0.7), col, (*srgb_to_lin(LIP_TONE[variant]), 1))
+
+    pits, creases = pore_height(g, co, 1.0)
+    pores = g.attr("pores")
+    height = g.add(g.mul(g.sub(pits, 1.0), g.add(0.18, g.mul(pores, 0.82))), g.mul(creases, 0.3))
+    height = g.sub(height, g.mul(lines, 0.25))
+    # Lips: fine vertical furrows instead of pores.
+    furrows = g.noise(g.mapping(co, scale=(1, 1, 0.05)), 1100.0, detail=1.0)
+    height = g.mix(lip, height, g.mul(furrows, 0.6))
+    rough = g.add(0.5, g.mul(creases, 0.08))
+    rough = g.sub(rough, g.mul(g.attr("oily"), 0.1))
+    rough = g.mix(lip, rough, 0.43)
     marks = marks or {}
     if marks.get("beard"):
-        # Shaved stubble: fine dark dots over a faint blue-brown shadow.
-        dots = g.smooth(g.noise(co, 2600.0, detail=0.0), 0.5, 0.62)
-        amount = g.mul(g.attr("beard"), g.add(0.5, g.mul(dots, 0.4)))
-        col = g.mixc(amount, col, (*srgb_to_lin((0.075, 0.058, 0.055)), 1))
-        rough = g.add(rough, g.mul(g.attr("beard"), 0.1))
+        col, rough = stubble(g, co, col, rough)
     if marks.get("eyes"):
         # Kajal: a soft dark line hugging each eye, heavier along the upper lid.
         e = list(marks["eyes"])
@@ -121,13 +177,13 @@ def skin_material(variant, img, marks=None):
         dot = g.smooth(d, 0.0036, 0.0029)
         col = g.mixc(dot, col, (*srgb_to_lin((0.55, 0.02, 0.05)), 1))
         rough = g.mix(dot, rough, 0.45)
-    normal = g.bump(g.add(g.mul(pores, 0.6), g.mul(mottle, 0.2)), 0.015, 0.0005)
-    g.principled(col, 0.0, rough, normal)
+    g.principled(col, 0.0, rough, g.bump(height, 0.18, 0.0005))
     return m
 
 
-def eye_material(name, img):
-    """MakeHuman's brown iris pulled toward a deep, less red brown; wet and glossy."""
+def eye_material(name, img, lid_z):
+    """MakeHuman's brown iris pulled toward a deep, less red brown; wet and glossy. The upper lid's
+    shadow falls on it from `lid_z` up (object space): the game's lights don't see the lid."""
     m = new_material(name)
     g = Graph(m)
     uv = g.node("ShaderNodeUVMap", uv_map="src").outputs["UV"]
@@ -135,8 +191,19 @@ def eye_material(name, img):
     hsv = g.node("ShaderNodeHueSaturation", {"Color": tex.outputs["Color"]})
     hsv.inputs["Hue"].default_value = 0.52
     hsv.inputs["Saturation"].default_value = 0.7
-    hsv.inputs["Value"].default_value = 0.9
-    g.principled(hsv.outputs["Color"], 0.0, 0.06)
+    hsv.inputs["Value"].default_value = 0.75
+    z = g.node("ShaderNodeSeparateXYZ", {"Vector": g.texcoord("Object")}).outputs["Z"]
+    shade = g.smooth(z, lid_z - 0.001, lid_z + 0.006)
+    g.principled(g.mixc(g.mul(shade, 0.65), hsv.outputs["Color"], (0.0, 0.0, 0.0, 1.0)), 0.0, 0.06)
+    return m
+
+
+def cornea_material(name):
+    """The glass over the eye: nothing of its own but a sharp wet highlight. glTF Blend, not baked."""
+    m = new_material(name)
+    g = Graph(m)
+    p = g.principled((0.0, 0.0, 0.0, 1.0), 0.0, 0.02)
+    p.inputs["Alpha"].default_value = 0.08
     return m
 
 
@@ -304,17 +371,255 @@ def pack_atlas(obj, margin=0.004):
     bpy.ops.object.mode_set(mode="OBJECT")
 
 
-def finish_character(variant, rig, proxy, parts, items, root):
+# Texture size baked per part (BAKE_RES caps them, for quick test builds). The file carries the head
+# at GLB_HEAD_RES; its full-size colour and normal go through tools/textures/character_pack.txt for
+# the Ultra level.
+PART_RES = {"head": 4096, "body": 2048, "outfit": 2048, "eyes": 512, "mouth": 512}
+GLB_HEAD_RES = 2048
+
+# Triangles per LOD; None keeps what the part has. Head, body and outfit together follow the budgets
+# in docs/PLAN.md: LOD1 ~25k, LOD2 ~12k, LOD3 ~5k.
+LOD_TRIS = {
+    "head": (18000, 6500, 3200, 1200),
+    "body": (None, 8000, 3800, 1200),
+    "outfit": (None, 10500, 5000, 2600),
+    # The MakeHuman teeth are 7k triangles behind closed lips. The mouth goes from LOD2 on.
+    "mouth": (1500, 600),
+    # Past LOD1 the eyes are about what the low-poly MakeHuman eyes were; the cornea is gone.
+    "eyes": (None, None, 180, 180),
+    "cornea": (None, None),
+}
+# Which LODs show the cards, and the hair's triangles on the last one (no scalp cap yet to stand in
+# for it, so it keeps its shape). Levels past the tuple's end have no such part.
+CARD_LODS = {"hair": 4, "eyebrows": 3, "eyelashes": 2}
+HAIR_LOD3 = 0.55
+
+
+def tri_count(obj):
+    return sum(len(p.vertices) - 2 for p in obj.data.polygons)
+
+
+def select_only(obj):
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+
+
+def join(name, objs):
+    bpy.ops.object.select_all(action="DESELECT")
+    for o in objs:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = objs[0]
+    if len(objs) > 1:
+        bpy.ops.object.join()
+    out = bpy.context.view_layer.objects.active
+    out.name = out.data.name = name
+    return out
+
+
+def delete_faces(obj, doomed):
+    """Delete the faces `doomed(mean z)` picks, from the object's world-space mean height."""
+    mw = obj.matrix_world
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    gone = [f for f in bm.faces if doomed(sum((mw @ v.co).z for v in f.verts) / len(f.verts))]
+    bmesh.ops.delete(bm, geom=gone, context="FACES")
+    bm.to_mesh(obj.data)
+    bm.free()
+
+
+def split_skin(proxy, rig):
+    """Cut the proxy across the neck, above any collar, into (head, body)."""
+    bones = rig.data.bones
+    mw = rig.matrix_world
+    neck, skull = (mw @ bones["neck_01"].head_local).z, (mw @ bones["head"].head_local).z
+    cut = neck + 0.55 * (skull - neck)
+    head = proxy.copy()
+    head.data = proxy.data.copy()
+    bpy.context.scene.collection.objects.link(head)
+    delete_faces(head, lambda z: z < cut)
+    delete_faces(proxy, lambda z: z >= cut)
+    return head, proxy
+
+
+def bake_part(variant, part, obj, root):
+    """Pack the part's own atlas, bake its set and swap in the game material. The rest of the
+    character stays in the scene, so the baked occlusion still sees the clothes on the skin."""
+    pack_atlas(obj)
+    res = PART_RES[part]
+    if os.environ.get("BAKE_RES"):
+        res = min(res, int(os.environ["BAKE_RES"]))
+    start = time.monotonic()
+    # A wide margin: decimation leaves some LOD triangles with corners off the islands, in what
+    # would otherwise be the black between them.
+    images = bake.bake_texture_set(obj, os.path.join(root, "build", "textures", variant), f"{variant}_{part}", res=res, margin=res // 8)
+    if part == "head" and res > GLB_HEAD_RES:
+        for img in images.values():
+            img.scale(GLB_HEAD_RES, GLB_HEAD_RES)
+    me = obj.data
+    me.materials.clear()
+    me.materials.append(export.game_material(f"{variant}_{part}", images))
+    me.polygons.foreach_set("material_index", [0] * len(me.polygons))
+    me.uv_layers.remove(me.uv_layers["src"])
+    print(f"[{variant}] baked {part} at {res}: {tri_count(obj)} tris, {time.monotonic() - start:.0f} s")
+
+
+def weld_seam(obj):
+    """Sew the two halves of the skin back together along the cut."""
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bmesh.ops.remove_doubles(bm, verts=[v for v in bm.verts if v.is_boundary], dist=1e-5)
+    bm.to_mesh(obj.data)
+    bm.free()
+
+
+def lod_copy(src, name):
+    o = src.copy()
+    o.data = src.data.copy()
+    o.name = o.data.name = name
+    bpy.context.scene.collection.objects.link(o)
+    return o
+
+
+def decimate(o, tris, keep_slot=None, hold=None):
+    """Cut `o` to `tris` triangles, still skinned. With `keep_slot`, the faces of that material are
+    left alone (a vertex group's zero weight stops the decimator on them) but for their edge; so are
+    the vertices the point attribute `hold` marks."""
+    have = tri_count(o)
+    if have <= tris:
+        return
+    d = o.modifiers.new("Decimate", "DECIMATE")
+    d.decimate_type = "COLLAPSE"
+    d.ratio = tris / have
+    d.use_collapse_triangulate = True
+    if keep_slot is not None:
+        kept = np.zeros(len(o.data.vertices), dtype=bool)
+        for p in o.data.polygons:
+            if p.material_index == keep_slot:
+                kept[list(p.vertices)] = True
+        for p in o.data.polygons:
+            if p.material_index != keep_slot:
+                kept[list(p.vertices)] = False
+        if hold is not None:
+            marked = np.empty(len(o.data.vertices), dtype=np.float32)
+            o.data.attributes[hold].data.foreach_get("value", marked)
+            kept |= marked > 0.5
+        g = o.vertex_groups.new(name="_may_collapse")
+        g.add(np.flatnonzero(~kept).tolist(), 1.0, "REPLACE")
+        d.vertex_group = g.name
+        d.vertex_group_factor = 1.0
+    select_only(o)
+    bpy.ops.object.modifier_move_to_index(modifier=d.name, index=0)
+    bpy.ops.object.modifier_apply(modifier=d.name)
+    if keep_slot is not None:
+        o.vertex_groups.remove(o.vertex_groups["_may_collapse"])
+
+
+def drop_covered_islands(obj, cloth, slot, gap=0.08):
+    """Delete pieces of the `slot` skin that are mostly under cloth: the scraps `delete_hidden_body`
+    left. The far LODs' cloth shrinks onto them and they'd show through. Returns the faces gone."""
+    bm = bmesh.new()
+    bm.from_mesh(cloth.data)
+    tree = BVHTree.FromBMesh(bm)
+    bm.free()
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    todo = {f for f in bm.faces if f.material_index == slot}
+    total = len(todo)
+    doomed = []
+    while todo:
+        stack = [todo.pop()]
+        piece = []
+        while stack:
+            f = stack.pop()
+            piece.append(f)
+            for e in f.edges:
+                for g in e.link_faces:
+                    if g in todo:
+                        todo.remove(g)
+                        stack.append(g)
+        verts = {v for f in piece for v in f.verts}
+        hidden = sum(tree.ray_cast(v.co + v.normal * 0.002, v.normal, gap)[0] is not None for v in verts)
+        if hidden * 2 > len(verts) and len(piece) * 4 < total:
+            doomed += piece
+    bmesh.ops.delete(bm, geom=doomed, context="FACES")
+    bm.to_mesh(obj.data)
+    bm.free()
+    return len(doomed)
+
+
+def skin_lod(skin, name, head_slot, head_tris, body_tris, hold=None):
+    """The welded skin at (head, body) triangles: the body cut with the head held, then the
+    other way round. None keeps a part as it is; `hold` as for `decimate`, on the head's cut."""
+    o = lod_copy(skin, name)
+    slots = np.zeros(len(o.data.polygons), dtype=np.int32)
+    if body_tris is not None:
+        o.data.polygons.foreach_get("material_index", slots)
+        decimate(o, int((slots == head_slot).sum()) + body_tris, keep_slot=head_slot)
+        slots = np.zeros(len(o.data.polygons), dtype=np.int32)
+    o.data.polygons.foreach_get("material_index", slots)
+    decimate(o, head_tris + int((slots != head_slot).sum()), keep_slot=1 - head_slot, hold=hold)
+    return o
+
+
+def freeze_normals(obj):
+    """Store the surface's normals on it, so cutting it up doesn't change its shading."""
+    me = obj.data
+    n = np.empty(len(me.loops) * 3, dtype=np.float32)
+    me.corner_normals.foreach_get("vector", n)
+    me.normals_split_custom_set(n.reshape(-1, 3))
+
+
+def cut_by_material(obj, names):
+    """Separate a mesh by material into {material name: object}, renamed by `names`."""
+    select_only(obj)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.mesh.separate(type="MATERIAL")
+    bpy.ops.object.mode_set(mode="OBJECT")
+    pieces = [o for o in bpy.context.selected_objects if o.type == "MESH"]
+    out = {}
+    for o in pieces:
+        mat = o.data.materials[o.data.polygons[0].material_index].name
+        o.name = o.data.name = names[mat]
+        out[mat] = o
+    return out
+
+
+def card_lod(variant, key, src, k):
+    """Cards on LOD k: the same mesh, except the last LOD's hair."""
+    name = f"{variant}_{key}_LOD{k}"
+    if key == "hair" and k == 3:
+        o = lod_copy(src, name)
+        decimate(o, int(tri_count(src) * HAIR_LOD3))
+        return o
+    o = src.copy()
+    o.name = name
+    bpy.context.scene.collection.objects.link(o)
+    return o
+
+
+def skin_marks(proxy):
+    return {"beard": "beard" in proxy.data.attributes, "eyes": proxy.get("eyes"), "bindi": proxy.get("bindi")}
+
+
+def finish_character(variant, rig, proxy, parts, items, root, age=0.5):
     # --- materials per source object
     skin_img = find_image(proxy)
     proxy.data.materials.clear()
-    marks = {"beard": "beard" in proxy.data.attributes, "eyes": proxy.get("eyes"), "bindi": proxy.get("bindi")}
-    proxy.data.materials.append(skin_material(variant, skin_img, marks))
-    eyes = parts["eyes"]
-    eye_img = find_image(eyes)
+    eye_img = find_image(parts["eyes"])
+    eyes, cornea = head_build.eye_parts(parts["eyes"], f"{variant}_cornea_mesh")
+    cornea.data.materials.clear()
+    cornea.data.materials.append(cornea_material(f"{variant}_cornea"))
+    apply_non_armature_modifiers(cornea)
     eyes.data.materials.clear()
-    eyes.data.materials.append(eye_material(f"{variant}_eyes", eye_img))
-    opaque = [proxy, eyes]
+    eyes.data.materials.append(eye_material(f"{variant}_iris", eye_img, head_build.mid_height(eyes)))
+    mouth = [parts["teeth"], parts["tongue"]]
+    for o, rough in zip(mouth, (0.2, 0.4)):
+        img = find_image(o)
+        o.data.materials.clear()
+        o.data.materials.append(textured_material(o.name, img, rough))
+    on_head, outfit = [], []
     for obj, role in items:
         kind = obj.get("kind", "cloth")
         obj.data.materials.clear()
@@ -332,34 +637,33 @@ def finish_character(variant, rig, proxy, parts, items, root):
             from garments import edge_distance_attr
             edge_distance_attr(obj)
             obj.data.materials.append(cloth_material(key, base, border, pattern, bw))
-        opaque.append(obj)
+        (on_head if kind == "hairmesh" else outfit).append(obj)
 
-    for o in opaque:
+    for o in [proxy, eyes, *mouth, *on_head, *outfit]:
         apply_non_armature_modifiers(o)
         prepare_uvs(o)
 
-    # --- join opaque parts into one skinned mesh
-    bpy.ops.object.select_all(action="DESELECT")
-    for o in opaque:
-        o.select_set(True)
-    bpy.context.view_layer.objects.active = proxy
-    bpy.ops.object.join()
-    body = bpy.context.view_layer.objects.active
-    body.name = body.data.name = f"{variant}_LOD0"
-    pack_atlas(body)
+    # --- one mesh per part
+    head, body = split_skin(proxy, rig)
+    head_build.subdivide(head, body)
+    head.data.materials.append(head_material(variant, skin_img, skin_marks(proxy), age))
+    body.data.materials.append(body_material(variant, skin_img, skin_marks(proxy)))
+    meshes = {
+        "head": join(f"{variant}_head", [head, *on_head]),
+        "body": join(f"{variant}_body", [body]),
+        "outfit": join(f"{variant}_outfit", outfit),
+        "eyes": join(f"{variant}_eyes_mesh", [eyes]),
+        "mouth": join(f"{variant}_mouth_mesh", mouth),
+    }
 
     # --- bake (Cycles needs the rest pose; the armature is in rest anyway)
     device = bake.setup_cycles()
-    tris = sum(len(p.vertices) - 2 for p in body.data.polygons)
-    print(f"[{variant}] baking on {device}; opaque tris={tris}")
-    tex_dir = os.path.join(root, "build", "textures", variant)
-    images = bake.bake_texture_set(body, tex_dir, variant, res=int(os.environ.get("BAKE_RES", "2048")))
-    body.data.materials.clear()
-    body.data.materials.append(export.game_material(variant, images))
-    body.data.uv_layers.remove(body.data.uv_layers["src"])
+    print(f"[{variant}] baking on {device}")
+    for part, obj in meshes.items():
+        bake_part(variant, part, obj, root)
 
     # --- alpha cards: hair, brows, lashes
-    cards = []
+    cards = {}
     for key, tint, strength in CARDS:
         o = parts.get(key)
         if o is None or o.name not in bpy.data.objects:
@@ -368,25 +672,44 @@ def finish_character(variant, rig, proxy, parts, items, root):
         o.data.materials.clear()
         o.data.materials.append(alpha_card_material(f"{variant}_{key}", img, tint, strength))
         apply_non_armature_modifiers(o)
-        cards.append(o)
+        cards[key] = o
 
-    # --- LODs (decimate keeps vertex groups, so skinning survives). LOD0 is held to ~30k tris.
-    export.triangulate(body)
-    tris = sum(len(p.vertices) - 2 for p in body.data.polygons)
-    if tris > 30000:
-        d = body.modifiers.new("Budget", "DECIMATE")
-        d.ratio = 30000 / tris
-        bpy.context.view_layer.objects.active = body
-        bpy.ops.object.modifier_move_to_index(modifier="Budget", index=0)
-        bpy.ops.object.modifier_apply(modifier="Budget")
-    lods = export.make_lods(body, (0.45, 0.18))
-    for lod in lods[1:]:
-        lod.parent = rig
-    out = os.path.join(root, "assets", "models", "characters", f"{variant}.glb")
-    os.makedirs(os.path.dirname(out), exist_ok=True)
+    # --- LODs (decimate keeps vertex groups, so skinning survives)
+    out_objs = []
+    skin = join(f"{variant}_skin", [meshes["head"], meshes["body"]])
+    head_mat, body_mat = f"{variant}_head", f"{variant}_body"
+    head_slot = next(i for i, m in enumerate(skin.data.materials) if m.name == head_mat)
+    weld_seam(skin)
+    for o in (skin, meshes["outfit"], meshes["mouth"]):
+        export.triangulate(o)
+    print(f"[{variant}] {drop_covered_islands(skin, meshes['outfit'], 1 - head_slot)} faces of skin scraps under the cloth removed")
+    for k, (head_tris, body_tris) in enumerate(zip(LOD_TRIS["head"], LOD_TRIS["body"])):
+        o = skin_lod(skin, f"{variant}_skin_LOD{k}", head_slot, head_tris, body_tris, hold="detail" if k == 0 else None)
+        freeze_normals(o)
+        cut = cut_by_material(o, {head_mat: f"{variant}_head_LOD{k}", body_mat: f"{variant}_body_LOD{k}"})
+        out_objs += cut.values()
+    meshes["cornea"] = cornea
+    for part in ("outfit", "mouth", "eyes", "cornea"):
+        for k, tris in enumerate(LOD_TRIS[part]):
+            o = lod_copy(meshes[part], f"{variant}_{part}_LOD{k}")
+            if tris is not None:
+                decimate(o, tris)
+            out_objs.append(o)
+    for key, o in cards.items():
+        out_objs += [card_lod(variant, key, o, k) for k in range(CARD_LODS[key])]
+
+    # The sources are done with.
+    for o in [skin, meshes["outfit"], meshes["mouth"], meshes["eyes"], cornea, *cards.values()]:
+        bpy.data.objects.remove(o)
+    for o in out_objs:
+        o.parent = rig
+
+    # anims.py opens this for the rig (and the nose, on the head).
     bpy.ops.wm.save_as_mainfile(filepath=os.path.join(root, "build", f"char_{variant}_final.blend"))
+    out = os.path.join(root, "assets", "models", "characters", f"{variant}_parts.glb")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
     bpy.ops.object.select_all(action="DESELECT")
-    for o in [rig] + lods + cards:
+    for o in [rig, *out_objs]:
         o.select_set(True)
     bpy.context.view_layer.objects.active = rig
     bpy.ops.export_scene.gltf(
@@ -394,5 +717,7 @@ def finish_character(variant, rig, proxy, parts, items, root):
         export_skins=True, export_def_bones=True, export_animations=False, export_tangents=True,
         export_image_format="AUTO",
     )
-    counts = {o.name: sum(len(p.vertices) - 2 for p in o.data.polygons) for o in lods + cards}
-    print(f"[{variant}] exported {out}: {counts}")
+    for k in range(4):
+        row = {o.name.split("_")[1]: tri_count(o) for o in out_objs if o.name.endswith(f"_LOD{k}")}
+        print(f"[{variant}] LOD{k}: {sum(row.values())} tris {row}")
+    print(f"[{variant}] exported {out}")

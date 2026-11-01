@@ -106,6 +106,26 @@ pub fn paint_city(x: f32, z: f32, class: u8) -> (LinearRgba, f32) {
     (LinearRgba::new(c.red * v, c.green * v, c.blue * v, 1.0), cover)
 }
 
+/// The NCR arena's ground: muted urban dust, grass only in the parks, on the western ridge and
+/// along the Yamuna.
+pub fn paint_ncr(x: f32, z: f32, h: f32, n: Vec3) -> (LinearRgba, f32) {
+    let p = Vec2::new(x, z);
+    let river = shared::map::ncr::river_distance(p);
+    let park = p.distance(Vec2::new(-235.0, -235.0)) < 38.0 || (z > 365.0 && x < -120.0) || (z > 330.0 && x > 50.0 && x < 190.0);
+    let green = park || x < -405.0 || river < 14.0;
+    let color = if n.y < 0.8 {
+        [0.43, 0.40, 0.34]
+    } else if river < 7.0 {
+        [0.49, 0.46, 0.34]
+    } else if green {
+        [0.29, 0.39, 0.23]
+    } else {
+        [0.47, 0.45, 0.40]
+    };
+    let v = 0.92 + 0.16 * fbm(x / 12.0, z / 12.0, 2, 91);
+    (lin(color) * v, if green && h > -0.3 { 0.65 } else { 0.0 })
+}
+
 /// Ground colour and grass cover (0 bare .. 1 full) at a point, given its height, normal and
 /// distance to the nearest road. A city map's ground is painted by `paint_city` instead.
 pub fn paint(x: f32, z: f32, h: f32, n: Vec3, road_d: f32) -> (LinearRgba, f32) {
@@ -302,7 +322,7 @@ fn stream_chunks(
     // A few per frame, nearest first.
     for k in want.into_iter().take(6) {
         let keep = keep_at(k);
-        let e = match build_chunk(k, &layout.terrain, &grass.blockers, keep, grass.density) {
+        let e = match build_chunk(k, &layout.terrain, &grass.blockers, keep, grass.density, layout.style == shared::map::MapStyle::Ncr) {
             Some((mesh, origin)) => commands
                 .spawn((
                     Mesh3d(meshes.add(mesh)),
@@ -359,7 +379,7 @@ impl Blades {
 
 /// Builds chunk `k` with only the blades of rank below `keep` (the rest would be sunk by the
 /// shader at the chunk's distance).
-fn build_chunk(k: (i32, i32), t: &Terrain, blockers: &Blockers, keep: f32, density: f32) -> Option<(Mesh, Vec3)> {
+fn build_chunk(k: (i32, i32), t: &Terrain, blockers: &Blockers, keep: f32, density: f32, ncr: bool) -> Option<(Mesh, Vec3)> {
     let x0 = Vec2::new(k.0 as f32, k.1 as f32) * CHUNK;
     let c = x0 + Vec2::splat(CHUNK * 0.5);
     let origin = Vec3::new(c.x, on_mesh(t, &t.h, c.x, c.y), c.y);
@@ -376,6 +396,7 @@ fn build_chunk(k: (i32, i32), t: &Terrain, blockers: &Blockers, keep: f32, densi
         let n = t.normal(p.x, p.y);
         let (ground, cover) = match t.ground_at(p.x, p.y) {
             Some(class) => paint_city(p.x, p.y, class),
+            None if ncr => paint_ncr(p.x, p.y, h, n),
             None => paint(p.x, p.y, h, n, rd),
         };
         // Thicker in the lush patches, thin at the edges of dry ground and paths.

@@ -86,7 +86,7 @@ impl MapVotes {
     }
 }
 
-/// The maps that take turns after `current`: Delhi's, in order. Any other map stays put.
+/// The maps that take turns after `current`: Delhi's, in order. The NCR arena stays put.
 pub fn rotation(current: MapId) -> &'static [MapId] {
     if MapId::DELHI.contains(&current) { &MapId::DELHI } else { &[] }
 }
@@ -122,6 +122,12 @@ const BOT_NAMES: [&str; 23] = [
     "Pinky", "Dolly", "Sweety", "Bittu", "Chotu", "Lallan", "Babli", "Chikki", "Laddoo", "Jhumri", "Bobby",
 ];
 
+pub fn tick_simulation_pause(mut pause: ResMut<super::SimulationPause>, time: Res<Time>) {
+    if pause.timer > 0.0 {
+        pause.timer -= time.delta_secs();
+    }
+}
+
 fn start_match_on_startup(world: &mut World) {
     if !world.resource::<super::MatchConfig>().online {
         start_match(world);
@@ -143,7 +149,7 @@ pub fn start_match(world: &mut World) {
     // Flight path crosses the map through a random chord.
     let mut path = match_rng(seed, stream::VIMANA);
     let a = path.random_range(0.0..std::f32::consts::TAU);
-    let off = path.random_range(-60.0..60.0);
+    let off = path.random_range(-half * 0.24..half * 0.24);
     let dir = Vec2::new(a.cos(), a.sin());
     let perp = Vec2::new(-dir.y, dir.x) * off;
     let from = (-dir * (half + 40.0) + perp).extend(VIMANA_HEIGHT);
@@ -158,12 +164,13 @@ pub fn start_match(world: &mut World) {
         seed,
         ..default()
     };
-    world.insert_resource(Zone::new(seed));
+    world.insert_resource(Zone::for_extent(seed, half));
     world.spawn((Vimana, Transform::default()));
 
     let melee = world.resource::<ItemDb>().default_melee.clone();
     let mut names: Vec<&str> = BOT_NAMES.to_vec();
     let mut name_rng = match_rng(seed, stream::NAMES);
+    let mut round = 0;
     // VIVAD_LOOK=1 swaps every warrior's look (the player's body) for captures.
     let look_shift = std::env::var("VIVAD_LOOK").ok().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
     // The roster, the same on every peer: a warrior per peer (in peer order), then the bots.
@@ -172,7 +179,13 @@ pub fn start_match(world: &mut World) {
         let owner = if is_bot { peers.bot_owner(i - humans) } else { peers.all[i as usize] };
         let local = owner == peers.local;
         let name = if is_bot {
-            names.remove(name_rng.random_range(0..names.len())).to_string()
+            // More bots than names: deal the names out again, numbered.
+            if names.is_empty() {
+                names = BOT_NAMES.to_vec();
+                round += 1;
+            }
+            let n = names.remove(name_rng.random_range(0..names.len()));
+            if round == 0 { n.to_string() } else { format!("{n} {}", round + 1) }
         } else if local {
             "You".into()
         } else {
@@ -249,6 +262,7 @@ fn restart(world: &mut World) {
     world.resource_mut::<StartedBy>().0 = by;
     world.resource_mut::<MapVotes>().0.clear();
     world.resource_mut::<super::loot::Claims>().0.clear();
+    world.resource_mut::<super::loot::Gone>().0.clear();
     let mut doomed: Vec<Entity> = vec![];
     for e in world.query_filtered::<Entity, Or<(With<Warrior>, With<Chest>, With<Pickup>, With<Projectile>, With<FireZone>, With<Burst>, With<Vimana>)>>().iter(world) {
         doomed.push(e);
@@ -265,6 +279,7 @@ fn restart(world: &mut World) {
 #[allow(clippy::type_complexity)]
 fn fly_vimana(
     mut m: ResMut<Match>,
+    layout: Res<MapLayout>,
     mut riders: Query<(&mut Transform, &mut Kinematic, &PlayerIntent), (With<Warrior>, Without<Vimana>, Without<Remote>)>,
     mut vimana: Query<&mut Transform, With<Vimana>>,
     time: Res<Time>,
@@ -284,7 +299,7 @@ fn fly_vimana(
     }
     let done = m.vimana_t >= 1.0;
     // Players may only leap once the vimana is over the arena.
-    let over_land = pos.x.abs() < 240.0 && pos.z.abs() < 240.0;
+    let over_land = pos.x.abs() < layout.half_extent - 10.0 && pos.z.abs() < layout.half_extent - 10.0;
     for (mut tf, mut kin, intent) in &mut riders {
         if kin.mode != MoveMode::Vimana {
             continue;
@@ -303,13 +318,16 @@ fn fly_vimana(
 fn check_winner(
     mut m: ResMut<Match>,
     alive: Query<Entity, (With<Warrior>, Without<Eliminated>)>,
+    fallen: Query<(Entity, &Eliminated), With<Warrior>>,
     names: Query<&Warrior>,
     mut feed: MessageWriter<FeedMsg>,
 ) {
     m.alive = alive.iter().count() as u32;
     if m.state == MatchState::InProgress && m.alive <= 1 {
         m.state = MatchState::Ended;
-        m.winner = alive.iter().next();
+        // The last two can fall in the same tick, both burning in the ring: the one who fell
+        // last (placement 1) stood the longest, and is crowned; every peer has the placements.
+        m.winner = alive.iter().next().or_else(|| fallen.iter().find(|(_, e)| e.placement == 1).map(|(e, _)| e));
         if let Some(w) = m.winner.and_then(|e| names.get(e).ok()) {
             feed.write(FeedMsg(if w.name == "You" { "Tumne Panga jeet liya!".to_string() } else { format!("{} ne Panga jeet liya!", w.name) }));
         }

@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "id": "ncr-4km-v1",
+  "title": "NCR / Kali Yuga — four-city masterplan",
+  "status": "design_blueprint_not_runtime_map",
+  "confirmed_size_m": [4000, 4000],
+  "coordinate_system": {"unit": "metre", "east": "+X", "north": "-Z", "bounds": [-2000, -2000, 2000, 2000]},
+  "provenance": "Original fictional NCR-inspired level design. Positions are game coordinates, not surveyed geography. No OSM or third-party map artwork is embedded.",
+  "platforms": ["Apple Silicon Mac", "high-end Android gaming phones"],
+  "population": {"full_map_design_target": 64, "validation_steps": [16, 32, 64], "current_runtime_default_bots": 15, "small_lobby_play_space_m": [1500, 1500], "match_duration_target_minutes": [18, 22]},
+  "river": {"name": "Yamuna corridor", "width_m": 140, "surface_y_m": -1.2, "bed_y_m": -4.5, "centerline": [[120,-2050],[210,-1500],[70,-800],[110,0],[240,700],[100,1400],[190,2050]]},
+  "districts": [
+    {"id":"delhi","name":"Delhi","combat":"Layered lanes and circular courtyards","height_range_m":[3,22],"polygon":[[-1750,-1850],[-250,-1850],[-200,-150],[-1730,-150]],"kit":"Painted plaster, shaded arcades, brick service courts, water tanks, local shopfronts"},
+    {"id":"gurugram","name":"Gurugram","combat":"Vertical pushes and rooftop escapes","height_range_m":[3,85],"polygon":[[-1730,150],[-200,150],[-230,1850],[-1750,1850]],"kit":"Curtain-wall towers, precast podiums, parking decks, planted forecourts, mall service alleys"},
+    {"id":"noida","name":"Noida","combat":"Grid rotations with controlled long views","height_range_m":[3,32],"polygon":[[390,150],[1850,150],[1850,1850],[390,1850]],"kit":"Sector blocks, backlot facades, campus walls, green belts, raised wetland walks"},
+    {"id":"ghaziabad","name":"Ghaziabad","combat":"Industrial ambushes and courtyard flanks","height_range_m":[3,48],"polygon":[[390,-1850],[1850,-1850],[1850,-150],[390,-150]],"kit":"Society towers, painted stair cores, rail sheds, containers, loading courts"}
+  ],
+  "ridge": {"polygon":[[-2000,-2000],[-1760,-2000],[-1630,-1300],[-1790,-650],[-1670,200],[-1740,1050],[-1570,2000],[-2000,2000]],"height_range_m":[25,75]},
+  "pois": [
+    {"id":"D1","name":"Ring Bazaar","district":"delhi","center":[-980,-920],"radius_m":230,"pressure":"hot","height_range_m":[3,20],"hero_buildings":4,"planned_chests":28,"form":"ring","fight":"Three arcaded courtyards feed a circular street fight. Radial alleys break the ring.","routes":"Outer service road, covered inner arcade, roof escape; no dominant central firing perch."},
+    {"id":"D2","name":"Metro Interchange","district":"delhi","center":[-440,-240],"radius_m":160,"pressure":"hot","height_range_m":[-14,16],"hero_buildings":3,"planned_chests":24,"form":"station","fight":"Daylit concourse over a pedestrian metro underpass. Short views change at stair landings.","routes":"Two street entrances, two independent stairs, a service exit and a through corridor."},
+    {"id":"D3","name":"Old Lanes","district":"delhi","center":[-1430,-1450],"radius_m":210,"pressure":"warm","height_range_m":[3,15],"hero_buildings":3,"planned_chests":22,"form":"lanes","fight":"Small homes, courtyards and stepped roofs create close fights with readable escape routes.","routes":"Three lane loops; every accessible roof has stairs plus an alternate descent."},
+    {"id":"D4","name":"Civic Gardens","district":"delhi","center":[-480,-1510],"radius_m":180,"pressure":"quiet","height_range_m":[0,12],"hero_buildings":2,"planned_chests":16,"form":"park","fight":"Pavilions, planted berms and low service buildings support slower openings.","routes":"Garden edge path, broken wall route and shaded maintenance lane."},
+    {"id":"G1","name":"Glass Quarter","district":"gurugram","center":[-1070,650],"radius_m":250,"pressure":"hot","height_range_m":[3,85],"hero_buildings":4,"planned_chests":28,"form":"towers","fight":"Tower podiums and two selected playable towers offer vertical combat with counters below.","routes":"Podium loop, service alleys, two stair cores, roof ascenders and short glider links."},
+    {"id":"G2","name":"Meridian Mall","district":"gurugram","center":[-580,1280],"radius_m":220,"pressure":"hot","height_range_m":[3,24],"hero_buildings":3,"planned_chests":26,"form":"mall","fight":"A shallow two-floor retail loop meets a parking deck and a separate loading court.","routes":"Three public doors, two service doors, parking ramps and a roof connection."},
+    {"id":"G3","name":"Fairway Estates","district":"gurugram","center":[-1430,1400],"radius_m":230,"pressure":"quiet","height_range_m":[0,18],"hero_buildings":2,"planned_chests":18,"form":"park","fight":"Clubhouse compounds and tree-lined shallow dips turn open ground into short rotations.","routes":"Covered estate lane, dry drainage cut and clubhouse flank; no empty fairway sprint."},
+    {"id":"G4","name":"Ridge Workshops","district":"gurugram","center":[-1500,300],"radius_m":180,"pressure":"warm","height_range_m":[3,18],"hero_buildings":2,"planned_chests":18,"form":"yards","fight":"Repair courts and hillside service sheds create a low-density western landing.","routes":"Contour path, workshop courtyards and a retained wall route toward Glass Quarter."},
+    {"id":"N1","name":"Sector 18 Grid","district":"noida","center":[830,470],"radius_m":240,"pressure":"hot","height_range_m":[3,32],"hero_buildings":4,"planned_chests":28,"form":"grid","fight":"Planned blocks alternate occupied facades and green belts, keeping long views interruptible.","routes":"Parallel streets, rear courtyards and short roof crossings; cover on both road edges."},
+    {"id":"N2","name":"Film Backlots","district":"noida","center":[1410,1190],"radius_m":250,"pressure":"warm","height_range_m":[3,18],"hero_buildings":3,"planned_chests":22,"form":"yards","fight":"Large stages and false-front streets mix exterior lanes with a few deep, well-lit rooms.","routes":"Stage doors, exterior backlot loop, loading edge and one visible roof route."},
+    {"id":"N3","name":"Okhla Margins","district":"noida","center":[620,1550],"radius_m":210,"pressure":"quiet","height_range_m":[-2,8],"hero_buildings":2,"planned_chests":16,"form":"wetland","fight":"Raised walks, reed islands and a pump-house compound provide low, broken views.","routes":"Two raised paths and a dry embankment; seasonal appearance cannot silently remove exits."},
+    {"id":"N4","name":"Campus Depot","district":"noida","center":[1460,330],"radius_m":200,"pressure":"warm","height_range_m":[3,24],"hero_buildings":2,"planned_chests":20,"form":"grid","fight":"Loading bays, campus walls and a shallow parking deck connect east-side rotations.","routes":"Delivery court, courtyard spine and boundary wall breaks; no long fenced dead ends."},
+    {"id":"H1","name":"Rail Freight","district":"ghaziabad","center":[1320,-1100],"radius_m":270,"pressure":"hot","height_range_m":[0,18],"hero_buildings":3,"planned_chests":28,"form":"rail","fight":"Static wagons, staggered containers and two cargo sheds offer ambushes with parallel flanks.","routes":"Three longitudinal lanes, cross aisles and an elevated footbridge; train movement comes later."},
+    {"id":"H2","name":"Society Courts","district":"ghaziabad","center":[620,-1400],"radius_m":240,"pressure":"warm","height_range_m":[3,48],"hero_buildings":3,"planned_chests":22,"form":"towers","fight":"Apartment podiums frame shared courts. Two playable cores connect ground and selected roof decks.","routes":"Two court gates, service lane, exterior stairs and a secondary descent on each playable roof."},
+    {"id":"H3","name":"Foundry Blocks","district":"ghaziabad","center":[1380,-350],"radius_m":210,"pressure":"warm","height_range_m":[3,22],"hero_buildings":2,"planned_chests":20,"form":"yards","fight":"Workshop roofs and industrial loading courts favour lateral movement over one central choke.","routes":"Warehouse perimeter, broken service wall and parallel delivery lanes."},
+    {"id":"H4","name":"Vaishali Steps","district":"ghaziabad","center":[560,-540],"radius_m":170,"pressure":"warm","height_range_m":[-14,20],"hero_buildings":3,"planned_chests":24,"form":"station","fight":"A terraced metro plaza forms the eastern transfer point, with daylight visible from stairs.","routes":"Two plaza approaches, independent station exits and a dry boulevard flank."}
+  ],
+  "roads": [
+    {"id":"west-contour","width_m":12,"points":[[-1550,-1800],[-1550,-1450],[-1550,-1000],[-1550,-600],[-1450,-300],[-1550,250],[-1550,650],[-1450,1100],[-1450,1330],[-1450,1800]]},
+    {"id":"west-inner","width_m":18,"points":[[-480,-1800],[-480,-1450],[-480,-920],[-480,-600],[-440,-240],[-480,250],[-650,650],[-650,900],[-580,1280],[-580,1330],[-580,1800]]},
+    {"id":"east-inner","width_m":18,"points":[[560,-1800],[560,-1450],[560,-1100],[560,-600],[560,-540],[650,250],[830,470],[620,1190],[620,1330],[620,1800]]},
+    {"id":"east-outer","width_m":14,"points":[[1450,-1800],[1450,-1450],[1450,-1100],[1450,-600],[1380,-350],[1460,250],[1460,330],[1410,1190],[1410,1330],[1500,1800]]},
+    {"id":"north-link","width_m":8,"points":[[-1550,-1450],[-980,-1450],[-480,-1450],[200,-1450],[560,-1450],[1450,-1450]]},
+    {"id":"north-boulevard","width_m":18,"points":[[-1550,-600],[-980,-600],[-480,-600],[110,-600],[560,-600],[1450,-600]]},
+    {"id":"central-link","width_m":22,"points":[[-1550,250],[-1070,250],[-480,250],[160,250],[650,250],[1460,250]]},
+    {"id":"southern-link","width_m":10,"points":[[-1450,1330],[-580,1330],[110,1330],[620,1330],[1410,1330]]},
+    {"id":"bazaar-spur","width_m":12,"points":[[-1550,-1000],[-980,-920],[-480,-920]]},
+    {"id":"glass-spur","width_m":12,"points":[[-1550,650],[-1070,650],[-650,650]]},
+    {"id":"freight-spur","width_m":12,"points":[[560,-1100],[1320,-1100],[1450,-1100]]},
+    {"id":"backlot-spur","width_m":10,"points":[[620,1190],[1410,1190],[1800,1190]]}
+  ],
+  "crossings": [
+    {"id":"C1","name":"North Rail Walk","z_m":-1450,"mode":"footbridge","width_m":8,"deck_y_m":8,"counter":"Parallel screened walk and two stair exits at each bank."},
+    {"id":"C2","name":"North Boulevard","z_m":-600,"mode":"road","width_m":18,"deck_y_m":5,"counter":"Hard cover islands at 20–30 m intervals; lower maintenance foot route."},
+    {"id":"C3","name":"Central Interchange","z_m":250,"mode":"road","width_m":22,"deck_y_m":5,"counter":"Split decks, divided approaches and two independently usable ramps."},
+    {"id":"C4","name":"Southern Causeway","z_m":1330,"mode":"raised_walk","width_m":10,"deck_y_m":2.5,"counter":"Screened dry path and secondary boardwalk; protected wetland is scenery."},
+    {"id":"C5","name":"Blue Underpass","z_m":-120,"mode":"underground","width_m":9,"deck_y_m":-14,"counter":"Two independent exits per bank; fixed pedestrian lane remains usable without trains."}
+  ],
+  "metro_lines": [
+    {"id":"blue","name":"Blue corridor","points":[[-1430,-1450],[-980,-920],[-980,-240],[-440,-240],[-260,-120],[410,-120],[560,-540],[830,470]],"crossing":"C5","train_status":"future_feature","pedestrian_lane_required":true},
+    {"id":"yellow","name":"Yellow corridor","points":[[-480,-1510],[-980,-920],[-1070,650],[-580,1280]],"train_status":"future_feature","pedestrian_lane_required":true}
+  ],
+  "mobility": {"status":"required_before_full_map_release","sprint_mps":7.4,"current_glider_mps":14,"current_glider_sink_mps":6.5,"zipline_target_mps":12,"zipline_length_m":[90,220],"updraft_launch_height_target_m":120,"vimana_height_target_m":220,"vimana_speed_target_mps":45,"note":"Short ascenders, ziplines and mythic updrafts require implementation. Existing 14 m/s gliding is retained as the design baseline; do not assume unlimited flat-ground gliding."},
+  "vertical_slice": {"id":"delhi-ring-slice","center":[-980,-920],"size_m":[600,600],"contains":["D1"],"required_extensions":"One playable metro entrance and a 120 m street connector, inside the slice bounds.","acceptance":"A complete ground-to-roof loop, two paths through each hero building, readable cover, matched Mac/Android collision and measured performance."},
+  "streaming": {"status":"proposed_not_implemented","cell_m":128,"grid_origin_m":[-2048,-2048],"cells_per_axis":32,"grid_span_m":4096,"playable_span_m":4000,"physics_rule":"Retain support and authoritative collision independently of visual LOD; query/load coarse projectile cover along the full shot path.","network_rule":"Keep all competitive actors authoritative. Rendering distance never silently suspends remote opponents or drops network updates."},
+  "performance_targets": [
+    {"id":"mac-balanced","label":"Apple Silicon Mac / balanced","fps_target":60,"frame_budget_ms":16.67,"internal_resolution_target":[1600,900],"internal_resolution_ceiling":[1920,1080],"detail_radius_m":192,"mid_lod_radius_m":640,"hlod_radius_m":1600,"visible_batches_budget":800,"visible_triangles_budget":2500000,"texture_residency_budget_mb":1200,"shadow_cascades":2,"shadow_distance_m":120},
+    {"id":"android-high","label":"High-end Android / sustained","fps_target":60,"frame_budget_ms":16.67,"internal_resolution_target":[1600,900],"internal_resolution_floor":[1280,720],"detail_radius_m":128,"mid_lod_radius_m":384,"hlod_radius_m":1100,"visible_batches_budget":350,"visible_triangles_budget":1200000,"texture_residency_budget_mb":600,"shadow_cascades":1,"shadow_distance_m":70,"optional_fps_target_after_validation":90}
+  ],
+  "performance_disclaimer":"All FPS, memory, geometry and streaming numbers are initial design targets, not measured results or device guarantees. No new game session was launched to produce this plan.",
+  "sources": [
+    {"title":"Epic: Streaming and HLODs","url":"https://dev.epicgames.com/documentation/fortnite/streaming-and-hlods-in-unreal-editor-for-fortnite"},
+    {"title":"Epic: Reducing Draw Calls","url":"https://dev.epicgames.com/documentation/fortnite/reducing-draw-calls-in-fortnite"},
+    {"title":"Epic: Spatial Profiler","url":"https://dev.epicgames.com/documentation/en-us/fortnite/spatial-profiler-in-unreal-editor-for-fortnite"},
+    {"title":"PUBG: Sanhok / 4 × 4 km","url":"https://www.pubg.com/en/game-info/maps/sanhok"},
+    {"title":"PUBG: Erangel / 8 × 8 km","url":"https://pubg.com/en/game-info/maps/erangel"}
+  ]
+}

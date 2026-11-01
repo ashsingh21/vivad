@@ -1,0 +1,12 @@
+{
+  "status": "passed",
+  "runtime_integrated": false,
+  "area_km2": 16,
+  "major_pois": 16,
+  "micro_compounds": 24,
+  "crossings": 5,
+  "roads_connected": true,
+  "planned_hero_buildings": 45,
+  "planned_chests_major_pois": 360,
+  "note": "Offline blueprint checks only; no physics, rendering or FPS validation."
+}

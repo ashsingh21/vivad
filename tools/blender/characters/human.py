@@ -4,7 +4,12 @@ blender -b -P tools/blender/characters/human.py -- male|female [--stage build|fu
 
 Pipeline: MPFB body + game_engine rig + generic proxy -> garments grown from the body's own
 topology (so they inherit its bone weights) -> jewellery and turban -> hidden body faces removed
--> procedural materials -> bake to one opaque texture set + alpha hair cards -> LODs -> GLB.
+-> head subdivided, eyes split (head.py) -> procedural materials -> bake one texture set per part
+(head, body, outfit, eyes, mouth) + alpha hair cards -> four LODs ->
+assets/models/characters/<variant>_parts.glb, 4K head sources in build/textures. See finish.py.
+
+The old one-mesh <variant>.glb is no longer written here: it stays as the engine's fallback.
+BAKE_RES=512 caps the bakes for a quick test build.
 """
 
 import math
@@ -25,8 +30,9 @@ from mathutils.bvhtree import BVHTree  # noqa: E402
 import face  # noqa: E402
 import garments  # noqa: E402
 import outfits  # noqa: E402
+from bl_ext.blender_org.mpfb.services.locationservice import LocationService  # noqa: E402
 
-MPFB_DATA = os.path.expanduser("~/.config/blender/5.2/mpfb/data")
+MPFB_DATA = LocationService.get_user_data()
 
 
 def mpfb():
@@ -72,7 +78,7 @@ def clear_scene():
     bpy.ops.wm.read_homefile(use_empty=True)
 
 
-TARGETS = os.path.expanduser("~/.config/blender/5.2/extensions/blender_org/mpfb/data/targets")
+TARGETS = LocationService.get_mpfb_data("targets")
 
 
 def build_body(cfg):
@@ -85,8 +91,9 @@ def build_body(cfg):
     proxy = hs.add_mhclo_asset(os.path.join(MPFB_DATA, cfg["proxy"]), body, asset_type="Proxymeshes", subdiv_levels=0)
     hs.set_character_skin(os.path.join(MPFB_DATA, cfg["skin"]), body, skin_type="GAMEENGINE")
     parts = {"proxy": proxy}
-    for kind, rel in (("Eyes", "eyes/low-poly/low-poly.mhclo"), ("Eyebrows", cfg["brows"]),
-                      ("Eyelashes", "eyelashes/eyelashes01/eyelashes01.mhclo"), ("Hair", cfg["hair"])):
+    for kind, rel in (("Eyes", "eyes/high-poly/high-poly.mhclo"), ("Eyebrows", cfg["brows"]),
+                      ("Eyelashes", "eyelashes/eyelashes01/eyelashes01.mhclo"), ("Hair", cfg["hair"]),
+                      ("Teeth", "teeth/teeth_base/teeth_base.mhclo"), ("Tongue", "tongue/tongue01/tongue01.mhclo")):
         parts[kind.lower()] = hs.add_mhclo_asset(os.path.join(MPFB_DATA, rel), body, asset_type=kind, subdiv_levels=0,
                                                  material_type="MAKESKIN")
     # Remove MPFB's subdivision/mask helpers from the parts; keep only the armature deform.
@@ -144,7 +151,7 @@ def main():
     ctx = garments.BodyContext(proxy, rig, bone_weight_map(proxy))
     ctx.brow_top = max((parts["eyebrows"].matrix_world @ v.co).z for v in parts["eyebrows"].data.vertices)
     items = cfg["outfit"](ctx)          # list of (object, role) where role in {"cover", "accessory", "hair_replace"}
-    items += face.decorate(variant, proxy, parts, ctx)
+    items += face.decorate(variant, proxy, parts, body, ctx)
     if any(role == "hair_replace" for _, role in items):
         # Short hair shows below the turban's lower edge (no bare scalp); the rest is inside it.
         cut = face.trim_hair(parts["hair"], ctx.brow_top + 0.02)
@@ -161,7 +168,7 @@ def main():
         print(f"[{variant}] saved {out_blend}")
         return
     import finish
-    finish.finish_character(variant, rig, proxy, parts, items, ROOT)
+    finish.finish_character(variant, rig, proxy, parts, items, ROOT, cfg["macro"]["age"])
 
 
 if __name__ == "__main__":

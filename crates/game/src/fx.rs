@@ -461,9 +461,19 @@ fn punch_camera(
     let held = inv.current().map(|s| &db.get(&s.id).kind);
     for p in &shots {
         if p.owner == me && p.astra.is_none() {
-            // A heavier bow kicks harder (one kick per volley).
-            let k = if let Some(ItemKind::Bow { damage, pellets, .. }) = held { (damage * *pellets as f32).sqrt() * 0.0028 } else { 0.012 };
-            punch.kick = punch.kick.max(k);
+            // Each bow's own kick (radians of pitch) and rattle (metres), once per volley: the
+            // katta and the dunali wrench the view, the Vajra-9 chatters, the tamancha taps.
+            let (kick, rattle) = match p.item.as_str() {
+                "katta" => (0.040, 0.02),
+                "dunali" => (0.045, 0.025),
+                "gulel" => (0.030, 0.0),
+                "tamancha" => (0.016, 0.004),
+                "vajra9" => (0.011, 0.012),
+                "trishul_carbine" => (0.022, 0.008),
+                _ => (0.012, 0.0),
+            };
+            punch.kick = punch.kick.max(kick);
+            punch.shake = punch.shake.max(rattle);
         }
     }
     for h in hits.read() {

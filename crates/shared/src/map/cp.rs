@@ -63,8 +63,11 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
         b.push(c + Vec3::new(3.6 * k, r.flag - 1.0 * k - i as f32 * 1.3 * k, 0.0), Quat::IDENTITY,
                super::Shape::Box(Vec3::new(6.6 * k, 1.3 * k, 0.06)), mat, false, true);
     }
-    for i in 0..4 {
-        b.loot(w, r.at(r.park * 0.6, tau * (i as f32 + 0.5) / 4.0, 0.3));
+    // Loose finds in the park: two rings of four, the outer turned 45 degrees from the inner.
+    for (frac, turn) in [(0.45, 0.5), (0.75, 0.0)] {
+        for i in 0..4 {
+            b.loot(w, r.at(r.park * frac, tau * (i as f32 + turn) / 4.0, 0.3));
+        }
     }
     let mut streets = r.streets.clone();
     streets.sort_by(f32::total_cmp);
@@ -158,22 +161,103 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 b.stairs(radial, Vec3::new(core0 + 0.5, 0.0, 0.0), well_to - core0 - 0.5, r.g, 1.6, Mat::Plaster);
             }
             // Loot: a chest in every third shop (the back row too, in deep blocks), an urn
-            // upstairs now and then, loose finds on the verandahs.
+            // upstairs now and then, loose finds on the verandahs. A chest spills what it holds
+            // 1 m along its +Z, and in `radial` +X points away from the park, so yaw -FRAC_PI_2
+            // faces the park and FRAC_PI_2 faces outward: each chest faces its own shop front,
+            // and its contents land between it and the arch. The stairs climb through the inner
+            // shop (the only one, in a shallow block): no chest there, under them.
             if i % 3 == 1 {
-                let at = if split { (core0 + mid) / 2.0 } else { (core0 + core1) / 2.0 };
-                b.chest(radial, Vec3::new(at, 0.0, 0.0), FRAC_PI_2, ChestKind::Peti);
+                if !stairs(i) {
+                    let at = if split { (core0 + mid) / 2.0 } else { (core0 + core1) / 2.0 };
+                    b.chest(radial, Vec3::new(at, 0.0, 0.0), if split { -FRAC_PI_2 } else { FRAC_PI_2 }, ChestKind::Peti);
+                }
                 if split {
-                    b.chest(radial, Vec3::new((mid + core1) / 2.0, 0.0, 0.0), -FRAC_PI_2, ChestKind::Peti);
+                    b.chest(radial, Vec3::new((mid + core1) / 2.0, 0.0, 0.0), FRAC_PI_2, ChestKind::Peti);
                 }
             }
             if i % 9 == 2 || i + 3 == n {
                 let rad = if blk % 2 == 0 { r.ro - 2.0 } else { r.ri + 2.0 };
                 b.chest(radial, Vec3::new(rad, r.g, 0.0), -FRAC_PI_2, ChestKind::Kalash);
             }
-            if rng.random_bool(0.3) {
+            if rng.random_bool(0.2) {
                 let rad = if rng.random_bool(0.5) { r.ro - r.ver / 2.0 } else { r.ri + r.ver / 2.0 };
                 b.loot(radial, Vec3::new(rad, 0.3, 0.0));
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rand::SeedableRng;
+
+    use super::*;
+    use crate::map::{Block, MapLayout, Shape};
+
+    /// The ring at Connaught Place's real size (crate::map::delhi::ring), round the origin.
+    fn ring() -> Ring {
+        Ring {
+            center: Vec3::ZERO,
+            park: 112.0,
+            ri: 136.0,
+            ro: 168.0,
+            ver: 4.2,
+            g: 5.5,
+            u: 4.6,
+            seg_len: 4.6,
+            street: 13.0,
+            streets: [34.0f32, 93.6, 150.6, 212.2, 274.6, 304.1, 332.2].iter().map(|d| d.to_radians()).collect(),
+            flag: 45.0,
+        }
+    }
+
+    fn built(r: &Ring) -> MapLayout {
+        let mut map = MapLayout::default();
+        build(&mut Builder::new(&mut map), &mut SmallRng::seed_from_u64(7), r);
+        map
+    }
+
+    /// A chest spills what it holds 1 m along its +Z (sim::loot::open_chest). Every ground chest
+    /// in the ring must spill toward the arch of its own shop: the inner row toward the park, the
+    /// outer row away from it, never into the party wall between them.
+    #[test]
+    fn ring_chests_face_their_shop_front() {
+        let r = ring();
+        let map = built(&r);
+        let mid = (r.ri + r.ro) / 2.0;
+        let ground: Vec<_> = map.chests.iter().filter(|c| c.kind == ChestKind::Peti && c.pos.y < 0.5).collect();
+        assert!(ground.len() > 100, "{} ground chests", ground.len());
+        let mut shown = [false; 2];
+        for c in ground {
+            let spill = c.pos + Quat::from_rotation_y(c.yaw) * Vec3::Z;
+            let inner = c.pos.xz().length() < mid;
+            // The arch is on the chest's bearing, in the shop front its row opens through.
+            let arch = c.pos.xz().normalize() * if inner { r.ri + r.ver } else { r.ro - r.ver };
+            let (dc, ds) = (c.pos.xz().distance(arch), spill.xz().distance(arch));
+            if !std::mem::replace(&mut shown[inner as usize], true) {
+                let row = if inner { "inner" } else { "outer" };
+                println!("{row} row: chest {:.2?} yaw {:.3} spills at {:.2?}; arch {arch:.2?}: {dc:.2} m from the chest, {ds:.2} m from the spill", c.pos, c.yaw, spill);
+            }
+            assert!(ds < dc - 0.99, "chest at {:.1?} yaw {:.2} spills at {:.1?}, {ds:.2} m from its arch at {arch:.1?} ({dc:.2} m)", c.pos, c.yaw, spill);
+        }
+    }
+
+    /// No chest stands inside the ring's masonry: the stairs climb through the inner shops.
+    #[test]
+    fn ring_chests_stand_clear_of_the_masonry() {
+        let map = built(&ring());
+        let inside = |b: &Block, p: Vec3| {
+            let l = b.rot.inverse() * (p - b.pos);
+            match b.shape {
+                Shape::Box(s) => l.abs().cmplt(s / 2.0).all(),
+                Shape::Cylinder { radius, height } => l.xz().length() < radius && l.y.abs() < height / 2.0,
+                Shape::Sphere(r) => l.length() < r,
+            }
+        };
+        for c in &map.chests {
+            let p = c.pos + Vec3::Y * 0.4;
+            let hit = map.blocks.iter().find(|b| (b.visible || b.collide) && inside(b, p));
+            assert!(hit.is_none(), "chest at {:.1?} stands in {:?}", c.pos, hit.map(|b| (b.shape, b.pos)));
         }
     }
 }

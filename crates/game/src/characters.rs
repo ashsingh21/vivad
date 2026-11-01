@@ -1,7 +1,11 @@
 //! Character and vegetation art: skinned warriors (animated by `crate::animation`, holding their
 //! weapon per `crate::arms`) and map props with distance LODs.
 //!
-//! Character GLBs face +Z (MakeHuman), origin at the feet, `game_engine` rig.
+//! Character GLBs face +Z (MakeHuman), origin at the feet, `game_engine` rig. `<variant>_parts.glb`
+//! has the head, body, outfit, eyes, cornea, mouth and cards as separate meshes over four LODs
+//! (tools/blender/characters/finish.py); with VIVAD_CHAR_PARTS=0, or if it isn't there, the old
+//! one-mesh `<variant>.glb` is loaded instead. The bones are the same in both, so one set of clips
+//! drives either.
 
 use std::collections::HashMap;
 use std::f32::consts::PI;
@@ -22,7 +26,7 @@ impl Plugin for CharacterArtPlugin {
         app.add_systems(Startup, load_models)
             .add_systems(Startup, spawn_ornaments.after(load_models))
             .add_systems(Update, (load_props, spawn_ornaments).chain().run_if(map_reloaded).before(dress_props))
-            .add_systems(Update, (dress_props, dress_warriors, bind_animations, swap_weapons));
+            .add_systems(Update, (dress_props, dress_warriors, bind_animations, swap_weapons, retune_part_lods));
     }
 }
 
@@ -34,11 +38,23 @@ struct Models {
 }
 
 fn load_models(mut commands: Commands, assets: Res<AssetServer>, layout: Res<MapLayout>) {
+    let parts = std::env::var("VIVAD_CHAR_PARTS").as_deref() != Ok("0");
     commands.insert_resource(Models {
-        male: assets.load(GltfAssetLabel::Scene(0).from_asset("models/characters/male.glb")),
-        female: assets.load(GltfAssetLabel::Scene(0).from_asset("models/characters/female.glb")),
+        male: assets.load(GltfAssetLabel::Scene(0).from_asset(character_file("male", parts))),
+        female: assets.load(GltfAssetLabel::Scene(0).from_asset(character_file("female", parts))),
         props: prop_models(&assets, &layout),
     });
+}
+
+/// The model to load for a variant: the split one if it's on disk and not switched off.
+fn character_file(variant: &str, parts_on: bool) -> String {
+    let parts = format!("models/characters/{variant}_parts.glb");
+    // The browser build can't look on disk.
+    if parts_on && cfg!(not(target_arch = "wasm32")) && std::path::Path::new(crate::ASSET_DIR).join(&parts).exists() {
+        info!("character model: {parts}");
+        return parts;
+    }
+    format!("models/characters/{variant}.glb")
 }
 
 fn prop_models(assets: &AssetServer, layout: &MapLayout) -> HashMap<&'static str, Handle<WorldAsset>> {
@@ -174,6 +190,62 @@ struct CharRig {
 #[derive(Component)]
 struct CharacterModel;
 
+/// The old model's LODs: everything but its cards, which have no LOD names and always show.
+fn one_mesh_ranges() -> [(Range<f32>, Range<f32>); 3] {
+    [(0.0..0.0, 16.0..20.0), (16.0..20.0, 50.0..56.0), (50.0..56.0, 400.0..420.0)]
+}
+
+/// Ranges of the split model's four LODs. LOD0 shows only where the quality level allows it
+/// (`Quality::character_lod0`); elsewhere each band moves down a LOD and LOD0 stays hidden, so
+/// the near and middle bands cost about what the old model's did.
+fn part_ranges(lod0: bool) -> [(Range<f32>, Range<f32>); 4] {
+    if lod0 {
+        [(0.0..0.0, 16.0..20.0), (16.0..20.0, 50.0..56.0), (50.0..56.0, 150.0..160.0), (150.0..160.0, 400.0..420.0)]
+    } else {
+        [(0.0..0.0, 16.0..20.0), (0.0..0.0, 16.0..20.0), (16.0..20.0, 50.0..56.0), (50.0..56.0, 400.0..420.0)]
+    }
+}
+
+fn part_lod_visibility(lod: usize, lod0: bool) -> Visibility {
+    if lod == 0 && !lod0 { Visibility::Hidden } else { Visibility::Inherited }
+}
+
+/// On every entity of a split character's LOD node: which LOD, to follow the quality level.
+#[derive(Component)]
+struct PartLod(usize);
+
+/// Set up a spawned split character's LODs. Parts too small to shade the ground cast no shadow,
+/// which keeps the shadow passes near the old model's draw count.
+fn dress_part_lods(root: Entity, lod0: bool, children: &Query<&Children>, names: &Query<&Name>, commands: &mut Commands) {
+    apply_lod_ranges(root, &part_ranges(lod0), None, children, names, commands);
+    for e in children.iter_descendants(root) {
+        let Ok(name) = names.get(e) else { continue };
+        let Some(lod) = name.as_str().rsplit("LOD").next().and_then(|s| s.parse::<usize>().ok()) else { continue };
+        let no_shadow = ["_eyes_", "_cornea_", "_mouth_", "_eyebrows_", "_eyelashes_"].iter().any(|p| name.as_str().contains(p));
+        for d in std::iter::once(e).chain(children.iter_descendants(e)) {
+            commands.entity(d).insert((PartLod(lod), part_lod_visibility(lod, lod0)));
+            if no_shadow {
+                commands.entity(d).insert(bevy::light::NotShadowCaster);
+            }
+        }
+    }
+}
+
+/// The quality level changed: move the split characters' LODs to its bands.
+fn retune_part_lods(quality: Res<crate::quality::Quality>, mut q: Query<(&PartLod, &mut VisibilityRange, &mut Visibility)>) {
+    if !quality.is_changed() {
+        return;
+    }
+    let lod0 = quality.character_lod0();
+    let ranges = part_ranges(lod0);
+    for (lod, mut range, mut visibility) in &mut q {
+        let Some((start, end)) = ranges.get(lod.0).cloned() else { continue };
+        range.start_margin = start;
+        range.end_margin = end;
+        visibility.set_if_neq(part_lod_visibility(lod.0, lod0));
+    }
+}
+
 fn dress_warriors(mut commands: Commands, q: Query<(Entity, &WarriorVisual), Added<WarriorVisual>>, warriors: Query<&Warrior>, models: Res<Models>) {
     for (vis, wv) in &q {
         let look = warriors.get(wv.sim).map(|w| w.look).unwrap_or(0);
@@ -191,15 +263,13 @@ fn dress_warriors(mut commands: Commands, q: Query<(Entity, &WarriorVisual), Add
                            children: Query<&Children>,
                            names: Query<&Name>,
                            transforms: Query<&Transform>,
+                           quality: Res<crate::quality::Quality>,
                            mut commands: Commands| {
-                apply_lod_ranges(
-                    ready.entity,
-                    &[(0.0..0.0, 16.0..20.0), (16.0..20.0, 50.0..56.0), (50.0..56.0, 400.0..420.0)],
-                    None,
-                    &children,
-                    &names,
-                    &mut commands,
-                );
+                if lod_count(ready.entity, &children, &names) >= 4 {
+                    dress_part_lods(ready.entity, quality.character_lod0(), &children, &names, &mut commands);
+                } else {
+                    apply_lod_ranges(ready.entity, &one_mesh_ranges(), None, &children, &names, &mut commands);
+                }
                 let mut bones = HashMap::new();
                 let mut named = HashMap::new();
                 for e in children.iter_descendants(ready.entity) {
@@ -270,6 +340,143 @@ fn swap_weapons(
                 t.translation = grip;
                 commands.entity(e).insert(ChildOf(hand));
                 rig.weapon_attached = true;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+    use std::time::{Duration, Instant};
+
+    use bevy::animation::AnimationTargetId;
+    use bevy::asset::AssetMetaCheck;
+    use bevy::ecs::system::RunSystemOnce;
+    use bevy::gltf::Gltf;
+    use bevy::log::LogPlugin;
+    use bevy::mesh::skinning::SkinnedMesh;
+    use bevy::render::RenderPlugin;
+    use bevy::render::settings::WgpuSettings;
+    use bevy::winit::WinitPlugin;
+
+    use super::*;
+    use crate::quality::Quality;
+
+    #[test]
+    fn part_lods_cover_every_distance_without_gaps() {
+        for lod0 in [false, true] {
+            let ranges = part_ranges(lod0);
+            let shown: Vec<_> = ranges.iter().enumerate().filter(|(k, _)| *k > 0 || lod0).map(|(_, r)| r).collect();
+            assert_eq!(shown[0].0, 0.0..0.0);
+            assert_eq!(shown.last().unwrap().1, 400.0..420.0);
+            for pair in shown.windows(2) {
+                assert_eq!(pair[0].1, pair[1].0, "a band must start as the one before it fades");
+            }
+        }
+    }
+
+    #[test]
+    fn the_kill_switch_loads_the_old_model() {
+        assert_eq!(character_file("male", false), "models/characters/male.glb");
+        assert_eq!(character_file("nobody", true), "models/characters/nobody.glb");
+    }
+
+    #[derive(Resource, Default)]
+    struct Spawned(Option<Entity>);
+
+    fn headless() -> App {
+        let mut app = App::new();
+        app.add_plugins(
+            DefaultPlugins
+                .build()
+                .disable::<WinitPlugin>()
+                .disable::<LogPlugin>()
+                .set(AssetPlugin { file_path: crate::ASSET_DIR.into(), meta_check: AssetMetaCheck::Never, ..default() })
+                .set(RenderPlugin { render_creation: WgpuSettings { backends: None, ..default() }.into(), ..default() }),
+        );
+        app.finish();
+        app.cleanup();
+        app.init_resource::<Spawned>();
+        app
+    }
+
+    /// Bevy's real glTF loader, no GPU: every split model spawns its parts skinned to the bones
+    /// the clips animate, by the name paths the clips were loaded with, and its LODs follow the
+    /// quality level.
+    #[test]
+    fn split_models_spawn_and_take_the_clips() {
+        for variant in ["male", "female"] {
+            let file = format!("models/characters/{variant}_parts.glb");
+            if !std::path::Path::new(crate::ASSET_DIR).join(&file).exists() {
+                eprintln!("{file} not built: skipped");
+                continue;
+            }
+            let mut app = headless();
+            let assets = app.world().resource::<AssetServer>().clone();
+            let scene = assets.load(GltfAssetLabel::Scene(0).from_asset(file));
+            let anims: Handle<Gltf> = assets.load(format!("models/characters/{variant}_anims.glb"));
+            app.world_mut().spawn(WorldAssetRoot(scene)).observe(|ready: On<WorldInstanceReady>, mut spawned: ResMut<Spawned>| spawned.0 = Some(ready.entity));
+            let deadline = Instant::now() + Duration::from_secs(120);
+            let root = loop {
+                app.update();
+                let world = app.world();
+                let clips_in = world.resource::<Assets<Gltf>>().get(&anims).is_some_and(|g| g.named_animations.values().all(|h| world.resource::<Assets<AnimationClip>>().get(h).is_some()));
+                if let (Some(root), true) = (world.resource::<Spawned>().0, clips_in) {
+                    break root;
+                }
+                assert!(Instant::now() < deadline, "{variant}: never finished loading");
+                std::thread::sleep(Duration::from_millis(5));
+            };
+
+            let lod0 = false;
+            app.world_mut().run_system_once(move |children: Query<&Children>, names: Query<&Name>, mut commands: Commands| {
+                assert_eq!(lod_count(root, &children, &names), 4);
+                dress_part_lods(root, lod0, &children, &names, &mut commands);
+            }).unwrap();
+
+            // The name paths from the rig root, as `animation::bind` tags the bones.
+            let world = app.world_mut();
+            let mut q = world.query::<(Entity, &Name)>();
+            let rig = q.iter(world).find(|(_, n)| n.as_str() == "Human.rig").expect("no rig").0;
+            let mut ids = HashSet::new();
+            let mut stack = vec![(rig, vec![Name::new("Human.rig")])];
+            while let Some((e, path)) = stack.pop() {
+                ids.insert(AnimationTargetId::from_names(path.iter()));
+                for c in world.get::<Children>(e).into_iter().flat_map(|c| c.iter()) {
+                    if let Some(n) = world.get::<Name>(c) {
+                        let mut path = path.clone();
+                        path.push(n.clone());
+                        stack.push((c, path));
+                    }
+                }
+            }
+            let gltf = world.resource::<Assets<Gltf>>().get(&anims).unwrap();
+            let clips = world.resource::<Assets<AnimationClip>>();
+            assert_eq!(gltf.named_animations.len(), 21);
+            for (name, h) in &gltf.named_animations {
+                let missing = clips.get(h).unwrap().curves().keys().filter(|id| !ids.contains(id)).count();
+                assert_eq!(missing, 0, "{variant} {name}: {missing} animated bones not found");
+            }
+
+            let mut parts = world.query::<(&Mesh3d, &SkinnedMesh, &PartLod, &Visibility, &VisibilityRange, Has<bevy::light::NotShadowCaster>, &Name)>();
+            let mut count = 0;
+            for (_, skin, lod, visibility, range, no_shadow, name) in parts.iter(world) {
+                count += 1;
+                assert_eq!(skin.joints.len(), 53, "{name}");
+                assert_eq!(*visibility == Visibility::Hidden, lod.0 == 0, "{name}");
+                assert_eq!(range.end_margin, part_ranges(lod0)[lod.0].1, "{name}");
+                assert_eq!(no_shadow, ["eyes", "cornea", "mouth", "eyebrows", "eyelashes"].iter().any(|p| name.as_str().contains(&format!("{variant}_{p}"))), "{name}");
+            }
+            assert_eq!(count, 29, "{variant}: parts over the LODs");
+            eprintln!("{variant}: {count} parts skinned to 53 bones, {} bone paths match the clips", ids.len());
+
+            // Up to Ultra: LOD0 comes back, the bands shift.
+            world.insert_resource(Quality::Ultra);
+            world.run_system_once(retune_part_lods).unwrap();
+            for (_, _, lod, visibility, range, ..) in parts.iter(world) {
+                assert_eq!(*visibility, Visibility::Inherited);
+                assert_eq!(range.end_margin, part_ranges(true)[lod.0].1);
             }
         }
     }

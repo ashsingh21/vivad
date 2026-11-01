@@ -54,6 +54,12 @@ impl PickupId {
 #[derive(Resource, Default, Debug)]
 pub struct Claims(pub Vec<Claim>);
 
+/// Pickups another peer took before this one saw them spawn: one peer opens a chest, a second
+/// standing beside it takes the goli the moment it appears, and the third may hear of the take
+/// before the opening. Spawning one of these would leave a box here that no one can take.
+#[derive(Resource, Default, Debug)]
+pub struct Gone(pub std::collections::HashSet<PickupId>);
+
 #[derive(Clone, Debug)]
 pub struct Claim {
     pub pickup: PickupId,
@@ -71,8 +77,9 @@ pub struct LootPlugin;
 impl Plugin for LootPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Claims>()
+            .init_resource::<Gone>()
             .init_resource::<Swaps>()
-            .add_systems(FixedUpdate, (interact, auto_pickup_arrows, tick_pickups).in_set(SimSet::Loot));
+            .add_systems(FixedUpdate, (prune_gone.before(interact).before(auto_pickup_arrows), interact, auto_pickup_arrows, tick_pickups).in_set(SimSet::Loot));
     }
 }
 
@@ -214,17 +221,21 @@ pub fn give(inv: &mut Inventory, db: &ItemDb, mut st: ItemStack) -> Option<ItemS
 }
 
 /// Opens a chest: its contents spill out in front of it (the same on every peer).
-pub fn open_chest(commands: &mut Commands, spatial: &SpatialQuery, db: &ItemDb, seed: u64, ct: &Transform, c: &mut Chest) {
+pub fn open_chest(commands: &mut Commands, spatial: &SpatialQuery, db: &ItemDb, seed: u64, ct: &Transform, c: &mut Chest, gone: &mut Gone) {
     c.opened = true;
     let fwd = ct.rotation * Vec3::Z;
     for (i, st) in chest_contents(db, seed, c.index, c.kind).into_iter().enumerate() {
+        let id = PickupId::chest(c.index, i);
+        if gone.0.remove(&id) {
+            continue;
+        }
         let side = (i as f32 - 1.0) * 0.7;
         let mut at = ct.translation + fwd * 1.0 + ct.rotation * Vec3::X * side + Vec3::Y * 0.6;
         let filter = SpatialQueryFilter::from_mask(solid_mask());
         if let Some(hit) = spatial.cast_ray(at, Dir3::NEG_Y, 3.0, true, &filter) {
             at.y -= hit.distance - 0.25;
         }
-        commands.spawn((Pickup { id: PickupId::chest(c.index, i), stack: st, delay: 0.3 }, Transform::from_translation(at)));
+        commands.spawn((Pickup { id, stack: st, delay: 0.3 }, Transform::from_translation(at)));
     }
 }
 
@@ -240,6 +251,7 @@ fn interact(
     mut outbox: ResMut<Outbox>,
     mut claims: ResMut<Claims>,
     mut swaps: ResMut<Swaps>,
+    mut gone: ResMut<Gone>,
 ) {
     claims.0.retain(|c| m.elapsed - c.at < 3.0);
     let mut taken = vec![];
@@ -254,7 +266,7 @@ fn interact(
             .filter(|(t, c)| !c.opened && t.translation.distance(me) < INTERACT_RANGE)
             .min_by(|a, b| a.0.translation.distance(me).total_cmp(&b.0.translation.distance(me)));
         if let Some((ct, mut c)) = chest {
-            open_chest(&mut commands, &spatial, &db, m.seed, ct, &mut c);
+            open_chest(&mut commands, &spatial, &db, m.seed, ct, &mut c, &mut gone);
             outbox.0.push(NetMsg::ChestOpened { index: c.index });
             continue;
         }
@@ -324,6 +336,19 @@ pub fn revoke(inv: &mut Inventory, stack: &ItemStack) {
             s.count -= stack.count;
         } else {
             *slot = None;
+        }
+    }
+}
+
+/// A pickup that another peer took before its spawn reached us, however the two messages were
+/// ordered (the spawn may have been queued in the same batch as the take): gone.
+fn prune_gone(mut commands: Commands, q: Query<(Entity, &Pickup)>, mut gone: ResMut<Gone>) {
+    if gone.0.is_empty() {
+        return;
+    }
+    for (e, p) in &q {
+        if gone.0.remove(&p.id) {
+            commands.entity(e).despawn();
         }
     }
 }

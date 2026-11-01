@@ -58,3 +58,13 @@ previews/caves/
 previews/east/
 previews/caves_sheet.png
 previews/east_sheet.png
+
+# Generated NCR capture runs (curated preview lives in docs/ncr).
+/previews/ncr/
+/previews/ncr-sheet.png
+/previews/ncr-before/
+/previews/ncr-realism/
+/previews/ncr-realism-sheet.png
+/tools/texpack/target
+.DS_Store
+tools/texpack/target/

@@ -6,6 +6,15 @@
 //!   VIVAD_TOUR_DRIFT=m   during a burst, slide the camera sideways m metres per frame.
 //!   VIVAD_TOUR_SETTLE=n  frames to hold each view before its shot; above 120 it prints each view's
 //!                        frame rate (`[tour-fps]`; run with VIVAD_NO_VSYNC=1).
+//! A window that is not on screen (covered by another, on another Space, or on a sleeping or
+//! locked display) is not rendered, and every shot of it comes out black: keep the game window
+//! in view while a capture runs. The recipes also run under `caffeinate -d -i -u`.
+//!
+//! VIVAD_CLIP=<dir>,<from>,<to>,<fps>  with VIVAD_AUTOPILOT=1: small frames (800 px wide) of the
+//!                        match between two match times at that rate, then exit; `just clip` joins
+//!                        them into an animation. VIVAD_CLIP_VIEW=1 takes the frames from the 3D
+//!                        view's own image instead of the window: no HUD, but it works with the
+//!                        window hidden.
 //! VIVAD_SHOTS=<dir>     with VIVAD_AUTOPILOT=1: screenshot the match at set times, then exit.
 //!   VIVAD_SHOTS_AT=a,b   at these match times (seconds) instead.
 //!   VIVAD_SHOTS_MATCHES=n then start the next match (the next map in turn) and shoot it too, n
@@ -16,7 +25,7 @@
 //!   freeze the one bot (VIVAD_BOTS=1) in front as a target and shoot or cut at it.
 
 use bevy::prelude::*;
-use bevy::render::view::window::screenshot::{Screenshot, save_to_disk};
+use bevy::render::view::window::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
 use shared::items::{ItemDb, ItemKind, ItemStack, Rarity};
 use shared::map::MapLayout;
 use shared::sim::flow::Match;
@@ -32,6 +41,19 @@ pub struct Tour {
     frames: u32,
     /// When this view's timing window opened (frame 30), for VIVAD_TOUR_SETTLE runs.
     timed_from: f64,
+}
+
+/// Frames of a match between two match times, for a clip of play.
+#[derive(Resource)]
+pub struct Clip {
+    dir: String,
+    from: f32,
+    to: f32,
+    step: f32,
+    next: f32,
+    frame: u32,
+    /// Frames of the 3D view's image rather than the window.
+    view: bool,
 }
 
 #[derive(Resource)]
@@ -77,6 +99,8 @@ enum View {
     Range,
     /// The game's own camera (HUD numbers, kick and shake show as a player sees them).
     Player,
+    /// A close head shot, to judge faces in the game's own light.
+    Face,
 }
 
 #[derive(Resource)]
@@ -106,6 +130,7 @@ impl Armoury {
             View::Back => "back",
             View::Range => "range",
             View::Player => "player",
+            View::Face => "face",
         };
         let up = if p.pitch > 0.1 { "_up" } else if p.pitch < -0.1 { "_down" } else { "" };
         let at = if p.target.is_some() { format!("_{:.0}ms", p.after * 1000.0) } else { String::new() };
@@ -149,6 +174,9 @@ impl Plugin for AutoshotPlugin {
                     ("cp_lane", v(163.1, 1.8, 135.8), v(185.2, 4.0, 115.6)),
                     ("cp_verandah", v(39.5, 1.7, 113.0), v(36.5, 1.5, 135.0)),
                     ("cp_upper", v(-32.0, 6.7, 118.0), v(-26.0, 6.0, 100.0)),
+                    ("cp_ring_face", v(54.9, 1.7, 63.3), v(56.9, 4.0, 87.9)),
+                    ("cp_ring_arcade", v(77.2, 1.7, 74.4), v(47.2, 2.2, 89.7)),
+                    ("cp_ring_park", v(64.3, 2.5, 36.6), v(38.8, 4.0, 104.9)),
                     ("03_bazaar_roofs", v(-30.0, 26.0, 40.0), v(5.0, 2.0, 0.0)),
                     ("04_stepwell", v(-66.0, 22.0, 112.0), v(-112.0, -12.0, 95.0)),
                     ("04b_stepwell_above", v(-96.0, 45.0, 138.0), v(-108.0, -6.0, 95.0)),
@@ -200,6 +228,23 @@ impl Plugin for AutoshotPlugin {
                 index: 0,
                 frames: 0,
             });
+            if shared::map::ncr::enabled() {
+                app.world_mut().resource_mut::<Tour>().shots = vec![
+                    ("01_ncr_overview", v(0.0,900.0,250.0), v(0.0,0.0,0.0)),
+                    ("02_ncr_delhi", v(-135.0,120.0,-100.0), v(-235.0,0.0,-235.0)),
+                    ("03_ncr_cyberhub", v(-100.0,100.0,320.0), v(-260.0,20.0,160.0)),
+                    ("04_ncr_noida", v(470.0,130.0,340.0), v(245.0,0.0,170.0)),
+                    ("05_ncr_freight", v(470.0,100.0,-50.0), v(275.0,0.0,-230.0)),
+                    ("06_ncr_metro", v(-120.0,-5.8,0.0), v(-60.0,-6.0,0.0)),
+                    ("07_ncr_arcade", v(-214.0,2.0,-181.0), v(-235.0,3.0,-169.0)),
+                    ("08_ncr_bridge", v(58.0,24.0,320.0), v(0.0,0.0,270.0)),
+                    ("09_ncr_street", v(-310.0,2.0,260.0), v(-287.0,16.0,160.0)),
+                    ("10_ncr_yard_lane", v(225.0,2.0,-285.0), v(305.0,3.0,-280.0)),
+                    ("11_ncr_housing", v(100.0,2.0,-345.0), v(150.0,12.0,-400.0)),
+                    ("12_ncr_market", v(-230.0,1.8,-143.0), v(-235.0,3.0,-169.0)),
+                    ("13_ncr_forecourt", v(-374.0,1.8,135.0), v(-350.0,2.0,105.0)),
+                ];
+            }
             if let Ok(only) = std::env::var("VIVAD_TOUR_ONLY") {
                 let keys: Vec<String> = only.split(',').map(str::to_owned).collect();
                 app.world_mut().resource_mut::<Tour>().shots.retain(|s| keys.iter().any(|k| s.0.contains(k.as_str())));
@@ -210,6 +255,7 @@ impl Plugin for AutoshotPlugin {
             let p = |item, state, view, pitch| Pose { item, state, view, pitch, target: None, after: 0.17 };
             let range = |item, view, dist, after| Pose { item, state: Use::Strike, view, pitch: 0.0, target: Some(dist), after };
             let mut poses = vec![
+                p("bat", Use::Carry, View::Face, 0.0),
                 p("bat", Use::Carry, View::Front, 0.0),
                 p("bat", Use::Strike, View::Front, 0.0),
                 p("bat", Use::Strike, View::Side, 0.0),
@@ -256,6 +302,15 @@ impl Plugin for AutoshotPlugin {
             app.insert_resource(Armoury { dir, poses, index: 0, t: -3.0, shot: false, pressed: false, spot: None })
                 .add_systems(PreUpdate, armoury_actor.after(crate::input::LocalInput))
                 .add_systems(PostUpdate, armoury_camera.after(crate::camera::CameraSystems).before(TransformSystems::Propagate));
+        }
+        if let Ok(spec) = std::env::var("VIVAD_CLIP") {
+            let parts: Vec<&str> = spec.split(',').collect();
+            let num = |k: usize, d: f32| parts.get(k).and_then(|s| s.trim().parse().ok()).unwrap_or(d);
+            let (from, to, fps) = (num(1, 90.0), num(2, 210.0), num(3, 8.0));
+            std::fs::create_dir_all(parts[0]).ok();
+            let view = std::env::var("VIVAD_CLIP_VIEW").is_ok();
+            app.insert_resource(Clip { dir: parts[0].to_owned(), from, to, step: 1.0 / fps.max(1.0), next: from, frame: 0, view })
+                .add_systems(Update, clip_frames);
         }
         if let Ok(dir) = std::env::var("VIVAD_SHOTS") {
             let times = std::env::var("VIVAD_SHOTS_AT")
@@ -380,6 +435,53 @@ fn match_shots(
     }
 }
 
+/// A frame of the clip, shrunk to 800 px wide so two minutes of them fit on a disk.
+fn save_small(path: String) -> impl FnMut(On<ScreenshotCaptured>) {
+    move |captured| {
+        let img = captured.image.clone();
+        let path = path.clone();
+        // Shrinking and encoding take longer than a frame: off the main thread with them.
+        std::thread::spawn(move || {
+            if let Ok(full) = img.try_into_dynamic() {
+                let (w, h) = (full.width().max(1), full.height());
+                if let Err(e) = full.thumbnail(800, 800 * h / w).save(&path) {
+                    warn!("clip frame {path}: {e}");
+                }
+            }
+        });
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn clip_frames(
+    mut commands: Commands,
+    mut clip: ResMut<Clip>,
+    m: Res<Match>,
+    time: Res<Time<Real>>,
+    view: Res<crate::quality::View3d>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    if m.elapsed > clip.to + 1.0 {
+        info!("clip done: {} frames", clip.frame);
+        exit.write(AppExit::Success);
+        return;
+    }
+    if m.elapsed < clip.from || m.elapsed < clip.next || m.elapsed > clip.to {
+        return;
+    }
+    if clip.frame == 0 && !clip.view {
+        info!("clip: keep the game window in view; a window off screen is not rendered and its frames are black");
+    }
+    let path = format!("{}/frame_{:05}.png", clip.dir, clip.frame);
+    let shot = if clip.view { Screenshot::image(view.image.clone()) } else { Screenshot::primary_window() };
+    commands.spawn(shot).observe(save_small(path));
+    if clip.frame % 8 == 0 {
+        info!("clip frame {} at match {:.1}s ({:?}, {} alive), wall {:.1}s", clip.frame, m.elapsed, m.state, m.alive, time.elapsed_secs());
+    }
+    clip.frame += 1;
+    clip.next += clip.step;
+}
+
 /// Holds the local player still on open ground with the pose's item, pitch and buttons. Runs in
 /// place of the keyboard and mouse (just after them) so the sim and the animation both see it.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -485,6 +587,7 @@ fn armoury_camera(
         View::Back => Some((chest + Vec3::new(0.9, 0.5, 2.3), chest + Vec3::new(0.0, 0.1, -0.6))),
         View::Range => Some((chest + Vec3::new(far * 0.55 + 2.0, 0.8, -far * 0.5), chest + Vec3::new(0.0, -0.2, -far * 0.5))),
         View::Player => None,
+        View::Face => Some((chest + Vec3::new(0.22, 0.34, -0.62), chest + Vec3::new(0.0, 0.3, -0.05))),
     };
     if let Some((eye, look)) = view {
         *ct = Transform::from_translation(eye).looking_at(look, Vec3::Y);

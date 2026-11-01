@@ -1,0 +1,117 @@
+<div id="ncr-masterplan">
+  <style>
+    #ncr-masterplan { display: grid; gap: calc(var(--font-size-base) * .75); }
+    #ncr-masterplan .ncr-map { width: 100%; min-width: 0; }
+    #ncr-masterplan .ncr-map svg { display: block; width: 100%; height: auto; }
+    #ncr-masterplan .ncr-key { display: flex; flex-wrap: wrap; gap: calc(var(--font-size-base) * .8); align-items: center; }
+    #ncr-masterplan .ncr-key span { display: inline-flex; gap: calc(var(--font-size-base) * .3); align-items: center; }
+    #ncr-masterplan .ncr-swatch { width: .7em; height: .7em; display: inline-block; }
+    #ncr-masterplan .ncr-location-label { display: grid; gap: calc(var(--font-size-base) * .25); width: 100%; }
+    #ncr-masterplan .ncr-svg-label { fill: var(--foreground); font-size: 12px; font-weight: 500; }
+    #ncr-masterplan .ncr-map-label { paint-order: stroke; stroke: var(--background); stroke-width: 3px; stroke-linejoin: round; }
+    #ncr-masterplan .ncr-detail { min-height: calc(var(--font-size-base) * 2.5); }
+  </style>
+  <div class="viz-row"><span style="font-weight:500">4 × 4 km · NCR masterplan</span><span class="text-small text-muted">16 destinations · 5 river crossings · design blueprint</span></div>
+  <div class="ncr-map"></div>
+  <div class="ncr-key text-small" aria-label="District legend">
+    <span><i class="ncr-swatch" style="background:var(--viz-series-1)" aria-hidden="true"></i>Delhi</span>
+    <span><i class="ncr-swatch" style="background:var(--viz-series-2)" aria-hidden="true"></i>Gurugram</span>
+    <span><i class="ncr-swatch" style="background:var(--viz-series-3)" aria-hidden="true"></i>Noida</span>
+    <span><i class="ncr-swatch" style="background:var(--viz-series-4)" aria-hidden="true"></i>Ghaziabad</span>
+    <span>Dashed routes: metro · Dashed square: first production slice</span>
+  </div>
+  <div class="viz-controls">
+    <label class="form-label ncr-location-label" for="ncr-location">Explore a destination
+      <select class="form-select" id="ncr-location" aria-controls="ncr-location-detail"></select>
+    </label>
+  </div>
+  <div id="ncr-location-detail" class="ncr-detail text-small" aria-live="polite"></div>
+  <script type="application/json" id="ncr-plan-data">__MAP_DATA__</script>
+  <template id="ncr-geometry"><svg xmlns="http://www.w3.org/2000/svg">__MAP_GEOMETRY__</svg></template>
+  <script>
+  (() => {
+    const root = document.getElementById('ncr-masterplan');
+    const plan = JSON.parse(root.querySelector('#ncr-plan-data').textContent);
+    const map = root.querySelector('.ncr-map');
+    const select = root.querySelector('#ncr-location');
+    const detail = root.querySelector('#ncr-location-detail');
+    const colors = {delhi:'var(--viz-series-1)',gurugram:'var(--viz-series-2)',noida:'var(--viz-series-3)',ghaziabad:'var(--viz-series-4)'};
+    const ns = 'http://www.w3.org/2000/svg';
+    const saved = window.openai?.widgetState?.modelContent;
+    let selected = plan.pois.some(p => p.id === saved?.selectedPoi) ? saved.selectedPoi : 'D1';
+    const make = (tag, attributes = {}, text = '') => {
+      const el = document.createElementNS(ns, tag);
+      Object.entries(attributes).forEach(([k, v]) => el.setAttribute(k, v));
+      if (text) el.textContent = text;
+      return el;
+    };
+    plan.districts.forEach(d => {
+      const group = document.createElement('optgroup'); group.label = d.name;
+      plan.pois.filter(p => p.district === d.id).forEach(p => {
+        const option = document.createElement('option'); option.value = p.id;
+        option.textContent = `${p.id} · ${p.name}`; group.append(option);
+      });
+      select.append(group);
+    });
+    const geometry = root.querySelector('#ncr-geometry').content.querySelector('svg').innerHTML;
+    function draw() {
+      const w = Math.max(280, Math.round(map.getBoundingClientRect().width));
+      const pad = 24, inner = w - pad * 2, s = inner / 4000;
+      const xy = p => [pad + (p[0] + 2000) * s, pad + (p[1] + 2000) * s];
+      const svg = make('svg', {viewBox:`0 0 ${w} ${w}`,role:'img','aria-labelledby':'ncr-map-title ncr-map-desc'});
+      svg.append(make('title',{id:'ncr-map-title'},'Proposed NCR arena: four kilometres square'));
+      svg.append(make('desc',{id:'ncr-map-desc'},'Original fictional four-city layout. Delhi northwest, Gurugram southwest, Ghaziabad northeast and Noida southeast. Five crossings join the Yamuna banks. Choose a destination below for its fight and exits.'));
+      const defs = make('defs'); const clip = make('clipPath',{id:'ncr-map-clip'});
+      clip.append(make('rect',{x:pad,y:pad,width:inner,height:inner})); defs.append(clip); svg.append(defs);
+      const clipped = make('g',{'clip-path':'url(#ncr-map-clip)'});
+      const world = make('g',{transform:`translate(${w/2} ${w/2}) scale(${s})`});
+      world.innerHTML = geometry; clipped.append(world); svg.append(clipped);
+      svg.append(make('rect',{x:pad,y:pad,width:inner,height:inner,fill:'none',stroke:'var(--border)','stroke-width':1}));
+      for (let i = 0; i < 8; i++) {
+        svg.append(make('text',{x:pad+(i+.5)*inner/8,y:16,'text-anchor':'middle',class:'ncr-svg-label'},String.fromCharCode(65+i)));
+        svg.append(make('text',{x:12,y:pad+(i+.5)*inner/8+4,'text-anchor':'middle',class:'ncr-svg-label'},String(i+1)));
+      }
+      const p = plan.pois.find(p => p.id === selected);
+      const [sx, sy] = xy(p.center);
+      svg.append(make('circle',{cx:sx,cy:sy,r:p.radius_m*s,fill:colors[p.district],'fill-opacity':.13,stroke:colors[p.district],'stroke-width':2,'data-selected-poi':p.id}));
+      const districtLabels = [['Delhi',[-1400,-1850]],['Ghaziabad',[1100,-1850]],['Gurugram',[-1170,1870]],['Noida',[1270,1870]]];
+      for (const [name, point] of districtLabels) {
+        const [x,y] = xy(point); svg.append(make('text',{x,y,'text-anchor':'middle',class:'ncr-svg-label ncr-map-label'},name));
+      }
+      for (const poi of plan.pois) {
+        const [x,y] = xy(poi.center);
+        svg.append(make('circle',{cx:x,cy:y,r:9,fill:'var(--background)',stroke:colors[poi.district],'stroke-width':2}));
+        svg.append(make('text',{x,y:y+4,'text-anchor':'middle',class:'ncr-svg-label'},poi.id));
+        if (w >= 620) svg.append(make('text',{x,y:y+25,'text-anchor':'middle',class:'ncr-svg-label ncr-map-label'},poi.name));
+      }
+      for (const crossing of plan.crossings) {
+        let rx=0;
+        const line=plan.river.centerline;
+        for(let i=1;i<line.length;i++) if(line[i-1][1]<=crossing.z_m && crossing.z_m<=line[i][1]) {
+          const t=(crossing.z_m-line[i-1][1])/(line[i][1]-line[i-1][1]); rx=line[i-1][0]+t*(line[i][0]-line[i-1][0]);break;
+        }
+        const [x,y] = xy([rx,crossing.z_m]);
+        svg.append(make('text',{x:x+7,y:y-7,class:'ncr-svg-label ncr-map-label'},crossing.id));
+      }
+      const x1=pad+inner-1000*s, x2=pad+inner, yy=w-8;
+      svg.append(make('path',{d:`M${x1} ${yy} H${x2}`,stroke:'var(--foreground)','stroke-width':2}));
+      svg.append(make('text',{x:x1-6,y:yy+4,'text-anchor':'end',class:'ncr-svg-label'},'1 km'));
+      svg.append(make('text',{x:pad,y:yy+4,class:'ncr-svg-label'},'N ↑'));
+      map.replaceChildren(svg);
+      select.value = selected;
+      const district = plan.districts.find(d=>d.id===p.district);
+      detail.textContent = `${p.id} · ${p.name} / ${district.name}. ${p.fight} ${p.routes}`;
+    }
+    select.addEventListener('change', () => {
+      selected = select.value; draw();
+      if(window.openai?.setWidgetState) window.openai.setWidgetState({modelContent:{selectedPoi:selected,map:'ncr-4km-v1'},privateContent:null}).catch(()=>{});
+    });
+    window.addEventListener('openai:set_globals', event => {
+      const id = event.detail?.globals?.widgetState?.modelContent?.selectedPoi;
+      if(plan.pois.some(p=>p.id===id)) { selected=id;draw(); }
+    });
+    new ResizeObserver(draw).observe(map);
+    draw();
+  })();
+  </script>
+</div>

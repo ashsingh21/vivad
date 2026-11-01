@@ -6,6 +6,10 @@
 //! Replaces Bevy's physical atmosphere, whose lookup tables were compute passes every frame: this is
 //! three draws of a few thousand triangles at any quality, which suits the tile-based phone GPUs
 //! (docs/rendering-guidelines.md §4), and reads as the polished stylised look we want.
+//!
+//! Ultra is the exception: it brings the physical atmosphere back (crate::ultra), which hides the
+//! dome and this fixed sun disc. The atmosphere draws its own sun where the clock puts it, and the
+//! clouds stay, lit like anything else.
 
 use std::f32::consts::{PI, TAU};
 
@@ -20,7 +24,8 @@ pub struct SkyPlugin;
 
 impl Plugin for SkyPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_sky.after(crate::visuals::setup_sky))
+        app.init_resource::<crate::ultra::UltraSky>()
+            .add_systems(Startup, spawn_sky.after(crate::visuals::setup_sky))
             .add_systems(PostUpdate, follow_camera.after(crate::camera::CameraSystems).before(TransformSystems::Propagate));
     }
 }
@@ -37,6 +42,11 @@ const SUN_GLOW: [f32; 3] = [1.0, 0.86, 0.62];
 #[derive(Component)]
 struct SkyRig;
 
+/// The parts of the rig the physical atmosphere replaces (crate::ultra hides them).
+#[derive(Component)]
+#[require(Visibility)]
+pub struct PaintedSky;
+
 fn lin(c: [f32; 3]) -> Vec3 {
     let l = Color::srgb(c[0], c[1], c[2]).to_linear();
     Vec3::new(l.red, l.green, l.blue)
@@ -50,10 +60,11 @@ fn spawn_sky(mut commands: Commands, sun: Query<&Transform, With<Sun>>, mut mesh
         materials.add(StandardMaterial { base_color: Color::WHITE, unlit: true, fog_enabled: false, emissive, ..default() })
     };
     let plain = unlit(&mut materials, LinearRgba::BLACK);
-    commands.spawn((Mesh3d(meshes.add(dome(to_sun))), MeshMaterial3d(plain), sky_flags(), ChildOf(rig)));
+    commands.spawn((PaintedSky, Mesh3d(meshes.add(dome(to_sun))), MeshMaterial3d(plain), sky_flags(), ChildOf(rig)));
     // The sun: a disc bright enough to bloom.
     let disc = Circle::new(26.0).mesh().resolution(32).build();
     commands.spawn((
+        PaintedSky,
         Mesh3d(meshes.add(disc)),
         MeshMaterial3d(unlit(&mut materials, LinearRgba::rgb(14.0, 12.0, 9.0))),
         Transform::from_translation(to_sun * RADIUS * 0.95).looking_to(-to_sun, Vec3::Y),

@@ -1,0 +1,22 @@
+{
+  "note": "Built by tools/textures/cp_surfaces.py and tools/texpack (just textures-pack). Every map here is either procedural or derived from the CC0 scans below; nothing else was used.",
+  "license": "CC0-1.0",
+  "license_url": "https://polyhaven.com/license",
+  "credit": "Poly Haven (polyhaven.com)",
+  "scans": {
+    "painted_plaster_wall": {
+      "source": "https://polyhaven.com/a/painted_plaster_wall",
+      "used_in": ["plaster", "facade", "shop"]
+    },
+    "asphalt_02": {
+      "source": "https://polyhaven.com/a/asphalt_02",
+      "used_in": ["asphalt"]
+    },
+    "concrete_floor": {
+      "source": "https://polyhaven.com/a/concrete_floor",
+      "used_in": ["soil", "pavers", "marble"]
+    }
+  },
+  "local_copies": "assets/models/samples/delhi_street/textures/vendor (sources.json there has URLs and hashes)",
+  "procedural": ["marble veins and slabs", "paver layout", "window, shutter, AC, rail and shop-front layers", "water ripples"]
+}

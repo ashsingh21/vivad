@@ -16,6 +16,10 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
+        if std::env::var("VIVAD_CLEAN_CAPTURE").is_ok() {
+            app.add_plugins((FrameTimeDiagnosticsPlugin::default(), EntityCountDiagnosticsPlugin::default()));
+            return;
+        }
         app.add_plugins((FrameTimeDiagnosticsPlugin::default(), EntityCountDiagnosticsPlugin::default()))
             .init_resource::<Feed>()
             .add_systems(Startup, build_hud)
@@ -72,6 +76,8 @@ struct Feed {
     lines: Vec<(String, f32)>,
     hit_flash: f32,
     headshot: bool,
+    /// The last hit was the one that dropped them: red ticks, held longer.
+    kill: bool,
 }
 
 fn text(s: &str, size: f32, color: Color) -> (Text, TextFont, TextColor) {
@@ -243,6 +249,7 @@ fn hotbar(
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn prompts(
+    layout: Res<shared::map::MapLayout>,
     q: Query<(&Transform, &Kinematic, &Inventory, &Action, Has<Eliminated>), With<LocalPlayer>>,
     chests: Query<(&Transform, &Chest)>,
     pickups: Query<(&Transform, &Pickup)>,
@@ -270,7 +277,7 @@ fn prompts(
     let mut progress: Option<f32> = None;
     if dead {
     } else if kin.mode == MoveMode::Vimana {
-        let over = me.x.abs() < 240.0 && me.z.abs() < 240.0;
+        let over = me.x.abs() < layout.half_extent - 10.0 && me.z.abs() < layout.half_extent - 10.0;
         let jugaad = *ride == crate::visuals::DropRide::Jugaad;
         s = match (over && m.state == MatchState::Flight, jugaad) {
             (true, true) => "[Space] Auto se kood jao!".into(),
@@ -358,7 +365,7 @@ fn reticle(
     let h = windows.iter().next().map(|w| w.height()).unwrap_or(900.0);
     let mut gap = BASE_GAP;
     if let Some(ItemKind::Bow { spread_deg, .. }) = inv.current().map(|s| &db.get(&s.id).kind) {
-        let spread = spread_deg.to_radians() * if intent.held(btn::AIM) { 0.6 } else { 1.0 };
+        let spread = (spread_deg + act.bloom).to_radians() * if intent.held(btn::AIM) { 0.6 } else { 1.0 };
         // Camera vertical field of view 70 degrees (camera.rs).
         gap += spread.tan() / 35f32.to_radians().tan() * h / 2.0;
     }
@@ -374,25 +381,35 @@ fn reticle(
     }
 }
 
-/// Four diagonal ticks round the reticle when the local player's hit lands (gold for a headshot).
+/// Four diagonal ticks round the reticle when the local player's hit lands (gold for a headshot),
+/// and larger red ones, held longer, for the hit that drops someone.
 fn hit_marker(
     mut hits: MessageReader<HitMsg>,
+    mut kills: MessageReader<shared::sim::combat::KillMsg>,
     local: Query<Entity, With<LocalPlayer>>,
     mut f: ResMut<Feed>,
     time: Res<Time>,
-    mut q: Query<(&mut Visibility, &mut BackgroundColor), With<HitTick>>,
+    mut q: Query<(&mut Visibility, &mut BackgroundColor, &mut UiTransform), With<HitTick>>,
 ) {
     let Ok(me) = local.single() else { return };
     for h in hits.read() {
         if h.attacker == me && h.target != me {
             f.hit_flash = 0.18;
             f.headshot = h.headshot;
+            f.kill = false;
+        }
+    }
+    for k in kills.read() {
+        if k.killer == me {
+            f.hit_flash = 0.5;
+            f.kill = true;
         }
     }
     f.hit_flash = (f.hit_flash - time.delta_secs()).max(0.0);
-    for (mut v, mut c) in &mut q {
+    for (mut v, mut c, mut t) in &mut q {
         *v = if f.hit_flash > 0.0 { Visibility::Inherited } else { Visibility::Hidden };
-        c.0 = if f.headshot { Color::srgb(1.0, 0.85, 0.2) } else { Color::WHITE };
+        t.scale = Vec2::splat(if f.kill { 1.7 } else { 1.0 });
+        c.0 = if f.kill { Color::srgb(1.0, 0.3, 0.2) } else if f.headshot { Color::srgb(1.0, 0.85, 0.2) } else { Color::WHITE };
     }
 }
 

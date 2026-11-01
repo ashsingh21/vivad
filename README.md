@@ -57,4 +57,17 @@ made in either can be joined from the other (through iroh's relays; a room only 
 and steps down while it measures under 45 fps; `&quality=low|medium|high` fixes it.
 
 Blender path comes from `.env` (`BLENDER=...`, see `.env.example`).
+On macOS, use `BLENDER=/Applications/Blender.app/Contents/MacOS/Blender`.
+Rebuilding characters and carved figures also requires the
+[MPFB extension](https://extensions.blender.org/add-ons/mpfb/) to be enabled and the
+[MakeHuman system assets](https://static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html)
+pack to be installed through MPFB. The scripts resolve asset paths from MPFB's settings.
 Weapon axis convention and all reference dimensions: `docs/references.md`.
+
+## Modern NCR version
+
+`just ncr` launches the new Kali Yuga arena: Delhi, Gurugram, Noida and Ghaziabad, joined by the Yamuna bridges and metro routes. `just ncr-tour` captures it; `just ncr-walk` checks traversal. The original arena remains `just play`.
+
+See [the map design](docs/ncr/DESIGN.md), [generated tactical atlas](docs/ncr/map-atlas.svg), and [approved concept](docs/ncr/world-concept.png). This is a playable procedural blockout; moving trains, seasonal flooding and final character/environment art are not implemented.
+
+The next map is specified in the [4 × 4 km masterplan](docs/ncr/masterplan/MASTERPLAN.md), with a [new design atlas](docs/ncr/masterplan/ncr-4km-atlas.svg) and canonical spatial data. It targets Mac and high-end Android; the blueprint is not yet integrated into the runtime. `just ncr-plan` regenerates its atlas, and `just ncr-plan-check` validates its layout without launching the game.

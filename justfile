@@ -40,13 +40,34 @@ figures:
 # Characters (needs the MPFB extension + MakeHuman CC0 assets, see docs/references.md)
 characters:
     for v in male female; do {{blender}} -b -P tools/blender/characters/human.py -- $v 2>&1 | grep -E '^\[|Error|Traceback' || true; done
+    just characters-pack
+
+# The heads' 4K colour and normal from build/textures to KTX2, for the Ultra level.
+characters-pack:
+    cargo run --release --manifest-path tools/texpack/Cargo.toml -- pack tools/textures/character_pack.txt
+
+# One character, timed (all of `just characters` for one variant): just character male
+character variant:
+    time {{blender}} -b -P tools/blender/characters/human.py -- {{variant}} 2>&1 | grep -E '^\[|Error|Traceback|real' || true
+    just characters-pack
+
+# Checks the split character files from the files alone: rig against the clips, parts and LODs,
+# budgets, the neck seam, shape against the old models, texture sizes.
+check-characters *variants:
+    python3 tools/check_characters.py {{variants}}
+
+# The split characters beside the old ones, LOD by LOD: just compare-characters male
+compare-characters variant="male" samples="64":
+    {{blender}} -b --factory-startup -P tools/blender/characters/portrait.py -- previews/characters/old {{variant}} {{samples}} 2>&1 | grep -E '^\[|Error|Traceback' || true
+    for k in 0 1 2 3; do {{blender}} -b --factory-startup -P tools/blender/characters/portrait.py -- previews/characters/parts_lod$k {{variant}} {{samples}} parts lod=$k 2>&1 | grep -E '^\[|Error|Traceback' || true; done
+    python3 tools/shots.py sheet previews/characters/old previews/characters/parts_lod0 previews/characters/parts_lod1 previews/characters/parts_lod2 previews/characters/parts_lod3 -o previews/characters/compare_{{variant}}.png --cols 3 --width 1500
 
 # Head shots of the exported characters (front and three-quarter): just faces, or just faces after
 faces tag="latest":
     {{blender}} -b --factory-startup -P tools/blender/characters/portrait.py -- previews/faces/{{tag}} 64 2>&1 | grep -E '^\[|Error|Traceback' || true
     python3 tools/shots.py sheet previews/faces/{{tag}} -o previews/faces_{{tag}}.png --cols 4 --width 1600
 
-# Quick face iteration without garments or bake (~1 min): just face-lab female, just face-lab male "x1.5 hair=short04"
+# Quick face iteration without garments or bake (~1 min): just face-lab female, just face-lab male "x1.5 hair=short04 age=0.8 --sheet"
 face-lab variant opts="":
     {{blender}} -b -P tools/blender/characters/face_lab.py -- previews/faces/lab {{variant}} {{opts}} 2>&1 | grep -E '^\[|Error|Traceback' || true
 
@@ -94,10 +115,20 @@ view name:
 
 
 # Play (release build; first build takes a few minutes). Maps: cp (Connaught Place), chandni
-# (Chandni Chowk), hauzkhas, indiagate: `just play map=chandni`.
+# (Chandni Chowk), hauzkhas, indiagate, ncr: `just play map=chandni`.
 # `just play random` for a fresh seed (printed), `just play 1234` to replay one.
 play seed="7" map="cp":
     VIVAD_MAP={{map}} VIVAD_MAP_SEED={{seed}} cargo run --release -p game --bin game
+
+# Two minutes of a match from the player's seat, as an animation the owner can open in a browser:
+# `just clip` records 95-215 s of an autopilot match on Connaught Place at 8 frames a second
+# (previews/cp_clip/clip.webp); `just clip 60 120 10` picks the times and rate. Keep the game
+# window in view while it records (a hidden window renders nothing), or set VIVAD_CLIP_VIEW=1
+# for frames of the 3D view without the HUD, which work with the window hidden.
+clip from="95" to="215" fps="8" map="cp":
+    rm -rf previews/{{map}}_clip && mkdir -p previews/{{map}}_clip
+    VIVAD_MAP={{map}} VIVAD_ROTATE=0 VIVAD_AUTOPILOT=1 VIVAD_CLIP=previews/{{map}}_clip,{{from}},{{to}},{{fps}} caffeinate -d -i -u cargo run --release -q -p game --bin game
+    python3 tools/clip.py previews/{{map}}_clip {{fps}}
 
 # Headless matches to sanity-check the loop and bots: just sim 5
 sim matches="3" bots="15":
@@ -179,6 +210,41 @@ mesh +models:
 autoplay:
     mkdir -p previews/graybox/match && VIVAD_AUTOPILOT=1 VIVAD_SHOTS=previews/graybox/match cargo run --release -p game --bin game
 
+# The modern NCR arena (docs/ncr/DESIGN.md), 2.2 km across: `just ncr 42` for another seed's
+# tower heights. Online, both peers must pick it (`just host Arjuna map=ncr`).
+ncr seed="7":
+    VIVAD_MAP=ncr VIVAD_MAP_SEED={{seed}} cargo run --release -p game --bin game
+
+# Screenshot the NCR arena's thirteen views into previews/ncr (then `just shots previews/ncr`).
+ncr-tour:
+    mkdir -p previews/ncr && VIVAD_MAP=ncr VIVAD_TOUR=previews/ncr cargo run --release -p game --bin game
+
+# Physics checks of the NCR bridges, metro exits, stairs and interiors; fails on a stuck walker.
+ncr-walk:
+    VIVAD_MAP=ncr cargo run --release -p shared --bin ncr_walk_check
+
+# Headless NCR matches: just ncr-sim 1 15
+ncr-sim matches="1" bots="15":
+    VIVAD_MAP=ncr cargo run --release -p shared --bin sim_check -- {{matches}} {{bots}}
+
+# Export the NCR arena's tactical atlas from the generated geometry.
+ncr-atlas out="docs/ncr/map-atlas.svg":
+    VIVAD_MAP=ncr cargo run --release -p shared --bin ncr_atlas -- {{out}}
+
+# The 4 km masterplan (docs/ncr/masterplan, a design blueprint, not a playable map): regenerate
+# its atlas and validation data, or only check the blueprint's spatial constraints.
+ncr-plan:
+    python3 tools/maps/ncr_masterplan.py
+ncr-plan-check:
+    python3 tools/maps/ncr_masterplan.py --check
+
+# The Delhi street sample (assets/models/samples/delhi_street): walk it in a window, or check
+# its four routes headlessly.
+street-sample:
+    cargo run --release -p game --bin street_sample
+street-sample-walk:
+    cargo run --release -p game --bin street_sample_walk
+
 # The browser build (WebGPU): writes build/web (page, wasm, a link to assets/), serves it on
 # http://localhost:8080. `just web serve=no` only builds.
 web serve="yes":
@@ -189,3 +255,7 @@ web serve="yes":
     ln -sfn ../../assets build/web/assets
     @ls -la build/web/game_bg.wasm
     {{ if serve == "yes" { "cd build/web && python3 -m http.server 8080" } else { "true" } }}
+
+# Encode the Ultra surfaces (tools/textures/ultra_pack.txt) to KTX2.
+textures-pack:
+    cargo run --release --manifest-path tools/texpack/Cargo.toml -- pack tools/textures/ultra_pack.txt

@@ -41,6 +41,9 @@ struct Data {
     south_shift: f32,
     #[serde(default)]
     landmarks: Vec<Landmark>,
+    /// Holy sites as x, z and radius (the four old maps list theirs in `holy_sites`).
+    #[serde(default)]
+    holy: Vec<[f32; 3]>,
     buildings: Vec<Building>,
     roads: Vec<Road>,
     areas: Vec<Area>,
@@ -108,8 +111,71 @@ fn ring(center: Vec3) -> super::cp::Ring {
     }
 }
 
+/// Real places of worship and graves on each map, as world x, z and a radius: the site and about
+/// 20 m round it. They stay standing as plain buildings, but nothing draws a fight to them: no
+/// loot, and no name on screen. Checked on 1 Nov 2026 against OpenStreetMap, Wikimapia, Overture
+/// Places, the Delhi Waqf register and Jain temple directories. Old Delhi has more shrines than
+/// any of those list, so add to this when someone local spots a site.
+pub(super) fn holy_sites(id: super::MapId) -> &'static [(f32, f32, f32)] {
+    match id {
+        super::MapId::Cp => &[
+            (-127.3, -147.8, 25.0), // Moti Masjid, inside B Block
+        ],
+        super::MapId::Chandni => &[
+            (60.7, -28.3, 62.0),    // Gurdwara Sis Ganj Sahib, the whole site
+            (10.1, -40.2, 30.0),    // Shahi Sunehri Masjid
+            (-86.5, 65.5, 25.0),    // Jain Sweitamna Temple (Naughara)
+            (199.4, -78.1, 49.0),   // Central Baptist Church
+            (-71.2, -95.1, 45.0),   // Mahavir Bhawan, the Barahdari Jain prayer hall
+            (113.5, 232.2, 40.0),   // Digambar Jain Bada and Chota Mandir, Kucha Seth
+            (70.0, 91.0, 38.0),     // Masjid Peepal Wali, Kinari Bazar
+            (151.0, 98.0, 30.0),    // Masjid Sharf-ud-Daula, Dariba Kalan (from its street number)
+            (180.4, 207.8, 25.0),   // Masjid Suraj Wali, Dariba Kalan
+            (-107.6, -131.8, 25.0), // Unnamed Hindu temples
+            (-126.2, -134.8, 25.0),
+            (-136.9, -134.9, 25.0),
+            (-209.3, -71.9, 25.0),
+            // One source each, kept to be safe.
+            (134.2, 199.1, 25.0),   // Jain Mandir
+            (-140.8, -7.9, 25.0),   // Jain Mandir
+            (-50.0, 32.0, 28.0),    // Hanuman Mandir and Shri Chintamani Mandir
+            (-96.1, -93.9, 25.0),   // Shree Ganesh Mandir
+            (93.9, -95.2, 25.0),    // Sri Digambar Jain Mandir
+            (10.4, -251.9, 25.0),   // Prachin Shiv Mandir, just past the north edge
+            (-212.5, -125.4, 25.0), // Shri Adishakti Mandir
+            (228.7, 64.9, 25.0),    // Shiv Mandir, Katra Mashroo
+        ],
+        super::MapId::HauzKhas => &[
+            (22.9, 3.5, 33.0),    // Hauz Khas Medresse Mosque
+            (-67.4, 90.0, 55.0),  // The madrasa's west wing
+            (-1.6, 51.3, 65.0),   // The madrasa's north wing
+            (-25.0, 109.0, 25.0), // Feroz Shah Tughlaq's tomb
+            (-3.3, 127.8, 25.0),  // A tomb nobody has named
+            (29.0, 99.0, 34.0),   // The garden pavilions, thought to mark graves
+            (81.1, -13.7, 25.0),  // New City Delhi, a church in a retail block
+            (65.7, 30.7, 25.0),   // An unnamed Hindu temple
+        ],
+        _ => &[],
+    }
+}
+
+/// Mapped names of those sites, kept off the screen. Other names near them are ordinary streets
+/// and markets, so this goes by name and not by distance.
+pub(super) const HOLY_NAMES: [&str; 5] =
+    ["Jain Sweitamna Temple", "Hauz Khas Madrasa West Wing", "Hauz Khas Madrasa North Wing", "Unidentified Tomb", "New City Delhi"];
+
 pub fn generate(id: super::MapId, seed: u64) -> MapLayout {
-    let data: Data = serde_json::from_str(data(id)).expect("assets/data/maps/delhi_*.json");
+    generate_from(data(id), Some(id), seed)
+}
+
+/// A district of the NCR map from its converted OpenStreetMap data (tools/osm/ncr.py). It has no
+/// map of its own, so it takes its holy sites from the data.
+pub fn district(json: &str, seed: u64) -> MapLayout {
+    generate_from(json, None, seed)
+}
+
+fn generate_from(json: &str, id: Option<super::MapId>, seed: u64) -> MapLayout {
+    let data: Data = serde_json::from_str(json).expect("assets/data/maps/*.json");
     let mut map = MapLayout { name: data.title.clone().unwrap_or_else(|| "Dilli".into()), half_extent: HALF, ..default() };
     map.terrain = terrain::generate(&TerrainSpec {
         size: 2.0 * HALF + 60.0,
@@ -126,12 +192,15 @@ pub fn generate(id: super::MapId, seed: u64) -> MapLayout {
     });
     paint_ground(&mut map, &data);
     let cp = Vec3::new(0.0, 0.0, -data.south_shift);
+    if id == Some(super::MapId::Cp) {
+        paint_inner_circle(&mut map, cp.xz());
+    }
     // Only Connaught Place has the ring; elsewhere a ring of no size keeps nothing out.
-    let ring = if id == super::MapId::Cp { ring(cp) } else { super::cp::Ring { ri: 0.0, ro: 0.0, ..self::ring(Vec3::new(1.0e5, 0.0, 1.0e5)) } };
+    let ring = if id == Some(super::MapId::Cp) { ring(cp) } else { super::cp::Ring { ri: 0.0, ro: 0.0, ..self::ring(Vec3::new(1.0e5, 0.0, 1.0e5)) } };
     let mut rng = SmallRng::seed_from_u64(seed);
     let mut b = Builder::new(&mut map);
     boundary(&mut b);
-    if id == super::MapId::Cp {
+    if id == Some(super::MapId::Cp) {
         super::cp::build(&mut b, &mut rng, &ring);
     }
     for l in &data.landmarks {
@@ -152,10 +221,23 @@ pub fn generate(id: super::MapId, seed: u64) -> MapLayout {
     super::kit::roofs(&mut b, &mut rng);
     street_loot(&mut b, &mut rng, &data, &ring, &houses);
     map.terrain.settle_under(&map.blocks);
-    map.pois = data.pois.iter().map(|p| Poi { name: p.name.clone(), center: Vec3::new(p.x, 0.0, p.z), radius: p.r }).collect();
-    if id == super::MapId::Cp {
+    map.pois = data
+        .pois
+        .iter()
+        .filter(|p| !HOLY_NAMES.contains(&p.name.as_str()))
+        .map(|p| Poi { name: p.name.clone(), center: Vec3::new(p.x, 0.0, p.z), radius: p.r })
+        .collect();
+    if id == Some(super::MapId::Cp) {
         map.pois.push(Poi { name: "Connaught Place".into(), center: cp, radius: 175.0 });
     }
+    // Last, so the rest of the map is laid out exactly as it would be without them.
+    let sites: Vec<(f32, f32, f32)> = match id {
+        Some(id) => holy_sites(id).to_vec(),
+        None => data.holy.iter().map(|s| (s[0], s[1], s[2])).collect(),
+    };
+    let clear = |p: Vec3| sites.iter().all(|&(x, z, r)| p.xz().distance(Vec2::new(x, z)) >= r);
+    map.chests.retain(|c| clear(c.pos));
+    map.floor_loot.retain(|p| clear(*p));
     map
 }
 
@@ -280,19 +362,35 @@ fn paint_ground(map: &mut MapLayout, data: &Data) {
     }
 }
 
+/// The road round the ring: OpenStreetMap's Inner Circle comes through as a single point here, so
+/// it is painted from its real radius instead, leaving a footpath in front of the colonnade.
+fn paint_inner_circle(map: &mut MapLayout, center: Vec2) {
+    let t = &mut map.terrain;
+    let n = t.n;
+    for i in 0..n {
+        for j in 0..n {
+            let r = Vec2::new(t.coord(i), t.coord(j)).distance(center);
+            if (119.0..129.0).contains(&r) {
+                t.ground[i * n + j] = ground::ROAD;
+                t.road_d[i * n + j] = 0.0;
+            }
+        }
+    }
+}
+
 /// Every mapped building but those where the inner circle's blocks stand, as its real outline.
 /// White for the colonial blocks and offices, the rest in Delhi's plasters and red sandstone.
 /// In the old city and the village some of the houses (square ones of up to three storeys) are
 /// built to go inside instead: rooms, stairs to each floor and the roof, a door onto the street
 /// (crate::map::india::house). Their outlines are returned, to keep trees and finds out of them.
-fn footprints(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp::Ring, id: super::MapId) -> Vec<Vec<Vec2>> {
+fn footprints(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp::Ring, id: Option<super::MapId>) -> Vec<Vec<Vec2>> {
     let palette = [Mat::Plaster, Mat::Plaster, Mat::PlasterOchre, Mat::Sandstone, Mat::RedSandstone, Mat::Brick];
     // The old city's and the village's houses: limewashed in white, ochre and blue, or bare brick.
     let houses = [Mat::Plaster, Mat::PlasterOchre, Mat::PlasterBlue, Mat::Brick, Mat::PlasterOchre];
     // About 110 chests a map, however many buildings it has.
     let in_play = data.buildings.iter().filter(|b| b.pts.iter().map(v2).sum::<Vec2>().abs().max_element() < (HALF - 8.0) * b.pts.len() as f32).count();
     // Where houses are entered, their own chests (about 1.4 a house) make up the rest.
-    let lived_in = matches!(id, super::MapId::Chandni | super::MapId::HauzKhas);
+    let lived_in = matches!(id, Some(super::MapId::Chandni | super::MapId::HauzKhas));
     let chest_odds = ((if lived_in { 60.0 } else { 110.0 }) / in_play.max(1) as f64).min(0.5);
     let mut entered = vec![];
     for bld in &data.buildings {
@@ -334,7 +432,11 @@ fn footprints(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp
             let out = (mid - c).normalize_or(Vec2::X);
             let at = mid + out * 1.4;
             let yaw = (-out.y).atan2(out.x) + PI / 2.0;
-            b.chest(Frame::new(Vec3::ZERO, 0.0), Vec3::new(at.x, 0.0, at.y), yaw, ChestKind::Peti);
+            // A long building's middle can be well inside while the wall drawn is past the edge
+            // of play (Connaught Place's blocks on the south): no chest outside the boundary.
+            if at.abs().max_element() < HALF - 8.0 {
+                b.chest(Frame::new(Vec3::ZERO, 0.0), Vec3::new(at.x, 0.0, at.y), yaw, ChestKind::Peti);
+            }
         }
     }
     entered
@@ -462,7 +564,7 @@ fn street_loot(b: &mut Builder, rng: &mut SmallRng, _data: &Data, ring: &super::
     }
     let mut placed = 0;
     let mut tries = 0;
-    while placed < 90 && tries < 5000 {
+    while placed < 60 && tries < 5000 {
         tries += 1;
         let p = Vec2::new(rng.random_range(-HALF + 6.0..HALF - 6.0), rng.random_range(-HALF + 6.0..HALF - 6.0));
         if open(b.map, ring, houses, p, 1.0) {

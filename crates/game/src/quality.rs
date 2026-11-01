@@ -1,8 +1,8 @@
 //! Quality levels: how much of the frame goes to resolution, shadows, ambient occlusion,
-//! anti-aliasing and grass. Picked from the GPU at start (a discrete GPU gets High, an integrated
-//! one such as a MacBook's gets Medium, anything else Low; in the browser, which won't say, by the
-//! frame rate measured on High), forced with VIVAD_QUALITY=low|medium|high (in the browser
-//! ?quality=), and cycled in play with F4.
+//! anti-aliasing and grass. Picked from the GPU at start (a discrete GPU or Apple Silicon gets
+//! Ultra, another integrated one Medium, anything else Low; in the browser, which won't say, by the
+//! frame rate measured on High), forced with VIVAD_QUALITY=low|medium|high|ultra (in the browser
+//! ?quality=, without ultra), and cycled in play with F4. Ultra is the desktop level.
 //!
 //! The 3D view renders into an image no taller than the level allows and is stretched over the
 //! window, so a Retina screen doesn't shade four pixels for every one a 1080p screen does; the HUD
@@ -13,8 +13,8 @@ use bevy::anti_alias::fxaa::Fxaa;
 use bevy::anti_alias::smaa::Smaa;
 use bevy::anti_alias::taa::TemporalAntiAliasing;
 use bevy::camera::{ImageRenderTarget, RenderTarget};
-use bevy::light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap};
-use bevy::pbr::ScreenSpaceAmbientOcclusion;
+use bevy::light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, ShadowFilteringMethod};
+use bevy::pbr::{ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
 use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
 use bevy::render::renderer::RenderAdapterInfo;
@@ -29,20 +29,55 @@ pub enum Quality {
     Low,
     Medium,
     High,
+    /// The desktop level.
+    Ultra,
 }
 
 impl Quality {
+    /// The physical sky's level (crate::ultra).
+    pub fn is_ultra(self) -> bool {
+        self == Quality::Ultra
+    }
+
     /// Most rows of pixels the 3D view is rendered at (None: the window's own).
     fn max_rows(self) -> Option<u32> {
         match self {
             Quality::Low => Some(720),
             Quality::Medium => Some(1080),
             Quality::High => None,
+            // Temporal AA and sharpening recover most of the rest; shading a Retina window's every
+            // pixel costs an M4 about a third of its frame rate for little that shows.
+            Quality::Ultra => Some(1080),
         }
     }
 
-    fn ssao(self) -> bool {
-        self == Quality::High
+    /// The ambient occlusion setting (None: off).
+    fn ssao(self) -> Option<ScreenSpaceAmbientOcclusion> {
+        match self {
+            Quality::Low | Quality::Medium => None,
+            Quality::High => Some(ScreenSpaceAmbientOcclusion { radius: 0.6, ..default() }),
+            // Medium: Ultra's samples cost an M4 about 3 ms a frame for little that shows at this radius.
+            Quality::Ultra => Some(ScreenSpaceAmbientOcclusion { radius: 0.9, quality_level: ScreenSpaceAmbientOcclusionQualityLevel::Medium, ..default() }),
+        }
+    }
+
+    fn cas(self) -> f32 {
+        if self == Quality::Ultra { 0.3 } else { 0.45 }
+    }
+
+    /// How the sun's shadow edges are filtered; Temporal hides the banding of soft edges under TAA.
+    fn shadow_filter(self) -> ShadowFilteringMethod {
+        if self == Quality::Ultra { ShadowFilteringMethod::Temporal } else { ShadowFilteringMethod::default() }
+    }
+
+    /// Where the first shadow cascade ends: nearer keeps more of its resolution round the player.
+    fn first_cascade(self) -> f32 {
+        if self == Quality::Ultra { 14.0 } else { 18.0 }
+    }
+
+    /// The camera's far plane: Ultra shows the city out to the skyline's last blocks.
+    fn far_plane(self) -> f32 {
+        if self == Quality::Ultra { 3000.0 } else { 1000.0 }
     }
 
     /// TAA needs the depth and motion prepass; Low does without it and uses FXAA.
@@ -56,6 +91,8 @@ impl Quality {
             Quality::Low => (2, 70.0, 1024),
             Quality::Medium => (2, 120.0, 2048),
             Quality::High => (3, 200.0, 2048),
+            // Measured on an M4: 4 cascades at 4096 cost over 7 ms a frame against these.
+            Quality::Ultra => (3, 250.0, 2048),
         }
     }
 
@@ -65,6 +102,7 @@ impl Quality {
             Quality::Low => 0.55,
             Quality::Medium => 0.75,
             Quality::High => 1.0,
+            Quality::Ultra => 1.0,
         }
     }
 
@@ -79,14 +117,23 @@ impl Quality {
             Quality::Low => 0.12,
             Quality::Medium => 0.3,
             Quality::High => 0.5,
+            Quality::Ultra => 0.5,
         }
+    }
+
+    /// Whether characters show their densest LOD up close.
+    pub fn character_lod0(self) -> bool {
+        self == Quality::Ultra
     }
 
     fn next(self) -> Self {
         match self {
             Quality::Low => Quality::Medium,
             Quality::Medium => Quality::High,
-            Quality::High => Quality::Low,
+            // The browser tops out at High.
+            Quality::High if cfg!(target_arch = "wasm32") => Quality::Low,
+            Quality::High => Quality::Ultra,
+            Quality::Ultra => Quality::Low,
         }
     }
 
@@ -95,6 +142,7 @@ impl Quality {
             "low" => Some(Quality::Low),
             "medium" | "med" => Some(Quality::Medium),
             "high" => Some(Quality::High),
+            "ultra" if !cfg!(target_arch = "wasm32") => Some(Quality::Ultra),
             _ => None,
         }
     }
@@ -112,9 +160,10 @@ pub struct LodScale(pub f32);
 #[derive(Resource)]
 pub struct ViewScale(pub f32);
 
+/// The image the main camera draws the 3D view into; the window shows it under the HUD.
 #[derive(Resource)]
-struct View3d {
-    image: Handle<Image>,
+pub struct View3d {
+    pub image: Handle<Image>,
     size: UVec2,
 }
 
@@ -157,13 +206,15 @@ fn choose(mut commands: Commands, info: Option<Res<RenderAdapterInfo>>, mut q: R
         Quality::High
     } else {
         let Some(info) = info else { return };
-        match format!("{:?}", info.device_type).as_str() {
-            "DiscreteGpu" => Quality::High,
-            "IntegratedGpu" => Quality::Medium,
+        // Apple Silicon reports itself as integrated, but with the render height capped it
+        // carries the top level.
+        match (format!("{:?}", info.device_type).as_str(), format!("{:?}", info.backend).as_str()) {
+            ("DiscreteGpu", _) | ("IntegratedGpu", "Metal") => Quality::Ultra,
+            ("IntegratedGpu", _) => Quality::Medium,
             _ => Quality::Low,
         }
     };
-    info!("quality {level:?} (VIVAD_QUALITY=low|medium|high to choose, F4 to cycle)");
+    info!("quality {level:?} (VIVAD_QUALITY=low|medium|high|ultra to choose, F4 to cycle)");
     *q = level;
     commands.remove_resource::<Undecided>();
 }
@@ -205,7 +256,7 @@ fn settle(mut commands: Commands, time: Res<Time<Real>>, mut s: ResMut<Settle>, 
     let fps = s.frames as f32 / measured;
     if fps < MIN_FPS && *q != Quality::Low {
         *q = match *q {
-            Quality::High => Quality::Medium,
+            Quality::Ultra | Quality::High => Quality::Medium,
             _ => Quality::Low,
         };
         info!("{fps:.0} fps: quality down to {:?}", *q);
@@ -262,7 +313,7 @@ fn fit_view(
 ) {
     let Ok(w) = window.single() else { return };
     let full = w.physical_size().max(UVec2::ONE);
-    let rows = q.max_rows().map_or(full.y, |m| m.min(full.y));
+    let rows = std::env::var("VIVAD_ROWS").ok().and_then(|s| s.parse().ok()).or(q.max_rows()).map_or(full.y, |m: u32| m.min(full.y));
     let size = UVec2::new(((full.x as u64 * rows as u64) / full.y as u64).max(1) as u32, rows);
     scale.0 = w.width() / size.x as f32;
     if size == view.size {
@@ -280,22 +331,35 @@ fn fit_view(
 }
 
 /// Puts the level's settings on the camera, the sun and the grass. VIVAD_AA, VIVAD_NO_SSAO,
-/// VIVAD_CASCADES and VIVAD_SHADOW_FAR still override them, for comparisons.
+/// VIVAD_CASCADES, VIVAD_SHADOW_FAR, VIVAD_SHADOW_MAP, VIVAD_GRASS, VIVAD_LOD (and VIVAD_ROWS, in
+/// `fit_view`) still override them, for comparisons.
 fn apply(
     mut commands: Commands,
     q: Res<Quality>,
-    cam: Query<Entity, With<MainCamera>>,
+    mut cam: Query<(Entity, &mut Projection), With<MainCamera>>,
     sun: Query<Entity, With<Sun>>,
     mut grass: ResMut<crate::grass::Grass>,
     mut lods: Query<(Entity, &crate::characters::LodRange, &mut bevy::camera::visibility::VisibilityRange, Has<LodShadow>)>,
 ) {
     let env = |k: &str| std::env::var(k).ok();
-    for e in &cam {
+    for (e, mut projection) in &mut cam {
+        if let Projection::Perspective(p) = projection.as_mut() {
+            p.far = q.far_plane();
+        }
         let mut c = commands.entity(e);
         c.remove::<(ScreenSpaceAmbientOcclusion, TemporalAntiAliasing, ContrastAdaptiveSharpening, Smaa, Fxaa)>();
-        if q.ssao() && env("VIVAD_NO_SSAO").is_none() {
-            // Contact shadows in corners, under eaves and between blocks.
-            c.insert(ScreenSpaceAmbientOcclusion { radius: 0.6, ..default() });
+        c.insert(q.shadow_filter());
+        // Contact shadows in corners, under eaves and between blocks.
+        if let Some(mut ssao) = q.ssao().filter(|_| env("VIVAD_NO_SSAO").is_none()) {
+            // VIVAD_SSAO=low|medium|high|ultra picks the sample count, for comparisons.
+            match env("VIVAD_SSAO").as_deref() {
+                Some("low") => ssao.quality_level = ScreenSpaceAmbientOcclusionQualityLevel::Low,
+                Some("medium") => ssao.quality_level = ScreenSpaceAmbientOcclusionQualityLevel::Medium,
+                Some("high") => ssao.quality_level = ScreenSpaceAmbientOcclusionQualityLevel::High,
+                Some("ultra") => ssao.quality_level = ScreenSpaceAmbientOcclusionQualityLevel::Ultra,
+                _ => {}
+            }
+            c.insert(ssao);
         }
         match env("VIVAD_AA").as_deref() {
             Some("none") => {}
@@ -308,7 +372,7 @@ fn apply(
             _ if q.taa() => {
                 // Without TAA, carved detail and normal-map highlights finer than a pixel crawl and
                 // sparkle as the camera moves; sharpening wins back the crispness its resolve softens.
-                c.insert((TemporalAntiAliasing::default(), ContrastAdaptiveSharpening { enabled: true, sharpening_strength: 0.45, ..default() }));
+                c.insert((TemporalAntiAliasing::default(), ContrastAdaptiveSharpening { enabled: true, sharpening_strength: q.cas(), ..default() }));
             }
             _ => {
                 // Sharpening matters most here: the low level's view is the most stretched.
@@ -320,11 +384,12 @@ fn apply(
     let cascades = env("VIVAD_CASCADES").and_then(|s| s.parse().ok()).unwrap_or(cascades);
     let far = env("VIVAD_SHADOW_FAR").and_then(|s| s.parse().ok()).unwrap_or(far);
     for e in &sun {
-        commands.entity(e).insert(CascadeShadowConfigBuilder { num_cascades: cascades, maximum_distance: far, first_cascade_far_bound: 18.0, ..default() }.build());
+        commands.entity(e).insert(CascadeShadowConfigBuilder { num_cascades: cascades, maximum_distance: far, first_cascade_far_bound: q.first_cascade(), ..default() }.build());
     }
+    let map = env("VIVAD_SHADOW_MAP").and_then(|s| s.parse().ok()).unwrap_or(map);
     commands.insert_resource(DirectionalLightShadowMap { size: map });
-    grass.set_density(q.grass());
-    let k = q.lod_scale();
+    grass.set_density(env("VIVAD_GRASS").and_then(|s| s.parse().ok()).unwrap_or(q.grass()));
+    let k = env("VIVAD_LOD").and_then(|s| s.parse().ok()).unwrap_or(q.lod_scale());
     commands.insert_resource(LodScale(k));
     for (e, base, mut range, shadow) in &mut lods {
         *range = base.scaled(k);
@@ -336,6 +401,7 @@ fn apply(
             }
         }
     }
+    crate::ultra::apply(&mut commands, q.is_ultra());
 }
 
 /// VIVAD_TRIS=1: every 5 s, log the triangles drawn in view and the models they come from.

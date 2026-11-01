@@ -1,0 +1,27 @@
+# What `just textures-pack` encodes: <kind> <input> <output>, relative to this file.
+# Inputs come from tools/textures/cp_surfaces.py; kinds are explained in tools/texpack/src/main.rs.
+
+color  ../../build/ultra_src/plaster_basecolor.png ../../assets/textures/ultra/plaster_basecolor.ktx2
+normal ../../build/ultra_src/plaster_normal.png ../../assets/textures/ultra/plaster_normal.ktx2
+data   ../../build/ultra_src/plaster_orm.png ../../assets/textures/ultra/plaster_orm.ktx2
+color  ../../build/ultra_src/marble_basecolor.png ../../assets/textures/ultra/marble_basecolor.ktx2
+normal ../../build/ultra_src/marble_normal.png ../../assets/textures/ultra/marble_normal.ktx2
+data   ../../build/ultra_src/marble_orm.png ../../assets/textures/ultra/marble_orm.ktx2
+color  ../../build/ultra_src/asphalt_basecolor.png ../../assets/textures/ultra/asphalt_basecolor.ktx2
+normal ../../build/ultra_src/asphalt_normal.png ../../assets/textures/ultra/asphalt_normal.ktx2
+data   ../../build/ultra_src/asphalt_orm.png ../../assets/textures/ultra/asphalt_orm.ktx2
+color  ../../build/ultra_src/pavers_basecolor.png ../../assets/textures/ultra/pavers_basecolor.ktx2
+normal ../../build/ultra_src/pavers_normal.png ../../assets/textures/ultra/pavers_normal.ktx2
+data   ../../build/ultra_src/pavers_orm.png ../../assets/textures/ultra/pavers_orm.ktx2
+color  ../../build/ultra_src/soil_basecolor.png ../../assets/textures/ultra/soil_basecolor.ktx2
+normal ../../build/ultra_src/soil_normal.png ../../assets/textures/ultra/soil_normal.ktx2
+data   ../../build/ultra_src/soil_orm.png ../../assets/textures/ultra/soil_orm.ktx2
+color  ../../build/ultra_src/facade_basecolor.png ../../assets/textures/ultra/facade_basecolor.ktx2
+normal ../../build/ultra_src/facade_normal.png ../../assets/textures/ultra/facade_normal.ktx2
+data   ../../build/ultra_src/facade_orm.png ../../assets/textures/ultra/facade_orm.ktx2
+height ../../build/ultra_src/facade_depth.png ../../assets/textures/ultra/facade_depth.ktx2
+color  ../../build/ultra_src/shop_basecolor.png ../../assets/textures/ultra/shop_basecolor.ktx2
+normal ../../build/ultra_src/shop_normal.png ../../assets/textures/ultra/shop_normal.ktx2
+data   ../../build/ultra_src/shop_orm.png ../../assets/textures/ultra/shop_orm.ktx2
+height ../../build/ultra_src/shop_depth.png ../../assets/textures/ultra/shop_depth.ktx2
+normal ../../build/ultra_src/water_normal.png ../../assets/textures/ultra/water_normal.ktx2

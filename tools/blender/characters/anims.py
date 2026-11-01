@@ -587,7 +587,8 @@ def main():
     preview = sys.argv[sys.argv.index("--preview") + 1] if "--preview" in sys.argv else None
     arm = bpy.data.objects["Human.rig"]
     rig = Rig(arm)
-    rig.anchor = face_anchor(rig, bpy.data.objects[f"{variant}_LOD0"])
+    # The nose: on the head mesh, or on the whole body in a build from before the parts.
+    rig.anchor = face_anchor(rig, bpy.data.objects.get(f"{variant}_head_LOD0") or bpy.data.objects[f"{variant}_LOD0"])
     for o in list(bpy.data.objects):
         # Keep the LOD0 body for previews; everything else goes.
         if o is not arm and not (preview and o.type == "MESH" and o.name.endswith("LOD0")):

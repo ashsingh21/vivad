@@ -27,7 +27,7 @@ fn colour(k: usize) -> (f32, f32, f32) {
 
 fn spawn_skyline(mut commands: Commands, layout: Res<MapLayout>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>) {
     // The India map has its own mountains at the edge.
-    if layout.river.is_some() || layout.footprints.is_empty() {
+    if layout.style != shared::map::MapStyle::City || layout.footprints.is_empty() {
         return;
     }
     let t = &layout.terrain;

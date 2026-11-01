@@ -2,14 +2,18 @@
 //! into meshes. Layouts are generated deterministically from a seed so every peer agrees.
 
 pub mod build;
+pub mod compose;
 pub mod cp;
 pub mod delhi;
 pub mod footprint;
 pub mod india;
 pub mod kit;
+pub mod navigation;
+pub mod ncr;
+mod ncr_art;
 pub mod terrain;
 
-/// The maps: Panga's four from Delhi.
+/// The maps: Panga's four from Delhi, and Vivad's NCR arena.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum MapId {
     /// Connaught Place and the head of Janpath.
@@ -21,10 +25,13 @@ pub enum MapId {
     HauzKhas,
     /// India Gate, its lawns and canals, Kartavya Path.
     IndiaGate,
+    /// Vivad's modern NCR arena (crate::map::ncr): Delhi, Gurugram, Noida and Ghaziabad across
+    /// the Yamuna, 2.2 km across.
+    Ncr,
 }
 
 impl MapId {
-    pub const ALL: [MapId; 4] = [MapId::Cp, MapId::Chandni, MapId::HauzKhas, MapId::IndiaGate];
+    pub const ALL: [MapId; 5] = [MapId::Cp, MapId::Chandni, MapId::HauzKhas, MapId::IndiaGate, MapId::Ncr];
     /// Panga's maps, the ones a room is drawn on.
     pub const DELHI: [MapId; 4] = [MapId::Cp, MapId::Chandni, MapId::HauzKhas, MapId::IndiaGate];
 
@@ -34,6 +41,7 @@ impl MapId {
             MapId::Chandni => "chandni",
             MapId::HauzKhas => "hauzkhas",
             MapId::IndiaGate => "indiagate",
+            MapId::Ncr => "ncr",
         }
     }
 
@@ -44,6 +52,7 @@ impl MapId {
             MapId::Chandni => "Chandni Chowk",
             MapId::HauzKhas => "Hauz Khas",
             MapId::IndiaGate => "India Gate",
+            MapId::Ncr => "NCR / Kali Yuga",
         }
     }
 
@@ -54,11 +63,12 @@ impl MapId {
             "india-gate" | "india_gate" => Some(MapId::IndiaGate),
             "chandni-chowk" | "chandnichowk" => Some(MapId::Chandni),
             "connaught" | "connaught-place" => Some(MapId::Cp),
+            "kali" | "kaliyuga" | "kali-yuga" => Some(MapId::Ncr),
             _ => None,
         })
     }
 
-    /// VIVAD_MAP=cp|chandni|hauzkhas|indiagate, else Connaught Place.
+    /// VIVAD_MAP=cp|chandni|hauzkhas|indiagate|ncr, else Connaught Place.
     pub fn from_env() -> MapId {
         std::env::var("VIVAD_MAP").ok().and_then(|s| MapId::parse(&s)).unwrap_or_default()
     }
@@ -75,6 +85,7 @@ impl MapId {
 /// Build a map. Every peer in a match builds the same one from the same id and seed.
 pub fn generate(map: MapId, seed: u64) -> MapLayout {
     match map {
+        MapId::Ncr => ncr::generate(seed),
         _ => delhi::generate(map, seed),
     }
 }
@@ -101,6 +112,18 @@ pub enum Mat {
     Gold,
     Marble,
     Thatch,
+    Concrete,
+    Asphalt,
+    Glass,
+    Steel,
+    TransitBlue,
+    TransitYellow,
+    ContainerRed,
+    Pavers,
+    Rubber,
+    PaintWhite,
+    ShopSign,
+    MetroSign,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Reflect)]
@@ -202,7 +225,96 @@ pub struct MapLayout {
     pub footprints: Vec<Footprint>,
     /// The street kit's pieces on a city map (crate::map::kit); drawn by the client, merged.
     pub kit: Vec<kit::KitPiece>,
-    /// A river across the map, as its channel's x range.
-    pub river: Option<(f32, f32)>,
+    /// The river across the map, if it has one.
+    pub river: River,
+    /// Which family of map this is: what the client paints it with and how bots find their way.
+    pub style: MapStyle,
     pub terrain: terrain::Terrain,
+}
+
+/// How a map is dressed and walked.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MapStyle {
+    /// Painted ground classes, footprints, street kit, skyline, kites: the Delhi maps.
+    #[default]
+    City,
+    /// The NCR arena (crate::map::ncr): its own ground paint and street router.
+    Ncr,
+}
+
+/// A river running north to south across a map.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum River {
+    #[default]
+    None,
+    /// A channel winding round x = `x0`: its centre is at `x0 + amp * sin(z / wavelength)`.
+    Sine { x0: f32, amp: f32, wavelength: f32, half_width: f32 },
+}
+
+impl River {
+    /// Metres from the channel's bank, 0 in the channel. Far away on a map with no river.
+    pub fn distance(&self, p: Vec2) -> f32 {
+        match *self {
+            River::None => 1.0e4,
+            River::Sine { x0, amp, wavelength, half_width } => ((p.x - x0 - amp * (p.y / wavelength).sin()).abs() - half_width).max(0.0),
+        }
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    /// Blocks, footprints, chests, floor loot, props, kit pieces, POIs and a checksum of their
+    /// positions, so a refactor that should change nothing can prove it.
+    fn fingerprint(map: MapId) -> (usize, usize, usize, usize, usize, usize, usize, u64) {
+        let m = generate(map, 7);
+        let mut sum = 0u64;
+        let mut add = |p: Vec3| {
+            for c in p.to_array() {
+                sum = sum.wrapping_mul(31).wrapping_add(c.to_bits() as u64);
+            }
+        };
+        m.blocks.iter().for_each(|b| add(b.pos));
+        m.chests.iter().for_each(|c| add(c.pos));
+        m.floor_loot.iter().for_each(|p| add(*p));
+        m.props.iter().for_each(|p| add(p.pos));
+        m.kit.iter().for_each(|k| add(k.pos));
+        (m.blocks.len(), m.footprints.len(), m.chests.len(), m.floor_loot.len(), m.props.len(), m.kit.len(), m.pois.len(), sum)
+    }
+
+    /// Every map's seed-7 contents, recorded before the style and river refactor. A change here
+    /// means a map changed: update the numbers only if that was the intent.
+    #[test]
+    fn maps_are_unchanged() {
+        assert_eq!(fingerprint(MapId::Cp), (6811, 60, 147, 102, 379, 728, 11, 10784036215856373148));
+        assert_eq!(fingerprint(MapId::Chandni), (14376, 879, 98, 124, 69, 2371, 11, 10426603982683760837));
+        assert_eq!(fingerprint(MapId::HauzKhas), (6431, 134, 81, 81, 350, 479, 2, 3684859097812863807));
+        assert_eq!(fingerprint(MapId::IndiaGate), (630, 6, 70, 60, 585, 774, 5, 1864056156504546495));
+        assert_eq!(fingerprint(MapId::Ncr), (18591, 0, 191, 72, 156, 0, 15, 5774487229815900076));
+    }
+
+    #[test]
+    fn holy_sites_have_no_loot_and_no_names() {
+        for map in [MapId::Cp, MapId::Chandni, MapId::HauzKhas, MapId::IndiaGate] {
+            for seed in [1, 7, 23, 99] {
+                let m = generate(map, seed);
+                let spots = m.chests.iter().map(|c| c.pos).chain(m.floor_loot.iter().copied());
+                for p in spots {
+                    let near = delhi::holy_sites(map).iter().any(|&(x, z, r)| p.xz().distance(Vec2::new(x, z)) < r);
+                    assert!(!near, "loot at {p} on {map:?}, seed {seed}");
+                }
+                assert!(m.pois.iter().all(|p| !delhi::HOLY_NAMES.contains(&p.name.as_str())));
+            }
+        }
+    }
+
+    #[test]
+    fn river_distance_matches_the_ncr_arena() {
+        let river = generate(MapId::Ncr, 7).river;
+        for p in [Vec2::ZERO, Vec2::new(300.0, 120.0), Vec2::new(-40.0, 900.0), Vec2::new(30.0, -500.0)] {
+            assert!((river.distance(p) - ncr::river_distance(p)).abs() < 1e-3);
+        }
+        assert_eq!(River::None.distance(Vec2::ZERO), 1.0e4);
+    }
 }

@@ -1,0 +1,12 @@
+{
+  "triangles": 151104,
+  "vertices": 302208,
+  "material_batches": 31,
+  "colliders": 637,
+  "building_bays": 46,
+  "street_length_m": 170,
+  "units": "metres",
+  "geometry": "true arches, profiled columns, open shop rooms, layered balconies, metro excavation and authored cars",
+  "provenance": "Original generated geometry, signs and procedural textures; Poly Haven CC0 surface maps where available; existing repo vegetation is instanced by the sample viewer.",
+  "external_surface_manifest": "textures/vendor/sources.json"
+}

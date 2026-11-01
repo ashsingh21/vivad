@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::combat::{KillMsg, Projectile, feed_line};
 use super::flow::Match;
-use super::loot::{Chest, Claims, Pickup, PickupId, open_chest, revoke, spawn_pickup};
+use super::loot::{Chest, Claims, Gone, Pickup, PickupId, open_chest, revoke, spawn_pickup};
 use super::{
     Action, DamageCause, DamageMsg, Door, Eliminated, FeedMsg, Health, Inventory, Kinematic, MatchConfig, MoveMode, PlayerIntent, SimSet,
     Warrior,
@@ -349,6 +349,7 @@ fn apply_loot(
     pickups: Query<(Entity, &Pickup)>,
     mut ours: Query<(&NetId, &mut Inventory), Without<Remote>>,
     mut claims: ResMut<Claims>,
+    mut gone: ResMut<Gone>,
 ) {
     let mut rest = vec![];
     let mut msgs = std::mem::take(&mut inbox.0).into_iter();
@@ -362,7 +363,7 @@ fn apply_loot(
             NetMsg::ChestOpened { index } => {
                 // Both peers opening it at once is harmless: the contents are the same.
                 if let Some((ct, mut c)) = chests.iter_mut().find(|(_, c)| c.index == index && !c.opened) {
-                    open_chest(&mut commands, &spatial, &db, m.seed, ct, &mut c);
+                    open_chest(&mut commands, &spatial, &db, m.seed, ct, &mut c, &mut gone);
                 }
             }
             NetMsg::Took { pickup, by, at } => {
@@ -377,9 +378,16 @@ fn apply_loot(
                         }
                         claims.0.remove(k);
                     }
+                } else {
+                    // Taken before we saw it spawn: remember, so the spawn is skipped.
+                    gone.0.insert(pickup);
                 }
             }
-            NetMsg::Dropped { id, at, stack } => spawn_pickup(&mut commands, id, at, stack),
+            NetMsg::Dropped { id, at, stack } => {
+                if !gone.0.remove(&id) {
+                    spawn_pickup(&mut commands, id, at, stack);
+                }
+            }
             other => rest.push((from, other)),
         }
     }

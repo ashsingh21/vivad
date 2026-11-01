@@ -203,6 +203,17 @@ fn main() {
         .collect();
     check(loot.iter().all(|l| l.1 == loot[0].1), format!("every peer has the same chests open ({})", loot[0].1.len()));
     check(loot.iter().all(|l| l.0 == loot[0].0), format!("every peer has the same pickups lying about ({})", loot[0].0.len()));
+    if !loot.iter().all(|l| l.0 == loot[0].0) {
+        // Which ones differ: the kind is in the top byte (1 floor, 2 chest, 3 fallen, 4 swapped).
+        let all: std::collections::BTreeSet<u64> = loot.iter().flat_map(|l| l.0.iter().copied()).collect();
+        for id in all {
+            let have: Vec<usize> = loot.iter().enumerate().filter(|(_, l)| l.0.contains(&id)).map(|(i, _)| i).collect();
+            if have.len() != loot.len() {
+                let kind = match id >> 56 { 1 => "floor", 2 => "chest", 3 => "fallen", 4 => "swapped", _ => "?" };
+                println!("  pickup {kind} {:#x} only on peers {have:?}", id & ((1 << 56) - 1));
+            }
+        }
+    }
     check(!loot[0].1.is_empty(), "chests were opened".into());
 
     // Two players grab the same item on the same tick: exactly one keeps it.

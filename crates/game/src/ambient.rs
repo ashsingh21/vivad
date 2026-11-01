@@ -138,7 +138,7 @@ const KITE_COLOURS: [(f32, f32, f32); 6] = [(0.95, 0.20, 0.25), (0.98, 0.75, 0.1
 
 fn spawn_sky(mut commands: Commands, layout: Res<MapLayout>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
     // Delhi's sky only.
-    if layout.river.is_some() || layout.footprints.is_empty() {
+    if layout.style != shared::map::MapStyle::City || layout.footprints.is_empty() {
         return;
     }
     let half = layout.half_extent;

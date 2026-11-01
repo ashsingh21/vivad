@@ -204,6 +204,8 @@ pub struct Action {
     pub using: Option<(usize, f32)>,
     /// Seconds since the last swing or shot (for client animation).
     pub since_attack: f32,
+    /// Extra spread from sustained fire, degrees.
+    pub bloom: f32,
 }
 
 // ------------------------------------------------------------------ world entities
@@ -324,6 +326,17 @@ pub struct MatchConfig {
     pub rotate: bool,
 }
 
+#[derive(Resource, Default, Debug)]
+pub struct SimulationPause {
+    pub timer: f32,
+}
+
+impl SimulationPause {
+    pub fn active(&self) -> bool {
+        self.timer > 0.0
+    }
+}
+
 /// While set, the match stands still (online, until every peer has loaded it).
 #[derive(Resource, Default, Debug)]
 pub struct Hold(pub bool);
@@ -395,6 +408,8 @@ impl Plugin for SimPlugin {
         let db = ItemDb::load_from_str(&self.items_ron).expect("items.ron");
         let config = app.world().get_resource::<MatchConfig>().copied().unwrap_or_default();
         let layout = crate::map::generate(config.map, config.map_seed);
+        // The NCR arena's street router (empty elsewhere; the other maps use nav::NavGrid).
+        app.insert_resource(crate::map::navigation::StreetNav::new(&layout));
         app.insert_resource(db)
             .insert_resource(config)
             .insert_resource(layout)
@@ -423,6 +438,8 @@ impl Plugin for SimPlugin {
                     .chain(),
             )
             .init_resource::<Hold>()
+            .init_resource::<SimulationPause>()
+            .add_systems(FixedUpdate, flow::tick_simulation_pause)
             .configure_sets(
                 FixedUpdate,
                 (
@@ -435,7 +452,7 @@ impl Plugin for SimPlugin {
                     SimSet::Zone,
                     SimSet::Cleanup,
                 )
-                    .distributive_run_if(|hold: Res<Hold>| !hold.0),
+                    .distributive_run_if(|(hold, pause): (Res<Hold>, Res<SimulationPause>)| !hold.0 && !pause.active()),
             )
             .add_systems(Startup, spawn_map)
             .add_systems(FixedFirst, record_prev_positions)

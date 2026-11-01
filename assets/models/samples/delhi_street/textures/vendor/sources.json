@@ -1,0 +1,70 @@
+{
+  "license": "CC0-1.0",
+  "license_url": "https://polyhaven.com/license",
+  "api_credit": "Powered by Poly Haven",
+  "assets": {
+    "asphalt": {
+      "asset_id": "asphalt_02",
+      "source": "https://polyhaven.com/a/asphalt_02",
+      "maps": {
+        "diff": {
+          "file": "asphalt_02_diff_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_02/asphalt_02_diff_1k.jpg",
+          "sha256": "1aa5ce99f58a625c71d48cfc3e68b65ca85ccb00f39e045c0a928608a0ea25ed"
+        },
+        "nor_gl": {
+          "file": "asphalt_02_nor_gl_1k.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/asphalt_02/asphalt_02_nor_gl_1k.png",
+          "sha256": "b2069741070f0107c81d001eabfffd6d6644f249cd4ffdf52852e4b5e746a959"
+        },
+        "arm": {
+          "file": "asphalt_02_arm_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_02/asphalt_02_arm_1k.jpg",
+          "sha256": "56bd8e591a3db579846fcb5185f60b0651e0bd4ea85c3529c339e6746243c9cf"
+        }
+      }
+    },
+    "plaster": {
+      "asset_id": "painted_plaster_wall",
+      "source": "https://polyhaven.com/a/painted_plaster_wall",
+      "maps": {
+        "diff": {
+          "file": "painted_plaster_wall_diff_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/painted_plaster_wall/painted_plaster_wall_diff_1k.jpg",
+          "sha256": "440310f05af089f2c93353167573403cbc3f805948203237b5d26431eeb9e19c"
+        },
+        "nor_gl": {
+          "file": "painted_plaster_wall_nor_gl_1k.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/painted_plaster_wall/painted_plaster_wall_nor_gl_1k.png",
+          "sha256": "dfc363188b3290091601337dc1041e491b3fee5becab82f21ea219b783f12e67"
+        },
+        "arm": {
+          "file": "painted_plaster_wall_arm_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/painted_plaster_wall/painted_plaster_wall_arm_1k.jpg",
+          "sha256": "2f13ed444e3e8f13087bca0890969d30795ed074bcfb11737d1ad6f5f0b53992"
+        }
+      }
+    },
+    "concrete": {
+      "asset_id": "concrete_floor",
+      "source": "https://polyhaven.com/a/concrete_floor",
+      "maps": {
+        "diff": {
+          "file": "concrete_floor_diff_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_floor/concrete_floor_diff_1k.jpg",
+          "sha256": "5e06d0fb226f671470f59bf7798954b6965c9ed56dd45084dfd012e15737e444"
+        },
+        "nor_gl": {
+          "file": "concrete_floor_nor_gl_1k.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/concrete_floor/concrete_floor_nor_gl_1k.png",
+          "sha256": "3b641f7258345b5f5562df5ec61ad8a9d74de86cbc7e60604a2877378cb64569"
+        },
+        "arm": {
+          "file": "concrete_floor_arm_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_floor/concrete_floor_arm_1k.jpg",
+          "sha256": "626b3f6bf3e7ac4793b569af87fc7e15cd375a59ff121654a0a4b67d9907878f"
+        }
+      }
+    }
+  }
+}

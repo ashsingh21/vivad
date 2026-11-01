@@ -87,10 +87,20 @@ fn main() {
             ..default()
         });
     app.add_plugins((net::TransportPlugin, game::lobby::LobbyPlugin));
-    // GPU time per render pass, for the perf overlay (F3) and VIVAD_PERF_ALL=1's log. The browser
+    // GPU time per render pass, for the perf overlay (F3) and VIVAD_PERF_ALL=1's log. Only when
+    // asked for (VIVAD_GPU_TIMERS=1): on Metal the timers run out of counter sample buffers after
+    // a minute or two, and wgpu reports that as a lost device, which quits the game. The browser
     // has no GPU timers.
     #[cfg(not(target_arch = "wasm32"))]
-    app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    if std::env::var("VIVAD_GPU_TIMERS").is_ok() {
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    }
+    // Ultra's optional metering (crate::ultra), not part of PostProcessPlugin. It needs compute, so
+    // native only, and it is off unless VIVAD_AUTOEXP=1 asks for it: see crate::ultra's notes.
+    #[cfg(not(target_arch = "wasm32"))]
+    if std::env::var("VIVAD_AUTOEXP").is_ok() {
+        app.add_plugins(bevy::post_process::auto_exposure::AutoExposurePlugin);
+    }
     app.run();
 }
 

@@ -8,7 +8,25 @@ pixels only when the numbers point somewhere.
    (whole matches with bots). Add a `walk_check` case for every new climbable or enterable thing.
    Walks also report fall damage: every walk must end unhurt except those marked `hurts` (the
    jump into the stepwell). Drops of up to 6.5 m are free; `sim` lists "fell to their death"
-   in the feed if bots start walking off edges again.
+   in the feed if bots start walking off edges again. `sim` ends each match with a verdict per
+   Aandhi death (stuck, no path, above the street, too far...) and a `nav paths` line (searches a
+   second, their mean and worst milliseconds); `VIVAD_MAP=cp VIVAD_ROTATE=0 SIM_SEED=7 just sim 5`
+   plays the same five Connaught Place matches every time, and `TRACK=<name>` (or `TRACK='*'` for
+   everyone outside the ring) prints a warrior's position, goal, path and intent twice a second.
+   `VIVAD_MAP=cp cargo run --release -p shared --bin nav_check` checks the grid itself: walkable
+   share, stairs joined, chests and Aandhi circles reachable, path cost; `SKETCH=level,x0,z0,x1,z1`
+   draws a patch of it.
+   A game window that is not on screen (covered by another window, on another Space, or on a
+   sleeping or locked display) is not rendered, and every shot of it is black (the "black frames
+   after death" of 1 Nov were this, not the game): keep the window in view while a capture runs.
+   The recipes also run under `caffeinate -d -i -u`. `VIVAD_CLIP_VIEW=1` takes clip frames from
+   the 3D view's own image instead, which works with the window hidden but shows no HUD.
+   `just clip` is the one moving picture: two minutes of an autopilot match from the player's
+   seat as `previews/cp_clip/clip.webp` (`VIVAD_CLIP=<dir>,<from>,<to>,<fps>` writes the frames,
+   `tools/clip.py` joins them), for judging how the guns feel: the reticle opens as a Vajra-9 or
+   tamancha sprays (spread bloom, closing again at 2.5 degrees a second once the trigger is let
+   go), each gun has its own kick, and the hit ticks go red and large for the hit that drops
+   someone.
 2. **Models: text only.** `just mesh assets/models/props/x.gltf` prints triangles per LOD, size
    and height range, open edges, loose pieces and materials: enough to catch a broken export,
    a missing LOD, a model floating or sunk, or a mesh that lost its closure.
@@ -53,7 +71,18 @@ shimmering as the camera drifts, so look at where it is before calling it z-figh
 **Bot skill.** Bots are `chill` by default (loose aim, about a second and a half to react, an
 archer picks fights within 35 m, they attack only half the time once engaged, sidestep lazily,
 walk instead of sprinting unless the zone presses, and stand about 3-9 s wherever they arrive);
-`VIVAD_BOT_SKILL=normal` brings back the sharp ones, `VIVAD_BOTS=n` sets how many.
+`VIVAD_BOT_SKILL=normal` brings back the sharp ones, `VIVAD_BOTS=n` sets how many. Every bot
+loots first: for 75 s after landing (30 s for the sharp ones) it fights only whoever hits it,
+leaps for a landing no one else is making for, and leaves the chests others stand by; and below
+40 health it breaks off and runs for the far side of a block, unless the ring is at its back or
+too small to run in. That is what makes a sixteen-warrior match on Connaught Place last seven
+to eight minutes instead of four. Looting itself: a find at a bot's feet (14 m) is taken on the
+way, otherwise the nearest chest comes before any find across the street; goli only while under
+120; no upstairs urns until the grace is over; a jog between chests; one short rest per chest
+(1.5-3.5 s), none at a find, and a stand-about only at a wander spot. `sim` reports it: an
+"armed" line (warriors holding a gun by 60 s and 90 s, the stragglers by name), "chests opened
+N/T", "pickups taken". Connaught Place at map seed 7 has 147 chests (103 ring Peti facing their
+shop fronts, 26 upstairs Kalash, 18 at building feet) and 102 floor-find spots.
 
 **Map seeds.** `VIVAD_MAP_SEED` (or `just play <seed>`, `just play random`) picks the map; every
 check here takes it too, and seed 7 is the default. The seed changes the hills, groves, villages,

@@ -17,15 +17,47 @@ use shared::sim::{
     PosHistory, Warrior,
 };
 
+/// Whether the sun runs through the day (`update_sun`, the camera's smog): always under Ultra's
+/// physical sky (crate::ultra). Off otherwise unless VIVAD_DAYNIGHT=1: the sky dome (crate::sky)
+/// is built for the fixed morning sun and would not follow.
+pub fn daynight(sky: Option<Res<crate::ultra::UltraSky>>) -> bool {
+    sky.is_some_and(|s| s.atmosphere()) || std::env::var("VIVAD_DAYNIGHT").is_ok()
+}
+
+#[derive(Resource)]
+pub struct TimeOfDay {
+    pub hour: f32,
+    /// VIVAD_HOUR stops the clock, for captures.
+    pub pinned: bool,
+}
+
+impl Default for TimeOfDay {
+    fn default() -> Self {
+        let pin = std::env::var("VIVAD_HOUR").ok().and_then(|s| parse_hour(&s));
+        Self { hour: pin.unwrap_or(8.0), pinned: pin.is_some() } // Start at 8am
+    }
+}
+
+/// `18.5` or `18:30`.
+pub(crate) fn parse_hour(s: &str) -> Option<f32> {
+    let hour = match s.trim().split_once(':') {
+        Some((h, m)) => h.parse::<f32>().ok()? + m.parse::<f32>().ok()? / 60.0,
+        None => s.trim().parse().ok()?,
+    };
+    hour.is_finite().then(|| hour.rem_euclid(24.0))
+}
+
 pub struct VisualsPlugin;
 
 impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DropRide>()
+            .init_resource::<TimeOfDay>()
             .add_systems(Startup, (setup_assets, setup_sky).chain())
             .add_systems(
                 Update,
                 (
+                    update_sun.run_if(daynight),
                     dress_blocks,
                     dress_terrain,
                     resolve_gltf_materials,
@@ -51,9 +83,12 @@ impl Plugin for VisualsPlugin {
 }
 
 /// Baked models in assets/models/weapons, one per item (the arrow-quiver pickup shows the tarkash).
-pub const WEAPON_MODELS: [&str; 14] = [
+pub const WEAPON_MODELS: [&str; 16] = [
     "bat", "katta", "tamancha", "dunali", "gulel", "chakra", "brahmastra", "arrow", "tarkash", "agneyastra", "vayavyastra", "sanjeevani",
     "soma", "amrita",
+    // The NCR arsenal borrows the Bharat bows' models (`model_for`): the Vajra-9 the Gandiva's,
+    // the Trishul Carbine the Sharanga's.
+    "gandiva", "sharanga",
 ];
 
 /// The chakra model's radius (tools/blender/weapons/desi.py CHAKRA_R): its origin is the rim.
@@ -92,6 +127,17 @@ pub struct Palette {
 fn mat_color(m: Mat) -> (Color, f32, f32) {
     // (base colour, perceptual roughness, metallic)
     match m {
+        Mat::Pavers => (Color::srgb(0.59,0.58,0.55),0.85,0.0),
+        Mat::Rubber => (Color::srgb(0.035,0.04,0.045),0.94,0.0),
+        Mat::PaintWhite => (Color::srgb(0.78,0.81,0.79),0.32,0.25),
+        Mat::ShopSign | Mat::MetroSign => (Color::srgb(0.07,0.2,0.25),0.7,0.0),
+        Mat::ContainerRed => (Color::srgb(0.55,0.16,0.10),0.65,0.35),
+        Mat::Concrete => (Color::srgb(0.64,0.66,0.64),0.92,0.0),
+        Mat::Asphalt => (Color::srgb(0.12,0.15,0.17),0.95,0.0),
+        Mat::Glass => (Color::srgb(0.12,0.32,0.40),0.22,0.65),
+        Mat::Steel => (Color::srgb(0.35,0.41,0.44),0.4,0.7),
+        Mat::TransitBlue => (Color::srgb(0.08,0.55,0.8),0.5,0.0),
+        Mat::TransitYellow => (Color::srgb(0.95,0.7,0.15),0.5,0.0),
         Mat::Grass => (Color::srgb(0.42, 0.50, 0.25), 0.95, 0.0),
         Mat::Dirt => (Color::srgb(0.62, 0.48, 0.33), 0.95, 0.0),
         Mat::Sandstone => (Color::srgb(0.84, 0.66, 0.45), 0.85, 0.0),
@@ -114,6 +160,92 @@ fn mat_color(m: Mat) -> (Color, f32, f32) {
 
 const VARIANTS: u8 = 4;
 
+fn update_sun(
+    time: Res<Time>,
+    mut tod: ResMut<TimeOfDay>,
+    mut sun_q: Query<(&mut Transform, &mut DirectionalLight), With<Sun>>,
+    mut ambient: ResMut<GlobalAmbientLight>,
+    sky: Option<Res<crate::ultra::UltraSky>>,
+    mut exposure: Query<&mut bevy::camera::Exposure, With<crate::camera::MainCamera>>,
+) {
+    if !tod.pinned {
+        tod.hour = (tod.hour + time.delta_secs() * 0.01).rem_euclid(24.0); // 1 hour = 100s real time
+    }
+
+    // The physical sky has its own day: the air colours and dims the light, not this.
+    if sky.is_some_and(|s| s.atmosphere()) {
+        let now = crate::ultra::sky_at(tod.hour);
+        if let Ok((mut tf, mut light)) = sun_q.single_mut() {
+            tf.look_to(-now.to_light, if now.to_light.y.abs() > 0.999 { Vec3::Z } else { Vec3::Y });
+            light.illuminance = now.illuminance;
+            light.color = now.color;
+        }
+        ambient.brightness = now.ambient;
+        if crate::camera::ev_override().is_none() {
+            for mut e in &mut exposure {
+                e.ev100 = now.ev100;
+            }
+        }
+        return;
+    }
+
+    let angle = (tod.hour - 6.0) * (std::f32::consts::PI / 12.0);
+    let dir = Vec3::new(angle.cos(), angle.sin(), 0.0).normalize();
+
+    if let Ok((mut tf, mut light)) = sun_q.single_mut() {
+        // Directional lights point along the incoming rays, toward the ground.
+        let up = if dir.y.abs() > 0.999 { Vec3::Z } else { Vec3::Y };
+        tf.look_to(-dir, up);
+
+        // Lighting transition: Gold (morning) -> White (noon) -> Red (evening) -> Dark (night)
+        let intensity = (angle.sin()).max(0.0);
+        light.illuminance = intensity * 30_000.0;
+
+        if angle < 0.0 || angle > std::f32::consts::PI {
+            light.color = Color::srgb(0.1, 0.1, 0.3); // Night
+        } else if angle < std::f32::consts::PI / 4.0 {
+            light.color = Color::srgb(1.0, 0.6, 0.3); // Sunrise
+        } else if angle < 3.0 * std::f32::consts::PI / 4.0 {
+            light.color = Color::srgb(1.0, 0.95, 0.8); // Midday
+        } else {
+            light.color = Color::srgb(0.8, 0.4, 0.2); // Sunset
+        }
+    }
+
+    ambient.brightness = (angle.sin()).max(0.1) * 500.0;
+}
+
+fn mat_textures(m: Mat) -> Option<(String, String, String)> {
+    // Surface assets belong to a material family, regardless of the active map.
+    let urban = matches!(m, Mat::Pavers | Mat::Asphalt | Mat::Concrete | Mat::Steel | Mat::Glass);
+    let folder = if urban { "ncr" } else { "india" };
+    let name = match m {
+        Mat::Pavers => Some("pavers"),
+        Mat::Asphalt => Some("asphalt"),
+        Mat::Concrete => Some("concrete"),
+        Mat::Steel => Some("steel"),
+        Mat::Glass => Some("glass"),
+        Mat::Sandstone => Some("sandstone"),
+        Mat::Plaster => Some("plaster"),
+        Mat::Brick => Some("brick"),
+        Mat::Granite => Some("granite"),
+        Mat::Wood => Some("wood"),
+        Mat::Thatch => Some("thatch"),
+        _ => None,
+    };
+
+    let name = name?;
+    let base = format!("textures/{folder}/{name}_basecolor.png");
+    let norm = format!("textures/{folder}/{name}_normal.png");
+    // Both packs store roughness in G and metallic in B.
+    let mr = if urban {
+        format!("textures/{folder}/{name}_mr.png")
+    } else {
+        format!("textures/{folder}/{name}_orm.png")
+    };
+    Some((base, norm, mr))
+}
+
 fn setup_assets(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -125,16 +257,23 @@ fn setup_assets(
     let all = [
         Mat::Grass, Mat::Dirt, Mat::Sandstone, Mat::RedSandstone, Mat::Granite, Mat::Plaster, Mat::PlasterOchre,
         Mat::PlasterBlue, Mat::Brick, Mat::Wood, Mat::Cloth, Mat::Foliage, Mat::Bark, Mat::Water, Mat::Gold,
-        Mat::Marble, Mat::Thatch,
+        Mat::Marble, Mat::Thatch, Mat::Concrete, Mat::Asphalt, Mat::Glass, Mat::Steel, Mat::TransitBlue, Mat::TransitYellow, Mat::ContainerRed, Mat::Pavers, Mat::Rubber, Mat::PaintWhite, Mat::ShopSign, Mat::MetroSign,
     ];
+
     for m in all {
         let (c, rough, metal) = mat_color(m);
         for v in 0..VARIANTS {
-            // Small tint variation so repeated blocks don't read as one flat colour.
             let k = 1.0 + (v as f32 - 1.5) * 0.035;
             let lin = c.to_linear();
             let base = Color::linear_rgba(lin.red * k, lin.green * k, lin.blue * k, lin.alpha);
             let mut sm = StandardMaterial { base_color: base, perceptual_roughness: rough, metallic: metal, ..default() };
+
+            if let Some((b_tex, n_tex, mr_tex)) = mat_textures(m) {
+                sm.base_color_texture = Some(assets.load(b_tex));
+                sm.normal_map_texture = Some(assets.load_builder().with_settings(|s: &mut bevy::image::ImageLoaderSettings| s.is_srgb = false).load(n_tex));
+                sm.metallic_roughness_texture = Some(assets.load_builder().with_settings(|s: &mut bevy::image::ImageLoaderSettings| s.is_srgb = false).load(mr_tex));
+            }
+
             if m == Mat::Water {
                 sm.alpha_mode = AlphaMode::Blend;
                 sm.reflectance = 0.6;
@@ -148,6 +287,7 @@ fn setup_assets(
             mats.insert((m, v), materials.add(sm));
         }
     }
+
     let mut rarity_glow = HashMap::new();
     for r in Rarity::ALL {
         let l = r.color().to_linear();
@@ -230,12 +370,7 @@ fn setup_assets(
         beam_mesh: meshes.add(beam_mesh),
         wood: materials.add(StandardMaterial { base_color: Color::srgb(0.40, 0.24, 0.12), perceptual_roughness: 0.7, ..default() }),
         gold: materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.78, 0.34), metallic: 1.0, perceptual_roughness: 0.3, ..default() }),
-        glint: materials.add(StandardMaterial {
-            base_color: Color::srgb(1.0, 0.95, 0.8),
-            emissive: LinearRgba::rgb(6.0, 5.0, 3.2),
-            unlit: true,
-            ..default()
-        }),
+        string: materials.add(StandardMaterial { base_color: Color::srgb(0.86, 0.82, 0.70), perceptual_roughness: 0.8, ..default() }),
         fire: materials.add(StandardMaterial {
             base_color: Color::srgba(1.0, 0.45, 0.1, 0.7),
             emissive: LinearRgba::rgb(12.0, 3.5, 0.6),
@@ -246,6 +381,12 @@ fn setup_assets(
             base_color: Color::srgba(0.75, 0.9, 1.0, 0.25),
             emissive: LinearRgba::rgb(1.0, 1.6, 2.0),
             alpha_mode: AlphaMode::Blend,
+            ..default()
+        }),
+        glint: materials.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.95, 0.8),
+            emissive: LinearRgba::rgb(6.0, 5.0, 3.2),
+            unlit: true,
             ..default()
         }),
         zone: materials.add(StandardMaterial {
@@ -263,32 +404,42 @@ fn setup_assets(
                 let path = format!("models/weapons/{id}.glb");
                 (id, ModelHandles {
                     mesh: assets.load(format!("{path}#Mesh0/Primitive0")),
-                    // Neutral placeholder until the glTF material loads; then it's replaced in place.
-                    mat: materials.add(StandardMaterial { base_color: Color::srgb(0.5, 0.45, 0.4), perceptual_roughness: 0.5, ..default() }),
+                    mat: materials.add(StandardMaterial {
+                        base_color: Color::srgb(0.5, 0.45, 0.4),
+                        perceptual_roughness: 0.5,
+                        ..default()
+                    }),
                     gltf_mat: assets.load(format!("{path}#Material0")),
                 })
             })
             .collect(),
-        string: materials.add(StandardMaterial { base_color: Color::srgb(0.86, 0.82, 0.70), perceptual_roughness: 0.8, ..default() }),
     });
 }
 
 #[derive(Component)]
 pub struct Sun;
 
-pub(crate) fn setup_sky(mut commands: Commands, palette: Res<Palette>, mut meshes: ResMut<Assets<Mesh>>) {
+pub(crate) fn setup_sky(layout: Res<shared::map::MapLayout>, mut commands: Commands, palette: Res<Palette>, mut meshes: ResMut<Assets<Mesh>>) {
+    // The NCR arena: a higher, whiter sun over the towers, the hemisphere light (crate::camera)
+    // filling in for most of the ambient.
+    let ncr = layout.style == shared::map::MapStyle::Ncr;
     // Low morning sun from the east-south-east: the ghats and the Ajanta cliff both face east.
     commands.spawn((
         Sun,
         // About 34 degrees up and only a little warm: high enough that the walls keep their own
         // colours, low enough for long shadows down the lanes.
-        DirectionalLight { illuminance: 27_000.0, shadow_maps_enabled: std::env::var("VIVAD_NO_SHADOWS").is_err(), color: Color::srgb(1.0, 0.91, 0.78), ..default() },
-        Transform::from_xyz(1.0, 0.75, 0.45).looking_at(Vec3::ZERO, Vec3::Y),
+        DirectionalLight {
+            illuminance: if ncr { 38_000.0 } else { 27_000.0 },
+            shadow_maps_enabled: std::env::var("VIVAD_NO_SHADOWS").is_err(),
+            color: if ncr { Color::srgb(1.0, 0.96, 0.89) } else { Color::srgb(1.0, 0.91, 0.78) },
+            ..default()
+        },
+        Transform::from_xyz(1.0, if ncr { 0.85 } else { 0.75 }, 0.45).looking_at(Vec3::ZERO, Vec3::Y),
         // Cascades and reach are the quality level's (crate::quality): the shadow pass is the
         // frame's largest GPU cost.
         CascadeShadowConfigBuilder::default().build(),
     ));
-    commands.insert_resource(GlobalAmbientLight { color: Color::srgb(0.82, 0.87, 1.0), brightness: 1800.0, ..default() });
+    commands.insert_resource(GlobalAmbientLight { color: Color::srgb(0.82, 0.87, 1.0), brightness: if ncr { 900.0 } else { 1800.0 }, ..default() });
     // The Pralaya wall.
     commands.spawn((
         ZoneWall,
@@ -408,6 +559,7 @@ fn contact_shade(layout: &shared::map::MapLayout) -> Vec<f32> {
 }
 
 fn dress_terrain(
+    assets: Res<AssetServer>,
     mut commands: Commands,
     q: Query<Entity, Added<shared::sim::MapTerrain>>,
     layout: Res<shared::map::MapLayout>,
@@ -421,7 +573,16 @@ fn dress_terrain(
     for e in &q {
         let t = &layout.terrain;
         let n = t.n;
-        let material = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.95, ..default() });
+        let ncr = layout.style == shared::map::MapStyle::Ncr;
+        // The NCR arena's ground is textured (assets/textures/ncr); the rest is vertex-painted only.
+        let material = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            perceptual_roughness: 0.95,
+            base_color_texture: ncr.then(|| assets.load("textures/ncr/ground_basecolor.png")),
+            normal_map_texture: ncr
+                .then(|| assets.load_builder().with_settings(|s: &mut bevy::image::ImageLoaderSettings| s.is_srgb = false).load("textures/ncr/ground_normal.png")),
+            ..default()
+        });
         commands.entity(e).insert(Visibility::default());
         let contact = contact_shade(&layout);
         // Grid indices a tile samples from `a` to `b` (inclusive) every `step`, always ending on `b`.
@@ -442,6 +603,7 @@ fn dress_terrain(
                         let nn = t.normal(x, z);
                         let (c, _) = match t.ground.get(i * n + j) {
                             Some(&class) => crate::grass::paint_city(x, z, class),
+                            None if ncr => crate::grass::paint_ncr(x, z, h, nn),
                             None => crate::grass::paint(x, z, h, nn, t.road_d[i * n + j]),
                         };
                         pos.push([x, h - drop, z]);
@@ -484,12 +646,16 @@ fn dress_terrain(
                     let (lo, hi) = pos.iter().fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| (lo.min(Vec3::from(*p)), hi.max(Vec3::from(*p))));
                     let centre = (lo + hi) / 2.0;
                     let pos: Vec<[f32; 3]> = pos.iter().map(|p| (Vec3::from(*p) - centre).to_array()).collect();
-                    let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+                    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
                         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
                         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nrm)
                         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
                         .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, col)
                         .with_inserted_indices(Indices::U32(idx));
+                    if ncr {
+                        // The normal map needs tangents.
+                        let _ = mesh.generate_tangents();
+                    }
                     let base = crate::characters::LodRange(
                         VisibilityRange { start_margin: start..start + 10.0 * (lod > 0) as u8 as f32, end_margin: end..end + 10.0, use_aabb: false },
                         lod,
@@ -518,7 +684,11 @@ fn variant(p: Vec3) -> u8 {
 /// Map blocks get a mesh child (scaled), so the collider on the parent stays unscaled.
 /// Per-entity meshes only for dynamic blocks (breakable doors) and water; static architecture is
 /// batched by `buildings`.
-fn dress_blocks(mut commands: Commands, q: Query<(Entity, &MapBlock, Has<shared::sim::Door>), Added<MapBlock>>, palette: Res<Palette>) {
+fn dress_blocks(
+    mut commands: Commands,
+    q: Query<(Entity, &MapBlock, Has<shared::sim::Door>), Added<MapBlock>>,
+    palette: Res<Palette>,
+) {
     for (e, MapBlock(b), door) in &q {
         commands.entity(e).insert(Visibility::default());
         // Water is drawn by `water`.
@@ -629,7 +799,13 @@ fn pose_warriors(
 
 /// The model an item shows (in hand, on the ground): its own, or the quiver for arrows.
 pub fn model_for(id: &str) -> &str {
-    if id == "arrows" { "tarkash" } else { id }
+    match id {
+        "arrows" => "tarkash",
+        "vajra9" => "gandiva",
+        "trishul_carbine" => "sharanga",
+        "brahmastra_mk2" => "agneyastra",
+        _ => id,
+    }
 }
 
 /// Where the hand closes on each model, in its glTF frame (the origin unless noted): vessels are

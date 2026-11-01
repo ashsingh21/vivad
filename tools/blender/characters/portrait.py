@@ -1,7 +1,9 @@
-"""Portrait renders of the exported characters (the GLB the game loads, LOD0 and the hair, brow and lash cards): front and
-three-quarter head shots, to judge faces.
+"""Portrait renders of the exported characters (the GLB the game loads, LOD0 and the hair, brow and lash cards): front,
+three-quarter and close head shots, to judge faces, and a full-body shot.
 
-blender -b --factory-startup -P tools/blender/characters/portrait.py -- <out_dir> [male female] [samples]
+blender -b --factory-startup -P tools/blender/characters/portrait.py -- <out_dir> [male female] [samples] [parts] [lod=<k>]
+
+`parts` renders <variant>_parts.glb instead of the old one-mesh <variant>.glb; lod=<k> shows that LOD.
 """
 
 import math
@@ -25,12 +27,14 @@ def main():
     out = args[0]
     variants = [a for a in args[1:] if a in ("male", "female")] or ["male", "female"]
     samples = next((int(a) for a in args[1:] if a.isdigit()), 64)
+    suffix = "_parts" if "parts" in args[1:] else ""
+    lod = next((a[4:] for a in args[1:] if a.startswith("lod=")), "0")
     os.makedirs(out, exist_ok=True)
     for v in variants:
         bpy.ops.wm.read_homefile(use_empty=True)
-        bpy.ops.import_scene.gltf(filepath=os.path.join(ROOT, "assets", "models", "characters", f"{v}.glb"))
+        bpy.ops.import_scene.gltf(filepath=os.path.join(ROOT, "assets", "models", "characters", f"{v}{suffix}.glb"))
         for o in list(bpy.data.objects):
-            if o.type == "MESH" and ("LOD1" in o.name or "LOD2" in o.name):
+            if o.type == "MESH" and "LOD" in o.name and not o.name.endswith(f"LOD{lod}"):
                 bpy.data.objects.remove(o)
         arm = next(o for o in bpy.data.objects if o.type == "ARMATURE")
         head = arm.matrix_world @ arm.pose.bones["head"].head
@@ -54,14 +58,15 @@ def main():
         cam.data.lens = 85
         sc.collection.objects.link(cam)
         sc.camera = cam
-        for name, yaw in (("front", 0.0), ("three_q", 0.6)):
+        waist = Vector((0, 0, top / 2))
+        shots = (("front", 0.0, centre, 0.85), ("three_q", 0.6, centre, 0.85), ("close", 0.3, centre - Vector((0, 0, 0.02)), 0.36), ("full", 0.6, waist, 4.6))
+        for name, yaw, at, away in shots:
             d = Vector((math.sin(yaw), fwd * math.cos(yaw), 0.0))
-            cam.location = centre + d * 0.85
-            cam.rotation_euler = (centre - cam.location).to_track_quat("-Z", "Y").to_euler()
+            cam.location = at + d * away
+            cam.rotation_euler = (at - cam.location).to_track_quat("-Z", "Y").to_euler()
             sc.render.filepath = os.path.join(out, f"{v}_{name}.png")
             bpy.ops.render.render(write_still=True)
             print(f"[portrait] {sc.render.filepath}")
-        del top
 
 
 main()

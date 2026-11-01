@@ -101,19 +101,20 @@ def save(img, path):
     img.save()
 
 
-def bake_texture_set(obj, out_dir, prefix, res=2048):
-    """Bake the full set and return {'basecolor','orm','normal'} image datablocks saved as PNG."""
+def bake_texture_set(obj, out_dir, prefix, res=2048, margin=12):
+    """Bake the full set and return {'basecolor','orm','normal'} image datablocks saved as PNG.
+    `margin`: pixels of colour bled past the UV islands."""
     base = new_image(f"{prefix}_basecolor", res, non_color=False)
     rough = new_image(f"{prefix}_rough_tmp", res, non_color=True)
     metal = new_image(f"{prefix}_metal_tmp", res, non_color=True)
     ao = new_image(f"{prefix}_ao_tmp", res, non_color=True)
     normal = new_image(f"{prefix}_normal", res, non_color=True)
 
-    bake(obj, base, "EMIT", "Base Color", samples=16)
-    bake(obj, rough, "EMIT", "Roughness", samples=16)
-    bake(obj, metal, "EMIT", "Metallic", samples=16)
-    bake(obj, normal, "NORMAL", samples=16)
-    bake(obj, ao, "AO", samples=256)
+    bake(obj, base, "EMIT", "Base Color", samples=16, margin=margin)
+    bake(obj, rough, "EMIT", "Roughness", samples=16, margin=margin)
+    bake(obj, metal, "EMIT", "Metallic", samples=16, margin=margin)
+    bake(obj, normal, "NORMAL", samples=16, margin=margin)
+    bake(obj, ao, "AO", samples=256, margin=margin)
 
     orm = new_image(f"{prefix}_orm", res, non_color=True)
     p = np.ones((res, res, 4), dtype=np.float32)

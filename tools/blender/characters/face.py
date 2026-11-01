@@ -3,13 +3,19 @@ the male's stubble (a `beard` vertex attribute the skin shader darkens by) and m
 sculpted mesh), the female's bindi and kajal (points the skin shader paints, stored on the
 proxy), and the male's hair trimmed to what shows below the pagri.
 
+regions() paints the masks the head material reads, one vertex attribute each: `lip` (from the
+basemesh's own lips group), `blush`, `socket`, `oily`, `pores`, `lines`, and `detail`, the part of
+the head that keeps its subdivided triangles.
+
 Proxy and eye meshes face -Y in Blender (MakeHuman), +X is the character's left.
 """
 
 import bmesh
 import bpy
+import numpy as np
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
+from mathutils.kdtree import KDTree
 
 import garments
 
@@ -106,6 +112,82 @@ def moustache(f, ctx, name="moustache"):
     return obj
 
 
+def basemesh_masks(body, co, names):
+    """{group: 0/1 per vertex at `co`}: whether the nearest real skin vertex of the basemesh, as
+    shaped by its targets, is in that vertex group of the basemesh."""
+    key = body.shape_key_add(name="_fitted", from_mix=True) if body.data.shape_keys else None
+    shaped = key.data if key else body.data.vertices
+    groups = {g.index: g.name for g in body.vertex_groups}
+    member = {n: set() for n in (*names, "body")}
+    for v in body.data.vertices:
+        for g in v.groups:
+            if g.weight > 0.5 and groups.get(g.group) in member:
+                member[groups[g.group]].add(v.index)
+    tree = KDTree(len(member["body"]))
+    for i in member["body"]:
+        tree.insert(shaped[i].co, i)
+    tree.balance()
+    nearest = [tree.find(p)[1] for p in co]
+    if key:
+        body.shape_key_remove(key)
+    return {n: np.array([i in member[n] for i in nearest], dtype=np.float32) for n in names}
+
+
+def gauss(*terms):
+    return np.exp(-sum(t * t for t in terms))
+
+
+def blur(me, values, passes):
+    """Average each vertex with its neighbours, to soften a mask's edge."""
+    ends = np.empty(len(me.edges) * 2, dtype=np.int64)
+    me.edges.foreach_get("vertices", ends)
+    a, b = ends[::2], ends[1::2]
+    for _ in range(passes):
+        total = values.copy()
+        count = np.ones(len(values))
+        np.add.at(total, a, values[b])
+        np.add.at(total, b, values[a])
+        np.add.at(count, a, 1)
+        np.add.at(count, b, 1)
+        values = total / count
+    return values
+
+
+def regions(proxy, body, f):
+    """The material's masks, as vertex attributes on the proxy. Distances are in metres from the
+    measured landmarks, so they follow the face targets."""
+    co = np.array([p[:] for p in f.co])
+    x, y, z = np.abs(co[:, 0]), co[:, 1], co[:, 2]
+    ex, ey = abs(f.eye_l.x), f.eye_l.y
+    nz, ny = f.nose.z, f.nose.y
+    front = np.clip((ey + 0.05 - y) / 0.03, 0, 1)
+    me = proxy.data
+    group = basemesh_masks(body, f.co, ("lips", "ears"))
+    lip = blur(me, group["lips"], 1)
+    socket = gauss((x - ex) / 0.03, (z - f.eye_z + 0.002) / 0.02) * front
+    cheek = gauss((x - 0.05) / 0.03, (z - nz + 0.004) / 0.028) * front
+    nose = gauss(x / 0.014, (z - nz) / 0.016, (y - ny) / 0.02)
+    brow = gauss(x / 0.06, (z - f.eye_z - 0.05) / 0.02) * front
+    # The crease from the nose's wing to the corner of the mouth.
+    t = np.clip((nz - 0.004 - z) / 0.048, 0, 1)
+    fold = blur(me, gauss((x - (0.022 + 0.018 * t)) / 0.007) * ((z < nz) & (z > nz - 0.06)) * front, 3)
+    masks = {
+        "lip": lip,
+        "blush": np.clip(cheek + 0.7 * nose + 0.6 * blur(me, group["ears"], 2), 0, 1),
+        "socket": socket,
+        "oily": np.clip(nose + 0.7 * brow + 0.3 * cheek, 0, 1),
+        "pores": np.clip(0.35 + nose + 0.8 * cheek - lip - socket, 0, 1),
+        "lines": fold,
+    }
+    # What the eye reads closest: lids, lips and the nose. The decimator keeps the rest's curvature.
+    held = ((socket > 0.4) | (lip > 0.3) | (nose > 0.2)) & (y < ey + 0.02)
+    masks["detail"] = held.astype(np.float32)
+    for name, vals in masks.items():
+        attr = me.attributes.new(name, "FLOAT", "POINT")
+        attr.data.foreach_set("value", vals.astype(np.float32))
+    print(f"[face] {int(group['lips'].sum())} lip vertices, {int(masks['detail'].sum())} of {len(co)} vertices hold detail")
+
+
 def trim_hair(hair, below_z):
     """Keep only the hair below a covering turban's lower edge (the rest is hidden inside it)."""
     bm = bmesh.new()
@@ -118,10 +200,11 @@ def trim_hair(hair, below_z):
     return len(gone)
 
 
-def decorate(variant, proxy, parts, ctx=None):
+def decorate(variant, proxy, parts, body, ctx=None):
     """Face marks for the skin shader (stored on the proxy) and, for the male, the stubble mask
-    and moustache. Returns extra (object, role) outfit items."""
+    and moustache. `body` is the fitted basemesh. Returns extra (object, role) outfit items."""
     f = Face(proxy, parts["eyes"])
+    regions(proxy, body, f)
     inv = proxy.matrix_world.inverted()
     items = []
     if variant == "female":

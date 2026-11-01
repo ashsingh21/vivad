@@ -61,6 +61,12 @@ pub enum ItemKind {
         misfire: f32,
         #[serde(default)]
         backfire: f32,
+        /// Degrees of spread each shot adds, and the most they add up to: spray and the cone
+        /// opens, let go and it closes again (2.5 degrees a second).
+        #[serde(default)]
+        bloom: f32,
+        #[serde(default)]
+        bloom_max: f32,
     },
     /// Thrown astra that bursts into an area effect on impact.
     Astra { effect: AstraEffect, speed: f32, count: u32 },

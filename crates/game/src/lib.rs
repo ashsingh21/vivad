@@ -19,6 +19,9 @@ pub mod street;
 pub mod skyline;
 pub mod lobby;
 pub mod studio_env;
+pub mod ultra;
+pub mod street_sample;
+pub mod surfaces;
 pub mod visuals;
 
 /// Repo-level assets/ regardless of how the binary is launched; in the browser, `assets/` beside

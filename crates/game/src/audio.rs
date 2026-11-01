@@ -111,6 +111,11 @@ struct Player<'w, 's> {
 
 impl Player<'_, '_> {
     fn at(&mut self, name: &str, pos: Vec3, volume: f32, cull: f32) {
+        self.at_pitched(name, pos, volume, cull, 1.0);
+    }
+
+    /// The same sample at another pitch: one gunshot recording serves a second gun.
+    fn at_pitched(&mut self, name: &str, pos: Vec3, volume: f32, cull: f32, pitch: f32) {
         let ear = self.ear.iter().next().map(|t| t.translation()).unwrap_or(pos);
         if ear.distance(pos) > cull {
             return;
@@ -118,7 +123,7 @@ impl Player<'_, '_> {
         let Some(h) = self.sfx.0.get(name) else { return };
         *self.played.0.entry(name.to_owned()).or_default() += 1;
         // A touch of pitch variety so repeats don't sound mechanical.
-        let speed = 1.0 + (pos.x * 12.9898 + pos.z * 78.233).sin().fract() * 0.08;
+        let speed = pitch * (1.0 + (pos.x * 12.9898 + pos.z * 78.233).sin().fract() * 0.08);
         self.commands.spawn((
             AudioPlayer(h.clone()),
             PlaybackSettings::DESPAWN
@@ -166,7 +171,7 @@ fn surface(spatial: &SpatialQuery, blocks: &Query<&MapBlock>, terrain: &Query<()
     }
     if terrain.contains(hit.entity) {
         let p = pos.xz();
-        if layout.river.is_some_and(|(x0, x1)| p.x > x0 && p.x < x1) && pos.y < -0.3 {
+        if layout.river.distance(p) == 0.0 && pos.y < -0.3 && pos.y > -5.0 {
             return "water";
         }
         if let Some(class) = layout.terrain.ground_at(p.x, p.y) {
@@ -288,15 +293,19 @@ fn combat_events(
         match p.astra {
             None => {
                 let heavy = matches!(db.get(&p.item).kind, ItemKind::Bow { charge, .. } if charge > 0.0);
-                let (sound, reach) = match p.item.as_str() {
-                    "tamancha" => ("gun_tamancha", 200.0),
-                    "dunali" => ("gun_dunali", 220.0),
-                    "katta" => ("gun_katta", 220.0),
-                    "gulel" => ("gulel_release", 60.0),
-                    _ if heavy => ("bow_release_heavy", 120.0),
-                    _ => ("bow_release", 120.0),
+                // (sample, reach, pitch, volume): the Vajra-9 is the tamancha's shot pitched up
+                // and clipped short, the Trishul Carbine's burst the same shot pitched down.
+                let (sound, reach, pitch, vol) = match p.item.as_str() {
+                    "tamancha" => ("gun_tamancha", 200.0, 1.0, 1.0),
+                    "dunali" => ("gun_dunali", 220.0, 1.0, 1.0),
+                    "katta" => ("gun_katta", 220.0, 1.0, 1.0),
+                    "gulel" => ("gulel_release", 60.0, 1.0, 1.0),
+                    "vajra9" => ("gun_tamancha", 180.0, 1.45, 0.75),
+                    "trishul_carbine" => ("gun_tamancha", 210.0, 0.8, 1.1),
+                    _ if heavy => ("bow_release_heavy", 120.0, 1.0, 1.0),
+                    _ => ("bow_release", 120.0, 1.0, 1.0),
                 };
-                play.at(sound, tf.translation, WEAPON, reach);
+                play.at_pitched(sound, tf.translation, WEAPON * vol, reach, pitch);
             }
             Some(_) if p.item == "chakra" => play.at("chakra_throw", tf.translation, WEAPON, 80.0),
             Some(_) => play.at("throw", tf.translation, WEAPON, 60.0),
@@ -397,12 +406,7 @@ fn beds(
 ) {
     let Ok((tf, kin)) = me.single() else { return };
     let p = tf.translation;
-    let river_d = match layout.river {
-        Some((rx0, _)) if p.x < rx0 => rx0 - p.x,
-        Some((_, rx1)) if p.x > rx1 => p.x - rx1,
-        Some(_) => 0.0,
-        None => 1.0e4,
-    };
+    let river_d = layout.river.distance(p.xz());
     let wall_d = (p.xz().distance(zone.center) - zone.radius).abs();
     let speed = kin.velocity.length();
     for (bed, mut sink) in &mut sinks {

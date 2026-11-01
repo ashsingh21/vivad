@@ -1,0 +1,7 @@
+# What `just characters-pack` encodes: <kind> <input> <output>, relative to this file.
+# Inputs come from the head bake in tools/blender/characters/finish.py; see tools/texpack/src/main.rs.
+
+color  ../../build/textures/male/male_head_basecolor.png ../../assets/textures/characters/male_head_4k_basecolor.ktx2
+normal ../../build/textures/male/male_head_normal.png ../../assets/textures/characters/male_head_4k_normal.ktx2
+color  ../../build/textures/female/female_head_basecolor.png ../../assets/textures/characters/female_head_4k_basecolor.ktx2
+normal ../../build/textures/female/female_head_normal.png ../../assets/textures/characters/female_head_4k_normal.ktx2

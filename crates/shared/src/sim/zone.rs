@@ -7,13 +7,17 @@ use super::{DamageCause, DamageMsg, Eliminated, SimSet, Warrior, match_rng, stre
 use super::flow::{Match, MatchState};
 
 /// (wait seconds, shrink seconds, end radius, damage per second outside)
+///
+/// 520 s from the first wait to the ring's end, so that with the half-minute vimana ride a
+/// sixteen-warrior match on a 500 m map runs seven to nine minutes: a minute of looting, the
+/// middle game pushed along by the ring, and the last two inside a ring they can see across.
 pub const PHASES: [(f32, f32, f32, f32); 6] = [
-    (50.0, 35.0, 190.0, 1.0),
-    (40.0, 30.0, 115.0, 2.0),
-    (35.0, 25.0, 60.0, 4.0),
-    (25.0, 20.0, 28.0, 7.0),
-    (20.0, 20.0, 10.0, 10.0),
-    (15.0, 25.0, 0.0, 14.0),
+    (85.0, 45.0, 190.0, 1.0),
+    (80.0, 40.0, 115.0, 2.0),
+    (65.0, 35.0, 60.0, 4.0),
+    (40.0, 30.0, 28.0, 7.0),
+    (30.0, 25.0, 10.0, 10.0),
+    (20.0, 25.0, 0.0, 14.0),
 ];
 pub const START_RADIUS: f32 = 360.0;
 
@@ -32,29 +36,36 @@ pub struct Zone {
     /// The match seed: each phase's circle comes from it, so every peer closes the same ring.
     seed: u64,
     tick: f32,
+    scale: f32,
 }
 
 impl Zone {
     pub fn new(seed: u64) -> Self {
-        let mut z = Zone { radius: START_RADIUS, from_radius: START_RADIUS, dps: 1.0, seed, ..default() };
+        Self::for_extent(seed, 250.0)
+    }
+
+    pub fn for_extent(seed: u64, half: f32) -> Self {
+        let scale = half / 250.0;
+        let mut z = Zone { radius: START_RADIUS * scale, from_radius: START_RADIUS * scale, dps: 1.0, seed, scale, ..default() };
         z.plan_next();
         z
     }
 
     fn plan_next(&mut self) {
         let Some(&(wait, _, end_r, dps)) = PHASES.get(self.phase) else { return };
+        let end_r = end_r * self.scale;
         let mut rng = match_rng(self.seed, stream::ZONE + self.phase as u64);
         // Next circle sits fully inside the current one.
         let slack = (self.radius - end_r).max(0.0) * 0.8;
         let a = rng.random_range(0.0..std::f32::consts::TAU);
         let d = rng.random_range(0.0..slack.min(self.radius));
         let mut c = self.center + Vec2::new(a.cos(), a.sin()) * d;
-        c = c.clamp(Vec2::splat(-200.0), Vec2::splat(200.0));
+        c = c.clamp(Vec2::splat(-200.0 * self.scale), Vec2::splat(200.0 * self.scale));
         self.from_center = self.center;
         self.from_radius = self.radius;
         self.target_center = c;
         self.target_radius = end_r;
-        self.timer = wait;
+        self.timer = wait * self.scale.sqrt();
         self.shrinking = false;
         self.dps = dps;
     }
@@ -66,6 +77,7 @@ impl Zone {
     /// One tick of the battle: wait, then shrink towards the planned circle, then plan the next.
     pub fn advance(&mut self, dt: f32) {
         let Some(&(_, shrink, _, _)) = PHASES.get(self.phase) else { return };
+        let shrink = shrink * self.scale.sqrt();
         self.timer -= dt;
         if !self.shrinking {
             if self.timer <= 0.0 {
@@ -123,6 +135,25 @@ fn burn_outside(
     for (e, tf) in &q {
         if zone.outside(tf.translation) {
             damage.write(DamageMsg { target: e, amount: zone.dps, source: None, headshot: false, cause: DamageCause::Pralaya });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn scaled_zone_covers_corners_and_finishes() {
+        for half in [250.0,500.0] {
+            let mut z=Zone::for_extent(7,half);
+            assert!(!z.outside(Vec3::new(half,0.0,half)));
+            let mut steps=0;
+            while z.phase<PHASES.len() && steps<10000 {
+                assert!(z.target_center.distance(z.from_center)+z.target_radius<=z.from_radius+0.01);
+                z.advance(0.1);steps+=1;
+            }
+            assert_eq!(z.phase,PHASES.len());
+            assert_eq!(z.radius,0.0);
         }
     }
 }

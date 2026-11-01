@@ -48,6 +48,8 @@ pub struct FireZone {
     pub radius: f32,
     pub dps: f32,
     pub ttl: f32,
+    /// The astra that lit it, credited for its kills.
+    pub item: String,
 }
 
 /// One-shot visual cue for clients (wind bursts, the Brahmastra's blast).
@@ -69,6 +71,8 @@ pub struct Boomerang {
 
 /// How close a chakra passes to cut someone, and to be caught.
 const CHAKRA_REACH: f32 = 0.9;
+/// Degrees of spread bloom a bow sheds each second once the trigger is let go.
+const BLOOM_RECOVERY: f32 = 2.5;
 const CHAKRA_CATCH: f32 = 1.3;
 
 fn select_slot(mut q: Query<(&PlayerIntent, &mut Inventory, &mut Action), (Without<Eliminated>, Without<Remote>)>) {
@@ -167,8 +171,9 @@ fn use_items(
                     act.since_attack = 0.0;
                 }
             }
-            ItemKind::Bow { damage: dmg, interval, speed, gravity, pellets, spread_deg, magazine, reload, charge, headshot, misfire, backfire } => {
+            ItemKind::Bow { damage: dmg, interval, speed, gravity, pellets, spread_deg, magazine, reload, charge, headshot, misfire, backfire, bloom, bloom_max } => {
                 let slot = inv.selected;
+                act.bloom = (act.bloom - BLOOM_RECOVERY * dt).max(0.0);
                 // Reloading.
                 if act.reload_left > 0.0 {
                     act.reload_left -= dt;
@@ -233,7 +238,8 @@ fn use_items(
                     .unwrap_or(eye_origin + aim * 600.0);
                 let base = (target - muzzle).normalize_or(aim);
                 let ads = intent.held(btn::AIM);
-                let spread = spread_deg.to_radians() * if ads { 0.6 } else { 1.0 };
+                let spread = (spread_deg + act.bloom).to_radians() * if ads { 0.6 } else { 1.0 };
+                act.bloom = (act.bloom + bloom).min(*bloom_max);
                 for _ in 0..*pellets {
                     let yaw_off = rng.random_range(-1.0f32..1.0) * spread;
                     let pitch_off = rng.random_range(-1.0f32..1.0) * spread * 0.6;
@@ -396,7 +402,7 @@ fn astra_burst(
     match effect {
         AstraEffect::Fire { radius, dps, duration } => {
             commands.spawn((
-                FireZone { owner, radius: *radius, dps: *dps, ttl: *duration },
+                FireZone { owner, radius: *radius, dps: *dps, ttl: *duration, item: item.into() },
                 Transform::from_translation(at),
             ));
         }
@@ -535,7 +541,7 @@ fn tick_fire_zones(
                     amount: z.dps * dt,
                     source: Some(z.owner),
                     headshot: false,
-                    cause: DamageCause::Weapon("agneyastra".into()),
+                    cause: DamageCause::Weapon(z.item.clone()),
                 });
             }
         }
@@ -558,6 +564,7 @@ fn apply_damage(
     mut hits: MessageWriter<HitMsg>,
     names: Query<&Warrior>,
     mut kill_msgs: MessageWriter<KillMsg>,
+    mut pause: ResMut<super::SimulationPause>,
 ) {
     let mut alive_count = alive.iter().count() as u32;
     for msg in msgs.read() {
@@ -601,6 +608,11 @@ fn apply_damage(
                 shield: shield_hit,
                 at: tf.translation + Vec3::Y * 1.0,
             });
+            if let DamageCause::Weapon(id) = &msg.cause {
+                if matches!(db.get(id).kind, ItemKind::Melee { .. }) {
+                    pause.timer = 0.05;
+                }
+            }
         }
         if h.hp <= 0.0 {
             h.hp = 0.0;
