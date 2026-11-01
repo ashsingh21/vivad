@@ -174,6 +174,7 @@ fn segment(a: Vec3, b: Vec3) -> Transform {
 fn orient_bows(
     rigs: Query<(Entity, &BowRig)>,
     parents: Query<&ChildOf>,
+    kids: Query<&Children>,
     vis: Query<(&WarriorVisual, &WarriorAnim, &Body)>,
     intents: Query<&PlayerIntent>,
     mut tf: Query<(&Transform, &mut GlobalTransform)>,
@@ -222,6 +223,62 @@ fn orient_bows(
         }
         if let Ok((_, mut g)) = tf.get_mut(e) {
             *g = socket_g.mul_transform(bow_local);
+        }
+        // A long gun's fore-end in the left hand, wherever the clip left that hand: the palm under
+        // the barrel a fore-end's length ahead of the grip, fingers wrapping round its far side.
+        if gun && long {
+            let (_, rot, _) = socket_g.to_scale_rotation_translation();
+            let (along, up) = (rot * Vec3::NEG_Z, rot * Vec3::Y);
+            let right = rot * Vec3::X;
+            let palm = socket_g.transform_point(Vec3::new(0.0, -0.02, -FOREND));
+            let fingers = (along * 0.5 + right * 0.8 + up * 0.2).normalize();
+            let wrist = palm - fingers * PALM - up * 0.01;
+            let (Ok(lower), hand) = (parents.get(body.hand_l).map(|p| p.parent()), body.hand_l) else { continue };
+            let Ok(upper) = parents.get(lower).map(|p| p.parent()) else { continue };
+            reach(upper, lower, hand, wrist, Vec3::NEG_Y - right * 0.7, fingers, &kids, &mut tf);
+        }
+    }
+}
+
+/// How far ahead of the grip the left hand holds a long gun (m, along the barrel).
+const FOREND: f32 = 0.32;
+/// Wrist to the middle of the palm (m).
+const PALM: f32 = 0.07;
+
+/// Two-bone IK on already-propagated global transforms: bend the arm `upper` - `lower` - `hand` so
+/// the wrist lands on `wrist`, the elbow toward `pole` (a direction), then turn the hand to point
+/// along `fingers`. Everything under each bone (forearm, hand, fingers) turns with it.
+#[allow(clippy::too_many_arguments)]
+fn reach(upper: Entity, lower: Entity, hand: Entity, wrist: Vec3, pole: Vec3, fingers: Vec3, kids: &Query<&Children>,
+         tf: &mut Query<(&Transform, &mut GlobalTransform)>) {
+    let pos = |tf: &Query<(&Transform, &mut GlobalTransform)>, e: Entity| tf.get(e).map(|(_, g)| g.translation()).ok();
+    let (Some(s), Some(e0), Some(w0)) = (pos(tf, upper), pos(tf, lower), pos(tf, hand)) else { return };
+    let (l1, l2) = ((e0 - s).length(), (w0 - e0).length());
+    let v = wrist - s;
+    let Some(u) = v.try_normalize() else { return };
+    let d = v.length().clamp((l1 - l2).abs() + 0.01, (l1 + l2) * 0.999);
+    let a = ((l1 * l1 + d * d - l2 * l2) / (2.0 * l1 * d)).clamp(-1.0, 1.0).acos();
+    let w = (pole - u * pole.dot(u)).normalize_or(Vec3::NEG_Y);
+    let elbow = s + u * (l1 * a.cos()) + w * (l1 * a.sin());
+    turn_subtree(upper, s, Quat::from_rotation_arc((e0 - s).normalize(), (elbow - s).normalize()), kids, tf);
+    let Some(w1) = pos(tf, hand) else { return };
+    turn_subtree(lower, elbow, Quat::from_rotation_arc((w1 - elbow).normalize(), (s + u * d - elbow).normalize()), kids, tf);
+    // The hand bone runs along its +Y, wrist to knuckles.
+    let Ok((_, g)) = tf.get(hand) else { return };
+    let (cur, at) = (g.rotation() * Vec3::Y, g.translation());
+    turn_subtree(hand, at, Quat::from_rotation_arc(cur.normalize(), fingers), kids, tf);
+}
+
+/// Turn `e` and everything under it by `q` about `pivot`, in their (already propagated) global
+/// transforms.
+fn turn_subtree(e: Entity, pivot: Vec3, q: Quat, kids: &Query<&Children>, tf: &mut Query<(&Transform, &mut GlobalTransform)>) {
+    if let Ok((_, mut g)) = tf.get_mut(e) {
+        let (scale, rot, t) = g.to_scale_rotation_translation();
+        *g = GlobalTransform::from(Transform { translation: pivot + q * (t - pivot), rotation: q * rot, scale });
+    }
+    if let Ok(c) = kids.get(e) {
+        for k in c.iter() {
+            turn_subtree(k, pivot, q, kids, tf);
         }
     }
 }
