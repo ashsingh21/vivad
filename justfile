@@ -22,6 +22,10 @@ architecture:
 
 # Carved figures for the kit (needs MPFB; writes tools/blender/architecture/figures/, which the
 # architecture scripts read, so run this first when a figure changes)
+# The patang glider every player opens after the jump (four colourways).
+glider:
+    {{blender}} -b --factory-startup -P tools/blender/props/glider.py 2>&1 | grep -E '^\[|Error|Traceback' || true
+
 figures:
     {{blender}} -b -P tools/blender/architecture/figures.py 2>&1 | grep -E '^\[|Error|Traceback' || true
 

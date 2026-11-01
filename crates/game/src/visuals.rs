@@ -85,7 +85,6 @@ pub struct Palette {
     glint: Handle<StandardMaterial>,
     zone: Handle<StandardMaterial>,
     pub(crate) models: HashMap<&'static str, ModelHandles>,
-    outfits: Vec<(Handle<StandardMaterial>, Handle<StandardMaterial>)>,
 }
 
 fn mat_color(m: Mat) -> (Color, f32, f32) {
@@ -217,25 +216,6 @@ fn setup_assets(
             .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
             .with_inserted_indices(Indices::U32(vec![0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]))
     };
-    let outfit_colors = [
-        (Color::srgb(0.95, 0.55, 0.10), Color::srgb(0.95, 0.92, 0.85)), // local: saffron + white
-        (Color::srgb(0.70, 0.15, 0.20), Color::srgb(0.90, 0.75, 0.30)),
-        (Color::srgb(0.15, 0.35, 0.70), Color::srgb(0.95, 0.95, 0.95)),
-        (Color::srgb(0.20, 0.50, 0.30), Color::srgb(0.90, 0.60, 0.20)),
-        (Color::srgb(0.50, 0.20, 0.55), Color::srgb(0.95, 0.85, 0.40)),
-        (Color::srgb(0.85, 0.80, 0.70), Color::srgb(0.70, 0.15, 0.15)),
-        (Color::srgb(0.25, 0.25, 0.28), Color::srgb(0.85, 0.55, 0.15)),
-        (Color::srgb(0.90, 0.40, 0.55), Color::srgb(0.25, 0.30, 0.60)),
-    ];
-    let outfits = outfit_colors
-        .iter()
-        .map(|(a, b)| {
-            (
-                materials.add(StandardMaterial { base_color: *a, perceptual_roughness: 0.8, ..default() }),
-                materials.add(StandardMaterial { base_color: *b, perceptual_roughness: 0.8, ..default() }),
-            )
-        })
-        .collect();
     commands.insert_resource(Palette {
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         cylinder: meshes.add(Cylinder::new(0.5, 1.0).mesh().resolution(20)),
@@ -288,7 +268,6 @@ fn setup_assets(
             })
             .collect(),
         string: materials.add(StandardMaterial { base_color: Color::srgb(0.86, 0.82, 0.70), perceptual_roughness: 0.8, ..default() }),
-        outfits,
     });
 }
 
@@ -507,14 +486,21 @@ pub struct Glider;
 #[derive(Component)]
 pub struct WeaponSocket(pub Entity);
 
-fn dress_warriors(mut commands: Commands, q: Query<(Entity, &Warrior, &Transform), Added<Warrior>>, palette: Res<Palette>) {
+fn dress_warriors(mut commands: Commands, q: Query<(Entity, &Warrior, &Transform), Added<Warrior>>, assets: Res<AssetServer>) {
     for (e, w, t) in &q {
-        let (_, trim) = palette.outfits[(w.look as usize) % palette.outfits.len()].clone();
         let root = commands.spawn((WarriorVisual { sim: e }, Transform::from_translation(t.translation), Visibility::default())).id();
         let held = commands.spawn((HeldWeapon { showing: None }, Transform::from_xyz(0.36, 0.15, -0.25), Visibility::default(), ChildOf(root))).id();
-        // Garuda wings: a saffron canopy held overhead while gliding.
-        commands.spawn((Glider, Mesh3d(palette.cube.clone()), MeshMaterial3d(trim),
-                        Transform::from_xyz(0.0, 1.6, 0.0).with_scale(Vec3::new(3.4, 0.06, 1.3)), Visibility::Hidden, ChildOf(root)));
+        // A patang glider (tools/blender/props/glider.py) held overhead while gliding, in one of
+        // four colourways by the warrior's look.
+        let colourway = ["a", "b", "c", "d"][w.look as usize % 4];
+        commands.spawn((
+            Glider,
+            WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(format!("models/props/patang_glider_{colourway}.glb")))),
+            // The model's origin is the feet; the warrior's is the capsule's middle.
+            Transform::from_xyz(0.0, -shared::sim::HALF_HEIGHT, 0.0),
+            Visibility::Hidden,
+            ChildOf(root),
+        ));
         commands.entity(root).insert(WeaponSocket(held));
     }
 }
