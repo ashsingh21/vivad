@@ -72,7 +72,7 @@ pub(super) fn place(b: &mut Builder, name: &'static str, pos: Vec3, yaw: f32) {
     // A planter's bush: the nature set's, bougainvillea or lantana by where it stands.
     if name == "planter" {
         let model = if (pos.x.abs() as i32 + pos.z.abs() as i32) % 3 == 0 { super::india::BUSH_LANTANA } else { super::india::BUSH_BOUGAINVILLEA };
-        b.map.props.push(super::Prop { model, pos: pos + Vec3::Y * 0.58, yaw: yaw * 1.7, scale: 0.5, trunk: None });
+        b.map.props.push(super::Prop { model, pos: pos + Vec3::Y * 0.6, yaw: yaw * 1.7, scale: 0.5, trunk: None });
     }
 }
 

@@ -519,7 +519,8 @@ def planter():
     p = Piece("planter")
     bikes.loft(p, [((0, 0, 0.0), 0.56, 0.56, 1.0), ((0, 0, 0.5), 0.64, 0.64, 1.0), ((0, 0, 0.53), 0.7, 0.7, 1.0),
                    ((0, 0, 0.6), 0.7, 0.7, 1.0)], C["concrete"])
-    p.cyl((0, 0, 0.56), (0, 0, 0.6), 0.62, (0.16, 0.11, 0.08), 16)
+    # The soil 1.5 cm proud of the pot's closed top (sharing its plane, the two flickered).
+    p.cyl((0, 0, 0.56), (0, 0, 0.615), 0.62, (0.16, 0.11, 0.08), 16)
     return p.finish(0.0)
 
 
