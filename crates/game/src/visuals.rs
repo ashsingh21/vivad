@@ -1,7 +1,7 @@
 //! Presentation of simulation entities: graybox map, warriors, loot, projectiles, effects, sky.
 
 use std::collections::HashMap;
-use std::f32::consts::FRAC_PI_2;
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use bevy::light::CascadeShadowConfigBuilder;
 use bevy::prelude::*;
@@ -594,17 +594,51 @@ fn dress_warriors(mut commands: Commands, q: Query<(Entity, &Warrior, &Transform
     }
 }
 
+/// Where a warrior's drawn body faces, and how it turned last frame (for its lean).
+#[derive(Default)]
+struct Facing {
+    yaw: f32,
+    turn: f32,
+}
+
+/// The drawn body: between the last two sim ticks; facing, as a player would expect, the way it
+/// runs when it's just moving (so the legs run forward rather than crabbing sideways at speed),
+/// turning back to the aim when aiming, attacking or standing; turning smoothly, never snapping,
+/// and leaning a little into turns. The sim's own facing (aim, hits) is untouched.
+#[allow(clippy::type_complexity)]
 fn interpolate_warriors(
     fixed: Res<Time<Fixed>>,
-    sims: Query<(&PosHistory, &Transform), Without<WarriorVisual>>,
-    mut vis: Query<(&WarriorVisual, &mut Transform)>,
+    time: Res<Time>,
+    sims: Query<(&PosHistory, &Transform, &shared::sim::PlayerIntent, &shared::sim::Action, &Kinematic), Without<WarriorVisual>>,
+    mut vis: Query<(Entity, &WarriorVisual, &mut Transform)>,
+    mut facing: Local<HashMap<Entity, Facing>>,
 ) {
     let a = fixed.overstep_fraction();
-    for (v, mut t) in &mut vis {
-        if let Ok((h, st)) = sims.get(v.sim) {
-            t.translation = h.prev.lerp(h.curr, a);
-            t.rotation = st.rotation;
-        }
+    let dt = time.delta_secs().max(1e-4);
+    facing.retain(|e, _| vis.contains(*e));
+    for (e, v, mut t) in &mut vis {
+        let Ok((h, st, intent, act, kin)) = sims.get(v.sim) else { continue };
+        t.translation = h.prev.lerp(h.curr, a);
+        let aim_yaw = st.rotation.to_euler(EulerRot::YXZ).0;
+        let vel = (h.curr - h.prev) / fixed.timestep().as_secs_f32().max(1e-4);
+        let ground = Vec2::new(vel.x, vel.z);
+        let fighting = intent.held(shared::sim::btn::AIM) || act.since_attack < 1.2 || act.charge > 0.0;
+        let target = if kin.mode == MoveMode::Ground && ground.length() > 1.2 && !fighting {
+            // The model faces -Z: the yaw that points it along the motion.
+            (-ground.x).atan2(-ground.y)
+        } else {
+            aim_yaw
+        };
+        let f = facing.entry(e).or_insert(Facing { yaw: target, turn: 0.0 });
+        let diff = (target - f.yaw + PI).rem_euclid(TAU) - PI;
+        // Quick when fighting (the shot must look aimed), easy otherwise.
+        let rate = if fighting { 18.0 } else { 9.0 };
+        let step = diff * (1.0 - (-rate * dt).exp());
+        f.yaw += step;
+        f.turn = f.turn.lerp(step / dt, (dt * 10.0).min(1.0));
+        // Lean into the turn with speed, a few degrees at most.
+        let lean = (-f.turn * ground.length() * 0.012).clamp(-0.14, 0.14);
+        t.rotation = Quat::from_rotation_y(f.yaw) * Quat::from_rotation_z(lean);
     }
 }
 
