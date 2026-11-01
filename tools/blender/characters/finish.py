@@ -16,7 +16,7 @@ from nodes import Graph, new_material
 
 # Target skin tone (sRGB) for South Asian warm brown, per variant.
 # Alpha cards: (part, tint sRGB, how far the texture is pulled to the tint).
-CARDS = (("hair", (0.045, 0.032, 0.026), 0.7), ("eyebrows", (0.035, 0.025, 0.02), 0.85), ("eyelashes", (0.03, 0.02, 0.02), 0.6))
+CARDS = (("hair", (0.075, 0.055, 0.045), 0.92), ("eyebrows", (0.035, 0.025, 0.02), 0.85), ("eyelashes", (0.03, 0.02, 0.02), 0.6))
 
 SKIN_TONE = {"male": (0.66, 0.44, 0.31), "female": (0.71, 0.48, 0.35)}
 
@@ -244,7 +244,12 @@ def tinted_image(name, img, tint_srgb, strength):
     lum = px[:, :3] @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
     # Byte images hand back their stored (sRGB-encoded) values, so tint in sRGB.
     tint = np.array(tint_srgb, dtype=np.float32)
-    px[:, :3] = px[:, :3] * (1 - strength) + np.outer(lum * 1.8, tint) * strength
+    # Strand shading kept moderate round the texture's own mean (±55%), so light strands don't
+    # turn into pale stripes: hair reads as a dark mass with sheen, not a painted sheet.
+    seen = px[:, 3] > 0.5
+    mean = float(lum[seen].mean()) if seen.any() else 0.5
+    shade = np.clip(1.0 + 0.55 * (lum / max(mean, 1e-3) - 1.0), 0.45, 1.45)
+    px[:, :3] = px[:, :3] * (1 - strength) + np.outer(shade, tint) * strength
     out = bpy.data.images.new(f"{name}_tinted", w, h, alpha=True)
     out.colorspace_settings.name = img.colorspace_settings.name
     out.pixels.foreach_set(px.ravel())
@@ -257,8 +262,9 @@ def alpha_card_material(name, img, tint_srgb, strength):
     m = new_material(name)
     g = Graph(m)
     tex = g.node("ShaderNodeTexImage", image=tinted_image(name, img, tint_srgb, strength))
-    p = g.principled(tex.outputs["Color"], 0.0, 0.45)
-    cut = g.math("GREATER_THAN", tex.outputs["Alpha"], 0.5)
+    # Soft sheen, not a plastic gloss.
+    p = g.principled(tex.outputs["Color"], 0.0, 0.62)
+    cut = g.math("GREATER_THAN", tex.outputs["Alpha"], 0.4)
     g.set(p.inputs["Alpha"], cut)
     return m
 

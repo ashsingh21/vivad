@@ -60,7 +60,8 @@ VARIANTS = {
                   "cupsize": 0.45, "firmness": 0.6, "race": {"asian": 0.22, "caucasian": 0.48, "african": 0.30}},
         "proxy": "proxymeshes/female_generic/female_generic.proxy",
         "skin": "skins/young_african_female/young_african_female.mhmat",
-        "hair": "hair/long01/long01.mhclo",
+        # A single long braid (choti): its shape holds up on hair cards far better than loose hair.
+        "hair": "hair/braid01/braid01.mhclo",
         "brows": "eyebrows/eyebrow010/eyebrow010.mhclo",
         "eyes": "brown",
         "face": {"nose/nose-scale-horiz-decr": 0.7, "nose/nose-flaring-decr": 0.9, "nose/nose-point-width-decr": 0.7,
