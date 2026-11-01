@@ -6,7 +6,8 @@ Opens build/char_<variant>_final.blend (written by human.py, so the rig is exact
 <variant>.glb) and keys these actions, exported to assets/models/characters/<variant>_anims.glb:
 
   locomotion  (loops, one cycle = two steps, all start at the left foot's contact)
-    idle, walk_{f,b,l,r} (AIM_SPEED 3.6 m/s), run_{f,b,l,r} (WALK_SPEED 5.6), sprint_f (SPRINT_SPEED 8.6)
+    idle, walk_{f,b,l,r} (STROLL_SPEED 1.8 m/s), run_{f,b,l,r} (WALK_SPEED 5.6), sprint_f (SPRINT_SPEED 8.6),
+    crouch_idle, crouch_f (CROUCH_SPEED 1.4), slide
   air         jump, fall, freefall, glide (loops / holds)
   upper body  melee_guard, melee_swing(_b), bow_draw, rifle_aim, consume (the game masks these to the torso)
   death       one-shot, holds its last frame
@@ -29,7 +30,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 FPS = 30
 
-WALK, RUN, SPRINT, CROUCH = 3.6, 5.6, 8.6, 2.0
+WALK, RUN, SPRINT, CROUCH = 1.8, 5.6, 8.6, 1.4
 
 # Character faces -Y in Blender; its left is +X.
 FWD = Vector((0, -1, 0))
@@ -831,7 +832,7 @@ def main():
             bpy.data.objects.remove(o)
     cycles = {}
     for name, speed, d in (("walk", WALK, None), ("run", RUN, None)):
-        cad = 2.8 if speed == WALK else 3.0
+        cad = 2.7 if speed == WALK else 3.0
         p = dict(cadence=cad, duty=0.42 if speed == WALK else 0.33, lift=0.16 if speed == WALK else 0.24,
                  crouch=0.07 if speed == WALK else 0.1, bob=0.025 if speed == WALK else 0.035,
                  arm=0.45 if speed == WALK else 0.6, elbow=1.2 if speed == WALK else 1.5)
@@ -852,6 +853,8 @@ def main():
     cycles["run_f"] = mocap(rig, src, acts, "run_f", "Jog_Fwd_Loop", RUN, stride=0.82)
     cycles["sprint_f"] = mocap(rig, src, acts, "sprint_f", "Sprint_Loop", SPRINT, stride=0.85)
     mocap(rig, src, acts, "idle", "Idle_Loop", 0.0)
+    # A stroll, its steps a little longer than the clip's (it walks slowly).
+    cycles["walk_f"] = mocap(rig, src, acts, "walk_f", "Walk_Loop", WALK, stride=1.4)
     # Crouching: the clips' own motion, their deep hunch eased to a fairly upright back with the
     # head up, the walk in shorter, quicker steps (at its own stride the trailing leg stretched
     # straight out behind the low hips).

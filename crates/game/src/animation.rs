@@ -19,7 +19,7 @@ use bevy::animation::{AnimatedBy, AnimationTargetId};
 use bevy::gltf::Gltf;
 use bevy::prelude::*;
 use shared::items::{ItemDb, ItemKind};
-use shared::sim::movement::{AIM_SPEED, CROUCH_SPEED, SPRINT_SPEED, WALK_SPEED};
+use shared::sim::movement::{CROUCH_SPEED, SPRINT_SPEED, STROLL_SPEED, WALK_SPEED};
 use shared::sim::{Action, Eliminated, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, PosHistory, Warrior, btn};
 
 use crate::visuals::WarriorVisual;
@@ -229,12 +229,12 @@ fn locomotion_weights(forward: f32, right: f32) -> Vec<(&'static str, f32)> {
             }
         }
     };
-    if speed <= AIM_SPEED {
-        let a = speed / AIM_SPEED;
+    if speed <= STROLL_SPEED {
+        let a = speed / STROLL_SPEED;
         out.push(("idle", 1.0 - a));
         tier(&mut out, "walk", a);
     } else if speed <= WALK_SPEED {
-        let b = (speed - AIM_SPEED) / (WALK_SPEED - AIM_SPEED);
+        let b = (speed - STROLL_SPEED) / (WALK_SPEED - STROLL_SPEED);
         tier(&mut out, "walk", 1.0 - b);
         tier(&mut out, "run", b);
     } else {
@@ -271,7 +271,7 @@ pub fn bow_draw(kind: &ItemKind, act: &Action, loaded: bool, aiming: bool) -> Op
 
 fn clip_speed(name: &str) -> f32 {
     match name {
-        n if n.starts_with("walk") => AIM_SPEED,
+        n if n.starts_with("walk") => STROLL_SPEED,
         n if n.starts_with("run") => WALK_SPEED,
         "sprint_f" => SPRINT_SPEED,
         "crouch_f" => CROUCH_SPEED,
@@ -375,7 +375,7 @@ fn drive(
                         // On the move or crouched and not fighting, the body's own pose (the arms
                         // swinging with the run, the bat in hand; the crouch's lean, which the guard's
                         // upright back would undo); standing, aiming or just after a swing, the guard.
-                        Some(ItemKind::Melee { .. }) if (speed > AIM_SPEED * 0.7 || low) && act.since_attack > 1.0 && !intent.held(btn::AIM) => None,
+                        Some(ItemKind::Melee { .. }) if (speed > STROLL_SPEED * 0.6 || low) && act.since_attack > 1.0 && !intent.held(btn::AIM) => None,
                         Some(ItemKind::Melee { .. }) => Some(("melee_guard", clock % dur("melee_guard"))),
                         // A long gun is shouldered; pistols are held up at the start of the draw, both
                         // hands on the gun.

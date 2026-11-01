@@ -22,8 +22,10 @@ pub const FALL_GRAVITY: f32 = 1.3;
 /// Slowing in the air with no stick held (momentum otherwise kept).
 pub const AIR_DRAG: f32 = 2.0;
 pub const AIM_SPEED: f32 = 3.6;
+/// Walking (btn::WALK): a stroll.
+pub const STROLL_SPEED: f32 = 1.8;
 /// Crouched: slower, steadier (crate::sim::combat), and shorter.
-pub const CROUCH_SPEED: f32 = 2.0;
+pub const CROUCH_SPEED: f32 = 1.4;
 /// A slide: crouching while running fast throws the warrior into it at at least SLIDE_SPEED,
 /// slowing by SLIDE_FRICTION (m/s each second; downhill, gravity along the slope speeds it up),
 /// steered only a little; it ends crouched under SLIDE_END, and the next can start SLIDE_COOLDOWN
@@ -127,7 +129,9 @@ fn move_warriors(
             }
             MoveMode::Ground => {
                 let crouch = intent.held(btn::CROUCH);
-                let mut speed = if intent.held(btn::AIM) || (intent.held(btn::WALK) && !intent.held(btn::SPRINT)) {
+                let mut speed = if intent.held(btn::WALK) && !intent.held(btn::SPRINT) {
+                    STROLL_SPEED
+                } else if intent.held(btn::AIM) {
                     AIM_SPEED
                 } else if intent.held(btn::SPRINT) && intent.move_axis.y > 0.3 {
                     SPRINT_SPEED
