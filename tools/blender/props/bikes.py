@@ -121,6 +121,54 @@ def loft(p, secs, colour, seg=24, steps=4):
     _new(p, colour)
 
 
+def arch(p, secs, thick, colour, a0=0.15, seg=20, steps=4):
+    """An open arched shell (a canopy): the top of each section only, from angle a0 up over and
+    down to pi - a0, `thick` deep, splined between sections like a loft. Open underneath."""
+    bm = p.bm
+    secs = _spline(secs, steps)
+    rings = []
+    for c, hw, hh, sq in secs:
+        c = Vector(c)
+        outer, inner = [], []
+        for j in range(seg + 1):
+            a = a0 + (math.pi - 2 * a0) * j / seg
+            ca, sa = math.cos(a), math.sin(a)
+            px, pz = math.copysign(abs(ca) ** sq, ca), math.copysign(abs(sa) ** sq, sa)
+            outer.append(bm.verts.new(c + Vector((hw * px, 0, hh * pz))))
+            inner.append(bm.verts.new(c + Vector(((hw - thick) * px, 0, (hh - thick) * pz))))
+        rings.append((outer, inner))
+    for (o0, i0), (o1, i1) in zip(rings, rings[1:]):
+        for j in range(seg):
+            bm.faces.new((o0[j], o0[j + 1], o1[j + 1], o1[j]))
+            bm.faces.new((i0[j + 1], i0[j], i1[j], i1[j + 1]))
+        for j in (0, seg):
+            bm.faces.new((o0[j], i0[j], i1[j], o1[j]))
+    for o, i in (rings[0], rings[-1]):
+        for j in range(seg):
+            bm.faces.new((o[j], i[j], i[j + 1], o[j + 1]))
+    _new(p, colour)
+
+
+def arch_panel(p, y, base, c, hw, hh, sq, thick, colour, seg=20):
+    """A panel closing an arch's end: its outline the arch's top over straight sides down to
+    `base`, `thick` deep along Y (the canvas back of an auto's canopy)."""
+    bm = p.bm
+    outline = [(hw, base)]
+    for j in range(seg + 1):
+        a = math.pi * j / seg
+        ca, sa = math.cos(a), math.sin(a)
+        outline.append((hw * math.copysign(abs(ca) ** sq, ca), c + hh * math.copysign(abs(sa) ** sq, sa)))
+    outline.append((-hw, base))
+    front = [bm.verts.new((x, y + thick / 2, z)) for x, z in outline]
+    back = [bm.verts.new((x, y - thick / 2, z)) for x, z in outline]
+    bm.faces.new(front)
+    bm.faces.new(list(reversed(back)))
+    n = len(outline)
+    for j in range(n):
+        bm.faces.new((front[j], back[j], back[(j + 1) % n], front[(j + 1) % n]))
+    _new(p, colour)
+
+
 def cushion(p, y0, y1, z, w0, w1, h0, h1, colour, seg=14, n=10, crown=0.35):
     """A padded seat from y0 (its nose) to y1 (its tail) sitting on z: half-width w and height h
     blending from nose to tail, a rounded-square section (fuller over the top: `crown`), the ends

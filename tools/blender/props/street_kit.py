@@ -224,16 +224,18 @@ def auto():
         p.box((x * 0.36 - 0.03, 1.02, 0.95), (x * 0.36 + 0.03, 1.08, 1.0), (0.98, 0.55, 0.06))
         bikes.arc_band(p, -0.78, R, R + 0.03, R + 0.045, 60, 175, 0.07, black, 8)
     # The canopy: a domed yellow roof on a black back, two posts at the front, the windscreen.
-    bikes.loft(p, [((0, -1.32, 1.66), 0.66, 0.06, 0.6), ((0, -1.22, 1.70), 0.74, 0.10, 0.5), ((0, 0.45, 1.70), 0.74, 0.10, 0.5),
-                   ((0, 0.66, 1.64), 0.66, 0.06, 0.6)], yellow)
-    bikes.loft(p, [((0, -1.22, 0.96), 0.68, 0.05, 0.4), ((0, -1.24, 1.30), 0.71, 0.05, 0.4), ((0, -1.22, 1.62), 0.70, 0.05, 0.45)], black)
-    for x in (-0.66, 0.66):
-        p.cyl((x, 0.56, 0.96), (x, 0.58, 1.64), 0.026, "black", 8)
-        p.cyl((x, -0.30, 0.98), (x, -0.30, 1.64), 0.024, "black", 8)
+    # The canopy: one curved shell arching over the top and down the sides like a tent, its
+    # black canvas back following the same arch; posts and the windscreen under it.
+    bikes.arch(p, [((0, -1.27, 1.36), 0.72, 0.34, 0.7), ((0, -1.0, 1.36), 0.75, 0.37, 0.7), ((0, 0.40, 1.36), 0.75, 0.37, 0.7),
+                   ((0, 0.66, 1.33), 0.71, 0.33, 0.7)], 0.035, yellow)
+    bikes.arch_panel(p, -1.23, 0.95, 1.36, 0.69, 0.32, 0.7, 0.05, black)
+    for x in (-0.64, 0.64):
+        p.cyl((x, 0.56, 0.96), (x, 0.58, 1.48), 0.026, "black", 8)
+        p.cyl((x, -0.30, 0.98), (x, -0.30, 1.48), 0.024, "black", 8)
         # The side curtains, rolled up under the canopy's edge, and the passengers' grab rail.
-        p.cyl((x * 1.05, -1.18, 1.56), (x * 1.05, 0.48, 1.56), 0.05, "black", 10)
-        p.cyl((x * 0.96, -1.05, 1.38), (x * 0.96, -0.36, 1.38), 0.014, "chrome", 6)
-    bikes.loft(p, [((0, 0.73, 1.02), 0.56, 0.02, 0.5), ((0, 0.66, 1.34), 0.58, 0.02, 0.5), ((0, 0.62, 1.58), 0.56, 0.02, 0.5)], C["glass"])
+        p.cyl((x * 1.1, -1.18, 1.43), (x * 1.1, 0.48, 1.43), 0.045, "black", 10)
+        p.cyl((x * 0.96, -1.05, 1.28), (x * 0.96, -0.36, 1.28), 0.014, "chrome", 6)
+    bikes.loft(p, [((0, 0.73, 1.02), 0.56, 0.02, 0.5), ((0, 0.67, 1.3), 0.58, 0.02, 0.5), ((0, 0.63, 1.5), 0.5, 0.02, 0.5)], C["glass"])
     # Seats: the passengers' bench and backrest, the driver's saddle; the handlebar and its grips.
     bikes.cushion(p, -0.60, -1.12, 0.92, 0.62, 0.62, 0.12, 0.12, black, seg=14, n=8)
     bikes.loft(p, [((0, -1.14, 1.08), 0.6, 0.06, 0.45), ((0, -1.17, 1.32), 0.6, 0.06, 0.45)], black)
@@ -242,6 +244,12 @@ def auto():
     p.cyl((-0.34, 0.60, 1.10), (0.34, 0.60, 1.10), 0.014, "chrome", 6)
     for x in (-1, 1):
         p.cyl((x * 0.26, 0.60, 1.10), (x * 0.38, 0.60, 1.10), 0.02, "black", 8)
+    # The back in truck art: bands of colour across the tail, and a sticker or two on the sides.
+    for k, (c, z) in enumerate((("red", 0.44), ("auto_yellow", 0.51), ("blue", 0.58), ("pink", 0.65))):
+        p.box((-0.46, -1.286, z), (0.46, -1.27, z + 0.055), c, round=False)
+    for x in (-1, 1):
+        p.box((x * 0.692, -0.9, 0.74), (x * 0.70, -0.62, 0.84), "saffron", round=False)
+        p.box((x * 0.692, 0.0, 0.52), (x * 0.70, 0.22, 0.6), "white", round=False)
     # Tail lamps and the plates.
     for x in (-1, 1):
         p.box((x * 0.5 - 0.06, -1.29, 0.62), (x * 0.5 + 0.06, -1.25, 0.70), "red")

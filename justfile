@@ -34,6 +34,14 @@ jugaad:
 street-kit:
     {{blender}} -b --factory-startup -P tools/blender/props/street_kit.py 2>&1 | grep -E '^\[|Error|Traceback' || true
 
+# The street auto with its baked texture (canvas, panel seams, dust): assets/models/props/auto.glb.
+auto:
+    {{blender}} -b --factory-startup -P tools/blender/props/auto.py 2>&1 | grep -E '^\[|Error|Traceback' || true
+
+# Turntable renders of a model from six angles: just orbit assets/models/props/auto.glb previews/auto
+orbit model out:
+    {{blender}} -b --factory-startup -P tools/blender/orbit.py -- {{model}} {{out}} 48 2>&1 | grep -E '^\[|Error|Traceback' || true
+
 # The city facade and shopfront textures: colour, normal, roughness/metal (numpy, no Blender).
 city-textures:
     python3 tools/textures/city.py
