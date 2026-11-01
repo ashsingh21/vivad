@@ -166,7 +166,7 @@ file per distinct texture named by content hash, shared by every model that uses
 ## Warrior animation
 
 Authored procedurally in `tools/blender/characters/anims.py`, no mocap or third-party clips:
-idle; walk (3.6 m/s) and run (5.6 m/s) in four directions; forward sprint (7.4 m/s); jump, fall,
+idle; walk (3.6 m/s) and run (5.6 m/s) in four directions; forward sprint (8.6 m/s); jump, fall,
 skydiving freefall, glide; death; and torso-only sword guard and swing, bow aim, drinking. Legs
 use two-bone IK against foot paths that move at the clip's ground speed (the script prints the
 remaining foot slide per clip, under 1 cm). Clips are per rig because the male and female rest

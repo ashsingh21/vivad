@@ -6,7 +6,7 @@ Opens build/char_<variant>_final.blend (written by human.py, so the rig is exact
 <variant>.glb) and keys these actions, exported to assets/models/characters/<variant>_anims.glb:
 
   locomotion  (loops, one cycle = two steps, all start at the left foot's contact)
-    idle, walk_{f,b,l,r} (AIM_SPEED 3.6 m/s), run_{f,b,l,r} (WALK_SPEED 5.6), sprint_f (7.4)
+    idle, walk_{f,b,l,r} (AIM_SPEED 3.6 m/s), run_{f,b,l,r} (WALK_SPEED 5.6), sprint_f (SPRINT_SPEED 8.6)
   air         jump, fall, freefall, glide (loops / holds)
   upper body  melee_guard, melee_swing(_b), bow_draw, rifle_aim, consume (the game masks these to the torso)
   death       one-shot, holds its last frame
@@ -29,7 +29,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 FPS = 30
 
-WALK, RUN, SPRINT = 3.6, 5.6, 7.4
+WALK, RUN, SPRINT = 3.6, 5.6, 8.6
 
 # Character faces -Y in Blender; its left is +X.
 FWD = Vector((0, -1, 0))
@@ -601,7 +601,7 @@ def main():
         for suf, dvec in (("f", FWD), ("b", -FWD), ("l", LEFT), ("r", -LEFT)):
             lean = (0.1 if speed == WALK else 0.18) * (1 if suf == "f" else -0.4 if suf == "b" else 0.3)
             cycles[f"{name}_{suf}"] = locomotion(rig, f"{name}_{suf}", speed, dvec, lean=lean, **p)
-    cycles["sprint_f"] = locomotion(rig, "sprint_f", SPRINT, FWD, cadence=3.25, duty=0.29, lift=0.32, crouch=0.11,
+    cycles["sprint_f"] = locomotion(rig, "sprint_f", SPRINT, FWD, cadence=3.45, duty=0.29, lift=0.32, crouch=0.11,
                                     bob=0.04, lean=0.3, arm=0.85, elbow=1.6)
     idle(rig)
     hold_pose(rig, "jump", 12, jump_pose)

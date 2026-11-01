@@ -24,11 +24,14 @@ CLOTH = {
     # name prefix: (base sRGB, border sRGB or None, pattern, border width m). Longer prefixes first:
     # a garment takes the first that its name starts with.
     # Panga: modern desi clothes.
-    "shirt_placket": ((0.14, 0.26, 0.52), None, "check", 0.0),
-    "shirt": ((0.14, 0.26, 0.52), None, "check", 0.0),
-    "jeans": ((0.13, 0.19, 0.33), None, "denim", 0.0),
+    "shirt_placket": ((0.80, 0.46, 0.04), None, "check", 0.0),
+    "shirt": ((0.80, 0.46, 0.04), None, "check", 0.0),
+    # Indigo denim (its twill and fading lighten it a good deal), so jeans read as jeans.
+    "jeans": ((0.10, 0.18, 0.38), None, "denim", 0.0),
     "belt": ((0.22, 0.12, 0.06), None, "weave", 0.0),
     "gamchha": ((0.78, 0.10, 0.10), None, "check_fine", 0.0),
+    "kurti_panel": ((0.74, 0.10, 0.38), None, "buti", 0.0),
+    "kurti": ((0.74, 0.10, 0.38), (0.86, 0.64, 0.24), "buti", 0.012),
     "kameez": ((0.74, 0.10, 0.38), (0.86, 0.64, 0.24), "buti", 0.012),
     "salwar": ((0.92, 0.88, 0.78), None, "weave", 0.0),
     "dupatta_fall": ((0.94, 0.70, 0.12), (0.74, 0.10, 0.38), "weave", 0.03),

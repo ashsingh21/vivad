@@ -108,8 +108,9 @@ def jewellery(ctx, items, *, armbands=True, kadas=1, anklets=False, neck=False, 
 
 # ------------------------------------------------------------------ Panga: today's street clothes
 
-SHIRT_BLUE = (0.12, 0.42, 0.86)
-DENIM = (0.14, 0.22, 0.42)
+SHIRT_MUSTARD = (0.93, 0.64, 0.10)
+# Mid-blue, washed: reads as jeans against any top.
+DENIM = (0.20, 0.34, 0.58)
 GAMCHHA_RED = (0.88, 0.12, 0.10)
 KAMEEZ_PINK = (0.90, 0.12, 0.46)
 SALWAR_CREAM = (0.92, 0.88, 0.78)
@@ -146,7 +147,7 @@ def upper_body(ctx, L, hem, sleeve, neck_front, neck_back, lower_sleeve=0.0):
 
 
 def male_street(ctx):
-    """A half-sleeve checked shirt worn out over jeans and a belt, a chequered gamchha over the
+    """A half-sleeve mustard shirt worn out over blue jeans and a belt, a chequered gamchha over the
     right shoulder, a steel kada; his own hair."""
     L = Landmarks(ctx)
     items = []
@@ -171,11 +172,11 @@ def male_street(ctx):
         return 0.011 + 0.022 * below
     shirt = g.shell(ctx, "shirt", upper_body(ctx, L, shirt_hem, 0.42, 0.06, 0.02), shirt_offset, smooth=3, thickness=0.003,
                     edge_iters=20)
-    items.append((tag(shirt, SHIRT_BLUE), "cover"))
+    items.append((tag(shirt, SHIRT_MUSTARD), "cover"))
     # The button placket down the front.
     top_z = L.clav - 0.06
     placket = [L.surface(0.0, top_z - (top_z - shirt_hem) * s, push=0.017) for s in [i / 10 for i in range(11)]]
-    items.append((tag(g.strip(ctx, "shirt_placket", placket, [0.028] * 11, thickness=0.003), SHIRT_BLUE), "accessory"))
+    items.append((tag(g.strip(ctx, "shirt_placket", placket, [0.028] * 11, thickness=0.003), SHIRT_MUSTARD), "accessory"))
 
     # Gamchha thrown over the right shoulder: one end down the chest, the other down the back.
     for k, front in enumerate((True, False)):
@@ -191,53 +192,44 @@ def male_street(ctx):
 
 
 def female_street(ctx):
-    """Salwar kameez: a kameez with its front and back panels falling to the knee (slit at the
-    sides), a full salwar gathered at the ankles, a dupatta across the chest from the right hip over
-    the left shoulder and down the back; glass bangles and payal."""
+    """A kurti over slim jeans: the kurti fitted through the body, three-quarter sleeves, falling to
+    mid-thigh with slits at the sides; jeans to the ankle; glass bangles."""
     L = Landmarks(ctx)
     items = []
     waistline = L.waist - 0.02
-    hem = L.ankle + 0.05
+    ankle = L.ankle + 0.035
 
-    def salwar_offset(co, n):
-        t = (waistline - co.z) / (waistline - hem)
-        loose = 0.01 + 0.04 * math.sin(math.pi * min(max(t, 0.0) * 0.95, 1.0))
-        inner = 1.0 - 0.6 * max(0.0, -n.x * math.copysign(1.0, co.x)) * smoothstep(L.hip, L.knee, co.z)
-        return loose * inner
+    def jeans_offset(co, n):
+        t = (waistline - co.z) / (waistline - ankle)
+        return 0.007 + 0.005 * t + 0.006 * smoothstep(0.8, 1.0, t)
 
-    salwar = g.shell(ctx, "salwar", lambda v: all_in(ctx, v, LEG_GROUPS, hem, waistline), salwar_offset, smooth=6,
-                     snap=g.z_snap(hem, waistline))
-    items.append((tag(salwar, SALWAR_CREAM), "cover"))
+    jeans = g.shell(ctx, "jeans", lambda v: all_in(ctx, v, LEG_GROUPS, ankle, waistline), jeans_offset, smooth=4,
+                    snap=g.z_snap(ankle, waistline))
+    items.append((tag(jeans, DENIM), "cover"))
 
-    # The kameez: fitted through the body to the hips, three-quarter sleeves, round neck...
-    kameez_hem = L.hip - 0.05
+    # The kurti: fitted through the body to the hips...
+    kurti_hem = L.hip - 0.05
+    thigh = (L.hip + L.knee) * 0.5
 
-    def kameez_offset(co, n):
-        return 0.009 + 0.028 * smoothstep(waistline, kameez_hem, co.z)
-    kameez = g.shell(ctx, "kameez", upper_body(ctx, L, kameez_hem, 1.0, 0.07, 0.03, lower_sleeve=0.45), kameez_offset,
-                     smooth=3, thickness=0.003, edge_iters=20)
-    items.append((tag(kameez, KAMEEZ_PINK), "cover"))
-    # ...and below the hips to the knee, over the salwar (just outside it), with a narrow panel
-    # front and back closing the gap between the legs.
-    skirt = g.shell(ctx, "kameez_skirt", lambda v: all_in(ctx, v, LEG_GROUPS, L.knee + 0.03, kameez_hem + 0.03),
-                    lambda co, n: salwar_offset(co, n) + 0.014, smooth=6, snap=g.z_snap(L.knee + 0.03, kameez_hem + 0.03))
+    def kurti_offset(co, n):
+        return 0.009 + 0.024 * smoothstep(waistline, kurti_hem, co.z)
+    kurti = g.shell(ctx, "kurti", upper_body(ctx, L, kurti_hem, 1.0, 0.07, 0.03, lower_sleeve=0.45), kurti_offset,
+                    smooth=3, thickness=0.003, edge_iters=20)
+    items.append((tag(kurti, KAMEEZ_PINK), "cover"))
+    # ...then over the jeans (just outside them) to mid-thigh, with a narrow panel front and back
+    # closing the gap between the legs: open at the sides.
+    skirt = g.shell(ctx, "kurti_skirt", lambda v: all_in(ctx, v, LEG_GROUPS, thigh, kurti_hem + 0.03),
+                    lambda co, n: jeans_offset(co, n) + 0.016, smooth=6, snap=g.z_snap(thigh, kurti_hem + 0.03))
     items.append((tag(skirt, KAMEEZ_PINK), "cover"))
     for k, front in enumerate((True, False)):
         sgn = -1.0 if front else 1.0
-        top = L.surface(0.0, kameez_hem, front=front) + Vector((0.0, sgn * 0.045, 0.02))
-        drop = kameez_hem - L.knee - 0.01
-        path = [top + Vector((0.0, sgn * 0.035 * s, -drop * s)) for s in [i / 9 for i in range(10)]]
-        items.append((tag(g.strip(ctx, f"kameez_panel{k}", path, [0.16 + 0.04 * i / 9 for i in range(10)],
-                                  normals=[Vector((0, -1 if front else 1, 0))] * 10, thickness=0.003), KAMEEZ_PINK), "accessory"))
+        top = L.surface(0.0, kurti_hem, front=front) + Vector((0.0, sgn * 0.04, 0.02))
+        drop = kurti_hem - thigh - 0.01
+        path = [top + Vector((0.0, sgn * 0.02 * s, -drop * s)) for s in [i / 7 for i in range(8)]]
+        items.append((tag(g.strip(ctx, f"kurti_panel{k}", path, [0.20 + 0.03 * i / 7 for i in range(8)],
+                                  normals=[Vector((0, -1 if front else 1, 0))] * 8, thickness=0.003), KAMEEZ_PINK), "accessory"))
 
-    items.append((tag(diagonal_sash(ctx, L, "dupatta", half_width=0.075, offset=0.016, z_min=waistline - 0.03, smooth=9),
-                      DUPATTA_YELLOW), "cover"))
-    back_top = L.surface(0.10, L.clav - 0.02, front=False, push=0.02)
-    fall = [back_top + Vector((0.02 * s, 0.0, -(L.clav - L.knee) * 0.62 * s)) for s in [i / 14 for i in range(15)]]
-    items.append((tag(g.strip(ctx, "dupatta_fall", fall, [0.16 + 0.06 * i / 14 for i in range(15)], normals=[Vector((0, 1, 0))] * 15,
-                              thickness=0.003, shrink_to=ctx.proxy, shrink_offset=0.03), DUPATTA_YELLOW), "accessory"))
-
-    jewellery(ctx, items, armbands=False, kadas=4, anklets=True, neck=False)
+    jewellery(ctx, items, armbands=False, kadas=4, anklets=False, neck=False)
     return items
 
 

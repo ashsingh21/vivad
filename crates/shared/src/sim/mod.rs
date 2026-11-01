@@ -155,6 +155,11 @@ pub struct Kinematic {
     /// Highest point since last on the ground on foot (fall damage is by height dropped).
     /// None while airborne untracked: thrown by a wind astra, which lands harmlessly.
     pub fall_from: Option<f32>,
+    /// Seconds since last on the ground on foot (a jump still counts just after running off an
+    /// edge: movement::COYOTE).
+    pub air_time: f32,
+    /// Seconds a jump press is still waiting to happen (pressed just before landing: JUMP_BUFFER).
+    pub jump_buffer: f32,
 }
 
 /// Previous and current fixed-tick positions so clients can interpolate between ticks.

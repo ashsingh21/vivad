@@ -8,7 +8,19 @@ use super::{CAPSULE_LENGTH, CAPSULE_RADIUS, DamageCause, DamageMsg, Eliminated, 
 pub const GRAVITY: f32 = 22.0;
 pub const JUMP_SPEED: f32 = 7.6;
 pub const WALK_SPEED: f32 = 5.6;
-pub const SPRINT_SPEED: f32 = 7.4;
+pub const SPRINT_SPEED: f32 = 8.6;
+/// A jump at a full sprint goes this much faster forward (and a little higher: RUN_JUMP_LIFT);
+/// never past SPRINT_SPEED plus this, so hopping can't snowball.
+pub const RUN_JUMP_BOOST: f32 = 1.0;
+pub const RUN_JUMP_LIFT: f32 = 0.08;
+/// A jump still works this long after running off an edge, and a press this long before landing
+/// jumps on landing.
+pub const COYOTE: f32 = 0.12;
+pub const JUMP_BUFFER: f32 = 0.12;
+/// Falling pulls harder than rising: a snappier arc, the same height.
+pub const FALL_GRAVITY: f32 = 1.3;
+/// Slowing in the air with no stick held (momentum otherwise kept).
+pub const AIR_DRAG: f32 = 2.0;
 pub const AIM_SPEED: f32 = 3.6;
 pub const GROUND_ACCEL: f32 = 70.0;
 pub const AIR_ACCEL: f32 = 12.0;
@@ -108,19 +120,33 @@ fn move_warriors(
                 } else {
                     WALK_SPEED
                 };
-                let accel = if kin.grounded { GROUND_ACCEL } else { AIR_ACCEL };
-                let h = approach(kin.velocity.with_y(0.0), wish * speed, accel * dt);
+                kin.jump_buffer = if intent.pressed(btn::JUMP) { JUMP_BUFFER } else { (kin.jump_buffer - dt).max(0.0) };
+                kin.air_time = if kin.grounded { 0.0 } else { kin.air_time + dt };
+                let cur = kin.velocity.with_y(0.0);
+                let mut h = if kin.grounded {
+                    approach(cur, wish * speed, GROUND_ACCEL * dt)
+                } else if wish == Vec3::ZERO {
+                    approach(cur, Vec3::ZERO, AIR_DRAG * dt)
+                } else {
+                    // Steer in the air without braking: a running jump keeps its speed.
+                    approach(cur, wish * cur.length().max(speed), AIR_ACCEL * dt)
+                };
                 let mut vy = kin.velocity.y;
-                if kin.grounded {
+                if kin.jump_buffer > 0.0 && (kin.grounded || kin.air_time < COYOTE) {
+                    // How much of a sprint this is: a running jump carries further and a bit higher.
+                    let run = ((cur.length() - WALK_SPEED) / (SPRINT_SPEED - WALK_SPEED)).clamp(0.0, 1.0);
+                    vy = JUMP_SPEED * (1.0 + RUN_JUMP_LIFT * run);
+                    h = (h + h.normalize_or_zero() * RUN_JUMP_BOOST * run).clamp_length_max(SPRINT_SPEED + RUN_JUMP_BOOST);
+                    kin.grounded = false;
+                    kin.jump_buffer = 0.0;
+                    // No second jump off the same edge.
+                    kin.air_time = COYOTE;
+                } else if kin.grounded {
                     // Follow the ground plane so slopes and stair ramps don't sap speed.
                     let n = kin.ground_normal;
                     vy = if n.y > 0.0 { -(h.x * n.x + h.z * n.z) / n.y } else { 0.0 };
-                    if intent.pressed(btn::JUMP) {
-                        vy = JUMP_SPEED;
-                        kin.grounded = false;
-                    }
                 } else {
-                    vy -= GRAVITY * dt;
+                    vy -= GRAVITY * if vy < 0.0 { FALL_GRAVITY } else { 1.0 } * dt;
                 }
                 kin.velocity = h.with_y(vy);
             }
