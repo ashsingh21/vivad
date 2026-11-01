@@ -260,16 +260,20 @@ fn hills(map: &mut MapLayout, data: &Data, ring: &super::cp::Ring, made: &[Hill]
     for i in 0..n {
         for j in 0..n {
             let e = d[i * n + j];
-            if e <= 0.0 {
+            let p = Vec2::new(t.coord(i), t.coord(j));
+            // Only park ground rises (or, in Central Park, its footpaths over a made hill).
+            if e <= 0.0 && !(t.ground[i * n + j] == ground::PATH && p.distance(c) < ring.park) {
                 continue;
             }
-            let p = Vec2::new(t.coord(i), t.coord(j));
             // Swells: broad and mostly low (waist-high cover), now and then a knoll of 4 to 6 m.
             let swell = (terrain::fbm(p.x / 48.0, p.y / 48.0, 3, seed + 101) - 0.42).max(0.0) * 16.0 + terrain::fbm(p.x / 12.0, p.y / 12.0, 2, seed + 103) * 0.8;
             let mut h = swell * smooth(5.0, 24.0, e);
+            // The made hills rise over the park's footpaths (which would cut gullies through them),
+            // fading out only toward the park's edge.
+            let inside = 1.0 - smooth(ring.park - 10.0, ring.park - 2.0, p.distance(c));
             for hill in made {
                 let out = (p.distance(hill.center) - hill.plateau).max(0.0);
-                h = h.max(hill.top * (1.0 - smooth(0.0, hill.skirt, out)) * smooth(1.0, 6.0, e));
+                h = h.max(hill.top * (1.0 - smooth(0.0, hill.skirt, out)) * inside);
             }
             // Central Park's fountain and the paths out from it stay level.
             if p.distance(c) < ring.park + 4.0 {
