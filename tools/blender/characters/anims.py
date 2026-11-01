@@ -29,7 +29,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 FPS = 30
 
-WALK, RUN, SPRINT, CROUCH = 3.6, 5.6, 8.6, 2.4
+WALK, RUN, SPRINT, CROUCH = 3.6, 5.6, 8.6, 2.0
 
 # Character faces -Y in Blender; its left is +X.
 FWD = Vector((0, -1, 0))
@@ -844,11 +844,6 @@ def main():
             cycles[f"{name}_{suf}"] = locomotion(rig, f"{name}_{suf}", speed, dvec, lean=lean, **q)
     cycles["sprint_f"] = locomotion(rig, "sprint_f", SPRINT, FWD, cadence=3.45, duty=0.25, lift=0.32, crouch=0.05,
                                     bob=0.04, lean=0.28, arm=0.85, elbow=1.5, kick=0.52, arm_back=0.2)
-    # The crouch walk: the clip's are slow and short, and stretched to our speed they lunge; ours
-    # keeps low and steady with short steps.
-    cycles["crouch_f"] = locomotion(rig, "crouch_f", CROUCH, FWD, cadence=4.6, duty=0.6, lift=0.07, crouch=0.42, bob=0.012,
-                                    lean=0.4, arm=0.15, elbow=1.3, hips_back=0.04)
-    crouch_idle(rig)
     # The forward run and the sprint (shorter, quicker steps than the clips'), standing, crouching,
     # sliding and jumping, from motion capture.
     src, objs, acts = load_mocap("ual")
@@ -857,6 +852,11 @@ def main():
     cycles["run_f"] = mocap(rig, src, acts, "run_f", "Jog_Fwd_Loop", RUN, stride=0.82)
     cycles["sprint_f"] = mocap(rig, src, acts, "sprint_f", "Sprint_Loop", SPRINT, stride=0.85)
     mocap(rig, src, acts, "idle", "Idle_Loop", 0.0)
+    # Crouching: the clips' own motion, their deep hunch eased to a fairly upright back with the
+    # head up, the walk played quicker (its own steps, about two a second at the game's speed).
+    crouch_keep = {"spine_01": 0.6, "spine_02": 0.55, "spine_03": 0.55, "neck_01": 0.4, "head": 0.2}
+    cycles["crouch_f"] = mocap(rig, src, acts, "crouch_f", "Crouch_Fwd_Loop", CROUCH, keep=crouch_keep)
+    mocap(rig, src, acts, "crouch_idle", "Crouch_Idle_Loop", 0.0, keep=crouch_keep)
     # The game holds the jump at its middle (tucked, rising) and loops the fall.
     mocap(rig, src, acts, "jump", "Jump_Start", 0.0)
     mocap(rig, src, acts, "fall", "Jump_Loop", 0.0)

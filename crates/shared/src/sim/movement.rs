@@ -23,7 +23,7 @@ pub const FALL_GRAVITY: f32 = 1.3;
 pub const AIR_DRAG: f32 = 2.0;
 pub const AIM_SPEED: f32 = 3.6;
 /// Crouched: slower, steadier (crate::sim::combat), and shorter.
-pub const CROUCH_SPEED: f32 = 2.4;
+pub const CROUCH_SPEED: f32 = 2.0;
 /// A slide: crouching while running fast throws the warrior into it at at least SLIDE_SPEED,
 /// slowing by SLIDE_FRICTION (m/s each second; downhill, gravity along the slope speeds it up),
 /// steered only a little; it ends crouched under SLIDE_END, and the next can start SLIDE_COOLDOWN
