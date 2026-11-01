@@ -803,15 +803,21 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
 
 
 PISTOL_DROP = 0.6
+# A long gun's clips: the rifle pack's own, whole body (its stance puts the left hand on the gun; the
+# game places the gun and brings both hands to it); False: the plain moves under our own carry.
+RIFLE_PACK = True
+# A long gun carried: the shoulders turned this far (radians), the left one forward.
+RIFLE_TURN = 0.7
 ARM_BONES = ("clavicle", "upperarm", "lowerarm", "hand", "thumb", "index", "middle", "ring", "pinky")
 
 
-def carry(rig, name, base, hold, drop=0.0):
+def carry(rig, name, base, hold, drop=0.0, turn=0.0):
     """A gun carried on the move: `base`'s legs, hips and torso (the plain walk or run, its natural
     bounce and twist) with `hold`'s arms kept as they sit on the chest (each arm bone's turn from
     its parent copied, so the gun rides the torso as it swings). `drop` (radians) lowers both arms
     from the shoulders about the chest's side-to-side line, hands together: a pistol's aim grip
-    carried at low ready."""
+    carried at low ready. `turn` (radians) brings the left shoulder forward, the head kept to the
+    front: a long gun's fore-end within the left hand's reach."""
     held = [b.name for b in rig.pb if b.name.split("_")[0] in ARM_BONES]
     sc = bpy.context.scene
     rig.obj.animation_data.action = bpy.data.actions[hold]
@@ -829,6 +835,11 @@ def carry(rig, name, base, hold, drop=0.0):
         for pb in rig.pb:
             pb.matrix_basis = grip.get(pb.name, pose[pb.name])
         bpy.context.view_layer.update()
+        if turn:
+            rig.rotate("spine_02", UP, -turn * 0.5)
+            rig.rotate("spine_03", UP, -turn * 0.5)
+            rig.rotate("neck_01", UP, turn * 0.6)
+            rig.rotate("head", UP, turn * 0.4)
         if drop:
             side = (rig.head("upperarm_l") - rig.head("upperarm_r")).normalized()
             for s in "lr":
@@ -1071,7 +1082,7 @@ def bow_draw_pose(rig, t):
 # Where the long gun's hands go (crates/game/src/arms.rs holds the gun at the right hand, barrel
 # along the aim): the right hand on the grip this far in front of the shoulder, so the stock's
 # butt (0.4 m behind the grip) sits in the shoulder pocket; the left hand under the fore-end.
-RIFLE_GRIP = 0.3
+RIFLE_GRIP = 0.45
 RIFLE_FOREND = 0.3
 
 
@@ -1102,11 +1113,11 @@ def rifle_carry_pose(rig, t):
     right hip, the stock back along the forearm, the left hand under the fore-end, the barrel
     forward, angled down and in across the body."""
     legs_neutral(rig)
-    down, across = 0.22, 0.45
+    down, across = 0.25, 0.45
     shot = (FWD * math.cos(down) - UP * math.sin(down)).normalized()
     shot = (shot * math.cos(across) + LEFT * math.sin(across) * 0.55).normalized()
     shoulder = rig.head("upperarm_r")
-    want = shoulder + FWD * 0.3 + LEFT * 0.05 - UP * 0.2
+    want = shoulder + FWD * 0.38 + LEFT * 0.05 - UP * 0.2
     grip = want.copy()
     for _ in range(4):
         arm_ik(rig, "r", grip, Vector((-1.0, 0.4, -0.4)))
@@ -1235,17 +1246,20 @@ def main():
     # tactical jog, hunched, arms locked out), and still: a long gun at low ready (our own hold,
     # fitted to the gun: the packs' left hand isn't where our fore-end is), a pistol in both hands
     # at low ready.
-    hold_pose(rig, "rifle_carry", 1, rifle_carry_pose)
-    carry(rig, "rifle_idle", "idle", "rifle_carry")
-    carry(rig, "rifle_crouch_idle", "crouch_idle", "rifle_carry")
     for d in "fblr":
-        cycles[f"rifle_crouch_{d}"] = carry(rig, f"rifle_crouch_{d}", f"crouch_{d}", "rifle_carry")
         for m in ("walk", "run"):
-            cycles[f"rifle_{m}_{d}"] = carry(rig, f"rifle_{m}_{d}", f"{m}_{d}", "rifle_carry")
-            if f"pistol_idle" in bpy.data.actions:
+            if "pistol_idle" in bpy.data.actions:
                 cycles[f"pistol_{m}_{d}"] = carry(rig, f"pistol_{m}_{d}", f"{m}_{d}", "pistol_idle", drop=PISTOL_DROP)
-    cycles["rifle_sprint_f"] = carry(rig, "rifle_sprint_f", "sprint_f", "rifle_carry")
-    bpy.data.actions.remove(bpy.data.actions["rifle_carry"])
+    if not RIFLE_PACK:
+        hold_pose(rig, "rifle_carry", 1, rifle_carry_pose)
+        carry(rig, "rifle_idle", "idle", "rifle_carry", turn=RIFLE_TURN)
+        carry(rig, "rifle_crouch_idle", "crouch_idle", "rifle_carry", turn=RIFLE_TURN)
+        for d in "fblr":
+            cycles[f"rifle_crouch_{d}"] = carry(rig, f"rifle_crouch_{d}", f"crouch_{d}", "rifle_carry", turn=RIFLE_TURN)
+            for m in ("walk", "run"):
+                cycles[f"rifle_{m}_{d}"] = carry(rig, f"rifle_{m}_{d}", f"{m}_{d}", "rifle_carry", turn=RIFLE_TURN)
+        cycles["rifle_sprint_f"] = carry(rig, "rifle_sprint_f", "sprint_f", "rifle_carry", turn=RIFLE_TURN)
+        bpy.data.actions.remove(bpy.data.actions["rifle_carry"])
     if not os.path.exists(os.path.join(MIXAMO, "Running Slide.fbx")):
         src, objs, acts = load_mocap("ual2")
         bpy.context.view_layer.objects.active = arm

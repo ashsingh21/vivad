@@ -220,7 +220,22 @@ fn dress_warriors(mut commands: Commands, q: Query<(Entity, &WarriorVisual), Add
                 {
                     // The string sits in the crook of the curled index and middle fingers.
                     let pinch_l = m * 1.3 + crate::arms::palm_normal(i, m, p) * 0.025;
-                    commands.entity(vis).insert(crate::arms::Body { root: ready.entity, spine: [a, b, c, d], hand_l, pinch_l });
+                    // The left fingers, knuckle to tip, to close round a long gun's fore-end.
+                    let fingers_l = ["index", "middle", "ring", "pinky"]
+                        .iter()
+                        .flat_map(|f| (1..=3).filter_map(|k| named.get(&format!("{f}_0{k}_l")).copied()).collect::<Vec<_>>())
+                        .collect();
+                    commands.entity(vis).insert(crate::arms::Body {
+                        root: ready.entity,
+                        spine: [a, b, c, d],
+                        hand_l,
+                        pinch_l,
+                        knuckle_l: m,
+                        palm_l: crate::arms::palm_normal(i, m, p),
+                        fingers_l,
+                        shoulder_r: named.get("upperarm_r").copied(),
+                        head: named.get("head").copied(),
+                    });
                 }
                 commands.entity(vis).insert(CharRig { bones, weapon_attached: false, variant, rig_root, named });
             });

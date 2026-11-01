@@ -541,6 +541,7 @@ fn armoury_camera(
     visuals: Query<(&crate::visuals::WarriorVisual, &Transform), Without<MainCamera>>,
     mut cam: Query<&mut Transform, With<MainCamera>>,
     mut exit: MessageWriter<AppExit>,
+    mut check: ResMut<crate::arms::GunCheck>,
 ) {
     arm.t += time.delta_secs();
     let (Ok(me), Ok(mut ct)) = (player.single(), cam.single_mut()) else { return };
@@ -567,6 +568,9 @@ fn armoury_camera(
     let at = if pose.state == Use::Strike { STRIKE_AT + pose.after } else { POSE_TIME };
     if arm.t >= at && !arm.shot {
         let path = format!("{}/{}.png", arm.dir, arm.name(&pose));
+        if let Some(c) = check.0.take().filter(|_| crate::visuals::long_gun(pose.item)) {
+            info!("[guncheck] {}: {c}", arm.name(&pose));
+        }
         commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
         arm.shot = true;
     }
