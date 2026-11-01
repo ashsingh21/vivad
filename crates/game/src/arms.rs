@@ -204,7 +204,9 @@ fn orient_bows(
                 .unwrap_or(ahead)
         };
         let carry = if long {
-            along(body.hand_l, 1.0)
+            // Never steeper than ~14 degrees down (a run's forward lean tips the hands with it).
+            let d = along(body.hand_l, 1.0);
+            d.with_y(d.y.max(-0.25)).normalize_or(ahead)
         } else {
             parents.get(hand).map(|p| along(p.parent(), -1.0)).unwrap_or(ahead)
         };

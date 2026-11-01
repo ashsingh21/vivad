@@ -1097,6 +1097,29 @@ def rifle_aim_pose(rig, t):
     relax_fingers(rig, "l", 0.85)
 
 
+def rifle_carry_pose(rig, t):
+    """A long gun carried at low ready, both hands on it: the right hand on the grip in front of the
+    right hip, the stock back along the forearm, the left hand under the fore-end, the barrel
+    forward, angled down and in across the body."""
+    legs_neutral(rig)
+    down, across = 0.22, 0.45
+    shot = (FWD * math.cos(down) - UP * math.sin(down)).normalized()
+    shot = (shot * math.cos(across) + LEFT * math.sin(across) * 0.55).normalized()
+    shoulder = rig.head("upperarm_r")
+    want = shoulder + FWD * 0.3 + LEFT * 0.05 - UP * 0.2
+    grip = want.copy()
+    for _ in range(4):
+        arm_ik(rig, "r", grip, Vector((-1.0, 0.4, -0.4)))
+        rig.aim("hand_r", shot + UP * 0.1)
+        grip += want - rig.head("hand_r").lerp(rig.head("middle_01_r"), 0.6)
+    # The left wrist on the line from the right one along the barrel (the game lays a carried long
+    # gun from the right wrist toward the left), a fore-end's length on.
+    arm_ik(rig, "l", rig.head("hand_r") + shot * RIFLE_FOREND, Vector((0.5, 0.2, -1.0)))
+    rig.aim("hand_l", shot - LEFT * 0.4 + UP * 0.1)
+    relax_fingers(rig, "r", 0.95)
+    relax_fingers(rig, "l", 0.85)
+
+
 def consume_pose(rig, t):
     """Raise a flask or herb to the mouth and back."""
     legs_neutral(rig)
@@ -1209,16 +1232,20 @@ def main():
         print(f"[anims] {name} from Mixamo's {file} ({mfps:.0f} fps)")
         drop_mocap(mobjs, macts, arm)
     # Moving with a gun: the plain walk and run under the gun's hold (the packs' own runs are a
-    # tactical jog, hunched, arms locked out): a long gun low across the body in both hands, a
-    # pistol in both hands at low ready.
+    # tactical jog, hunched, arms locked out), and still: a long gun at low ready (our own hold,
+    # fitted to the gun: the packs' left hand isn't where our fore-end is), a pistol in both hands
+    # at low ready.
+    hold_pose(rig, "rifle_carry", 1, rifle_carry_pose)
+    carry(rig, "rifle_idle", "idle", "rifle_carry")
+    carry(rig, "rifle_crouch_idle", "crouch_idle", "rifle_carry")
     for d in "fblr":
+        cycles[f"rifle_crouch_{d}"] = carry(rig, f"rifle_crouch_{d}", f"crouch_{d}", "rifle_carry")
         for m in ("walk", "run"):
-            if f"rifle_idle" in bpy.data.actions:
-                cycles[f"rifle_{m}_{d}"] = carry(rig, f"rifle_{m}_{d}", f"{m}_{d}", "rifle_idle")
+            cycles[f"rifle_{m}_{d}"] = carry(rig, f"rifle_{m}_{d}", f"{m}_{d}", "rifle_carry")
             if f"pistol_idle" in bpy.data.actions:
                 cycles[f"pistol_{m}_{d}"] = carry(rig, f"pistol_{m}_{d}", f"{m}_{d}", "pistol_idle", drop=PISTOL_DROP)
-    if "rifle_idle" in bpy.data.actions:
-        cycles["rifle_sprint_f"] = carry(rig, "rifle_sprint_f", "sprint_f", "rifle_idle")
+    cycles["rifle_sprint_f"] = carry(rig, "rifle_sprint_f", "sprint_f", "rifle_carry")
+    bpy.data.actions.remove(bpy.data.actions["rifle_carry"])
     if not os.path.exists(os.path.join(MIXAMO, "Running Slide.fbx")):
         src, objs, acts = load_mocap("ual2")
         bpy.context.view_layer.objects.active = arm
