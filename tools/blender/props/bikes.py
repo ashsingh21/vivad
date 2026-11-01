@@ -173,22 +173,33 @@ def motorbike(Piece, name, k):
         p.cyl(axle + Vector((x, 0, 0)), axle + up * 0.30 + Vector((x, 0, 0)), 0.03, k.get("slider", ALLOY), 8)
     p.cyl(head + Vector((-0.1, 0, -0.06)), head + Vector((0.1, 0, -0.06)), 0.03, BLACK, 6)
     # Handlebar and grips.
-    bar = head + Vector((0, -0.07, 0.09))
+    # Two risers up from the top clamp, the bar through their tops: straight across the middle, then
+    # swept back and a little up to the grips.
+    bar = head + Vector((0, -0.04, 0.09))
     hw = k.get("bar", 0.36)
-    p.cyl(head, bar, 0.016, CHROME, 6)
-    p.cyl(bar + Vector((-hw, -0.06, 0.02)), bar + Vector((hw, -0.06, 0.02)), 0.012, CHROME if k.get("chrome_bar", True) else BLACK, 6)
-    for x in (-hw, hw):
-        p.cyl(bar + Vector((x * 0.78, -0.06, 0.02)), bar + Vector((x * 1.05, -0.06, 0.02)), 0.018, BLACK, 8)
+    bar_col = CHROME if k.get("chrome_bar", True) else BLACK
+    for x in (-0.05, 0.05):
+        p.cyl(head + Vector((x, 0, -0.07)), bar + Vector((x, 0, 0)), 0.014, CHROME, 6)
+    p.cyl(bar + Vector((-0.12, 0, 0)), bar + Vector((0.12, 0, 0)), 0.013, bar_col, 6)
+    for x in (-1, 1):
+        bend = bar + Vector((x * 0.12, 0, 0))
+        end = bar + Vector((x * hw, -0.07, 0.03))
+        p.ball(bend, 0.013, bar_col, 1)
+        p.cyl(bend, end, 0.013, bar_col, 6)
+        p.cyl(bar + Vector((x * hw * 0.74, -0.05, 0.022)), bar + Vector((x * hw * 1.04, -0.072, 0.031)), 0.019, BLACK, 8)
     # Mirrors on stalks, angled out.
     for x in (-1, 1):
-        root = bar + Vector((x * hw * 0.6, -0.05, 0.03))
+        root = bar + Vector((x * hw * 0.6, -0.04, 0.02))
         head_m = root + Vector((x * 0.07, 0.02, 0.22))
         p.cyl(root, head_m, 0.006, BLACK, 4)
         p.cyl(head_m + Vector((0, -0.012, 0.03)), head_m + Vector((0, 0.008, 0.03)), 0.05, BLACK, 12)
         p.cyl(head_m + Vector((0, -0.016, 0.03)), head_m + Vector((0, -0.012, 0.03)), 0.044, CHROME, 12)
-    # Headlamp.
+    # Headlamp, held off the fork legs by a bracket each side.
     lamp = head + Vector((0, 0.12, -0.10))
     style = k["lamp"]
+    s_lamp = (lamp.z - R) / up.z
+    for x in (-0.085, 0.085):
+        p.cyl(axle + up * s_lamp + Vector((x, 0, 0)), lamp + Vector((x * 0.9, -0.06, 0)), 0.012, BLACK, 4)
     if style == "round":
         p.cyl(lamp + Vector((0, -0.08, 0)), lamp, 0.095, k.get("lamp_shell", CHROME), 16)
         p.cyl(lamp, lamp + Vector((0, 0.012, 0)), 0.085, LAMP, 16)
