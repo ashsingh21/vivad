@@ -307,6 +307,40 @@ def pack_atlas(obj, margin=0.004):
     bpy.ops.object.mode_set(mode="OBJECT")
 
 
+# How freely each garment moves (crate::rim's vertex shader sways it with the warrior's motion):
+# name prefix -> (where the flex starts, as a fraction down the piece from its top, full by its
+# foot, and how much). Everything else (body, jeans, belts, jewellery) stays put.
+FLEX = {
+    "kurti_skirt": (0.0, 1.0),
+    "kurti_panel": (0.0, 1.0),
+    "kurti": (0.82, 0.45),
+    "kameez": (0.82, 0.45),
+    "gamchha": (0.1, 1.0),
+    "shirt_placket": (0.85, 0.35),
+    "shirt": (0.85, 0.35),
+    "dupatta": (0.2, 1.0),
+}
+
+
+def flex_layer(obj):
+    """A colour layer 'Flex' for the export: white, its alpha how far the cloth there may sway (0
+    where it's fastened, rising to the free hem). It joins with the rest and goes out as the
+    vertex colour (the bake doesn't read it)."""
+    me = obj.data
+    layer = me.color_attributes.new("Flex", "FLOAT_COLOR", "POINT")
+    key = next((k for k in FLEX if obj.name.startswith(k)), None)
+    zs = [(obj.matrix_world @ v.co).z for v in me.vertices]
+    top, bottom = (max(zs), min(zs)) if zs else (0.0, 0.0)
+    for v, z in zip(me.vertices, zs):
+        flex = 0.0
+        if key:
+            start, amount = FLEX[key]
+            down = (top - z) / max(top - bottom, 1e-4)
+            t = min(max((down - start) / max(1.0 - start, 1e-4), 0.0), 1.0)
+            flex = amount * t * t * (3 - 2 * t)
+        layer.data[v.index].color = (1.0, 1.0, 1.0, flex)
+
+
 def finish_character(variant, rig, proxy, parts, items, root):
     # --- materials per source object
     skin_img = find_image(proxy)
@@ -340,6 +374,7 @@ def finish_character(variant, rig, proxy, parts, items, root):
     for o in opaque:
         apply_non_armature_modifiers(o)
         prepare_uvs(o)
+        flex_layer(o)
 
     # --- join opaque parts into one skinned mesh
     bpy.ops.object.select_all(action="DESELECT")
@@ -360,6 +395,11 @@ def finish_character(variant, rig, proxy, parts, items, root):
     body.data.materials.clear()
     body.data.materials.append(export.game_material(variant, images))
     body.data.uv_layers.remove(body.data.uv_layers["src"])
+    # The flex layer is the one colour layer to export.
+    for c in [c for c in body.data.color_attributes if c.name != "Flex"]:
+        body.data.color_attributes.remove(c)
+    body.data.color_attributes.active_color = body.data.color_attributes["Flex"]
+    body.data.color_attributes.render_color_index = body.data.color_attributes.active_color_index
 
     # --- alpha cards: hair, brows, lashes
     cards = []
@@ -395,7 +435,7 @@ def finish_character(variant, rig, proxy, parts, items, root):
     bpy.ops.export_scene.gltf(
         filepath=out, export_format="GLB", use_selection=True, export_yup=True, export_apply=False,
         export_skins=True, export_def_bones=True, export_animations=False, export_tangents=True,
-        export_image_format="AUTO",
+        export_image_format="AUTO", export_vertex_color="ACTIVE", export_all_vertex_colors=False,
     )
     counts = {o.name: sum(len(p.vertices) - 2 for p in o.data.polygons) for o in lods + cards}
     print(f"[{variant}] exported {out}: {counts}")
