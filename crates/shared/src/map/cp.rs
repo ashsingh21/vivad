@@ -66,6 +66,7 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
     for i in 0..4 {
         b.loot(w, r.at(r.park * 0.6, tau * (i as f32 + 0.5) / 4.0, 0.3));
     }
+    park(b, rng, r);
     let mut streets = r.streets.clone();
     streets.sort_by(f32::total_cmp);
     // Deep blocks are two rows of shops back to back, one facing each colonnade.
@@ -119,6 +120,18 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 b.deco(radial, Vec3::new(rad + out * 0.25, r.g + r.u - 0.2 + lift, 0.0), Vec3::new(0.5, 0.3, chord_at(rad) + 0.1), Mat::Stucco);
                 b.deco(radial, Vec3::new(rad + out * 0.3, r.g - 0.25 + lift, 0.0), Vec3::new(0.6, 0.4, chord_at(rad) + 0.1), Mat::Stucco);
             }
+            // A beam across each verandah from every column to the shop wall, under the ceiling: the
+            // colonnade's rhythm of light and shade; and a light in the ceiling of every bay.
+            for (c0, c1) in [(r.ri + 0.5, core0 - 0.15), (core1 + 0.15, r.ro - 0.5)] {
+                b.deco(Frame::new(c, -s0), Vec3::new((c0 + c1) / 2.0, r.g - SLAB - 0.16 + lift, 0.0), Vec3::new(c1 - c0, 0.32, 0.36), Mat::Stucco);
+                b.map.signs.push(super::ShopSign {
+                    pos: r.at((c0 + c1) / 2.0, am, r.g - SLAB - 0.03 + lift),
+                    facing: Vec2::new(am.cos(), am.sin()),
+                    width: 0.14,
+                    height: (c1 - c0) * 0.5,
+                    kind: SignKind::Light,
+                });
+            }
             // Columns at the start of each segment (and the block's last), on both faces.
             for (col, last) in [(s0, false), (s1, true)] {
                 if last && i + 1 != n {
@@ -162,9 +175,11 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                     });
                 }
             }
-            // The back-to-back wall between the two rows of shops.
+            // The back-to-back wall between the two rows of shops, limewashed a shop's colour (Delhi's
+            // faded pinks, ochres, mints and blues) behind its shelves.
+            let wash = |k: usize| Mat::Paint(((blk * 7 + k * 3) % 7) as u8);
             if split {
-                b.wall(w, xz(mid, s0), xz(mid, s1), 0.0, r.g - SLAB, 0.3, Mat::Stucco, &[]);
+                b.wall(w, xz(mid, s0), xz(mid, s1), 0.0, r.g - SLAB, 0.3, wash(i / 2), &[]);
             }
             // Each shop's signboard over its front, under the verandah ceiling; shelves of goods
             // on its back wall, seen through the arch. The ring's faces carry bigger boards over
@@ -233,7 +248,7 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                     // Butting against the walls at its ends, not into them (their faces would share).
                     let (p, q) = (xz(r0 + 0.15, col), xz(r1 - 0.15, col));
                     let door = if end { vec![Opening::door(p.distance(q) / 2.0)] } else { vec![] };
-                    b.wall(w, p, q, 0.0, r.g - SLAB, 0.3, Mat::Stucco, &door);
+                    b.wall(w, p, q, 0.0, r.g - SLAB, 0.3, if end { Mat::Stucco } else { wash(i / 2 + 1) }, &door);
                     // Shelves down both faces of the party wall, from the back halfway to the front.
                     if !end {
                         // The shop's back is the middle wall: the inner row's far end, the outer row's near one.
@@ -249,6 +264,25 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 if end {
                     let (p, q) = (xz(r.ri + 0.2, col), xz(r.ro - 0.2, col));
                     b.wall(w, p, q, r.g, r.u - SLAB, 0.3, Mat::Stucco, &[Opening::window(p.distance(q) / 2.0)]);
+                }
+            }
+            // Upstairs, the long floor divided into rooms: a limewashed partition every two segments
+            // with a doorway, and a few things in each room to take cover behind (not where the
+            // stairs come up).
+            if i % 2 == 0 && i > 0 {
+                let (p, q) = (xz(r.ri + 0.36, s0), xz(r.ro - 0.36, s0));
+                let room = (blk * 5 + i) % 7;
+                b.wall(w, p, q, r.g + lift, r.u - SLAB, 0.2, Mat::Paint(room as u8), &[Opening::door(p.distance(q) * 0.35), Opening::door(p.distance(q) * 0.65)]);
+            }
+            if i % 2 == 0 && !stairs(i) && !stairs(i + 1) && i + 1 < n {
+                let things: [&'static str; 4] = ["crates", "chairs", "drum", "cooler"];
+                for k in 0..2 {
+                    if rng.random_bool(0.6) {
+                        let rad = r.ri + 1.5 + rng.random_range(0.0..(r.ro - r.ri - 3.0));
+                        let ang = s0 + (s1 - s0) * rng.random_range(0.3..1.7);
+                        let name = things[(k + i + blk) % things.len()];
+                        super::kit::place(b, name, r.at(rad, ang, r.g + lift), rng.random_range(0.0..tau));
+                    }
                 }
             }
             // Stairs up through the shop, climbing outwards onto the floor beyond the well.
@@ -274,4 +308,48 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
             }
         }
     }
+}
+
+
+/// Central Park dressed: stone paths from the fountain out along each radial road and a ring path
+/// round it, flower beds and lamps along them, benches facing in (all on the grass, drawn only;
+/// the benches, lamps and beds take colliders as kit pieces do).
+fn park(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
+    let w = Frame::new(Vec3::ZERO, 0.0);
+    let ground = |b: &Builder, p: Vec3| b.map.terrain.height(p.x, p.z);
+    // Radial paths, in 4 m lengths so they follow the ground.
+    for &a in &r.streets {
+        let dir = Vec3::new(a.cos(), 0.0, a.sin());
+        let mut d = 8.0;
+        while d < r.park - 4.0 {
+            let p = r.center + dir * (d + 2.0);
+            b.deco(Frame::new(Vec3::new(p.x, ground(b, p), p.z), -a), Vec3::new(0.0, 0.015, 0.0), Vec3::new(4.0, 0.03, 3.2), Mat::Stone);
+            d += 4.0;
+        }
+        // Benches and lamps either side, every 14 m.
+        let mut d = 18.0;
+        while d < r.park - 10.0 {
+            for side in [-1.0f32, 1.0] {
+                let n = Vec3::new(-a.sin(), 0.0, a.cos()) * side;
+                let at = r.center + dir * d + n * 2.6;
+                let pos = Vec3::new(at.x, ground(b, at), at.z);
+                let name = if (d as i32 / 14) % 2 == 0 { "bench" } else { "lamp" };
+                super::kit::place(b, name, pos, (-n.x).atan2(-n.z) + std::f32::consts::PI);
+            }
+            d += 14.0;
+        }
+    }
+    // A ring path at two thirds out, in short chords; flower beds round it between the roads.
+    let ring_r = r.park * 0.62;
+    let n = (std::f32::consts::TAU * ring_r / 3.5) as usize;
+    for k in 0..n {
+        let a = std::f32::consts::TAU * (k as f32 + 0.5) / n as f32;
+        let p = r.at(ring_r, a, 0.0);
+        b.deco(Frame::new(Vec3::new(p.x, ground(b, p), p.z), -a), Vec3::new(0.0, 0.016 + 0.002 * (k % 2) as f32, 0.0), Vec3::new(3.0, 0.03, 3.7), Mat::Stone);
+        if k % 4 == 2 && rng.random_bool(0.7) {
+            let q = r.at(ring_r + 4.0, a, 0.0);
+            super::kit::place(b, "planter", Vec3::new(q.x, ground(b, q), q.z), 0.0);
+        }
+    }
+    let _ = w;
 }

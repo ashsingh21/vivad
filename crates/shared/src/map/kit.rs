@@ -59,7 +59,7 @@ fn reach(name: &str) -> f32 {
     }
 }
 
-fn place(b: &mut Builder, name: &'static str, pos: Vec3, yaw: f32) {
+pub(super) fn place(b: &mut Builder, name: &'static str, pos: Vec3, yaw: f32) {
     if let Some(shape) = collider(name) {
         let h = match shape {
             Shape::Box(s) => s.y,
