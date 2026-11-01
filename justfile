@@ -147,7 +147,7 @@ join code name="" lan="":
     VIVAD_JOIN={{code}} VIVAD_NAME="{{name}}" {{ if lan != "" { "VIVAD_LAN=1" } else { "" } }} cargo run --release -p game --bin game
 
 walk:
-    cargo run --release -p shared --bin walk_check
+    VIVAD_MAP=bharat cargo run --release -p shared --bin walk_check
 
 # Fly the camera over every landmark and screenshot it.
 tour:

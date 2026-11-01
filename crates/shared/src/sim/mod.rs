@@ -26,6 +26,10 @@ pub const CAPSULE_LENGTH: f32 = 1.0;
 pub const HALF_HEIGHT: f32 = CAPSULE_RADIUS + CAPSULE_LENGTH / 2.0;
 /// Eye / camera pivot height above the capsule centre.
 pub const EYE_OFFSET: f32 = 0.72;
+/// Crouched (or sliding), the capsule's top comes down this far (its base stays put), and the eye
+/// a little less.
+pub const CROUCH_DROP: f32 = 0.6;
+pub const CROUCH_EYE_DROP: f32 = 0.5;
 /// Over-the-shoulder camera, shared so server-side aim matches the client crosshair.
 pub const CAMERA_DISTANCE: f32 = 3.4;
 pub const CAMERA_SHOULDER: f32 = 0.65;
@@ -160,6 +164,27 @@ pub struct Kinematic {
     pub air_time: f32,
     /// Seconds a jump press is still waiting to happen (pressed just before landing: JUMP_BUFFER).
     pub jump_buffer: f32,
+    /// Low: crouching, or sliding (movement::SLIDE_*), the collider short (`warrior_collider`).
+    pub crouched: bool,
+    pub sliding: bool,
+    /// Seconds before another slide can start.
+    pub slide_cooldown: f32,
+}
+
+/// A warrior's collider: a capsule standing, or one CROUCH_DROP shorter crouched, its base in the
+/// same place (the transform stays the standing capsule's centre).
+pub fn warrior_collider(crouched: bool) -> Collider {
+    if crouched {
+        Collider::compound(vec![(Vec3::Y * (-CROUCH_DROP / 2.0), Quat::IDENTITY, Collider::capsule(CAPSULE_RADIUS, CAPSULE_LENGTH - CROUCH_DROP))])
+    } else {
+        Collider::capsule(CAPSULE_RADIUS, CAPSULE_LENGTH)
+    }
+}
+
+/// The eye's height over the capsule's centre: lower crouched (the crouch button held, which every
+/// peer sees).
+pub fn eye_offset(intent: &PlayerIntent) -> f32 {
+    EYE_OFFSET - if intent.held(btn::CROUCH) { CROUCH_EYE_DROP } else { 0.0 }
 }
 
 /// Previous and current fixed-tick positions so clients can interpolate between ticks.
@@ -562,7 +587,7 @@ fn clear_latched_input(mut q: Query<(&Transform, &mut PlayerIntent, Option<&mut 
 /// Camera-equivalent aim ray, shared by player shots and the client crosshair.
 pub fn aim_ray(center: Vec3, intent: &PlayerIntent) -> (Vec3, Vec3) {
     let rot = intent.aim_rotation();
-    let pivot = center + Vec3::Y * EYE_OFFSET;
+    let pivot = center + Vec3::Y * eye_offset(intent);
     let origin = pivot + rot * Vec3::new(CAMERA_SHOULDER, 0.0, CAMERA_DISTANCE);
     (origin, rot * Vec3::NEG_Z)
 }

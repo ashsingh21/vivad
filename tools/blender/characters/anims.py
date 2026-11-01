@@ -29,7 +29,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 FPS = 30
 
-WALK, RUN, SPRINT = 3.6, 5.6, 8.6
+WALK, RUN, SPRINT, CROUCH = 3.6, 5.6, 8.6, 2.4
 
 # Character faces -Y in Blender; its left is +X.
 FWD = Vector((0, -1, 0))
@@ -338,39 +338,57 @@ def locomotion(rig, name, speed, direction, cadence, duty, lift, crouch, bob, le
 
 # ------------------------------------------------------------------ motion capture
 
-# Quaternius' Universal Animation Library (CC0; tools/blender/characters/mocap): an Unreal-style
-# mannequin with our rig's bone names, its clips in place, facing -Y like ours.
-MOCAP = os.path.join(HERE, "mocap", "UAL_Standard.fbx")
+# Quaternius' Universal Animation Libraries 1 and 2 (CC0; tools/blender/characters/mocap): an
+# Unreal-style mannequin with our rig's bone names, its clips in place, facing -Y like ours.
+MOCAP = {"ual": os.path.join(HERE, "mocap", "UAL_Standard.fbx"), "ual2": os.path.join(HERE, "mocap", "UAL2_Standard.glb")}
 TORSO = ["pelvis", "spine_01", "spine_02", "spine_03", "neck_01", "head", "clavicle_l", "clavicle_r"]
 # How much of each torso bone's turn (in world space, from standing) we keep.
 TORSO_KEEP = {"spine_01": 0.8, "spine_02": 0.75, "spine_03": 0.75, "neck_01": 0.6, "head": 0.5}
 
 
-def load_mocap():
-    before = set(bpy.data.objects)
+def load_mocap(pack):
+    """Import a pack: its armature, the objects and the actions it brought."""
+    objs, acts = set(bpy.data.objects), set(bpy.data.actions)
     bpy.ops.object.mode_set(mode="OBJECT")
-    bpy.ops.import_scene.fbx(filepath=MOCAP)
-    new = [o for o in bpy.data.objects if o not in before]
-    return next(o for o in new if o.type == "ARMATURE"), new
+    path = MOCAP[pack]
+    if path.endswith(".fbx"):
+        bpy.ops.import_scene.fbx(filepath=path)
+    else:
+        bpy.ops.import_scene.gltf(filepath=path)
+    new = [o for o in bpy.data.objects if o not in objs]
+    return next(o for o in new if o.type == "ARMATURE"), new, [a for a in bpy.data.actions if a not in acts]
 
 
-def mocap(rig, src, name, clip, speed):
+def drop_mocap(objs, acts, arm):
+    bpy.ops.object.mode_set(mode="OBJECT")
+    for o in objs:
+        bpy.data.objects.remove(o)
+    for a in acts:
+        bpy.data.actions.remove(a)
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.mode_set(mode="POSE")
+
+
+def mocap(rig, src, acts, name, clip, speed, stride=1.0):
     """Retarget the mocap `clip` onto our rig as `name`, a locomotion cycle at `speed` (m/s; 0 for
-    one standing still). The torso's and head's rotations are copied; the arms aim along the source's
-    bones (whatever the two rigs' rest poses and rolls); the legs are put by IK where the source's
-    feet are, scaled by leg length, the knees bending the same way. A planted foot slides back at
-    exactly `speed`, so with the game advancing the cycle at the character's real speed it doesn't
-    skate; after lift-off the difference from the source eases out over the swing."""
+    one standing still, or in place). The torso's and head's rotations are copied; the arms aim along
+    the source's bones (whatever the two rigs' rest poses and rolls); the legs are put by IK where the
+    source's feet are, scaled by leg length, the knees bending the same way. A moving clip is
+    retimed so its stride, scaled by leg length and by `stride` (under 1: shorter, quicker steps),
+    covers the ground at `speed`; a planted foot is then locked sliding back at exactly `speed`, so
+    with the game advancing the cycle at the character's real speed it doesn't skate, and after
+    lift-off what's left of the difference from the source eases out over the swing."""
     bone = lambda n: next((b for b in src.pose.bones if b.name.lower() == n), None)
+    find = lambda c: next(a for a in acts if a.name.split("|")[-1] == c)
     W = src.matrix_world
     sc = bpy.context.scene
     rig.obj.animation_data.action = None
     # The source's reference: its A-pose clip, standing straight as our rig's rest does (its bind
     # pose isn't a standing pose).
-    src.animation_data.action = next(a for a in bpy.data.actions if a.name.split("|")[-1] == "A_TPose")
+    src.animation_data.action = find("A_TPose")
     sc.frame_set(int(src.animation_data.action.frame_range[0]))
     rest = {n: (W @ bone(n).matrix).copy() for n in TORSO + ["thigh_l", "foot_l", "calf_l"] if bone(n)}
-    act = next(a for a in bpy.data.actions if a.name.split("|")[-1] == clip)
+    act = find(clip)
     src.animation_data.action = act
     f0, f1 = map(int, act.frame_range)
     frames = f1 - f0          # the loop's last frame repeats its first
@@ -378,10 +396,9 @@ def mocap(rig, src, name, clip, speed):
     r = rig.leg / src_leg
     src_ankle_z = rest["foot_l"].translation.z
     src_pelvis = rest["pelvis"].translation
-    # Sample the source.
-    S = []
-    for i in range(frames):
-        sc.frame_set(f0 + i)
+
+    def sample(t):
+        sc.frame_set(f0 + int(t), subframe=t - int(t))
         hd = lambda n: W @ bone(n).head
         tl = lambda n: W @ bone(n).tail
         rec = {"rot": {n: (W @ bone(n).matrix).to_quaternion() for n in TORSO if bone(n)}, "pelvis": hd("pelvis")}
@@ -390,44 +407,66 @@ def mocap(rig, src, name, clip, speed):
                           foot=tl(f"foot_{s}") - hd(f"foot_{s}"), toe=tl(f"ball_{s}") - hd(f"ball_{s}"),
                           ua=tl(f"upperarm_{s}") - hd(f"upperarm_{s}"), fa=tl(f"lowerarm_{s}") - hd(f"lowerarm_{s}"),
                           hand=tl(f"hand_{s}") - hd(f"hand_{s}"))
-        S.append(rec)
+        return rec
+
+    def planted(S):
+        out = {}
+        for s in "lr":
+            zmin = min(rec[s]["ball"].z for rec in S)
+            out[s] = [rec[s]["ball"].z < zmin + 0.025 for rec in S]
+        return out
+
+    def runs(down):
+        """Each stretch of planted frames, as (first, length), wrapping round the loop."""
+        n = len(down)
+        out = []
+        for a in (i for i in range(n) if down[i] and not down[i - 1]):
+            k = 0
+            while down[(a + k) % n] and k < n:
+                k += 1
+            out.append((a, k))
+        return out
+
+    # Retime: the source's own ground speed (its planted feet's), scaled, against `speed`.
+    out = frames
+    if speed:
+        S = [sample(i) for i in range(frames)]
+        down = planted(S)
+        v = sorted((S[(a + k - 1) % frames][s]["ankle"].y - S[a][s]["ankle"].y) / (k - 1) * FPS
+                   for s in "lr" for a, k in runs(down[s]) if k > 1)
+        natural = v[len(v) // 2] * r * stride
+        out = max(8, round(frames * natural / speed))
+        print(f"[anims] {name} from {clip}: natural {natural:.2f} m/s at stride {stride}, {frames} -> {out} frames")
+    S = [sample(i * frames / out) for i in range(out)]
     src.animation_data.action = None
-    # Where each foot is planted (its ball within 2.5 cm of its lowest), and its scaled path, the
-    # planted stretches locked to the ground speed.
+    down = planted(S)
     path = {}
     for s in "lr":
-        zmin = min(rec[s]["ball"].z for rec in S)
-        down = [rec[s]["ball"].z < zmin + 0.025 for rec in S]
-        ys = [(rec[s]["ankle"].y - src_pelvis.y) * r for rec in S]
+        ys = [(rec[s]["ankle"].y - src_pelvis.y) * r * stride for rec in S]
         if speed:
-            # Each run of planted frames, as (first, length), wrapping round the loop.
-            starts = [i for i in range(frames) if down[i] and not down[i - 1]]
             locked = list(ys)
-            for a in starts:
-                n = 0
-                while down[(a + n) % frames] and n < frames:
-                    n += 1
+            for a, n in runs(down[s]):
                 for k in range(n):
-                    locked[(a + k) % frames] = ys[a] + speed * k / FPS
+                    locked[(a + k) % out] = ys[a] + speed * k / FPS
                 # After lift-off, ease the gap to the source's path out over the swing.
-                gap = ys[a] + speed * (n - 1) / FPS - ys[(a + n - 1) % frames]
-                swing = frames - n
+                gap = ys[a] + speed * (n - 1) / FPS - ys[(a + n - 1) % out]
+                swing = out - n
                 for k in range(swing):
-                    j = (a + n + k) % frames
-                    if not down[j]:
+                    j = (a + n + k) % out
+                    if not down[s][j]:
                         locked[j] = ys[j] + gap * (1.0 - smooth(k / max(1.0, swing * 0.6)))
             ys = locked
         path[s] = ys
     new_action(rig, name)
-    for i in range(frames + 1):
-        rec = S[i % frames]
+    for i in range(out + 1):
+        rec = S[i % out]
         rig.rest()
         rig.move("pelvis", rig.pelvis_rest + (rec["pelvis"] - src_pelvis) * r - rig.head("pelvis"))
         for n in TORSO:
             if n in rec["rot"] and n in rig.pb:
                 # The source's turn from its rest, on our bone's rest.
                 d = rec["rot"][n] @ rest[n].to_quaternion().inverted()
-                # Softened up the back (the clip's stylised hunch reads heavier on our builds), and
+                # Softened up the back (the clips' stylised hunch reads heavier on our builds), and
                 # the head kept nearer level, looking where it's going.
                 d = Quaternion().slerp(d, TORSO_KEEP.get(n, 1.0))
                 q = d @ (rig.obj.matrix_world @ rig.obj.data.bones[n].matrix_local).to_quaternion()
@@ -439,14 +478,14 @@ def mocap(rig, src, name, clip, speed):
             rig.aim(f"lowerarm_{s}", Vector((m["fa"].x * 0.8, m["fa"].y, m["fa"].z)))
             rig.aim(f"hand_{s}", m["hand"])
             relax_fingers(rig, s, 0.5)
-            ankle = Vector(((m["ankle"].x - src_pelvis.x) * r + rig.pelvis_rest.x, path[s][i % frames] + rig.pelvis_rest.y,
+            ankle = Vector(((m["ankle"].x - src_pelvis.x) * r + rig.pelvis_rest.x, path[s][i % out] + rig.pelvis_rest.y,
                             rig.ankle_z[s] + (m["ankle"].z - src_ankle_z) * r))
             pole = m["knee"] - (m["hip"] + m["ankle"]) * 0.5
             rig.leg_ik(s, ankle, pole.normalized() if pole.length > 1e-4 else FWD)
             rig.aim(f"foot_{s}", m["foot"])
             rig.aim(f"ball_{s}", m["toe"])
         rig.key(i + 1)
-    return frames
+    return out
 
 
 def idle(rig):
@@ -778,22 +817,26 @@ def main():
             cycles[f"{name}_{suf}"] = locomotion(rig, f"{name}_{suf}", speed, dvec, lean=lean, **q)
     cycles["sprint_f"] = locomotion(rig, "sprint_f", SPRINT, FWD, cadence=3.45, duty=0.25, lift=0.32, crouch=0.05,
                                     bob=0.04, lean=0.28, arm=0.85, elbow=1.5, kick=0.52, arm_back=0.2)
-    # The forward run and the sprint, and standing still, from motion capture.
-    src, imported = load_mocap()
+    # The forward run and the sprint (shorter, quicker steps than the clips'), standing, crouching,
+    # sliding and jumping, from motion capture.
+    src, objs, acts = load_mocap("ual")
     bpy.context.view_layer.objects.active = arm
     bpy.ops.object.mode_set(mode="POSE")
-    cycles["run_f"] = mocap(rig, src, "run_f", "Jog_Fwd_Loop", RUN)
-    cycles["sprint_f"] = mocap(rig, src, "sprint_f", "Sprint_Loop", SPRINT)
-    mocap(rig, src, "idle", "Idle_Loop", 0.0)
-    bpy.ops.object.mode_set(mode="OBJECT")
-    for o in imported:
-        bpy.data.objects.remove(o)
-    for a in [a for a in bpy.data.actions if "|" in a.name]:
-        bpy.data.actions.remove(a)
+    cycles["run_f"] = mocap(rig, src, acts, "run_f", "Jog_Fwd_Loop", RUN, stride=0.82)
+    cycles["sprint_f"] = mocap(rig, src, acts, "sprint_f", "Sprint_Loop", SPRINT, stride=0.85)
+    # The crouch walk's own steps are short and slow: longer ones, so it isn't hurried to keep up.
+    cycles["crouch_f"] = mocap(rig, src, acts, "crouch_f", "Crouch_Fwd_Loop", CROUCH, stride=1.45)
+    mocap(rig, src, acts, "idle", "Idle_Loop", 0.0)
+    mocap(rig, src, acts, "crouch_idle", "Crouch_Idle_Loop", 0.0)
+    # The game holds the jump at its middle (tucked, rising) and loops the fall.
+    mocap(rig, src, acts, "jump", "Jump_Start", 0.0)
+    mocap(rig, src, acts, "fall", "Jump_Loop", 0.0)
+    drop_mocap(objs, acts, arm)
+    src, objs, acts = load_mocap("ual2")
     bpy.context.view_layer.objects.active = arm
     bpy.ops.object.mode_set(mode="POSE")
-    hold_pose(rig, "jump", 12, jump_pose)
-    hold_pose(rig, "fall", 30, fall_pose)
+    mocap(rig, src, acts, "slide", "Slide_Loop", 0.0)
+    drop_mocap(objs, acts, arm)
     hold_pose(rig, "freefall", 40, freefall_pose)
     hold_pose(rig, "glide", 40, glide_pose)
     hold_pose(rig, "death", 30, death_pose)

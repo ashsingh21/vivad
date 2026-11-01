@@ -22,6 +22,18 @@ pub const FALL_GRAVITY: f32 = 1.3;
 /// Slowing in the air with no stick held (momentum otherwise kept).
 pub const AIR_DRAG: f32 = 2.0;
 pub const AIM_SPEED: f32 = 3.6;
+/// Crouched: slower, steadier (crate::sim::combat), and shorter.
+pub const CROUCH_SPEED: f32 = 2.4;
+/// A slide: crouching while running fast throws the warrior into it at at least SLIDE_SPEED,
+/// slowing by SLIDE_FRICTION (m/s each second; downhill, gravity along the slope speeds it up),
+/// steered only a little; it ends crouched under SLIDE_END, and the next can start SLIDE_COOLDOWN
+/// later. Jumping out keeps its speed.
+pub const SLIDE_SPEED: f32 = 10.5;
+pub const SLIDE_MAX: f32 = 14.0;
+pub const SLIDE_FRICTION: f32 = 6.5;
+pub const SLIDE_END: f32 = 3.6;
+pub const SLIDE_STEER: f32 = 1.4;
+pub const SLIDE_COOLDOWN: f32 = 0.5;
 pub const GROUND_ACCEL: f32 = 70.0;
 pub const AIR_ACCEL: f32 = 12.0;
 pub const FREEFALL_MAX: f32 = 42.0;
@@ -42,7 +54,7 @@ pub struct MovementPlugin;
 
 impl Plugin for MovementPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(FixedUpdate, move_warriors.in_set(SimSet::Movement));
+        app.add_systems(FixedUpdate, (move_warriors, remote_crouch).in_set(SimSet::Movement));
     }
 }
 
@@ -83,6 +95,7 @@ fn feet_probe(spatial: &SpatialQuery, center: Vec3, entity: Entity, max: f32) ->
 
 #[allow(clippy::type_complexity)]
 fn move_warriors(
+    mut commands: Commands,
     mut q: Query<(Entity, &mut Transform, &mut Kinematic, &PlayerIntent, &Collider), (Without<Eliminated>, Without<super::net::Remote>)>,
     move_and_slide: MoveAndSlide,
     spatial: SpatialQuery,
@@ -113,17 +126,45 @@ fn move_warriors(
                 kin.velocity = h.with_y(vy);
             }
             MoveMode::Ground => {
-                let speed = if intent.held(btn::AIM) {
+                let crouch = intent.held(btn::CROUCH);
+                let mut speed = if intent.held(btn::AIM) {
                     AIM_SPEED
                 } else if intent.held(btn::SPRINT) && intent.move_axis.y > 0.3 {
                     SPRINT_SPEED
                 } else {
                     WALK_SPEED
                 };
+                if kin.crouched {
+                    speed = speed.min(CROUCH_SPEED);
+                }
                 kin.jump_buffer = if intent.pressed(btn::JUMP) { JUMP_BUFFER } else { (kin.jump_buffer - dt).max(0.0) };
                 kin.air_time = if kin.grounded { 0.0 } else { kin.air_time + dt };
+                kin.slide_cooldown = (kin.slide_cooldown - dt).max(0.0);
                 let cur = kin.velocity.with_y(0.0);
-                let mut h = if kin.grounded {
+                // Crouching while running fast on the ground: a slide.
+                if crouch && intent.pressed(btn::CROUCH) && kin.grounded && !kin.sliding && kin.slide_cooldown <= 0.0 && cur.length() > WALK_SPEED - 0.3 {
+                    kin.sliding = true;
+                    kin.velocity = (cur.normalize() * cur.length().max(SLIDE_SPEED)).with_y(kin.velocity.y);
+                }
+                let cur = kin.velocity.with_y(0.0);
+                let mut h = if kin.sliding && kin.grounded {
+                    // Downhill speeds it up, friction slows it, the stick only bends it.
+                    let n = kin.ground_normal;
+                    let mut v = cur + Vec3::new(n.x, 0.0, n.z) * GRAVITY * 0.9 * dt;
+                    let s = (v.length() - SLIDE_FRICTION * dt).max(0.0);
+                    let mut dir = v.normalize_or_zero();
+                    if wish != Vec3::ZERO && dir != Vec3::ZERO {
+                        let turn = dir.angle_between(wish).min(SLIDE_STEER * dt);
+                        let side = dir.cross(wish).y.signum();
+                        dir = Quat::from_rotation_y(turn * side) * dir;
+                    }
+                    v = dir * s.min(SLIDE_MAX);
+                    if s < SLIDE_END || !crouch {
+                        kin.sliding = false;
+                        kin.slide_cooldown = SLIDE_COOLDOWN;
+                    }
+                    v
+                } else if kin.grounded {
                     approach(cur, wish * speed, GROUND_ACCEL * dt)
                 } else if wish == Vec3::ZERO {
                     approach(cur, Vec3::ZERO, AIR_DRAG * dt)
@@ -136,7 +177,9 @@ fn move_warriors(
                     // How much of a sprint this is: a running jump carries further and a bit higher.
                     let run = ((cur.length() - WALK_SPEED) / (SPRINT_SPEED - WALK_SPEED)).clamp(0.0, 1.0);
                     vy = JUMP_SPEED * (1.0 + RUN_JUMP_LIFT * run);
-                    h = (h + h.normalize_or_zero() * RUN_JUMP_BOOST * run).clamp_length_max(SPRINT_SPEED + RUN_JUMP_BOOST);
+                    // The boost never takes a jump past a sprint's plus it; a slide's own speed is kept.
+                    h = (h + h.normalize_or_zero() * RUN_JUMP_BOOST * run).clamp_length_max((SPRINT_SPEED + RUN_JUMP_BOOST).max(h.length()));
+                    kin.sliding = false;
                     kin.grounded = false;
                     kin.jump_buffer = 0.0;
                     // No second jump off the same edge.
@@ -152,7 +195,15 @@ fn move_warriors(
             }
         }
 
+        // Low while crouched or sliding; standing back up only with room overhead.
+        let low = kin.mode == MoveMode::Ground && (intent.held(btn::CROUCH) || kin.sliding);
         let filter = SpatialQueryFilter::from_mask(solid_mask()).with_excluded_entities([entity]);
+        let want = low || (kin.crouched && !spatial.shape_intersections(&super::warrior_collider(false), tf.translation, Quat::IDENTITY, &filter).is_empty());
+        if want != kin.crouched {
+            // Swapped once this tick's queries are done (the spatial queries read every collider).
+            kin.crouched = want;
+            commands.entity(entity).insert(super::warrior_collider(want));
+        }
         let out = move_and_slide.move_and_slide(
             collider,
             tf.translation,
@@ -200,6 +251,18 @@ fn move_warriors(
             tf.translation.y = 30.0;
             kin.velocity = Vec3::ZERO;
             kin.mode = MoveMode::Gliding;
+        }
+    }
+}
+
+/// Other peers' warriors crouch with their crouch button (it comes over the network), so they're
+/// as hard to hit behind low cover here as there.
+fn remote_crouch(mut q: Query<(&PlayerIntent, &mut Kinematic, &mut Collider), With<super::net::Remote>>) {
+    for (intent, mut kin, mut collider) in &mut q {
+        let low = intent.held(btn::CROUCH);
+        if low != kin.crouched {
+            kin.crouched = low;
+            *collider = super::warrior_collider(low);
         }
     }
 }

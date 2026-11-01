@@ -11,7 +11,7 @@ use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use shared::map::MapLayout;
 use shared::map::india::{hampi_at, hampi_dir};
-use shared::sim::{CAPSULE_LENGTH, CAPSULE_RADIUS, DamageCause, DamageMsg, HALF_HEIGHT, Health, Inventory, Kinematic, Layer, MatchConfig, MoveMode, PlayerIntent, SimPlugin};
+use shared::sim::{DamageCause, DamageMsg, HALF_HEIGHT, Health, Inventory, Kinematic, Layer, MatchConfig, MoveMode, PlayerIntent, SimPlugin};
 
 #[derive(Component)]
 struct Walker;
@@ -406,7 +406,7 @@ fn main() {
                 PlayerIntent { move_axis: Vec2::Y, yaw: yaw_for(c.dir), ..default() },
                 Transform::from_translation(c.start),
                 RigidBody::Kinematic,
-                Collider::capsule(CAPSULE_RADIUS, CAPSULE_LENGTH),
+                shared::sim::warrior_collider(false),
                 Health::default(),
                 Inventory::new("khadga"),
                 shared::sim::Warrior { name: "walker".into(), is_bot: false, look: 0, kills: 0 },
@@ -440,6 +440,58 @@ fn main() {
             if ok { "PASS" } else { "FAIL" }, c.name, c.start.x, c.start.y, c.start.z, p.x, p.y, p.z, lo, hi, fall, c.want
         );
         app.world_mut().despawn(id);
+    }
+    // A slide on open flat ground (a floor of its own, off the map): a second's sprint, then
+    // crouch. It should throw the walker forward at slide speed, slow, and end crouched.
+    {
+        use shared::sim::movement::{SLIDE_END, SLIDE_SPEED, SPRINT_SPEED};
+        use shared::sim::btn;
+        app.world_mut().spawn((RigidBody::Static, Collider::cuboid(600.0, 1.0, 60.0), Transform::from_xyz(5000.0, 99.5, 0.0),
+                               CollisionLayers::new(Layer::World, LayerMask::ALL)));
+        let id = app
+            .world_mut()
+            .spawn((
+                Walker,
+                Kinematic { mode: MoveMode::Ground, ..default() },
+                PlayerIntent { move_axis: Vec2::Y, yaw: yaw_for(Vec3::X), held: btn::SPRINT, ..default() },
+                Transform::from_xyz(4800.0, 100.0 + HALF_HEIGHT + 0.02, 0.0),
+                RigidBody::Kinematic,
+                shared::sim::warrior_collider(false),
+                Health::default(),
+                Inventory::new("khadga"),
+                shared::sim::Warrior { name: "slider".into(), is_bot: false, look: 0, kills: 0 },
+                CollisionLayers::new(Layer::Character, [Layer::World, Layer::Door]),
+            ))
+            .id();
+        for _ in 0..60 {
+            app.update();
+        }
+        let speed = |app: &App| app.world().get::<Kinematic>(id).unwrap().velocity.with_y(0.0).length();
+        let run = speed(&app);
+        let x0 = app.world().get::<Transform>(id).unwrap().translation.x;
+        {
+            let mut i = app.world_mut().get_mut::<PlayerIntent>(id).unwrap();
+            i.held = btn::CROUCH;
+            i.pressed = btn::CROUCH;
+        }
+        let (mut peak, mut slid, mut secs) = (0.0f32, false, 0.0);
+        for t in 0..150 {
+            app.update();
+            let k = app.world().get::<Kinematic>(id).unwrap();
+            peak = peak.max(speed(&app));
+            if k.sliding {
+                slid = true;
+                secs = (t + 1) as f32 / 60.0;
+            }
+        }
+        let k = app.world().get::<Kinematic>(id).unwrap();
+        let x1 = app.world().get::<Transform>(id).unwrap().translation.x;
+        let ok = slid && run > SPRINT_SPEED - 0.5 && peak >= SLIDE_SPEED - 0.3 && !k.sliding && k.crouched && speed(&app) < SLIDE_END;
+        failed += (!ok) as u32;
+        println!(
+            "{} {:<32} sprint {run:.1} m/s, slide peak {peak:.1} m/s for {secs:.2} s over {:.1} m, then {:.1} m/s crouched={}  want a slide ending crouched",
+            if ok { "PASS" } else { "FAIL" }, "slide from a sprint", x1 - x0, speed(&app), k.crouched
+        );
     }
     println!("\n{failed} failed");
     std::process::exit(failed as i32);

@@ -16,6 +16,8 @@ pub struct CameraSystems;
 #[derive(Component)]
 pub struct MainCamera {
     distance: f32,
+    /// The eye's height over the body, eased as the player crouches and stands.
+    eye: f32,
 }
 
 pub struct CameraPlugin;
@@ -30,7 +32,7 @@ impl Plugin for CameraPlugin {
 pub fn spawn_camera(mut commands: Commands) {
     // Ambient occlusion and anti-aliasing are the quality level's (crate::quality).
     commands.spawn((
-        MainCamera { distance: CAMERA_DISTANCE },
+        MainCamera { distance: CAMERA_DISTANCE, eye: EYE_OFFSET },
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection { fov: 70f32.to_radians(), near: 0.05, ..default() }),
         tonemapping(),
@@ -110,14 +112,16 @@ fn follow(
     let rot = intent.aim_rotation();
     let aiming = intent.held(btn::AIM) && kin.mode == MoveMode::Ground;
     let dt = time.delta_secs();
+    mc.eye += (shared::sim::eye_offset(intent) - mc.eye) * (1.0 - (-dt * 10.0).exp());
+    let eye = mc.eye;
 
     let (pivot, want_dist, shoulder, fov): (Vec3, f32, f32, f32) = match kin.mode {
         // The auto's fans stand 14 m over its floor: framed from farther back and higher.
         MoveMode::Vimana if *ride == crate::visuals::DropRide::Jugaad => (m.vimana_pos() + Vec3::Y * 8.0, 40.0, 0.0, 70.0),
         MoveMode::Vimana => (m.vimana_pos() + Vec3::Y * 4.0, 26.0, 0.0, 70.0),
         MoveMode::Freefall | MoveMode::Gliding => (body + Vec3::Y * EYE_OFFSET, 7.5, 0.0, 78.0),
-        MoveMode::Ground if aiming => (body + Vec3::Y * EYE_OFFSET, 1.9, CAMERA_SHOULDER * 0.85, 48.0),
-        MoveMode::Ground => (body + Vec3::Y * EYE_OFFSET, CAMERA_DISTANCE, CAMERA_SHOULDER, 70.0),
+        MoveMode::Ground if aiming => (body + Vec3::Y * eye, 1.9, CAMERA_SHOULDER * 0.85, 48.0),
+        MoveMode::Ground => (body + Vec3::Y * eye, CAMERA_DISTANCE, CAMERA_SHOULDER, 70.0),
     };
     // Smooth zoom in/out.
     mc.distance += (want_dist - mc.distance) * (1.0 - (-dt * 12.0).exp());

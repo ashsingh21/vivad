@@ -19,7 +19,7 @@ use bevy::animation::{AnimatedBy, AnimationTargetId};
 use bevy::gltf::Gltf;
 use bevy::prelude::*;
 use shared::items::{ItemDb, ItemKind};
-use shared::sim::movement::{AIM_SPEED, SPRINT_SPEED, WALK_SPEED};
+use shared::sim::movement::{AIM_SPEED, CROUCH_SPEED, SPRINT_SPEED, WALK_SPEED};
 use shared::sim::{Action, Eliminated, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, PosHistory, Warrior, btn};
 
 use crate::visuals::WarriorVisual;
@@ -33,7 +33,8 @@ impl Plugin for WarriorAnimationPlugin {
 }
 
 /// Clips the torso can't share with the legs: played legs-only under a weapon action.
-const LOCOMOTION: [&str; 10] = ["idle", "walk_f", "walk_b", "walk_l", "walk_r", "run_f", "run_b", "run_l", "run_r", "sprint_f"];
+const LOCOMOTION: [&str; 13] =
+    ["idle", "walk_f", "walk_b", "walk_l", "walk_r", "run_f", "run_b", "run_l", "run_r", "sprint_f", "crouch_idle", "crouch_f", "slide"];
 const FULL_BODY: [&str; 5] = ["jump", "fall", "freefall", "glide", "death"];
 const UPPER_BODY: [&str; 6] = ["melee_guard", "melee_swing", "melee_swing_b", "bow_draw", "rifle_aim", "consume"];
 /// Bones driven by the legs layer; everything else is upper body.
@@ -251,6 +252,7 @@ fn clip_speed(name: &str) -> f32 {
         n if n.starts_with("walk") => AIM_SPEED,
         n if n.starts_with("run") => WALK_SPEED,
         "sprint_f" => SPRINT_SPEED,
+        "crouch_f" => CROUCH_SPEED,
         _ => 0.0,
     }
 }
@@ -300,7 +302,18 @@ fn drive(
                     want.push((n, false, 1.0, if n == "jump" { dur(n) * 0.5 } else { clock % dur(n) }));
                 }
                 _ => {
-                    let loco = locomotion_weights(forward, right);
+                    // Low (the crouch button held, which every peer sees): sliding while still fast,
+                    // else the crouch walk over the crouch idle.
+                    let low = intent.held(btn::CROUCH) || kin.sliding;
+                    let speed = forward.hypot(right);
+                    let loco = if low && speed > CROUCH_SPEED + 1.2 {
+                        vec![("slide", 1.0)]
+                    } else if low {
+                        let a = (speed / CROUCH_SPEED).clamp(0.0, 1.0);
+                        vec![("crouch_idle", 1.0 - a), ("crouch_f", a)]
+                    } else {
+                        locomotion_weights(forward, right)
+                    };
                     // Advance the shared cycle at the real ground speed.
                     let speed = forward.hypot(right);
                     let (mut rate, mut wsum) = (0.0, 0.0);
@@ -357,7 +370,7 @@ fn drive(
                     let phase = anim.phase;
                     // Clips that would barely show are left out (each costs a pass over the bones).
                     for (n, w) in loco.into_iter().filter(|(_, w)| *w >= 0.05) {
-                        let t = if n == "idle" { clock % dur(n) } else { phase * dur(n) };
+                        let t = if clip_speed(n) == 0.0 { clock % dur(n) } else { phase * dur(n) };
                         want.push((n, action.is_some(), w, t));
                     }
                     if let Some((n, t)) = action {

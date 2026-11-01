@@ -16,6 +16,7 @@ pub enum Act {
     Reload,
     Interact,
     Sprint,
+    Crouch,
     NextSlot,
     PrevSlot,
     Restart,
@@ -50,6 +51,7 @@ impl Default for Bindings {
                 (Act::Reload, vec![Key(KeyCode::KeyR), Pad(GamepadButton::North)]),
                 (Act::Interact, vec![Key(KeyCode::KeyE), Key(KeyCode::KeyF), Pad(GamepadButton::West)]),
                 (Act::Sprint, vec![Key(KeyCode::ShiftLeft), Pad(GamepadButton::LeftThumb)]),
+                (Act::Crouch, vec![Key(KeyCode::ControlLeft), Key(KeyCode::KeyC), Pad(GamepadButton::RightThumb)]),
                 (Act::NextSlot, vec![Pad(GamepadButton::RightTrigger)]),
                 (Act::PrevSlot, vec![Pad(GamepadButton::LeftTrigger)]),
                 (Act::Restart, vec![Key(KeyCode::KeyR), Key(KeyCode::Enter), Pad(GamepadButton::Start)]),
@@ -210,6 +212,22 @@ fn write_intent(
             intent.pressed |= bit;
         }
     }
+    // Crouch toggles (a press down, a press up), as in most shooters; jumping or sprinting stands
+    // you up. A press while running fast slides (crate's sim, movement::SLIDE_*).
+    let crouched = CROUCHED.with(|c| {
+        let mut v = c.get();
+        if state.just_pressed(Act::Crouch) {
+            v = !v;
+            intent.pressed |= btn::CROUCH;
+        } else if state.just_pressed(Act::Jump) || state.just_pressed(Act::Sprint) {
+            v = false;
+        }
+        c.set(v);
+        v
+    });
+    if crouched {
+        held |= btn::CROUCH;
+    }
     intent.released |= before & !held;
     intent.held = held;
 
@@ -237,6 +255,8 @@ fn write_intent(
 }
 
 thread_local! {
+    // The crouch toggle.
+    static CROUCHED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     // Hotbar cursor for wheel cycling; resynced from the inventory by the HUD each frame.
     pub static CYCLE: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
 }

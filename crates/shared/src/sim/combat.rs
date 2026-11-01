@@ -327,7 +327,7 @@ fn use_items(
 fn step_projectiles(
     mut commands: Commands,
     mut q: Query<(Entity, &mut Transform, &mut Projectile)>,
-    warriors: Query<&Transform, (With<Warrior>, Without<Projectile>)>,
+    warriors: Query<(&Transform, &PlayerIntent), (With<Warrior>, Without<Projectile>)>,
     mut kin: Query<(Entity, &Transform, &mut Kinematic), (With<Warrior>, Without<Eliminated>, Without<Projectile>, Without<Remote>)>,
     remote: Query<(), With<Remote>>,
     spatial: SpatialQuery,
@@ -359,7 +359,7 @@ fn step_projectiles(
             }
             let headshot = warriors
                 .get(hit.entity)
-                .map(|t| point.y > t.translation.y + HEADSHOT_HEIGHT)
+                .map(|(t, i)| point.y > t.translation.y + HEADSHOT_HEIGHT - if i.held(btn::CROUCH) { super::CROUCH_DROP } else { 0.0 })
                 .unwrap_or(false);
             if !echo {
                 damage.write(DamageMsg {
