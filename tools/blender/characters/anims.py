@@ -378,7 +378,6 @@ MIXAMO_CLIPS = [
     # Empty-handed (and melee): the walk, the run, the crouch idle; the crouch walk in four
     # directions on the rifle pack's crouched legs, the arms hanging relaxed.
     ("walk_f", "Walking", 1.8, {}),
-    ("run_f", "Fast Run", 5.6, {}),
     ("crouch_idle", "Crouch Idle", 0.0, {}),
     *[(f"crouch_{d}", f"{_R}walk crouching {w}", 1.4, {"relax": True, "stride": "auto"}) for d, w in _DIRS],
     # Holding a long gun: the rifle pack, whole-body.
@@ -391,6 +390,8 @@ MIXAMO_CLIPS = [
     ("rifle_sprint_f", f"{_R}sprint forward", 8.6, {"stride": "auto"}),
     # Holding a pistol: the pistol pack (its strafes for both walking and running sideways).
     ("pistol_idle", f"{_P}pistol idle", 0.0, {}),
+    # Aiming or firing a pistol: its idle's two-handed hold, laid over the legs.
+    ("pistol_aim", f"{_P}pistol idle", 0.0, {}),
     ("pistol_crouch_idle", f"{_P}pistol kneeling idle", 0.0, {}),
     ("pistol_walk_f", f"{_P}pistol walk", 1.8, {"stride": "auto"}),
     ("pistol_walk_b", f"{_P}pistol walk backward", 1.8, {"stride": "auto"}),
@@ -621,7 +622,7 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, be
                 rig.aim(f"upperarm_{s}", Vector((m["ua"].x * 0.55, m["ua"].y * swing, m["ua"].z)))
                 rig.aim(f"lowerarm_{s}", Vector((m["fa"].x * 0.8, m["fa"].y * swing, m["fa"].z)))
                 rig.aim(f"hand_{s}", m["hand"])
-                if m.get("palm") is not None:
+                if m.get("palm") is not None and name.startswith(("rifle_", "pistol_")):
                     # The hand's twist too (what it holds turns with it): its palm faced as the source's.
                     _, _, palm = palm_frame(rig, s)
                     axis = (rig.tail(f"hand_{s}") - rig.head(f"hand_{s}")).normalized()

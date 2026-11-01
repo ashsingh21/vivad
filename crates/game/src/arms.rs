@@ -166,36 +166,51 @@ fn segment(a: Vec3, b: Vec3) -> Transform {
 }
 
 /// Stand raised bows upright with their backs to the aim, blending from the plain grip by the draw
-/// clip's weight. Runs after transform propagation and rewrites the bow's and its socket's global
+/// clip's weight; point guns the way they're held whatever the wrist does: raised, along the aim;
+/// carried, a long gun from the right hand toward the left (both hands on it), a pistol low and
+/// forward. Runs after transform propagation and rewrites the weapon's and its socket's global
 /// transforms for this frame (their local transforms keep the grip).
 #[allow(clippy::type_complexity)]
 fn orient_bows(
     rigs: Query<(Entity, &BowRig)>,
     parents: Query<&ChildOf>,
-    vis: Query<(&WarriorVisual, &WarriorAnim)>,
+    vis: Query<(&WarriorVisual, &WarriorAnim, &Body)>,
     intents: Query<&PlayerIntent>,
     mut tf: Query<(&Transform, &mut GlobalTransform)>,
 ) {
     for (e, rig) in &rigs {
-        let Some((wv, anim)) = parents.iter_ancestors(e).find_map(|a| vis.get(a).ok()) else { continue };
+        let Some((wv, anim, body)) = parents.iter_ancestors(e).find_map(|a| vis.get(a).ok()) else { continue };
         let w = anim.bow_weight.clamp(0.0, 1.0);
+        let gun = crate::visuals::shot_kind(&rig.model) == crate::visuals::Shot::Bullet;
+        let long = crate::visuals::long_gun(&rig.model);
         let (Ok(intent), Ok(socket), Ok(hand)) = (intents.get(wv.sim), parents.get(e).map(|p| p.parent()), parents.get(e).and_then(|p| parents.get(p.parent())).map(|p| p.parent())) else {
             continue;
         };
-        if w < 1e-3 {
+        if w < 1e-3 && !gun {
             continue;
         }
         let (Ok((_, hand_g)), Ok((grip, _)), Ok((bow_local, _))) = (tf.get(hand), tf.get(socket), tf.get(e)) else { continue };
         let (hand_g, grip, bow_local) = (*hand_g, *grip, *bow_local);
         let held = hand_g.mul_transform(grip);
-        let f = intent.aim_dir();
-        // A shouldered long gun stays level; a bow (or a pistol) is canted a little.
-        let cant = if crate::visuals::long_gun(&rig.model) { 0.0 } else { CANT };
+        let aim = intent.aim_dir();
+        let ahead = aim.with_y(0.0).normalize_or(Vec3::NEG_Z);
+        // Carried: a long gun along the hands (right toward left), a pistol low and forward.
+        let carry = if long {
+            tf.get(body.hand_l)
+                .map(|(_, l)| (l.translation() - hand_g.translation()).normalize_or(ahead))
+                .ok()
+                .filter(|d| d.dot(ahead) > 0.2)
+                .unwrap_or(ahead)
+        } else {
+            (ahead - Vec3::Y * 0.6).normalize()
+        };
+        let f = if gun { carry.lerp(aim, w).normalize_or(aim) } else { aim };
+        let (raise, cant) = if gun { (1.0, if long { 0.0 } else { CANT * w }) } else { (w, CANT) };
         let up = Quat::from_axis_angle(f, cant) * Vec3::Y.reject_from(f).normalize_or(Vec3::Y);
-        // Bow frame: -Z (its back) along the aim, +Y (upper limb) up.
+        // Weapon frame: -Z (a bow's back, a barrel's line) along f, +Y up.
         let raised = Quat::from_mat3(&Mat3::from_cols(up.cross(-f), up, -f));
         let (scale, rot, pos) = held.to_scale_rotation_translation();
-        let socket_g = GlobalTransform::from(Transform { translation: pos, rotation: rot.slerp(raised, w), scale });
+        let socket_g = GlobalTransform::from(Transform { translation: pos, rotation: rot.slerp(raised, raise), scale });
         if let Ok((_, mut g)) = tf.get_mut(socket) {
             *g = socket_g;
         }

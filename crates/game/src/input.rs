@@ -324,8 +324,15 @@ fn meta_actions(
 
 /// For testing the player's own controls (not the autopilot's): VIVAD_KEYS="t:+Key,t:-Key,..."
 /// presses (+) and releases (-) keys at those match times (seconds), through the same bindings and
-/// intent as a person's keyboard. Key names as Bevy's KeyCode (KeyW, ShiftLeft, ControlLeft, Space).
-fn scripted_keys(m: Option<Res<Match>>, mut keys: ResMut<ButtonInput<KeyCode>>, mut next: Local<usize>, mut script: Local<Option<Vec<(f32, bool, KeyCode)>>>) {
+/// intent as a person's keyboard. Key names as Bevy's KeyCode (KeyW, ShiftLeft, ControlLeft, Space),
+/// or MouseRight / MouseLeft.
+fn scripted_keys(
+    m: Option<Res<Match>>,
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    mut mouse: ResMut<ButtonInput<MouseButton>>,
+    mut next: Local<usize>,
+    mut script: Local<Option<Vec<(f32, bool, Result<KeyCode, MouseButton>)>>>,
+) {
     let script = script.get_or_insert_with(|| {
         std::env::var("VIVAD_KEYS")
             .unwrap_or_default()
@@ -334,6 +341,8 @@ fn scripted_keys(m: Option<Res<Match>>, mut keys: ResMut<ButtonInput<KeyCode>>, 
                 let (t, k) = e.split_once(':')?;
                 let (down, name) = (k.starts_with('+'), &k[1..]);
                 let code = match name {
+                    "MouseRight" => return Some((t.trim().parse().ok()?, down, Err(MouseButton::Right))),
+                    "MouseLeft" => return Some((t.trim().parse().ok()?, down, Err(MouseButton::Left))),
                     "KeyW" => KeyCode::KeyW,
                     "KeyA" => KeyCode::KeyA,
                     "KeyS" => KeyCode::KeyS,
@@ -345,7 +354,7 @@ fn scripted_keys(m: Option<Res<Match>>, mut keys: ResMut<ButtonInput<KeyCode>>, 
                     "Space" => KeyCode::Space,
                     _ => return None,
                 };
-                Some((t.trim().parse().ok()?, down, code))
+                Some((t.trim().parse().ok()?, down, Ok(code)))
             })
             .collect()
     });
@@ -354,7 +363,12 @@ fn scripted_keys(m: Option<Res<Match>>, mut keys: ResMut<ButtonInput<KeyCode>>, 
         if m.elapsed < t {
             break;
         }
-        if down { keys.press(code) } else { keys.release(code) }
+        match (code, down) {
+            (Ok(k), true) => keys.press(k),
+            (Ok(k), false) => keys.release(k),
+            (Err(b), true) => mouse.press(b),
+            (Err(b), false) => mouse.release(b),
+        }
         *next += 1;
     }
 }

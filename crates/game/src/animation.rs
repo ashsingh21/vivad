@@ -51,6 +51,8 @@ const OPTIONAL_LOCOMOTION: [&str; 31] = [
     "pistol_sprint_f", "pistol_crouch_f", "pistol_crouch_b",
 ];
 const UPPER_BODY: [&str; 6] = ["melee_guard", "melee_swing", "melee_swing_b", "bow_draw", "rifle_aim", "consume"];
+/// Upper-body actions the file may have (Mixamo's): a pistol's two-handed aim.
+const OPTIONAL_UPPER: [&str; 1] = ["pistol_aim"];
 /// Bones driven by the legs layer; everything else is upper body.
 const LOWER_BONES: [&str; 10] = ["Root", "pelvis", "thigh_l", "thigh_r", "calf_l", "calf_r", "foot_l", "foot_r", "ball_l", "ball_r"];
 const LOWER: u32 = 0;
@@ -80,7 +82,9 @@ impl AnimSet {
     /// `name` in the held weapon's set (`prefix`: "rifle_", "pistol_" or none) where the file has
     /// it, a pistol's sprint and crouch falling back to its run and the plain crouch.
     fn pick(&self, prefix: &str, name: &'static str) -> &'static str {
-        if prefix.is_empty() {
+        // A pistol is carried low on the run, the arms swinging (the pack's runs hold it up at the
+        // chest, a tactical jog that reads stiff): it comes up to aim or fire (the pistol_aim layer).
+        if prefix.is_empty() || (prefix == "pistol_" && (name.starts_with("run_") || name.starts_with("sprint_"))) {
             return name;
         }
         let want = format!("{prefix}{name}");
@@ -198,14 +202,14 @@ fn build_graphs(
             graph.add_target_to_mask_group(AnimationTargetId::from_names(path.iter()), group);
         }
         let root = graph.root;
-        let present: Vec<&'static str> = OPTIONAL_LOCOMOTION.iter().copied().filter(|n| clip(n).is_some()).collect();
+        let present: Vec<&'static str> = OPTIONAL_LOCOMOTION.iter().chain(&OPTIONAL_UPPER).copied().filter(|n| clip(n).is_some()).collect();
         for name in all.into_iter().chain(present) {
             let h = clip(name).or_else(|| clip(stand_in(name))).expect("checked above");
             set.durations.insert(name, clips.get(&h).map(|c| c.duration()).unwrap_or(1.0).max(1e-3));
             let full = graph.add_clip(h.clone(), 1.0, root);
             let masked = if LOCOMOTION.contains(&name) || OPTIONAL_LOCOMOTION.contains(&name) {
                 Some(graph.add_clip_with_mask(h, 1 << UPPER, 1.0, root))
-            } else if UPPER_BODY.contains(&name) {
+            } else if UPPER_BODY.contains(&name) || OPTIONAL_UPPER.contains(&name) {
                 Some(graph.add_clip_with_mask(h, 1 << LOWER, 1.0, root))
             } else {
                 None
@@ -443,9 +447,13 @@ fn drive(
                         Some(k @ ItemKind::Bow { .. }) => {
                             let id = inv.current().map(|s| s.id.as_str()).unwrap_or_default();
                             let gun = crate::visuals::shot_kind(id) == crate::visuals::Shot::Bullet;
-                            bow_draw(k, act, loaded, intent.held(btn::AIM)).map(|d| {
+                            // Sliding, the gun comes up ready to shoot, as when aiming.
+                            let sliding = loco.iter().any(|(n, _)| *n == "slide");
+                            bow_draw(k, act, loaded, intent.held(btn::AIM) || (sliding && gun)).map(|d| {
                                 if crate::visuals::long_gun(id) {
                                     ("rifle_aim", 0.0)
+                                } else if gun && set.has("pistol_aim") {
+                                    ("pistol_aim", clock % dur("pistol_aim"))
                                 } else {
                                     ("bow_draw", if gun { 0.0 } else { d * (dur("bow_draw") - 1e-3) })
                                 }
@@ -468,7 +476,7 @@ fn drive(
         }
 
         // The torso follows the aim fully with a bow up, partly otherwise.
-        let raised = want.iter().any(|w| w.0 == "bow_draw" || w.0 == "rifle_aim");
+        let raised = want.iter().any(|w| w.0 == "bow_draw" || w.0 == "rifle_aim" || w.0 == "pistol_aim");
         let share = if elim.is_some() { 0.0 } else if raised { 1.0 } else { 0.45 };
         anim.aim_share += (share - anim.aim_share) * (dt * 8.0).min(1.0);
 
@@ -525,7 +533,7 @@ fn drive(
                 continue;
             }
             let w = *w;
-            if ["bow_draw", "rifle_aim"].iter().any(|c| set.nodes.get(c).is_some_and(|n| n.1 == Some(node))) {
+            if ["bow_draw", "rifle_aim", "pistol_aim"].iter().any(|c| set.nodes.get(c).is_some_and(|n| n.1 == Some(node))) {
                 anim.bow_weight = anim.bow_weight.max(w);
             }
             let a = if player.is_playing_animation(node) { player.animation_mut(node).unwrap() } else { player.play(node) };
