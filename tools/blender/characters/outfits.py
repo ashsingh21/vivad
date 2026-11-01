@@ -111,7 +111,6 @@ def jewellery(ctx, items, *, armbands=True, kadas=1, anklets=False, neck=False, 
 SHIRT_MUSTARD = (0.93, 0.64, 0.10)
 # Mid-blue, washed: reads as jeans against any top.
 DENIM = (0.20, 0.34, 0.58)
-GAMCHHA_RED = (0.88, 0.12, 0.10)
 KAMEEZ_PINK = (0.90, 0.12, 0.46)
 SALWAR_CREAM = (0.92, 0.88, 0.78)
 DUPATTA_YELLOW = (0.99, 0.76, 0.10)
@@ -147,18 +146,9 @@ def upper_body(ctx, L, hem, sleeve, neck_front, neck_back, lower_sleeve=0.0):
 
 
 def male_street(ctx):
-    """Over the modelled shirt and jeans (tools/blender/characters/human.py "clothes"): a chequered
-    gamchha over the right shoulder and a steel kada; his own hair."""
-    L = Landmarks(ctx)
+    """Over the modelled shirt and jeans (tools/blender/characters/human.py "clothes"): a steel kada;
+    his own hair."""
     items = []
-    # Gamchha thrown over the right shoulder: one end down the chest, the other down the back.
-    for k, front in enumerate((True, False)):
-        top = L.surface(-0.115, L.clav + 0.005, front=front, push=0.035)
-        length = 0.42 if front else 0.36
-        path = [top + Vector((0.01 * s, 0.0, -length * s)) for s in [i / 9 for i in range(10)]]
-        items.append((tag(g.strip(ctx, f"gamchha{k}", path, [0.16 + 0.03 * i / 9 for i in range(10)],
-                                  normals=[Vector((0, -1 if front else 1, 0))] * 10, thickness=0.003,
-                                  shrink_to=ctx.proxy, shrink_offset=0.04), GAMCHHA_RED), "accessory"))
     jewellery(ctx, items, armbands=False, kadas=1, neck=False, metal=STEEL, metal_kind="silver")
     return items
 
