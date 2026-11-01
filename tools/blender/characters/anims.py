@@ -407,6 +407,13 @@ MIXAMO_CLIPS = [
     ("pistol_run_b", f"{_P}pistol run backward", 5.6, {}),
     ("pistol_run_l", f"{_P}pistol strafe", 5.6, {}),
     ("pistol_run_r", f"{_P}pistol strafe (2)", 5.6, {}),
+    # In the air: the jump's rise off the ground, knees tucking (the game holds its middle), and a
+    # drop off a ledge for the fall, both hips-at-rest so the legs move under the body.
+    ("jump", "Jumping Up", 0.0, {"window": (33, 51), "air": True}),
+    ("fall", "Jumping", 0.0, {"window": (61, 79), "pingpong": True, "air": True}),
+    # Sliding: the held stretch of the slide, sat up, head level, as you can shoot from it.
+    ("slide", "Running Slide", 0.0, {"window": (24, 44), "pingpong": True,
+                                     "keep": {"spine_01": 0.45, "spine_02": 0.4, "spine_03": 0.4, "neck_01": 0.3, "head": 0.1}}),
 ]
 
 
@@ -673,7 +680,8 @@ def crouch_idle(rig):
         rig.key(f + 1)
 
 
-def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_TPose", relax=False, keep=None):
+def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_TPose", relax=False, keep=None, window=None,
+             pingpong=False, air=False):
     """Retarget a clip bone by bone: every joint's rotation copied from the source, as a turn from
     its rest in world space, onto ours (each source bone first aligned to our rest's direction, so
     the rigs' different rest poses don't matter: a T-pose's arms onto our A). Twists, shoulders,
@@ -684,7 +692,9 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
     rest pose, as Mixamo's T). `relax`: the arms hang relaxed, swinging gently against the legs,
     instead of the source's (a rifle clip's legs, empty-handed). `keep` softens the torso's turns
     (how much of each bone's world turn from rest is kept: TORSO_KEEP for the library's stylised
-    hunch)."""
+    hunch). `window`: only these source frames (first, last), `pingpong` played there and back to
+    loop seamlessly. `air`: airborne, the hips held at rest height (the body is where the game puts
+    it; the legs tuck up under the hips rather than the whole body rising)."""
     bmap = bones or {}
     sb = lambda n: src.pose.bones.get(bmap.get(n, n)) or next((b for b in src.pose.bones if b.name.lower() == n), None)
     ours = [b.name for b in rig.obj.data.bones if b.name in rig.pb and b.name != "Root" and sb(b.name)]
@@ -714,7 +724,7 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
     r = rig.leg / s_leg
     act = find(clip)
     src.animation_data.action = act
-    f0, f1 = map(int, act.frame_range)
+    f0, f1 = window or map(int, act.frame_range)
     frames = f1 - f0
     sc.frame_set(f0)
     p0 = W @ sb("pelvis").head
@@ -724,9 +734,13 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
     if travel.length < 0.2:
         travel = Vector()
 
+    # Where the window starts (a clip's first frame stands over the source's origin; a window's
+    # need not): taken out with the travel, so it plays on the spot.
+    start = Vector((p0.x - s_pelvis.x, p0.y - s_pelvis.y, 0.0)) if window else Vector()
+
     def sample(t):
         sc.frame_set(f0 + int(t), subframe=t - int(t))
-        drift = travel * (t / frames)
+        drift = start + travel * (t / frames)
         return ({n: (W @ sb(n).matrix).to_quaternion() for n in ours}, W @ sb("pelvis").head - drift,
                 {s: W @ sb(f"ball_{s}").head - drift for s in "lr"}, {s: W @ sb(f"foot_{s}").head - drift for s in "lr"})
 
@@ -748,6 +762,9 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
         out = max(8, round(frames * natural / speed * FPS / src_fps))
         print(f"[anims] {name} from {clip}: natural {natural:.2f} m/s, {frames} -> {out} frames")
     S = [sample(i * frames / out) for i in range(out)]
+    if pingpong:
+        S = S + [sample(frames)] + S[:0:-1]
+        out = len(S)
     src.animation_data.action = None
     if speed:
         zmin = min(x[2]["l"].z for x in S)
@@ -761,7 +778,10 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
     for i in range(out + 1):
         rots, pelvis, _, _ = S[i % out]
         rig.rest()
-        rig.move("pelvis", rig.pelvis_rest + (pelvis - s_pelvis) * r - rig.head("pelvis"))
+        off = (pelvis - s_pelvis) * r
+        if air:
+            off.z = 0.0
+        rig.move("pelvis", rig.pelvis_rest + off - rig.head("pelvis"))
         for n in order:
             if relax and n.split("_")[0] in ("upperarm", "lowerarm", "hand", "index", "middle", "ring", "pinky", "thumb"):
                 continue
@@ -777,6 +797,41 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
                 relax_fingers(rig, s, 0.5)
         rig.key(i + 1)
     return out
+
+
+PISTOL_DROP = 0.6
+ARM_BONES = ("clavicle", "upperarm", "lowerarm", "hand", "thumb", "index", "middle", "ring", "pinky")
+
+
+def carry(rig, name, base, hold, drop=0.0):
+    """A gun carried on the move: `base`'s legs, hips and torso (the plain walk or run, its natural
+    bounce and twist) with `hold`'s arms kept as they sit on the chest (each arm bone's turn from
+    its parent copied, so the gun rides the torso as it swings). `drop` (radians) lowers both arms
+    from the shoulders about the chest's side-to-side line, hands together: a pistol's aim grip
+    carried at low ready."""
+    held = [b.name for b in rig.pb if b.name.split("_")[0] in ARM_BONES]
+    sc = bpy.context.scene
+    rig.obj.animation_data.action = bpy.data.actions[hold]
+    sc.frame_set(1)
+    grip = {n: rig.pb[n].matrix_basis.copy() for n in held}
+    act = bpy.data.actions[base]
+    rig.obj.animation_data.action = act
+    f0, f1 = map(int, act.frame_range)
+    poses = []
+    for f in range(f0, f1 + 1):
+        sc.frame_set(f)
+        poses.append({pb.name: pb.matrix_basis.copy() for pb in rig.pb})
+    new_action(rig, name)
+    for i, pose in enumerate(poses):
+        for pb in rig.pb:
+            pb.matrix_basis = grip.get(pb.name, pose[pb.name])
+        bpy.context.view_layer.update()
+        if drop:
+            side = (rig.head("upperarm_l") - rig.head("upperarm_r")).normalized()
+            for s in "lr":
+                rig.rotate(f"upperarm_{s}", side, drop)
+        rig.key(i + 1)
+    return f1 - f0
 
 
 def idle(rig):
@@ -1144,17 +1199,30 @@ def main():
         msrc, mobjs, macts, mfps = got
         bpy.context.view_layer.objects.active = arm
         bpy.ops.object.mode_set(mode="POSE")
-        n = transfer(rig, msrc, macts, name, None, speed, bones=MIXAMO_BONES, src_fps=mfps, ref=None, relax=opts.get("relax", False))
+        n = transfer(rig, msrc, macts, name, None, speed, bones=MIXAMO_BONES, src_fps=mfps, ref=None, relax=opts.get("relax", False),
+                     keep=opts.get("keep"), window=opts.get("window"), pingpong=opts.get("pingpong", False), air=opts.get("air", False))
         if speed:
             cycles[name] = n
         print(f"[anims] {name} from Mixamo's {file} ({mfps:.0f} fps)")
         drop_mocap(mobjs, macts, arm)
-    src, objs, acts = load_mocap("ual2")
-    bpy.context.view_layer.objects.active = arm
-    bpy.ops.object.mode_set(mode="POSE")
-    # Sitting up in the slide, head level, as you can shoot from it (the clip lies far back).
-    mocap(rig, src, acts, "slide", "Slide_Loop", 0.0, keep={"pelvis": 0.45, "spine_01": 0.3, "spine_02": 0.25, "spine_03": 0.25, "neck_01": 0.15, "head": 0.0})
-    drop_mocap(objs, acts, arm)
+    # Moving with a gun: the plain walk and run under the gun's hold (the packs' own runs are a
+    # tactical jog, hunched, arms locked out): a long gun low across the body in both hands, a
+    # pistol in both hands at low ready.
+    for d in "fblr":
+        for m in ("walk", "run"):
+            if f"rifle_idle" in bpy.data.actions:
+                cycles[f"rifle_{m}_{d}"] = carry(rig, f"rifle_{m}_{d}", f"{m}_{d}", "rifle_idle")
+            if f"pistol_idle" in bpy.data.actions:
+                cycles[f"pistol_{m}_{d}"] = carry(rig, f"pistol_{m}_{d}", f"{m}_{d}", "pistol_idle", drop=PISTOL_DROP)
+    if "rifle_idle" in bpy.data.actions:
+        cycles["rifle_sprint_f"] = carry(rig, "rifle_sprint_f", "sprint_f", "rifle_idle")
+    if not os.path.exists(os.path.join(MIXAMO, "Running Slide.fbx")):
+        src, objs, acts = load_mocap("ual2")
+        bpy.context.view_layer.objects.active = arm
+        bpy.ops.object.mode_set(mode="POSE")
+        # Sitting up in the slide, head level, as you can shoot from it (the clip lies far back).
+        mocap(rig, src, acts, "slide", "Slide_Loop", 0.0, keep={"pelvis": 0.45, "spine_01": 0.3, "spine_02": 0.25, "spine_03": 0.25, "neck_01": 0.15, "head": 0.0})
+        drop_mocap(objs, acts, arm)
     hold_pose(rig, "freefall", 40, freefall_pose)
     hold_pose(rig, "glide", 40, glide_pose)
     hold_pose(rig, "death", 30, death_pose)
