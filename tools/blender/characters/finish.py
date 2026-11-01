@@ -322,23 +322,47 @@ FLEX = {
 }
 
 
-def flex_layer(obj):
-    """A colour layer 'Flex' for the export: white, its alpha how far the cloth there may sway (0
-    where it's fastened, rising to the free hem). It joins with the rest and goes out as the
-    vertex colour (the bake doesn't read it)."""
+def flex_uvs(obj, flex_of):
+    """A second UV layer 'Flex' (TEXCOORD_1 in the export): u is how far the mesh may sway there.
+    Nothing else reads a second UV set (not the materials, not a preview), unlike a vertex colour
+    whose alpha would cut alpha-tested hair away."""
     me = obj.data
-    layer = me.color_attributes.new("Flex", "FLOAT_COLOR", "POINT")
+    if "UVMap" not in me.uv_layers:
+        me.uv_layers.new(name="UVMap")
+    layer = me.uv_layers.new(name="Flex")
+    for poly in me.polygons:
+        for li in poly.loop_indices:
+            layer.data[li].uv = (flex_of[me.loops[li].vertex_index], 0.0)
+    me.uv_layers.active = me.uv_layers["UVMap"]
+    me.uv_layers["UVMap"].active_render = True
+
+
+def flex_layer(obj):
+    """How far the cloth may sway at each vertex (0 where it's fastened, rising to the free hem),
+    into the 'Flex' UV layer (flex_uvs)."""
+    me = obj.data
     key = next((k for k in FLEX if obj.name.startswith(k)), None)
     zs = [(obj.matrix_world @ v.co).z for v in me.vertices]
     top, bottom = (max(zs), min(zs)) if zs else (0.0, 0.0)
+    flex = [0.0] * len(me.vertices)
     for v, z in zip(me.vertices, zs):
-        flex = 0.0
         if key:
             start, amount = FLEX[key]
             down = (top - z) / max(top - bottom, 1e-4)
             t = min(max((down - start) / max(1.0 - start, 1e-4), 0.0), 1.0)
-            flex = amount * t * t * (3 - 2 * t)
-        layer.data[v.index].color = (1.0, 1.0, 1.0, flex)
+            flex[v.index] = amount * t * t * (3 - 2 * t)
+    flex_uvs(obj, flex)
+
+
+def hair_flex(obj):
+    """The hair cards' 'Flex' colour layer: 0 at the crown, rising to the tips; long hair (well
+    below the neck) swings freely, short hair only a little."""
+    me = obj.data
+    zs = [(obj.matrix_world @ v.co).z for v in me.vertices]
+    top, bottom = max(zs), min(zs)
+    amount = 1.0 if top - bottom > 0.3 else 0.35
+    flex = [amount * min(max((top - z) / max(top - bottom, 1e-4), 0.0), 1.0) ** 1.5 for z in zs]
+    flex_uvs(obj, flex)
 
 
 def finish_character(variant, rig, proxy, parts, items, root):
@@ -395,11 +419,9 @@ def finish_character(variant, rig, proxy, parts, items, root):
     body.data.materials.clear()
     body.data.materials.append(export.game_material(variant, images))
     body.data.uv_layers.remove(body.data.uv_layers["src"])
-    # The flex layer is the one colour layer to export.
-    for c in [c for c in body.data.color_attributes if c.name != "Flex"]:
-        body.data.color_attributes.remove(c)
-    body.data.color_attributes.active_color = body.data.color_attributes["Flex"]
-    body.data.color_attributes.render_color_index = body.data.color_attributes.active_color_index
+    # UVMap first (TEXCOORD_0, the texture's), Flex second.
+    body.data.uv_layers.active = body.data.uv_layers["UVMap"]
+    body.data.uv_layers["UVMap"].active_render = True
 
     # --- alpha cards: hair, brows, lashes
     cards = []
@@ -411,6 +433,10 @@ def finish_character(variant, rig, proxy, parts, items, root):
         o.data.materials.clear()
         o.data.materials.append(alpha_card_material(f"{variant}_{key}", img, tint, strength))
         apply_non_armature_modifiers(o)
+        if key == "hair":
+            # Hair sways like the cloth (crate::rim): still at the scalp, free toward the tips,
+            # long hair most.
+            hair_flex(o)
         cards.append(o)
 
     # --- LODs (decimate keeps vertex groups, so skinning survives). LOD0 is held to ~30k tris.
@@ -435,7 +461,7 @@ def finish_character(variant, rig, proxy, parts, items, root):
     bpy.ops.export_scene.gltf(
         filepath=out, export_format="GLB", use_selection=True, export_yup=True, export_apply=False,
         export_skins=True, export_def_bones=True, export_animations=False, export_tangents=True,
-        export_image_format="AUTO", export_vertex_color="ACTIVE", export_all_vertex_colors=False,
+        export_image_format="AUTO",
     )
     counts = {o.name: sum(len(p.vertices) - 2 for p in o.data.polygons) for o in lods + cards}
     print(f"[{variant}] exported {out}: {counts}")

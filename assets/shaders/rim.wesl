@@ -38,8 +38,8 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
 @if(VERTEX_NORMALS && !SKINNED)
     out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex_in.instance_index);
     var world = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
-@if(VERTEX_COLORS)
-    world = vec4<f32>(sway(world.xyz, vertex.color.a, motion), 1.0);
+@if(VERTEX_UVS_B)
+    world = vec4<f32>(sway(world.xyz, vertex.uv_b.x, motion), 1.0);
     out.world_position = world;
     out.position = position_world_to_clip(world.xyz);
 @if(VERTEX_UVS_A)
@@ -49,8 +49,7 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
 @if(VERTEX_TANGENTS)
     out.world_tangent = mesh_functions::mesh_tangent_local_to_world(world_from_local, vertex.tangent, vertex_in.instance_index);
 @if(VERTEX_COLORS)
-    // White: the alpha is the cloth's looseness, not a colour.
-    out.color = vec4<f32>(vertex.color.rgb, 1.0);
+    out.color = vertex.color;
 @if(VERTEX_OUTPUT_INSTANCE_INDEX)
     out.instance_index = vertex_in.instance_index;
 @if(VISIBILITY_RANGE_DITHER)

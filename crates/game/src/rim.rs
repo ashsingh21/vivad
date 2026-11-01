@@ -2,7 +2,7 @@
 //! extended (assets/shaders/rim.wesl, rim_prepass.wesl) with
 //! - a rim light, a silhouette glow, so players read against busy, colourful streets;
 //! - cloth that moves: loose garments (the kurti's skirt and panels, the gamchha's ends, shirt
-//!   hems; their vertex colour's alpha says how loose, tools/blender/characters/finish.py) trail
+//!   hems, and the hair; their second UV set says how loose, tools/blender/characters/finish.py) trail
 //!   behind the warrior's motion, lift when it falls and flutter, from its velocity each frame.
 //!
 //! A few vertex and fragment instructions on the characters only: on at every quality level.

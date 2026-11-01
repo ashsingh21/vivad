@@ -20,8 +20,8 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
 @else
     var world_from_local = mesh_world_from_local;
     var world = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
-@if(VERTEX_COLORS)
-    world = vec4<f32>(sway(world.xyz, vertex.color.a, motion), 1.0);
+@if(VERTEX_UVS_B)
+    world = vec4<f32>(sway(world.xyz, vertex.uv_b.x, motion), 1.0);
     out.world_position = world;
     out.position = position_world_to_clip(world.xyz);
 @if(UNCLIPPED_DEPTH_ORTHO_EMULATION) {
@@ -41,7 +41,7 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     out.world_tangent = mesh_functions::mesh_tangent_local_to_world(world_from_local, vertex.tangent, vertex_in.instance_index);
 }
 @if(VERTEX_COLORS)
-    out.color = vec4<f32>(vertex.color.rgb, 1.0);
+    out.color = vertex.color;
 @if(MOTION_VECTOR_PREPASS) {
     // Last frame's place: the skin's previous pose, swayed the same (the cloth's own motion between
     // frames is small).
@@ -50,8 +50,8 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
 @else
     let prev_model = mesh_functions::get_previous_world_from_local(vertex_in.instance_index);
     var prev = mesh_functions::mesh_position_local_to_world(prev_model, vec4<f32>(vertex.position, 1.0));
-@if(VERTEX_COLORS)
-    prev = vec4<f32>(sway(prev.xyz, vertex.color.a, motion), 1.0);
+@if(VERTEX_UVS_B)
+    prev = vec4<f32>(sway(prev.xyz, vertex.uv_b.x, motion), 1.0);
     out.previous_world_position = prev;
 }
 @if(VERTEX_OUTPUT_INSTANCE_INDEX)

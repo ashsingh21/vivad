@@ -106,7 +106,7 @@ def bone_weight_map(obj):
     return out
 
 
-def delete_hidden_body(proxy, covers, gap=0.035):
+def delete_hidden_body(proxy, covers, gap=0.09):
     """Delete body faces whose every vertex is covered by a garment within `gap` along its normal.
     Saves triangles and prevents skin poking through cloth when animated."""
     trees = []

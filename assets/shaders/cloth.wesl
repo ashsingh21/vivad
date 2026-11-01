@@ -1,5 +1,5 @@
 // Cloth that moves (crate::rim): how far a vertex sways, from how loose it is there (`flex`, the
-// vertex colour's alpha, 0 fastened .. 1 free hem) and the warrior's motion (xyz velocity m/s,
+// mesh's second UV set's u, 0 fastened .. 1 free hem) and the warrior's motion (xyz velocity m/s,
 // w time s). Shared by the main pass (rim.wesl) and the prepass (rim_prepass.wesl), which must move
 // vertices identically.
 
