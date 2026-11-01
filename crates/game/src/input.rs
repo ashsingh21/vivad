@@ -103,7 +103,7 @@ impl Plugin for InputPlugin {
         app.init_resource::<Bindings>()
             .init_resource::<ActionState>()
             .init_resource::<ShowPerf>()
-            .add_systems(PreUpdate, (resolve_actions, write_intent, grab_cursor, meta_actions, vote).chain()
+            .add_systems(PreUpdate, (scripted_keys, resolve_actions, write_intent, grab_cursor, meta_actions, vote).chain()
                 .in_set(LocalInput).after(bevy::input::InputSystems));
     }
 }
@@ -158,6 +158,9 @@ fn write_intent(
     cursor: Single<&CursorOptions>,
     time: Res<Time>,
     mut q: Query<&mut PlayerIntent, With<LocalPlayer>>,
+    // The crouch toggle (the system's own: a thread-local flickered as the system ran on one
+    // worker thread or another).
+    mut crouched: Local<bool>,
 ) {
     let Ok(mut intent) = q.single_mut() else { return };
     let grabbed = cursor.grab_mode != CursorGrabMode::None;
@@ -214,18 +217,13 @@ fn write_intent(
     }
     // Crouch toggles (a press down, a press up), as in most shooters; jumping or sprinting stands
     // you up. A press while running fast slides (crate's sim, movement::SLIDE_*).
-    let crouched = CROUCHED.with(|c| {
-        let mut v = c.get();
-        if state.just_pressed(Act::Crouch) {
-            v = !v;
-            intent.pressed |= btn::CROUCH;
-        } else if state.just_pressed(Act::Jump) || state.just_pressed(Act::Sprint) {
-            v = false;
-        }
-        c.set(v);
-        v
-    });
-    if crouched {
+    if state.just_pressed(Act::Crouch) {
+        *crouched = !*crouched;
+        intent.pressed |= btn::CROUCH;
+    } else if state.just_pressed(Act::Jump) || state.just_pressed(Act::Sprint) {
+        *crouched = false;
+    }
+    if *crouched {
         held |= btn::CROUCH;
     }
     intent.released |= before & !held;
@@ -255,8 +253,6 @@ fn write_intent(
 }
 
 thread_local! {
-    // The crouch toggle.
-    static CROUCHED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     // Hotbar cursor for wheel cycling; resynced from the inventory by the HUD each frame.
     pub static CYCLE: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
 }
@@ -310,5 +306,41 @@ fn meta_actions(
     let dead = local.single().unwrap_or(true);
     if state.just_pressed(Act::Restart) && (m.state == MatchState::Ended || dead) {
         restart.write(RestartMatch);
+    }
+}
+
+/// For testing the player's own controls (not the autopilot's): VIVAD_KEYS="t:+Key,t:-Key,..."
+/// presses (+) and releases (-) keys at those match times (seconds), through the same bindings and
+/// intent as a person's keyboard. Key names as Bevy's KeyCode (KeyW, ShiftLeft, ControlLeft, Space).
+fn scripted_keys(m: Option<Res<Match>>, mut keys: ResMut<ButtonInput<KeyCode>>, mut next: Local<usize>, mut script: Local<Option<Vec<(f32, bool, KeyCode)>>>) {
+    let script = script.get_or_insert_with(|| {
+        std::env::var("VIVAD_KEYS")
+            .unwrap_or_default()
+            .split(',')
+            .filter_map(|e| {
+                let (t, k) = e.split_once(':')?;
+                let (down, name) = (k.starts_with('+'), &k[1..]);
+                let code = match name {
+                    "KeyW" => KeyCode::KeyW,
+                    "KeyA" => KeyCode::KeyA,
+                    "KeyS" => KeyCode::KeyS,
+                    "KeyD" => KeyCode::KeyD,
+                    "KeyC" => KeyCode::KeyC,
+                    "ShiftLeft" => KeyCode::ShiftLeft,
+                    "ControlLeft" => KeyCode::ControlLeft,
+                    "Space" => KeyCode::Space,
+                    _ => return None,
+                };
+                Some((t.trim().parse().ok()?, down, code))
+            })
+            .collect()
+    });
+    let Some(m) = m else { return };
+    while let Some(&(t, down, code)) = script.get(*next) {
+        if m.elapsed < t {
+            break;
+        }
+        if down { keys.press(code) } else { keys.release(code) }
+        *next += 1;
     }
 }
