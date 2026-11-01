@@ -371,6 +371,8 @@ impl MeshBuf {
 pub(crate) const BAY: f32 = 3.2;
 /// How far signs, cables and roof tanks are drawn (scaled by quality like the chunks' LODs).
 const CLUTTER_FAR: f32 = 130.0;
+/// How far the city's trim (copings, cornices, ledges, pilasters) is drawn, from its chunk's middle.
+const TRIM_FAR: f32 = 220.0;
 /// Festival colours, kept for small things so they pop off the pastel walls: signboards,
 /// awnings, bunting. Marigold, rani pink, peacock blue, parrot green, sindoor red, haldi yellow,
 /// jamun purple, white.
@@ -405,7 +407,7 @@ const TRIM_WHITE: [f32; 3] = [0.97, 0.94, 0.88];
 /// How high a roof's parapet stands, and how thick it is.
 const PARAPET: (f32, f32) = (0.9, 0.3);
 /// Half the width of a corner pilaster: clear of the parapet and coping behind it, so no faces meet.
-const PILASTER: f32 = 0.38;
+const PILASTER: f32 = 0.46;
 
 /// A cheap hash of a few integers to 0..1, for texture detail that doesn't repeat by the pixel.
 fn hash01(a: u32, b: u32, c: u32) -> f32 {
@@ -655,20 +657,29 @@ fn build_footprints(
                 // The parapet round the roof, and its coping.
                 let (ph, pt) = PARAPET;
                 t.open_box(at(len * 0.5, fp.top + ph * 0.5) - out * pt * 0.5, rot, Vec3::new(len, ph, pt), tint_at(1.06));
-                t.prism(at(len * 0.5, fp.top + ph + 0.07) - out * 0.15, rot, Vec3::new(len, 0.14, 0.4), 0.05, trim);
+                // Chunky, as a stylised city's trim is: a thick rounded coping overhanging both
+                // faces of the parapet...
+                t.prism(at(len * 0.5, fp.top + ph + 0.11) - out * 0.17, rot, Vec3::new(len, 0.22, 0.56), 0.08, trim);
+                // ...and a fat cornice under the roofline, run on round outside corners and stopped
+                // short of inside ones.
+                {
+                    let ext = |c: i8| c as f32 * 0.3;
+                    let (s0, s1) = (-ext(corner[i]), len + ext(corner[(i + 1) % n]));
+                    t.prism(at((s0 + s1) * 0.5, fp.top - 0.17) + out * 0.11, rot, Vec3::new(s1 - s0, 0.3, 0.32), 0.11, trim);
+                }
                 // A chhajja over the ground storey: a deep sunshade ledge, run on round outside
                 // corners to meet the next wall's and stopped short of inside ones.
                 if fp.top - split > 1.0 {
-                    const DEEP: f32 = 0.6;
+                    const DEEP: f32 = 0.75;
                     let ext = |c: i8| c as f32 * DEEP;
                     let (s0, s1) = (-ext(corner[i]), len + ext(corner[(i + 1) % n]));
-                    t.prism(at((s0 + s1) * 0.5, split + 0.04) + out * (DEEP - 0.1) * 0.5, rot, Vec3::new(s1 - s0, 0.2, DEEP + 0.1), 0.06, trim);
+                    t.prism(at((s0 + s1) * 0.5, split + 0.04) + out * (DEEP - 0.1) * 0.5, rot, Vec3::new(s1 - s0, 0.3, DEEP + 0.1), 0.1, trim);
                 }
                 // A pilaster up each outside corner.
                 if corner[i] > 0 {
                     let h = fp.top - fp.base + ph + 0.3;
                     let up = rot * Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
-                    t.prism(Vec3::new(a.x, fp.base + h * 0.5, a.y), up, Vec3::new(h, 2.0 * PILASTER, 2.0 * PILASTER), 0.08, trim);
+                    t.prism(Vec3::new(a.x, fp.base + h * 0.5, a.y), up, Vec3::new(h, 2.0 * PILASTER, 2.0 * PILASTER), 0.13, trim);
                 }
             }
             // Sills and lintels at each window of the upper storeys, where they can be seen,
@@ -690,11 +701,11 @@ fn build_footprints(
                         // The texture's two-by-two repeat: which of its windows this is.
                         let kind = [[0, 2], [3, 1]][(st % 2 == 0) as usize][bay.rem_euclid(2) as usize];
                         if kind == 3 {
-                            k.prism(at(s, floor + 0.62) + out * 0.27, rot, Vec3::new(2.1, 0.14, 0.6), 0.04, trim);
+                            k.prism(at(s, floor + 0.62) + out * 0.32, rot, Vec3::new(2.3, 0.2, 0.7), 0.07, trim);
                         } else {
-                            k.prism(at(s, floor + 0.84) + out * 0.08, rot, Vec3::new(1.75, 0.14, 0.24), 0.04, trim);
+                            k.prism(at(s, floor + 0.84) + out * 0.12, rot, Vec3::new(1.95, 0.2, 0.34), 0.07, trim);
                         }
-                        k.prism(at(s, floor + 3.0) + out * 0.06, rot, Vec3::new(1.75, 0.16, 0.2), 0.04, trim);
+                        k.prism(at(s, floor + 3.02) + out * 0.1, rot, Vec3::new(2.0, 0.22, 0.28), 0.08, trim);
                     }
                 }
             }
@@ -1022,11 +1033,15 @@ fn build_footprints(
             commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(glow.clone()), Transform::from_translation(centre), range.0.clone(), range, bevy::light::NotShadowCaster, OfMap));
         }
     }
+    // Trim is chunky and many-sided: drawn to TRIM_FAR (scaled by quality), past which the plain
+    // walls and roofs read just as well.
+    let trim_range = bevy::camera::visibility::VisibilityRange { start_margin: 0.0..0.0, end_margin: TRIM_FAR..TRIM_FAR + 15.0, use_aabb: false };
     let mut trim_tris = 0;
     for (_, buf) in trims {
         trim_tris += buf.idx.len() / 3;
+        let range = crate::characters::LodRange(trim_range.clone(), 0);
         let (mesh, centre) = buf.into_mesh();
-        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(roof.clone()), Transform::from_translation(centre), OfMap));
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(roof.clone()), Transform::from_translation(centre), range.0.clone(), range, OfMap));
     }
     info!("city: trim {trim_tris} triangles");
     let (set, mr) = roof_tex;
