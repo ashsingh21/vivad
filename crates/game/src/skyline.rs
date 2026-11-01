@@ -17,16 +17,13 @@ impl Plugin for SkylinePlugin {
     }
 }
 
-/// Hazy plaster, brick and concrete: the map's own colours, a little greyer for the distance.
-const COLOURS: [(f32, f32, f32); 7] = [
-    (0.76, 0.72, 0.64),
-    (0.70, 0.66, 0.60),
-    (0.64, 0.54, 0.48),
-    (0.80, 0.78, 0.74),
-    (0.60, 0.60, 0.60),
-    (0.72, 0.67, 0.56),
-    (0.68, 0.60, 0.56),
-];
+/// The map's own wall colours (crate::buildings::WALLS), a little greyer for the distance.
+fn colour(k: usize) -> (f32, f32, f32) {
+    let c = crate::buildings::WALLS[k % crate::buildings::WALLS.len()];
+    let g = (c[0] + c[1] + c[2]) / 3.0;
+    let m = |x: f32| x * 0.8 + g * 0.2;
+    (m(c[0]), m(c[1]), m(c[2]))
+}
 
 fn spawn_skyline(mut commands: Commands, layout: Res<MapLayout>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>) {
     // The India map has its own mountains at the edge.
@@ -81,7 +78,7 @@ fn spawn_skyline(mut commands: Commands, layout: Res<MapLayout>, mut meshes: Res
                     let (w, d) = (sub * (0.62 + rnd() * 0.25), sub * (0.62 + rnd() * 0.25));
                     let tall = rnd() < 0.015 + 0.035 * far;
                     let h = if tall { 45.0 + rnd() * 40.0 } else { 7.0 + rnd() * rnd() * (14.0 + 26.0 * far) };
-                    let col = COLOURS[(rnd() * COLOURS.len() as f32) as usize % COLOURS.len()];
+                    let col = colour((rnd() * 100.0) as usize);
                     let base = Vec3::new(c.x, floor, c.y);
                     parts.push(paint_keep_uv(block(w, h, d).translated_by(base), col));
                     roof_things(&mut parts, &mut rnd, base, w, d, h, col, tall);

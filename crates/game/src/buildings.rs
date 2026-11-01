@@ -128,6 +128,14 @@ impl MeshBuf {
         }
     }
 
+    /// A box of one colour with no bottom face, for trim that sits on or against something.
+    fn open_box(&mut self, c: Vec3, rot: Quat, size: Vec3, col: [f32; 4]) {
+        let n0 = self.idx.len();
+        self.solid_box(c, rot, size, col);
+        // solid_box's fourth face is the bottom: drop its six indices.
+        self.idx.drain(n0 + 18..n0 + 24);
+    }
+
     /// An upright cylinder of one colour (sides and top), for clutter.
     fn solid_cylinder(&mut self, c: Vec3, r: f32, h: f32, col: [f32; 4]) {
         let seg = 10;
@@ -292,6 +300,24 @@ const SIGNS: [[f32; 3]; 8] = [
     [0.15, 0.15, 0.18],
 ];
 pub(crate) const STOREY: f32 = 3.4;
+/// Lime-washed walls, sun-faded: Old Delhi's dusty pinks, ochres, mints and blues, and cream.
+pub(crate) const WALLS: [[f32; 3]; 9] = [
+    [0.93, 0.62, 0.58],
+    [0.96, 0.72, 0.38],
+    [0.60, 0.82, 0.70],
+    [0.56, 0.72, 0.90],
+    [0.96, 0.91, 0.80],
+    [0.87, 0.50, 0.38],
+    [0.77, 0.66, 0.85],
+    [0.97, 0.84, 0.48],
+    [0.48, 0.75, 0.78],
+];
+/// Off-white trim: parapet coping, cornices, pilasters, sills.
+const TRIM_WHITE: [f32; 3] = [0.97, 0.94, 0.88];
+/// How high a roof's parapet stands, and how thick it is.
+const PARAPET: (f32, f32) = (0.9, 0.3);
+/// Half the width of a corner pilaster: clear of the parapet and coping behind it, so no faces meet.
+const PILASTER: f32 = 0.38;
 
 /// A cheap hash of a few integers to 0..1, for texture detail that doesn't repeat by the pixel.
 fn hash01(a: u32, b: u32, c: u32) -> f32 {
@@ -470,6 +496,7 @@ fn build_footprints(
         [l.red, l.green, l.blue, 1.0]
     };
     let mut clutter: HashMap<(i32, i32), MeshBuf> = HashMap::new();
+    let mut trims: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     let tint = |m: Mat| match m {
         Mat::PlasterOchre => Color::srgb(0.95, 0.76, 0.48),
         Mat::Sandstone => Color::srgb(0.85, 0.68, 0.50),
@@ -501,12 +528,19 @@ fn build_footprints(
         // Each building a little different: lighter or darker, warmer or cooler.
         let seed = (c.x * 7.3 + c.y * 13.1).to_bits();
         let r = |k: u32| hash01(seed, k, 11);
-        let v = 0.92 + 0.14 * r(1);
-        let warm = (r(2) - 0.5) * 0.08;
+        // Plastered walls take a colour from the palette; brick and stone keep their own (the
+        // material's tint).
+        let painted = !matches!(fp.mat, Mat::Brick | Mat::RedSandstone | Mat::Sandstone);
+        let wall = if painted { WALLS[(r(4) * WALLS.len() as f32) as usize % WALLS.len()] } else { [1.0; 3] };
+        let v = 0.96 + 0.06 * r(1);
+        // Darker toward the street, and cooler there, as if in the lane's blue shade.
         let tint_at = |shade: f32| {
-            let l = Color::srgb(v * (1.0 + warm) * shade, v * shade, v * (1.0 - warm) * shade).to_linear();
+            let cool = (1.0 - shade).max(0.0) * 0.25;
+            let l = Color::srgb(wall[0] * v * shade, wall[1] * v * shade, wall[2] * v * (shade + cool)).to_linear();
             [l.red, l.green, l.blue, 1.0]
         };
+        // Trim mostly white; now and then the wall's own colour, deeper.
+        let trim = if r(5) < 0.75 || !painted { lin(TRIM_WHITE) } else { lin(wall.map(|c| c * 0.78)) };
         let height = fp.top - fp.base;
         // A row of shops along the street when there's a storey to spare above them.
         let shops = height > STOREY * 1.6 && r(3) < 0.8;
@@ -524,9 +558,57 @@ fn build_footprints(
             let out2 = if ccw { Vec2::new(e.y, -e.x) } else { Vec2::new(-e.y, e.x) } / len;
             let out = Vec3::new(out2.x, 0.0, out2.y);
             let (u0, u1) = (along / (2.0 * BAY), (along + len) / (2.0 * BAY));
+            let mid = (a + b) * 0.5;
+            let street = !occupied(mid + out2 * 1.0) && !occupied(mid + out2 * 2.5);
+            let dir = Vec3::new(e.x, 0.0, e.y) / len;
+            let rot = Quat::from_rotation_arc(Vec3::X, dir);
+            let at = |s: f32, y: f32| Vec3::new(a.x, y, a.y) + dir * s;
+            {
+                let t = trims.entry((cx, cz)).or_default();
+                // The parapet round the roof, and its coping.
+                let (ph, pt) = PARAPET;
+                t.open_box(at(len * 0.5, fp.top + ph * 0.5) - out * pt * 0.5, rot, Vec3::new(len, ph, pt), tint_at(1.06));
+                t.open_box(at(len * 0.5, fp.top + ph + 0.06) - out * 0.15, rot, Vec3::new(len, 0.12, 0.4), trim);
+                // A cornice over the ground storey.
+                if fp.top - split > 1.0 {
+                    t.open_box(at(len * 0.5, split + 0.02) + out * 0.03, rot, Vec3::new(len, 0.26, 0.3), trim);
+                }
+                // A pilaster up each outside corner.
+                let prev = fp.pts[(i + n - 1) % n];
+                let e0 = a - prev;
+                let turn = e0.x * e.y - e0.y * e.x;
+                if (turn > 0.0) == ccw && e0.length() > 1.0 && len > 1.0 && e0.normalize().dot(e / len) < 0.9 {
+                    let h = fp.top - fp.base + ph + 0.3;
+                    t.open_box(Vec3::new(a.x, fp.base + h * 0.5, a.y), rot, Vec3::new(2.0 * PILASTER, h, 2.0 * PILASTER), trim);
+                }
+            }
+            // Sills and lintels at each window of the upper storeys, where they face the street,
+            // where the window texture puts them (crate::buildings::facade_image): a window a bay,
+            // its sill 0.75-0.92 m up a storey, its head at 2.9-3.06 m; the balcony's opening goes
+            // down to a slab at 0.62 m.
+            if street {
+                let k = clutter.entry((cx, cz)).or_default();
+                let first = ((along + 0.6) / BAY).ceil() as i32;
+                let last = ((along + len - 0.6) / BAY).floor() as i32;
+                let storeys = ((fp.top - fp.base) / STOREY + 0.01).floor() as i32;
+                for bay in first..last {
+                    let s = (bay as f32 + 0.5) * BAY - along;
+                    for st in 1..storeys {
+                        let floor = fp.base + st as f32 * STOREY;
+                        // The texture's two-by-two repeat: which of its windows this is.
+                        let kind = [[0, 2], [3, 1]][(st % 2 == 0) as usize][bay.rem_euclid(2) as usize];
+                        if kind == 3 {
+                            k.open_box(at(s, floor + 0.62) + out * 0.27, rot, Vec3::new(2.1, 0.14, 0.6), trim);
+                        } else {
+                            k.open_box(at(s, floor + 0.84) + out * 0.08, rot, Vec3::new(1.75, 0.14, 0.24), trim);
+                        }
+                        k.open_box(at(s, floor + 3.0) + out * 0.06, rot, Vec3::new(1.75, 0.16, 0.2), trim);
+                    }
+                }
+            }
             // Two bands, each with its own texture and shading baked into the vertex colour: the
             // ground storey dark with street grime at its foot, the rest lighter toward the top.
-            for (lo, hi, shop, (s0, s1)) in [(fp.base, split, shops, (0.74, 0.98)), (split, fp.top, false, (0.98, 1.05))] {
+            for (lo, hi, shop, (s0, s1)) in [(fp.base, split, shops, (0.66, 0.84)), (split, fp.top, false, (0.9, 1.06))] {
                 if hi - lo < 0.05 {
                     continue;
                 }
@@ -545,12 +627,8 @@ fn build_footprints(
                 }
             }
             // Clutter on walls that face the street (not a neighbour's wall).
-            let mid = (a + b) * 0.5;
-            let street = !occupied(mid + out2 * 1.0) && !occupied(mid + out2 * 2.5);
             if street {
                 let k = clutter.entry((cx, cz)).or_default();
-                let dir = Vec3::new(e.x, 0.0, e.y) / len;
-                let rot = Quat::from_rotation_arc(Vec3::X, dir);
                 if shops {
                     // A signboard over each shop: a coloured board with a pale panel of "lettering".
                     let pair = 2.0 * BAY;
@@ -562,7 +640,7 @@ fn build_footprints(
                             continue;
                         }
                         let at = a + e / len * ((s as f32 + 0.5) * pair - along);
-                        let y = fp.base + STOREY - 0.36;
+                        let y = fp.base + STOREY - 0.5;
                         let board = SIGNS[(h * 41.0) as usize % SIGNS.len()];
                         let p = Vec3::new(at.x, y, at.y) + out * 0.07;
                         k.solid_box(p, rot, Vec3::new(pair * 0.86, 0.66, 0.1), lin(board));
@@ -599,6 +677,8 @@ fn build_footprints(
             }
         }
         let roof = roofs.entry((cx, cz)).or_default();
+        let g = 0.84 + 0.1 * r(6);
+        let roof_col = lin([g, g * 0.97, g * 0.92]);
         for [i, j, k] in shared::map::footprint::triangulate(&fp.pts) {
             let p = [fp.pts[i as usize], fp.pts[j as usize], fp.pts[k as usize]].map(|q| Vec3::new(q.x, fp.top, q.y));
             let p = if (p[1] - p[0]).cross(p[2] - p[0]).y >= 0.0 { p } else { [p[0], p[2], p[1]] };
@@ -607,7 +687,7 @@ fn build_footprints(
                 roof.pos.push(q.to_array());
                 roof.nrm.push([0.0, 1.0, 0.0]);
                 roof.uv.push([q.x / TILE, q.z / TILE]);
-                roof.col.push(tint_at(0.95));
+                roof.col.push(roof_col);
             }
             roof.idx.extend_from_slice(&[base, base + 1, base + 2]);
         }
@@ -617,7 +697,7 @@ fn build_footprints(
         let texture = if shop { shopfront.clone() } else { facade.clone() };
         let m = facade_mats
             .entry((mat, shop))
-            .or_insert_with(|| materials.add(StandardMaterial { base_color: tint(mat), base_color_texture: Some(texture), perceptual_roughness: 0.85, ..default() }))
+            .or_insert_with(|| materials.add(StandardMaterial { base_color: if matches!(mat, Mat::Brick | Mat::RedSandstone | Mat::Sandstone) { tint(mat) } else { Color::WHITE }, base_color_texture: Some(texture), perceptual_roughness: 0.85, ..default() }))
             .clone();
         let (mesh, centre) = buf.into_mesh();
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(m), Transform::from_translation(centre), OfMap));
@@ -633,6 +713,13 @@ fn build_footprints(
         let (mesh, centre) = buf.into_mesh();
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(plain.clone()), Transform::from_translation(centre), range.0.clone(), range, OfMap));
     }
+    let mut trim_tris = 0;
+    for (_, buf) in trims {
+        trim_tris += buf.idx.len() / 3;
+        let (mesh, centre) = buf.into_mesh();
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(plain.clone()), Transform::from_translation(centre), OfMap));
+    }
+    info!("city: trim {trim_tris} triangles");
     for (_, buf) in roofs {
         let (mesh, centre) = buf.into_mesh();
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(roof.clone()), Transform::from_translation(centre), OfMap));

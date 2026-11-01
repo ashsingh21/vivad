@@ -299,16 +299,16 @@ fn setup_sky(mut commands: Commands, mut media: ResMut<Assets<ScatteringMedium>>
     // Low morning sun from the east-south-east: the ghats and the Ajanta cliff both face east.
     commands.spawn((
         Sun,
-        // Low (about 24 degrees) and warm: a softer, golden light than the hard white
-        // high sun the map had, which read as glaring over the pale stone and dust.
-        DirectionalLight { illuminance: 27_000.0, shadow_maps_enabled: std::env::var("VIVAD_NO_SHADOWS").is_err(), color: Color::srgb(1.0, 0.86, 0.68), ..default() },
-        Transform::from_xyz(1.0, 0.5, 0.45).looking_at(Vec3::ZERO, Vec3::Y),
+        // About 34 degrees up and only a little warm: high enough that the walls keep their own
+        // colours, low enough for long shadows down the lanes.
+        DirectionalLight { illuminance: 27_000.0, shadow_maps_enabled: std::env::var("VIVAD_NO_SHADOWS").is_err(), color: Color::srgb(1.0, 0.91, 0.78), ..default() },
+        Transform::from_xyz(1.0, 0.75, 0.45).looking_at(Vec3::ZERO, Vec3::Y),
         // Cascades and reach are the quality level's (crate::quality): the shadow pass is the
         // frame's largest GPU cost.
         CascadeShadowConfigBuilder::default().build(),
     ));
     commands.spawn(Atmosphere::earth(media.add(ScatteringMedium::default())));
-    commands.insert_resource(GlobalAmbientLight { color: Color::srgb(0.85, 0.88, 1.0), brightness: 560.0, ..default() });
+    commands.insert_resource(GlobalAmbientLight { color: Color::srgb(0.76, 0.83, 1.0), brightness: 1800.0, ..default() });
     // The Pralaya wall.
     commands.spawn((
         ZoneWall,
