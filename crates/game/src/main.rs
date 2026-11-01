@@ -74,7 +74,8 @@ fn main() {
         .add_plugins(SimPlugin { items_ron })
         .add_plugins((InputPlugin, VisualsPlugin, ArmsPlugin, FxPlugin, GrassPlugin, LampsPlugin, WarriorAnimationPlugin, SoundPlugin, BuildingsPlugin, CharacterArtPlugin, CameraPlugin, HudPlugin, AutoshotPlugin, WaterPlugin))
         .add_plugins((QualityPlugin, game::batch::BatchPlugin, game::skyline::SkylinePlugin,
-            game::sky::SkyPlugin, game::ambient::AmbientPlugin))
+            game::sky::SkyPlugin,
+            game::street::StreetPlugin, game::ambient::AmbientPlugin))
         .add_plugins(bevy::diagnostic::LogDiagnosticsPlugin {
             wait_duration: std::time::Duration::from_secs(10),
             filter: std::env::var("VIVAD_PERF_ALL").is_ok().then(|| None).unwrap_or_else(|| std::env::var("VIVAD_PERF_LOG").is_ok().then(|| {

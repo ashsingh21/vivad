@@ -30,6 +30,10 @@ glider:
 jugaad:
     {{blender}} -b --factory-startup -P tools/blender/props/jugaad.py 2>&1 | grep -E '^\[|Error|Traceback' || true
 
+# The street kit: parked autos, stalls, poles, rooftop clutter (one GLB, merged per chunk in game).
+street-kit:
+    {{blender}} -b --factory-startup -P tools/blender/props/street_kit.py 2>&1 | grep -E '^\[|Error|Traceback' || true
+
 figures:
     {{blender}} -b -P tools/blender/architecture/figures.py 2>&1 | grep -E '^\[|Error|Traceback' || true
 

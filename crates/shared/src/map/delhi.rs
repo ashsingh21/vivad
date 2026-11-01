@@ -142,6 +142,14 @@ pub fn generate(id: super::MapId, seed: u64) -> MapLayout {
     water(&mut b, &data);
     let houses = footprints(&mut b, &mut rng, &data, &ring, id);
     trees(&mut b, &mut rng, &data, &ring, &houses);
+    let roads: Vec<(Vec<Vec2>, f32, bool)> = data
+        .roads
+        .iter()
+        .filter(|r| !matches!(r.kind.as_str(), "path" | "footway" | "steps" | "cycleway"))
+        .map(|r| (r.pts.iter().map(v2).collect(), r.w, !matches!(r.kind.as_str(), "primary" | "secondary" | "tertiary" | "trunk")))
+        .collect();
+    super::kit::streets(&mut b, &mut rng, &roads, &houses, HALF);
+    super::kit::roofs(&mut b, &mut rng);
     street_loot(&mut b, &mut rng, &data, &ring, &houses);
     map.terrain.settle_under(&map.blocks);
     map.pois = data.pois.iter().map(|p| Poi { name: p.name.clone(), center: Vec3::new(p.x, 0.0, p.z), radius: p.r }).collect();
@@ -384,6 +392,7 @@ fn open(map: &MapLayout, ring: &super::cp::Ring, houses: &[Vec<Vec2>], p: Vec2, 
         c.distance(p) < 80.0 && (super::footprint::contains(&f.pts, p) || f.pts.iter().any(|q| q.distance(p) < clear))
     }) && !houses.iter().any(|h| h[0].distance(p) < 30.0 && (super::footprint::contains(h, p) || h.iter().any(|q| q.distance(p) < clear)))
         && !map.props.iter().any(|q| q.pos.xz().distance(p) < 5.0)
+        && !map.kit.iter().any(|k| k.pos.xz().distance(p) < 2.5)
 }
 
 /// OpenStreetMap's mapped trees, Central Park and Palika Park planted round their edges and in

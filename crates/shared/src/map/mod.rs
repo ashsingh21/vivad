@@ -6,6 +6,7 @@ pub mod cp;
 pub mod delhi;
 pub mod footprint;
 pub mod india;
+pub mod kit;
 pub mod terrain;
 
 /// The maps: Panga's four from Delhi, and Vivad's ancient India.
@@ -205,6 +206,8 @@ pub struct MapLayout {
     pub ornaments: Vec<Ornament>,
     pub lamps: Vec<Lamp>,
     pub footprints: Vec<Footprint>,
+    /// The street kit's pieces on a city map (crate::map::kit); drawn by the client, merged.
+    pub kit: Vec<kit::KitPiece>,
     /// A river across the map, as its channel's x range (the India map's).
     pub river: Option<(f32, f32)>,
     pub terrain: terrain::Terrain,
