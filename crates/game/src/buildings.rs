@@ -502,7 +502,7 @@ fn bunting(buf: &mut MeshBuf, a: Vec3, b: Vec3, sag: f32, seed: u32) {
 }
 
 /// A city map's buildings (MapLayout::footprints), merged per chunk and material: walls in the
-/// facade, roofs and trim in plaster.
+/// facade, roofs in clay tile, trim in plaster.
 fn build_footprints(
     commands: &mut Commands,
     layout: &MapLayout,
@@ -519,6 +519,7 @@ fn build_footprints(
     // so glass and steel catch the sun.
     let facade = (load_set(assets, pending, "panga/facade"), load_linear(assets, pending, "textures/panga/facade_mr.png"));
     let shopfront = (load_set(assets, pending, "panga/shop"), load_linear(assets, pending, "textures/panga/shop_mr.png"));
+    let roof_tex = (load_set(assets, pending, "panga/roof"), load_linear(assets, pending, "textures/panga/roof_mr.png"));
     let signs_tex: Handle<Image> = assets.load("textures/panga/signs.png");
     pending.0.push(signs_tex.clone());
     // Where buildings stand, a metre a cell: whether a wall faces the street or a neighbour, and
@@ -804,8 +805,9 @@ fn build_footprints(
             }
         }
         let roof = roofs.entry((cx, cz)).or_default();
-        let g = 0.84 + 0.1 * r(6);
-        let roof_col = lin([g, g * 0.97, g * 0.92]);
+        // Clay tiles left bare, grey cement over them, or lime-washed white, a little lighter or darker.
+        let g = 0.9 + 0.12 * r(6);
+        let roof_col = lin([[0.86, 0.56, 0.44], [0.72, 0.72, 0.70], [0.95, 0.93, 0.88]][(r(7) * 2.99) as usize].map(|c| c * g));
         for [i, j, k] in shared::map::footprint::triangulate(&fp.pts) {
             let p = [fp.pts[i as usize], fp.pts[j as usize], fp.pts[k as usize]].map(|q| Vec3::new(q.x, fp.top, q.y));
             let p = if (p[1] - p[0]).cross(p[2] - p[0]).y >= 0.0 { p } else { [p[0], p[2], p[1]] };
@@ -864,9 +866,18 @@ fn build_footprints(
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(roof.clone()), Transform::from_translation(centre), OfMap));
     }
     info!("city: trim {trim_tris} triangles");
+    let (set, mr) = roof_tex;
+    let roof_mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        base_color_texture: Some(set.base),
+        normal_map_texture: Some(set.normal),
+        metallic_roughness_texture: Some(mr),
+        perceptual_roughness: 1.0,
+        ..default()
+    });
     for (_, buf) in roofs {
         let (mesh, centre) = buf.into_mesh();
-        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(roof.clone()), Transform::from_translation(centre), OfMap));
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(roof_mat.clone()), Transform::from_translation(centre), OfMap));
     }
     if !water.idx.is_empty() {
         let (mesh, centre) = water.into_mesh();

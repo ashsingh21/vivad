@@ -22,6 +22,7 @@ pub struct VisualsPlugin;
 impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DropRide>()
+            .add_plugins(crate::ground::GroundPlugin)
             .add_systems(Startup, (setup_assets, setup_sky).chain())
             .add_systems(
                 Update,
@@ -412,8 +413,9 @@ fn dress_terrain(
     q: Query<Entity, Added<shared::sim::MapTerrain>>,
     layout: Res<shared::map::MapLayout>,
     scale: Res<crate::quality::LodScale>,
+    assets: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<crate::ground::GroundMaterial>>,
 ) {
     use bevy::asset::RenderAssetUsages;
     use bevy::camera::visibility::VisibilityRange;
@@ -421,7 +423,21 @@ fn dress_terrain(
     for e in &q {
         let t = &layout.terrain;
         let n = t.n;
-        let material = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.95, ..default() });
+        let detail = assets
+            .load_builder()
+            .with_settings(|s: &mut bevy::image::ImageLoaderSettings| {
+                s.is_srgb = false;
+                s.sampler = bevy::image::ImageSampler::Descriptor(bevy::image::ImageSamplerDescriptor {
+                    address_mode_u: bevy::image::ImageAddressMode::Repeat,
+                    address_mode_v: bevy::image::ImageAddressMode::Repeat,
+                    ..bevy::image::ImageSamplerDescriptor::linear()
+                });
+            })
+            .load(crate::ground::DETAIL);
+        let material = materials.add(bevy::pbr::ExtendedMaterial {
+            base: StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.95, ..default() },
+            extension: crate::ground::GroundDetail::new(detail),
+        });
         commands.entity(e).insert(Visibility::default());
         let contact = contact_shade(&layout);
         // Grid indices a tile samples from `a` to `b` (inclusive) every `step`, always ending on `b`.
@@ -435,11 +451,12 @@ fn dress_terrain(
             for ti in (0..n - 1).step_by(TERRAIN_TILE) {
                 for tj in (0..n - 1).step_by(TERRAIN_TILE) {
                     let (is, js) = (samples(ti, (ti + TERRAIN_TILE).min(n - 1), step), samples(tj, (tj + TERRAIN_TILE).min(n - 1), step));
-                    let (mut pos, mut nrm, mut col, mut uv, mut idx) = (vec![], vec![], vec![], vec![], vec![]);
+                    let (mut pos, mut nrm, mut col, mut uv, mut kind, mut idx) = (vec![], vec![], vec![], vec![], vec![], vec![]);
                     let mut vert = |i: usize, j: usize, drop: f32| -> u32 {
                         let (x, z) = (t.coord(i), t.coord(j));
                         let h = t.at(i, j);
                         let nn = t.normal(x, z);
+                        kind.push(crate::ground::weights(t.ground.get(i * n + j).copied()));
                         let (c, _) = match t.ground.get(i * n + j) {
                             Some(&class) => crate::grass::paint_city(x, z, class),
                             None => crate::grass::paint(x, z, h, nn, t.road_d[i * n + j]),
@@ -488,6 +505,7 @@ fn dress_terrain(
                         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
                         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nrm)
                         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
+                        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_1, kind)
                         .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, col)
                         .with_inserted_indices(Indices::U32(idx));
                     let base = crate::characters::LodRange(

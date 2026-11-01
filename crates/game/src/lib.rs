@@ -8,6 +8,7 @@ pub mod buildings;
 pub mod camera;
 pub mod fx;
 pub mod grass;
+pub mod ground;
 pub mod characters;
 pub mod hud;
 pub mod input;

@@ -10,7 +10,11 @@ flat walls with their relief in the normal map.
 
 Near-white where the wall is, so the game's vertex colours tint each building.
 
-python3 tools/textures/city.py   -> assets/textures/panga/{facade,shop}_{basecolor,normal,mr}.png
+  roof (512): clay tiles in cement for the flat roofs.
+  ground_detail (512, RGBA): asphalt, slab and earth detail for the ground shader.
+
+python3 tools/textures/city.py   -> assets/textures/panga/{facade,shop,roof}_{basecolor,normal,mr}.png,
+                                    assets/textures/panga/ground_detail.png
 """
 
 import os
@@ -299,5 +303,64 @@ def shop():
     L.save("shop", 2.2)
 
 
+def roof():
+    """Flat roofs, 2 m a repeat (crate::buildings::TILE): square clay tiles laid in cement, some
+    cracked, black water stains and dust in patches. Light grey-white so each roof's vertex colour
+    makes it terracotta, cement or lime-washed."""
+    rng = np.random.default_rng(45)
+    n = 512
+    L = Layer(n, n, rng)
+    y, x = np.mgrid[0:n, 0:n].astype(np.float32)
+    t = n / 8  # eight tiles a repeat: 25 cm tiles
+    fu, fv = (x % t) / t, (y % t) / t
+    ti, tj = (x // t).astype(int), (y // t).astype(int)
+    k = rng.random((8, 8)).astype(np.float32)[tj, ti]
+    tile = bevelled(fu, fv, 0.03, 0.97, 0.03, 0.97, 0.05)
+    crack_line = ((np.abs(fu - 0.2 - 0.6 * fv) < 0.012) & (k > 0.8)).astype(np.float32)
+    dust = periodic_noise(n, n, rng, 4, 3)
+    stain = np.clip(periodic_noise(n, n, rng, 3, 2) * 2.2 - 1.3, 0, 1)
+    g = (0.80 + 0.12 * k - 0.10 * dust) * (0.55 + 0.45 * tile) * (1 - 0.5 * crack_line)
+    L.col = np.dstack([g, g * 0.98, g * 0.95]).astype(np.float32) * (1 - 0.55 * stain[..., None])
+    L.hgt = 1.2 * tile + 0.3 * dust - 0.8 * crack_line + 0.15 * rng.random((n, n)).astype(np.float32)
+    L.rough[:] = 0.85 - 0.25 * stain
+    L.save("roof", 1.6)
+
+
+def ground():
+    """Detail for the city ground, 4 m a repeat, one kind per channel (linear, 0.5 = no change), mixed
+    per vertex by what covers the ground there (crate::ground): R asphalt with grit, cracks and
+    patched repairs; G pavement slabs with their joints; B trodden earth with pebbles. The shader
+    shades the ground by it and bends the light off it, so joints and cracks catch the sun."""
+    rng = np.random.default_rng(47)
+    n = 512
+    y, x = np.mgrid[0:n, 0:n].astype(np.float32)
+    grit = rng.random((n, n)).astype(np.float32)
+    # Asphalt: fine grit, worn patches, a few long cracks (no one-off marks: they'd show the repeat).
+    cr = periodic_noise(n, n, rng, 5, 3)
+    crack = np.clip(1 - np.abs(cr - 0.5) / 0.008, 0, 1) * (periodic_noise(n, n, rng, 2, 2) > 0.55)
+    worn = periodic_noise(n, n, rng, 3, 4)
+    asphalt = 0.55 + 0.12 * (grit - 0.5) + 0.12 * (worn - 0.5) - 0.35 * crack
+    # Pavement: 60 x 40 cm slabs in stretcher bond, each its own shade, chipped corners.
+    sw, sh = n / 4 / 1.5, n / 10.0
+    row = np.floor(y / sh)
+    xs = x + (row % 2) * sw * 0.5
+    fu, fv = (xs % sw) / sw, (y % sh) / sh
+    slab_k = rng.random((11, 8)).astype(np.float32)[row.astype(int) % 11, (xs // sw).astype(int) % 8]
+    joint = 1 - bevelled(fu, fv, 0.0, 1.0, 0.0, 1.0, 0.06)
+    slabs = 0.58 + 0.12 * (slab_k - 0.5) + 0.06 * (grit - 0.5) + 0.06 * (worn - 0.5) - 0.38 * joint
+    # Earth: soft mounds, pebbles, dry cracks.
+    mounds = periodic_noise(n, n, rng, 4, 5)
+    peb = periodic_noise(n, n, rng, 2, 40)
+    pebbles = np.clip((peb - 0.78) * 6, 0, 1)
+    dry = np.clip(1 - np.abs(periodic_noise(n, n, rng, 4, 6) - 0.5) / 0.01, 0, 1) * 0.6
+    earth = 0.52 + 0.18 * (mounds - 0.5) + 0.25 * pebbles - 0.25 * dry + 0.05 * (grit - 0.5)
+    img = np.dstack([asphalt, slabs, earth, np.ones_like(earth)])
+    os.makedirs(OUT, exist_ok=True)
+    Image.fromarray((np.clip(img, 0, 1) * 255 + 0.5).astype(np.uint8), "RGBA").save(os.path.join(OUT, "ground_detail.png"))
+    print("[city] ground_detail: 512x512")
+
+
 facade()
 shop()
+roof()
+ground()
