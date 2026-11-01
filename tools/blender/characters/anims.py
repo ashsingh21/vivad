@@ -371,7 +371,7 @@ def drop_mocap(objs, acts, arm):
     bpy.ops.object.mode_set(mode="POSE")
 
 
-def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0):
+def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, bend=0.0, swing=1.0):
     """Retarget the mocap `clip` onto our rig as `name`, a locomotion cycle at `speed` (m/s; 0 for
     one standing still, or in place). The torso's and head's rotations are copied; the arms aim along
     the source's bones (whatever the two rigs' rest poses and rolls); the legs are put by IK where the
@@ -381,7 +381,9 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0):
     with the game advancing the cycle at the character's real speed it doesn't skate, and after
     lift-off what's left of the difference from the source eases out over the swing. `keep`
     overrides TORSO_KEEP (how much of each torso bone's turn is kept) for this clip; `lift` (m) raises
-    the pelvis over the clip's (a shallower crouch), the feet staying on their paths."""
+    the pelvis over the clip's (a shallower crouch; negative, lower: a walk made a crouch walk), the
+    feet staying on their paths; `bend` (rad) leans the back that much further forward, the head
+    kept up; `swing` scales the arms' swing fore and aft."""
     keep = {**TORSO_KEEP, **(keep or {})}
     bone = lambda n: next((b for b in src.pose.bones if b.name.lower() == n), None)
     find = lambda c: next(a for a in acts if a.name.split("|")[-1] == c)
@@ -476,11 +478,15 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0):
                 d = Quaternion().slerp(d, keep.get(n, 1.0))
                 q = d @ (rig.obj.matrix_world @ rig.obj.data.bones[n].matrix_local).to_quaternion()
                 rig.set_world_rot(n, q)
+        if bend:
+            rig.rotate("spine_01", LEFT, bend * 0.45)
+            rig.rotate("spine_02", LEFT, bend * 0.55)
+            rig.rotate("neck_01", LEFT, -bend * 0.7)
         for s in "lr":
             m = rec[s]
             # The mannequin's arms clear its bulky chest: on our slimmer builds the elbows come in.
-            rig.aim(f"upperarm_{s}", Vector((m["ua"].x * 0.55, m["ua"].y, m["ua"].z)))
-            rig.aim(f"lowerarm_{s}", Vector((m["fa"].x * 0.8, m["fa"].y, m["fa"].z)))
+            rig.aim(f"upperarm_{s}", Vector((m["ua"].x * 0.55, m["ua"].y * swing, m["ua"].z)))
+            rig.aim(f"lowerarm_{s}", Vector((m["fa"].x * 0.8, m["fa"].y * swing, m["fa"].z)))
             rig.aim(f"hand_{s}", m["hand"])
             relax_fingers(rig, s, 0.5)
             ankle = Vector(((m["ankle"].x - src_pelvis.x) * r + rig.pelvis_rest.x, path[s][i % out] + rig.pelvis_rest.y,
@@ -863,7 +869,10 @@ def main():
     # The lift scaled to the legs (17 cm on the male's 0.92 m): the female's shorter legs crouch as deep.
     crouch_lift = 0.17 * (rig.leg / 0.923) ** 1.5
     crouch_keep = {"spine_01": 0.6, "spine_02": 0.55, "spine_03": 0.55, "neck_01": 0.4, "head": 0.2}
-    cycles["crouch_f"] = mocap(rig, src, acts, "crouch_f", "Crouch_Fwd_Loop", CROUCH, stride=0.7, keep=crouch_keep, lift=crouch_lift)
+    # The crouch walk: the walk itself, the hips lowered to the crouch idle's height and the back
+    # leaning in: its heel-to-toe steps and swinging arms, knees bent (the library's crouch walk
+    # is a slow creep, its hands hanging, that reads oddly at any speed).
+    cycles["crouch_f"] = mocap(rig, src, acts, "crouch_f", "Walk_Loop", CROUCH, stride=0.75, lift=-0.23 * (rig.leg / 0.923), bend=0.6, swing=1.4)
     mocap(rig, src, acts, "crouch_idle", "Crouch_Idle_Loop", 0.0, keep=crouch_keep, lift=crouch_lift)
     # The game holds the jump at its middle (tucked, rising) and loops the fall.
     mocap(rig, src, acts, "jump", "Jump_Start", 0.0)
