@@ -853,9 +853,10 @@ def main():
     cycles["sprint_f"] = mocap(rig, src, acts, "sprint_f", "Sprint_Loop", SPRINT, stride=0.85)
     mocap(rig, src, acts, "idle", "Idle_Loop", 0.0)
     # Crouching: the clips' own motion, their deep hunch eased to a fairly upright back with the
-    # head up, the walk played quicker (its own steps, about two a second at the game's speed).
+    # head up, the walk in shorter, quicker steps (at its own stride the trailing leg stretched
+    # straight out behind the low hips).
     crouch_keep = {"spine_01": 0.6, "spine_02": 0.55, "spine_03": 0.55, "neck_01": 0.4, "head": 0.2}
-    cycles["crouch_f"] = mocap(rig, src, acts, "crouch_f", "Crouch_Fwd_Loop", CROUCH, keep=crouch_keep)
+    cycles["crouch_f"] = mocap(rig, src, acts, "crouch_f", "Crouch_Fwd_Loop", CROUCH, stride=0.7, keep=crouch_keep)
     mocap(rig, src, acts, "crouch_idle", "Crouch_Idle_Loop", 0.0, keep=crouch_keep)
     # The game holds the jump at its middle (tucked, rising) and loops the fall.
     mocap(rig, src, acts, "jump", "Jump_Start", 0.0)
