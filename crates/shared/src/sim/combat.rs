@@ -124,6 +124,7 @@ fn use_items(
         };
         act.cooldown = (act.cooldown - dt).max(0.0);
         act.since_attack += dt;
+        act.bloom = (act.bloom - BLOOM_RECOVER * dt).max(0.0);
         if kin.mode != MoveMode::Ground {
             act.charge = 0.0;
             continue;
@@ -232,8 +233,8 @@ fn use_items(
                     .map(|h| eye_origin + aim * h.distance)
                     .unwrap_or(eye_origin + aim * 600.0);
                 let base = (target - muzzle).normalize_or(aim);
-                let ads = intent.held(btn::AIM);
-                let spread = spread_deg.to_radians() * if ads { 0.6 } else { 1.0 };
+                let spread = spread_deg.to_radians() * spread_scale(intent, kin, &act);
+                act.bloom = (act.bloom + BLOOM_PER_SHOT).min(1.0);
                 for _ in 0..*pellets {
                     let yaw_off = rng.random_range(-1.0f32..1.0) * spread;
                     let pitch_off = rng.random_range(-1.0f32..1.0) * spread * 0.6;
@@ -321,6 +322,29 @@ fn use_items(
             ItemKind::Arrows { .. } => {}
         }
     }
+}
+
+/// Shot spread grows this much (of its full bloom) a shot, and recovers this much a second.
+pub const BLOOM_PER_SHOT: f32 = 0.2;
+pub const BLOOM_RECOVER: f32 = 1.5;
+
+/// A shot's spread as a multiple of the weapon's own: tighter aiming down the sights and crouched,
+/// wider on the move, sliding or in the air, and blooming as shots follow each other. Shared with
+/// the crosshair (crate::hud in the game), which opens and closes with it.
+pub fn spread_scale(intent: &PlayerIntent, kin: &Kinematic, act: &Action) -> f32 {
+    let speed = kin.velocity.with_y(0.0).length();
+    let mut k = if intent.held(btn::AIM) { 0.45 } else { 1.0 };
+    if !kin.grounded {
+        k *= 1.8;
+    } else if kin.sliding {
+        k *= 1.4;
+    } else {
+        if kin.crouched {
+            k *= 0.7;
+        }
+        k *= 1.0 + 0.45 * (speed / super::movement::WALK_SPEED).min(1.5);
+    }
+    k * (1.0 + 1.6 * act.bloom)
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -234,6 +234,8 @@ pub struct Action {
     pub using: Option<(usize, f32)>,
     /// Seconds since the last swing or shot (for client animation).
     pub since_attack: f32,
+    /// Shot-on-shot spread growth, 0..1 (combat::spread_scale), recovering between shots.
+    pub bloom: f32,
 }
 
 // ------------------------------------------------------------------ world entities

@@ -8,7 +8,7 @@ use shared::map::{ChestKind, MapLayout};
 use shared::sim::flow::{Match, MatchState};
 use shared::sim::loot::{Chest, INTERACT_RANGE, Pickup};
 use shared::sim::zone::Zone;
-use shared::sim::{Action, Eliminated, FeedMsg, Health, HitMsg, INVENTORY_SLOTS, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, Warrior, btn};
+use shared::sim::{Action, Eliminated, FeedMsg, Health, HitMsg, INVENTORY_SLOTS, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, Warrior};
 
 use crate::input::{CYCLE, ShowPerf};
 
@@ -346,22 +346,34 @@ const BASE_GAP: f32 = 5.0;
 const HIT_TICK_AT: f32 = 9.0;
 const HIT_TICK_LEN: f32 = 8.0;
 
-/// The reticle's arms sit as far out as the held bow's spread reaches on screen (wider for the
-/// seven-arrow bow, tighter when aiming down the sights), and kick out briefly after each shot.
+/// The reticle's arms sit as far out as the held bow's spread reaches on screen at the camera's
+/// field of view: wider for the seven-arrow bow, tighter aiming down the sights or crouched, opening
+/// on the move, in the air and as shots bloom (shared::sim::combat::spread_scale), easing between.
+#[allow(clippy::type_complexity)]
 fn reticle(
-    q: Query<(&Inventory, &Action, &PlayerIntent), With<LocalPlayer>>,
+    q: Query<(&Inventory, &Action, &PlayerIntent, &Kinematic), With<LocalPlayer>>,
     db: Res<ItemDb>,
     windows: Query<&Window>,
+    cam: Query<&Projection, With<crate::camera::MainCamera>>,
+    time: Res<Time>,
+    mut eased: Local<f32>,
     mut bars: Query<(&ReticleBar, &mut Node)>,
 ) {
-    let Ok((inv, act, intent)) = q.single() else { return };
+    let Ok((inv, act, intent, kin)) = q.single() else { return };
     let h = windows.iter().next().map(|w| w.height()).unwrap_or(900.0);
-    let mut gap = BASE_GAP;
+    let half_fov = match cam.single() {
+        Ok(Projection::Perspective(p)) => p.fov * 0.5,
+        _ => 35f32.to_radians(),
+    };
+    let mut spread_px = 0.0;
     if let Some(ItemKind::Bow { spread_deg, .. }) = inv.current().map(|s| &db.get(&s.id).kind) {
-        let spread = spread_deg.to_radians() * if intent.held(btn::AIM) { 0.6 } else { 1.0 };
-        // Camera vertical field of view 70 degrees (camera.rs).
-        gap += spread.tan() / 35f32.to_radians().tan() * h / 2.0;
+        let spread = spread_deg.to_radians() * shared::sim::combat::spread_scale(intent, kin, act);
+        spread_px = spread.tan() / half_fov.tan() * h / 2.0;
     }
+    // Opens fast, closes a little slower.
+    let rate = if spread_px > *eased { 25.0 } else { 10.0 };
+    *eased += (spread_px - *eased) * (1.0 - (-time.delta_secs() * rate).exp());
+    let mut gap = BASE_GAP + *eased;
     gap += 6.0 * (1.0 - act.since_attack / 0.15).clamp(0.0, 1.0);
     for (bar, mut n) in &mut bars {
         let d = bar.0;
