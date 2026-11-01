@@ -75,11 +75,33 @@ def arc_band(p, y, z, r0, r1, a0, a1, hw, colour, seg=10):
     _new(p, colour)
 
 
-def loft(p, secs, colour, seg=16):
+def _spline(secs, steps):
+    """Sections resampled along a Catmull-Rom spline (centre, half-width, half-height and
+    squareness alike): `steps` rings per span, so a body curves smoothly through its sections
+    instead of kinking at each one."""
+    vals = [(Vector(c), hw, hh, sq) for c, hw, hh, sq in secs]
+    if len(vals) < 3 or steps <= 1:
+        return vals
+    out = []
+    for i in range(len(vals) - 1):
+        p0, p1, p2, p3 = vals[max(i - 1, 0)], vals[i], vals[i + 1], vals[min(i + 2, len(vals) - 1)]
+        for k in range(steps):
+            t = k / steps
+            t2, t3 = t * t, t * t * t
+            w = (-0.5 * t3 + t2 - 0.5 * t, 1.5 * t3 - 2.5 * t2 + 1, -1.5 * t3 + 2 * t2 + 0.5 * t, 0.5 * t3 - 0.5 * t2)
+            mix = lambda j: p0[j] * w[0] + p1[j] * w[1] + p2[j] * w[2] + p3[j] * w[3]
+            out.append((mix(0), max(mix(1), 0.001), max(mix(2), 0.001), min(max(mix(3), 0.2), 1.0)))
+    out.append(vals[-1])
+    return out
+
+
+def loft(p, secs, colour, seg=24, steps=4):
     """A smooth body through a run of sections: each (centre, half-width, half-height, squareness),
     the section square-ish at squareness 0.3, elliptical at 1, set across the path (its width
-    along X; its height across the path's direction and X). Ends capped. Tanks, panels, bodywork."""
+    along X; its height across the path's direction and X), splined between them. Ends capped.
+    Tanks, panels, bodywork."""
     bm = p.bm
+    secs = _spline(secs, steps)
     pts = [Vector(c) for c, *_ in secs]
     rings = []
     for i, (c, hw, hh, sq) in enumerate(secs):

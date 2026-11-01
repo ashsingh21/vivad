@@ -193,21 +193,61 @@ def bake_ao(o, strength=0.7):
 # ------------------------------------------------------------------ street
 
 def auto():
+    """The CNG auto-rickshaw: a rounded green tub tapering into its nose, a domed yellow canopy,
+    the passengers' bench under it and the driver's saddle up front; one wheel ahead, two behind."""
     p = Piece("auto")
-    p.hull([(x, y, z) for x in (-0.68, 0.68) for y in (-1.22, 0.25) for z in (0.32, 0.98)], "auto_green")
-    p.hull([(x * w, y, z) for (y, w, z0, z1) in ((0.2, 0.62, 0.32, 1.0), (0.9, 0.42, 0.36, 1.02), (1.32, 0.26, 0.5, 0.98)) for x in (-1, 1) for z in (z0, z1)], "auto_green")
-    p.box((-0.70, -1.24, 0.60), (0.70, 0.22, 0.68), "auto_yellow")
-    roof = [(x, y, z) for x in (-0.70, 0.70) for y in (-1.28, 0.62) for z in (1.62, 1.70)] + [(x, y, 1.80) for x in (-0.5, 0.5) for y in (-1.15, 0.45)]
-    p.hull(roof, "auto_yellow")
-    p.box((-0.68, -1.24, 0.95), (0.68, -1.16, 1.64), "black")
+    green, yellow, black = C["auto_green"], C["auto_yellow"], C["black"]
+    R = 0.22
+    # Wheels: tyres and rims, the front one under the nose, the two rear ones at the sides.
+    for (x, y) in ((0.0, 0.98), (-0.66, -0.78), (0.66, -0.78)):
+        bikes.torus(p, y, R, R - 0.055, 0.055, bikes.TYRE, x=x, seg=20, ring=6)
+        bikes.torus(p, y, R, R - 0.11, 0.018, bikes.ALLOY, x=x, seg=16, ring=4)
+        p.cyl((x - 0.06, y, R), (x + 0.06, y, R), 0.06, "chrome", 10)
+    # The tub: rounded, from the rear bumper to the dashboard, with a yellow waist band.
+    bikes.loft(p, [((0, -1.27, 0.64), 0.62, 0.28, 0.35), ((0, -1.18, 0.64), 0.69, 0.34, 0.3), ((0, 0.15, 0.64), 0.69, 0.34, 0.3),
+             ((0, 0.38, 0.66), 0.64, 0.32, 0.32)], green)
+    bikes.loft(p, [((0, -1.20, 0.68), 0.70, 0.035, 0.6), ((0, 0.28, 0.68), 0.66, 0.035, 0.6)], yellow)
+    # The nose: narrowing and rounding off over the front wheel; its headlamp and mudguard.
+    bikes.loft(p, [((0, 0.32, 0.70), 0.62, 0.32, 0.32), ((0, 0.72, 0.76), 0.52, 0.33, 0.35), ((0, 1.0, 0.77), 0.40, 0.32, 0.4),
+             ((0, 1.13, 0.77), 0.30, 0.26, 0.5)], green)
+    p.cyl((0, 1.18, 0.88), (0, 1.25, 0.88), 0.085, "lamp", 16)
+    p.cyl((0, 1.12, 0.88), (0, 1.20, 0.88), 0.10, "chrome", 16)
+    # The front fork, from the wheel up into the cowl.
+    p.cyl((0, 0.98, 0.22), (0, 0.95, 0.6), 0.03, "black", 8)
+    # Bumper bars, chrome, front and back.
+    p.cyl((-0.3, 1.13, 0.48), (0.3, 1.13, 0.48), 0.022, "chrome", 8)
+    p.cyl((-0.62, -1.32, 0.40), (0.62, -1.32, 0.40), 0.025, "chrome", 8)
+    for x in (-0.55, 0.55):
+        p.cyl((x, -1.32, 0.40), (x, -1.2, 0.40), 0.02, "chrome", 6)
+    bikes.arc_band(p, 0.98, R, R + 0.03, R + 0.045, 20, 120, 0.08, green, 8)
+    for x in (-1, 1):
+        p.box((x * 0.36 - 0.03, 1.02, 0.95), (x * 0.36 + 0.03, 1.08, 1.0), (0.98, 0.55, 0.06))
+        bikes.arc_band(p, -0.78, R, R + 0.03, R + 0.045, 60, 175, 0.07, black, 8)
+    # The canopy: a domed yellow roof on a black back, two posts at the front, the windscreen.
+    bikes.loft(p, [((0, -1.32, 1.66), 0.66, 0.06, 0.6), ((0, -1.22, 1.70), 0.74, 0.10, 0.5), ((0, 0.45, 1.70), 0.74, 0.10, 0.5),
+                   ((0, 0.66, 1.64), 0.66, 0.06, 0.6)], yellow)
+    bikes.loft(p, [((0, -1.22, 0.96), 0.68, 0.05, 0.4), ((0, -1.24, 1.30), 0.71, 0.05, 0.4), ((0, -1.22, 1.62), 0.70, 0.05, 0.45)], black)
     for x in (-0.66, 0.66):
-        p.cyl((x, 0.55, 0.98), (x, 0.55, 1.64), 0.025, "black", 6)
-    p.hull([(x, y, z) for x in (-0.55, 0.55) for (y, z) in ((0.70, 1.02), (0.74, 1.02), (0.60, 1.58), (0.64, 1.58))], "glass")
-    p.cyl((0, 1.28, 0.98), (0, 1.41, 0.98), 0.10, "lamp", 10)
-    p.box((-0.62, -1.14, 0.45), (0.62, -0.62, 0.72), "black")
-    for (x, y) in ((0.0, 1.08), (-0.66, -0.78), (0.66, -0.78)):
-        p.wheel((x, y, 0.22), 0.22, 0.12)
-    return p.finish(0.06)
+        p.cyl((x, 0.56, 0.96), (x, 0.58, 1.64), 0.026, "black", 8)
+        p.cyl((x, -0.30, 0.98), (x, -0.30, 1.64), 0.024, "black", 8)
+        # The side curtains, rolled up under the canopy's edge, and the passengers' grab rail.
+        p.cyl((x * 1.05, -1.18, 1.56), (x * 1.05, 0.48, 1.56), 0.05, "black", 10)
+        p.cyl((x * 0.96, -1.05, 1.38), (x * 0.96, -0.36, 1.38), 0.014, "chrome", 6)
+    bikes.loft(p, [((0, 0.73, 1.02), 0.56, 0.02, 0.5), ((0, 0.66, 1.34), 0.58, 0.02, 0.5), ((0, 0.62, 1.58), 0.56, 0.02, 0.5)], C["glass"])
+    # Seats: the passengers' bench and backrest, the driver's saddle; the handlebar and its grips.
+    bikes.cushion(p, -0.60, -1.12, 0.92, 0.62, 0.62, 0.12, 0.12, black, seg=14, n=8)
+    bikes.loft(p, [((0, -1.14, 1.08), 0.6, 0.06, 0.45), ((0, -1.17, 1.32), 0.6, 0.06, 0.45)], black)
+    bikes.cushion(p, 0.36, 0.06, 0.92, 0.12, 0.17, 0.09, 0.1, black)
+    p.cyl((0, 0.66, 0.98), (0, 0.62, 1.10), 0.02, "black", 6)
+    p.cyl((-0.34, 0.60, 1.10), (0.34, 0.60, 1.10), 0.014, "chrome", 6)
+    for x in (-1, 1):
+        p.cyl((x * 0.26, 0.60, 1.10), (x * 0.38, 0.60, 1.10), 0.02, "black", 8)
+    # Tail lamps and the plates.
+    for x in (-1, 1):
+        p.box((x * 0.5 - 0.06, -1.29, 0.62), (x * 0.5 + 0.06, -1.25, 0.70), "red")
+    p.box((-0.18, -1.29, 0.42), (0.18, -1.27, 0.54), "white", round=False)
+    p.box((-0.12, 1.17, 0.56), (0.12, 1.19, 0.66), "white", round=False)
+    return p.finish(0.03)
 
 
 def scooter():
@@ -415,13 +455,89 @@ def mumty():
     return p.finish(0.02)
 
 
+# ------------------------------------------------------------------ open spaces (parks, plazas)
+
+def bench():
+    """A park bench: wooden slats on two cast-iron ends."""
+    p = Piece("bench")
+    iron, wood = (0.10, 0.12, 0.11), (0.62, 0.38, 0.18)
+    for x in (-0.75, 0.75):
+        p.box((x - 0.04, -0.28, 0.0), (x + 0.04, 0.28, 0.06), iron)
+        p.box((x - 0.035, -0.22, 0.0), (x + 0.035, -0.16, 0.44), iron)
+        p.box((x - 0.035, 0.16, 0.0), (x + 0.035, 0.22, 0.80), iron)
+        p.box((x - 0.035, -0.26, 0.40), (x + 0.035, 0.24, 0.46), iron)
+    for k in range(4):
+        y = -0.24 + k * 0.13
+        p.box((-0.9, y, 0.44), (0.9, y + 0.1, 0.49), wood)
+    for k in range(3):
+        z = 0.55 + k * 0.1
+        p.box((-0.9, 0.19, z), (0.9, 0.24, z + 0.07), wood)
+    return p.finish(0.012)
+
+
+def lamp():
+    """A cast-iron street lamp: fluted post on a stepped base, a lantern globe on top."""
+    p = Piece("lamp")
+    iron = (0.08, 0.09, 0.09)
+    p.cyl((0, 0, 0), (0, 0, 0.35), 0.17, iron, 12)
+    p.cyl((0, 0, 0.35), (0, 0, 0.55), 0.12, iron, 12, r2=0.08)
+    p.cyl((0, 0, 0.55), (0, 0, 3.6), 0.06, iron, 10, r2=0.045)
+    p.cyl((0, 0, 3.6), (0, 0, 3.7), 0.1, iron, 10)
+    p.ball((0, 0, 3.95), 0.24, (1.0, 0.95, 0.80), 2)
+    p.cyl((0, 0, 4.17), (0, 0, 4.3), 0.13, iron, 10, r2=0.03)
+    return p.finish(0.0)
+
+
+def planter():
+    """A round concrete planter with a flowering bush."""
+    p = Piece("planter")
+    bikes.loft(p, [((0, 0, 0.0), 0.62, 0.62, 1.0), ((0, 0, 0.55), 0.68, 0.68, 1.0), ((0, 0, 0.62), 0.66, 0.66, 1.0)], C["concrete"])
+    for k, (dx, dy, r) in enumerate(((0, 0, 0.42), (0.25, 0.15, 0.3), (-0.22, 0.2, 0.28), (0.05, -0.28, 0.3))):
+        p.ball((dx, dy, 0.82 + 0.1 * (k == 0)), r, (0.18, 0.50, 0.20) if k % 2 == 0 else (0.24, 0.58, 0.22), 2, 0.85)
+    for k in range(9):
+        a = k * 2.4
+        p.ball((0.38 * math.cos(a), 0.38 * math.sin(a), 0.95 + 0.12 * math.sin(a * 1.7)), 0.07,
+               [(0.98, 0.30, 0.45), (0.99, 0.80, 0.15), (0.98, 0.50, 0.08)][k % 3], 1)
+    return p.finish(0.0)
+
+
+def umbrella():
+    """A hawker's stall under a big striped umbrella: a folding table of goods, a stool."""
+    p = Piece("umbrella")
+    p.cyl((0, 0, 0), (0, 0, 2.35), 0.03, "steel", 8)
+    cols = [(0.95, 0.20, 0.15), (0.98, 0.92, 0.85)]
+    n = 12
+    for k in range(n):
+        a0, a1 = 2 * math.pi * k / n, 2 * math.pi * (k + 1) / n
+        tip = Vector((0, 0, 2.55))
+        rim = [Vector((1.35 * math.cos(a), 1.35 * math.sin(a), 2.05)) for a in (a0, a1)]
+        p.quad([tip, rim[0], rim[1]], cols[k % 2])
+    p.box((-0.6, 0.15, 0.0), (0.6, 0.75, 0.72), "wood")
+    p.box((-0.65, 0.1, 0.72), (0.65, 0.8, 0.78), "wood_lt")
+    for k in range(6):
+        x = -0.5 + k * 0.2
+        p.ball((x, 0.45, 0.85), 0.08, [C["orange"], C["banana"], C["apple"]][k % 3], 1)
+    p.cyl((0.0, -0.5, 0.0), (0.0, -0.5, 0.42), 0.16, "blue", 10)
+    return p.finish(0.02)
+
+
+def bin():
+    """A green municipal dustbin on a post."""
+    p = Piece("bin")
+    p.cyl((0, 0, 0), (0, 0, 0.5), 0.04, "steel", 6)
+    bikes.loft(p, [((0, 0, 0.35), 0.24, 0.24, 1.0), ((0, 0, 0.95), 0.27, 0.27, 1.0)], (0.12, 0.45, 0.22))
+    p.cyl((0, 0, 0.95), (0, 0, 1.0), 0.29, (0.08, 0.30, 0.15), 14)
+    return p.finish(0.0)
+
+
 def main():
     export.reset_scene()
     bake.setup_cycles(32)
     bpy.context.scene.world = bpy.context.scene.world or bpy.data.worlds.new("World")
     bpy.context.scene.world.light_settings.distance = 0.6
     objs = []
-    for build in (auto, scooter, thela, chai, pole, drum, crates, chairs, pot, cooler, dish, solar, clothesline, mumty):
+    for build in (auto, scooter, thela, chai, pole, drum, crates, chairs, pot, cooler, dish, solar, clothesline, mumty,
+                  bench, lamp, planter, umbrella, bin):
         objs += build()
     for build in bikes.BIKES:
         objs += build(Piece)

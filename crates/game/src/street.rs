@@ -138,5 +138,12 @@ fn build_kit(mut commands: Commands, mut kit: ResMut<Kit>, layout: Res<MapLayout
             OfMap,
         ));
     }
-    info!("street kit: {} pieces in {n} chunk meshes", layout.kit.len());
+    let mut counts: Vec<(&str, usize)> = vec![];
+    for piece in &layout.kit {
+        match counts.iter_mut().find(|(k, _)| *k == piece.name) {
+            Some((_, c)) => *c += 1,
+            None => counts.push((piece.name, 1)),
+        }
+    }
+    info!("street kit: {} pieces in {n} chunk meshes: {counts:?}", layout.kit.len());
 }

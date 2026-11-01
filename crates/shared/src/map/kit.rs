@@ -36,6 +36,11 @@ fn collider(name: &str) -> Option<Shape> {
         "cooler" => Shape::Box(Vec3::new(0.9, 1.1, 0.64)),
         "mumty" => Shape::Box(Vec3::new(3.0, 2.75, 2.4)),
         "pole" => Shape::Cylinder { radius: 0.14, height: 9.0 },
+        "bench" => Shape::Box(Vec3::new(1.8, 0.8, 0.6)),
+        "lamp" => Shape::Cylinder { radius: 0.17, height: 4.3 },
+        "planter" => Shape::Cylinder { radius: 0.68, height: 1.0 },
+        "umbrella" => Shape::Box(Vec3::new(1.3, 0.8, 0.7)),
+        "bin" => Shape::Cylinder { radius: 0.29, height: 1.0 },
         "drum" => Shape::Cylinder { radius: 0.3, height: 0.95 },
         _ => return None,
     })
@@ -47,6 +52,8 @@ fn reach(name: &str) -> f32 {
         "auto" | "thela" | "chai" => 1.6,
         "mumty" => 2.1,
         "clothesline" => 2.2,
+        "umbrella" => 1.5,
+        "bench" | "planter" => 1.1,
         "scooter" | "crates" | "solar" | "thumper" | "commuter" | "discover" | "twostroke" | "sport150" | "roadster" => 1.0,
         _ => 0.6,
     }
@@ -174,6 +181,43 @@ pub fn streets(b: &mut Builder, rng: &mut SmallRng, roads: &[(Vec<Vec2>, f32, bo
                     }
                     t += rng.random_range(4.0..10.0);
                 }
+            }
+        }
+    }
+}
+
+/// The open ground (parks, plazas, wide pavements) furnished: benches, lamps, planters, hawkers
+/// under umbrellas and bins, scattered on a jittered grid wherever there's room, so no square
+/// or lawn stands empty.
+pub fn open_spaces(b: &mut Builder, rng: &mut SmallRng, houses: &[Vec<Vec2>], half: f32) {
+    use super::terrain::ground;
+    const PARK: [(&str, f32); 5] = [("bench", 0.34), ("lamp", 0.22), ("planter", 0.22), ("bin", 0.1), ("umbrella", 0.12)];
+    const PLAZA: [(&str, f32); 5] = [("umbrella", 0.3), ("bench", 0.2), ("lamp", 0.16), ("planter", 0.2), ("bin", 0.14)];
+    const STEP: f32 = 7.5;
+    let n = (2.0 * half / STEP) as i32;
+    for i in 0..n {
+        for j in 0..n {
+            let p = Vec2::new(-half + (i as f32 + rng.random_range(0.15..0.85)) * STEP, -half + (j as f32 + rng.random_range(0.15..0.85)) * STEP);
+            // Wide paved squares count as plazas, though sparser and only with room to spare:
+            // ordinary pavements are too narrow to pass the clearance below.
+            let (table, chance, room): (&[(&str, f32)], f32, f32) = match b.map.terrain.ground_at(p.x, p.y) {
+                Some(ground::PARK) => (&PARK, 0.55, 1.5),
+                Some(ground::PLAZA) => (&PLAZA, 0.55, 1.5),
+                Some(ground::PAVEMENT) => (&PLAZA, 0.4, 3.0),
+                _ => continue,
+            };
+            if rng.random_range(0.0..1.0) > chance {
+                continue;
+            }
+            let mut roll = rng.random_range(0.0..1.0);
+            let name = table.iter().find(|(_, w)| {
+                roll -= w;
+                roll < 0.0
+            }).map_or("bench", |(n, _)| *n);
+            // Room round it, beyond its own footprint: space to walk past and fight round.
+            if street_free(b.map, houses, p, reach(name) + room, half) {
+                let yaw = rng.random_range(0.0..std::f32::consts::TAU);
+                place(b, name, Vec3::new(p.x, b.map.terrain.height(p.x, p.y), p.y), yaw);
             }
         }
     }

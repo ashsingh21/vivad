@@ -149,6 +149,7 @@ pub fn generate(id: super::MapId, seed: u64) -> MapLayout {
         .map(|r| (r.pts.iter().map(v2).collect(), r.w, !matches!(r.kind.as_str(), "primary" | "secondary" | "tertiary" | "trunk")))
         .collect();
     super::kit::streets(&mut b, &mut rng, &roads, &houses, HALF);
+    super::kit::open_spaces(&mut b, &mut rng, &houses, HALF);
     super::kit::roofs(&mut b, &mut rng);
     street_loot(&mut b, &mut rng, &data, &ring, &houses);
     map.terrain.settle_under(&map.blocks);

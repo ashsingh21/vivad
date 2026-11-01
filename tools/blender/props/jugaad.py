@@ -21,11 +21,13 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "lib"))
+sys.path.insert(0, HERE)
 
 import bmesh  # noqa: E402
 import bpy  # noqa: E402
 from mathutils import Matrix, Vector  # noqa: E402
 
+import bikes  # noqa: E402
 import export  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
@@ -36,7 +38,7 @@ DECK = 0.45  # the passenger floor's height on a real auto
 MATS = {}
 
 
-def mat(name, rgb, rough=0.6, metal=0.0, glow=0.0):
+def mat(name, rgb, rough=0.6, metal=0.0, glow=0.0, alpha=1.0):
     m = bpy.data.materials.new(name)
     m.use_nodes = True
     p = m.node_tree.nodes["Principled BSDF"]
@@ -47,6 +49,10 @@ def mat(name, rgb, rough=0.6, metal=0.0, glow=0.0):
     if glow:
         p.inputs["Emission Color"].default_value = (*lin, 1.0)
         p.inputs["Emission Strength"].default_value = glow
+    if alpha < 1.0:
+        # See-through (exported as glTF BLEND): the flame's outer layer shows its core.
+        p.inputs["Alpha"].default_value = alpha
+        m.surface_render_method = "BLENDED"
     MATS[name] = m
     return m
 
@@ -141,48 +147,96 @@ def text(name, s, at, size, material, rot=(math.pi / 2, 0, 0), depth=0.01):
 
 # ------------------------------------------------------------------ the auto
 
+class Part:
+    """A bmesh for the smooth-body helpers in bikes.py (loft, cushion, torus, arc_band), which
+    paint by face tag; here each part takes a material instead (`link`)."""
+
+    def __init__(self):
+        self.bm = bmesh.new()
+
+    def paint(self, colour, round=False):
+        for f in self.bm.faces:
+            f.tag = True
+
+
+def smooth(name, material, build):
+    """One part built by `build(part)` from the smooth helpers, linked with its material."""
+    part = Part()
+    build(part)
+    return link(name, part.bm, material)
+
+
 def auto():
     parts = []
     add = parts.append
-    # The tub: a rounded rear body and a nose that narrows to the front wheel.
-    add(hull("tub", [Vector((x, y, z)) for x in (-0.68, 0.68) for y in (-1.22, 0.25) for z in (0.32, 0.98)], "green", 0.09))
-    add(hull("nose", [Vector((x * w, y, z)) for (y, w, z0, z1) in ((0.2, 0.62, 0.32, 1.0), (0.9, 0.42, 0.36, 1.02), (1.32, 0.26, 0.5, 0.98))
-                      for x in (-1, 1) for z in (z0, z1)], "green", 0.08))
+    R = 0.22
+    # The tub: rounded, from the rear bumper to the dashboard; the nose narrowing over the front
+    # wheel, short and tall like an auto's, not a car's bonnet.
+    add(smooth("tub", "green", lambda p: bikes.loft(p, [((0, -1.27, 0.64), 0.62, 0.28, 0.35), ((0, -1.18, 0.64), 0.69, 0.34, 0.3), ((0, 0.15, 0.64), 0.69, 0.34, 0.3),
+             ((0, 0.38, 0.66), 0.64, 0.32, 0.32)], 0)))
+    add(smooth("nose", "green", lambda p: bikes.loft(p, [((0, 0.32, 0.70), 0.62, 0.32, 0.32), ((0, 0.72, 0.76), 0.52, 0.33, 0.35), ((0, 1.0, 0.77), 0.40, 0.32, 0.4),
+             ((0, 1.13, 0.77), 0.30, 0.26, 0.5)], 0)))
     add(box("floor", (-0.64, -1.18, DECK - 0.04), (0.64, 0.6, DECK), "dark", 0.01))
-    # A chrome strip and a yellow band round the tub.
-    add(box("band", (-0.70, -1.24, 0.60), (0.70, 0.22, 0.68), "yellow", 0.02))
-    add(box("skirt", (-0.71, -1.25, 0.30), (0.71, 0.24, 0.36), "chrome", 0.015))
-    # The canopy: a yellow roof, rounded, and its black canvas back.
-    roof = [Vector((x, y, z)) for x in (-0.70, 0.70) for y in (-1.28, 0.62) for z in (1.62, 1.70)]
-    roof += [Vector((x, y, 1.80)) for x in (-0.5, 0.5) for y in (-1.15, 0.45)]
-    add(hull("roof", roof, "yellow", 0.06))
-    add(box("canvas", (-0.68, -1.24, 0.95), (0.68, -1.16, 1.64), "dark", 0.02))
+    add(smooth("band", "yellow", lambda p: bikes.loft(p, [((0, -1.20, 0.68), 0.70, 0.035, 0.6), ((0, 0.28, 0.68), 0.66, 0.035, 0.6)], 0)))
+    add(smooth("skirt", "chrome", lambda p: bikes.loft(p, [((0, -1.18, 0.36), 0.70, 0.025, 0.6), ((0, 0.26, 0.36), 0.65, 0.025, 0.6)], 0)))
+    # The canopy: a domed yellow roof on its black canvas back; posts; the windscreen.
+    add(smooth("roof", "yellow", lambda p: bikes.loft(p, [((0, -1.32, 1.66), 0.66, 0.06, 0.6), ((0, -1.22, 1.70), 0.74, 0.10, 0.5),
+                                                          ((0, 0.45, 1.70), 0.74, 0.10, 0.5), ((0, 0.66, 1.64), 0.66, 0.06, 0.6)], 0)))
+    add(smooth("canvas", "dark", lambda p: bikes.loft(p, [((0, -1.22, 0.96), 0.68, 0.05, 0.4), ((0, -1.24, 1.30), 0.71, 0.05, 0.4),
+                                                          ((0, -1.22, 1.62), 0.70, 0.05, 0.45)], 0)))
     for x in (-0.66, 0.66):
-        add(cyl(f"pillar_f{x}", (x, 0.55, 0.98), (x, 0.55, 1.64), 0.025, "dark", 8))
+        add(cyl(f"pillar_f{x}", (x, 0.56, 0.96), (x, 0.58, 1.64), 0.026, "dark", 8))
         add(cyl(f"pillar_m{x}", (x, -0.3, 0.98), (x, -0.3, 1.64), 0.025, "dark", 8))
-    # Windscreen in a black frame, the handlebar behind it, a single headlight on the nose.
-    add(hull("screen", [Vector((x, y, z)) for x in (-0.55, 0.55) for (y, z) in ((0.70, 1.02), (0.74, 1.02), (0.60, 1.58), (0.64, 1.58))], "glass", 0.0))
-    add(box("screen_top", (-0.60, 0.58, 1.56), (0.60, 0.66, 1.63), "dark", 0.01))
-    add(cyl("bar", (-0.32, 0.55, 1.10), (0.32, 0.55, 1.10), 0.02, "chrome", 8))
-    add(cyl("headlight_shell", (0, 1.28, 0.98), (0, 1.40, 0.98), 0.11, "chrome", 16, 0.01))
-    add(cyl("headlight", (0, 1.40, 0.98), (0, 1.41, 0.98), 0.09, "lamp", 16))
-    add(box("seat", (-0.62, -1.14, DECK), (0.62, -0.62, 0.72), "seat", 0.05))
-    add(box("seat_back", (-0.62, -1.15, 0.72), (0.62, -1.02, 1.12), "seat", 0.05))
-    add(box("driver_seat", (-0.25, 0.05, DECK), (0.25, 0.45, 0.75), "seat", 0.05))
-    # Wheels: one at the front under a mudguard, two at the back.
-    for name, (x, y) in (("wheel_f", (0.0, 1.08)), ("wheel_l", (-0.66, -0.78)), ("wheel_r", (0.66, -0.78))):
-        add(cyl(name, (x - 0.06, y, 0.22), (x + 0.06, y, 0.22), 0.22, "tyre", 20, 0.02))
-        add(cyl(name + "_hub", (x - 0.075, y, 0.22), (x + 0.075, y, 0.22), 0.09, "chrome", 12))
-    add(hull("mudguard", [Vector((x, y, z)) for x in (-0.1, 0.1) for (y, z) in ((0.84, 0.36), (1.08, 0.50), (1.30, 0.40))], "green", 0.02))
+    add(smooth("screen", "glass", lambda p: bikes.loft(p, [((0, 0.73, 1.02), 0.56, 0.02, 0.5), ((0, 0.66, 1.34), 0.58, 0.02, 0.5),
+                                                           ((0, 0.62, 1.58), 0.56, 0.02, 0.5)], 0)))
+    add(cyl("bar", (-0.34, 0.60, 1.10), (0.34, 0.60, 1.10), 0.016, "chrome", 8))
+    for x in (-1, 1):
+        add(cyl(f"grip{x}", (x * 0.26, 0.60, 1.10), (x * 0.38, 0.60, 1.10), 0.022, "dark", 8))
+    add(cyl("headlight_shell", (0, 1.12, 0.88), (0, 1.22, 0.88), 0.11, "chrome", 16, 0.01))
+    add(cyl("headlight", (0, 1.22, 0.88), (0, 1.23, 0.88), 0.09, "lamp", 16))
+    add(cyl("fork", (0, 0.98, 0.22), (0, 0.95, 0.6), 0.03, "dark", 8))
+    # Seats: the passengers' bench and backrest, the driver's saddle.
+    add(smooth("seat", "seat", lambda p: bikes.cushion(p, -0.60, -1.12, DECK + 0.02, 0.62, 0.62, 0.24, 0.24, 0, seg=14, n=8)))
+    add(smooth("seat_back", "seat", lambda p: bikes.loft(p, [((0, -1.14, 0.80), 0.6, 0.07, 0.45), ((0, -1.17, 1.12), 0.6, 0.07, 0.45)], 0)))
+    add(smooth("driver_seat", "seat", lambda p: bikes.cushion(p, 0.42, 0.06, DECK + 0.08, 0.13, 0.19, 0.2, 0.22, 0)))
+    # Wheels: tyres and rims, one under the nose, two at the back; mudguards.
+    for name, (x, y) in (("wheel_f", (0.0, 0.98)), ("wheel_l", (-0.66, -0.78)), ("wheel_r", (0.66, -0.78))):
+        add(smooth(name, "tyre", lambda p, x=x, y=y: bikes.torus(p, y, R, R - 0.055, 0.055, 0, x=x, seg=20, ring=6)))
+        add(smooth(name + "_rim", "chrome", lambda p, x=x, y=y: bikes.torus(p, y, R, R - 0.11, 0.018, 0, x=x, seg=16, ring=4)))
+        add(cyl(name + "_hub", (x - 0.075, y, R), (x + 0.075, y, R), 0.06, "chrome", 12))
+    add(smooth("mudguard", "green", lambda p: bikes.arc_band(p, 0.98, R, R + 0.03, R + 0.045, 20, 120, 0.08, 0, 8)))
     # The back in truck art: bands of colour, tail lights, HORN OK PLEASE.
-    for k, (c, z) in enumerate((("red", 0.36), ("yellow", 0.46), ("blue", 0.56), ("pink", 0.66), ("green_lt", 0.76))):
-        add(box(f"stripe_{k}", (-0.6, -1.26, z), (0.6, -1.23, z + 0.08), c, 0.0))
+    for k, (c, z) in enumerate((("red", 0.42), ("yellow", 0.50), ("blue", 0.58), ("pink", 0.66), ("green_lt", 0.74))):
+        add(box(f"stripe_{k}", (-0.5, -1.285, z), (0.5, -1.262, z + 0.07), c, 0.0))
     for x in (-0.5, 0.5):
-        add(cyl(f"tail{x}", (x, -1.24, 0.88), (x, -1.29, 0.88), 0.06, "tail", 12))
-    add(text("horn", "HORN OK PLEASE", (0, -1.27, 1.32), 0.17, "white"))
+        add(cyl(f"tail{x}", (x, -1.24, 0.86), (x, -1.29, 0.86), 0.055, "tail", 12))
+    add(text("horn", "HORN OK PLEASE", (0, -1.29, 1.32), 0.17, "white"))
     add(text("sign_l", "UDTA AUTO", (-0.715, -0.5, 0.82), 0.16, "white", rot=(math.pi / 2, 0, -math.pi / 2)))
     add(text("sign_r", "UDTA AUTO", (0.715, -0.5, 0.82), 0.16, "white", rot=(math.pi / 2, 0, math.pi / 2)))
     return parts
+
+
+def flame(name, nozzle, length, radius, material):
+    """A stylised flame out of a nozzle, aft (-Y): a teardrop that swells then tapers to a point,
+    its rim rippling in three lobes that twist along it. Origin at the nozzle, which the game
+    flickers it about (crate::visuals::run_jugaad)."""
+    bm = bmesh.new()
+    rings, n, seg = [], 12, 18
+    for i in range(n + 1):
+        t = i / n
+        r = radius * (1.0 + 0.6 * math.sin(math.pi * min(t / 0.7, 1.0) * 0.5)) * (1 - t) ** 0.75
+        ring = []
+        for j in range(seg):
+            a = 2 * math.pi * j / seg
+            rr = max(r * (1 + 0.16 * math.sin(3 * a + 7 * t)), 0.002)
+            ring.append(bm.verts.new((rr * math.cos(a), -length * t, rr * math.sin(a))))
+        rings.append(ring)
+    for i in range(n):
+        for j in range(seg):
+            bm.faces.new((rings[i][j], rings[i][(j + 1) % seg], rings[i + 1][(j + 1) % seg], rings[i + 1][j]))
+    bm.faces.new(rings[0])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    return link(name, bm, material, origin=nozzle)
 
 
 def jugaad():
@@ -223,7 +277,9 @@ def jugaad():
         for y in (-1.05, -1.55):
             add(cyl(f"strap_{i}_{y}", (x, y - 0.02, z), (x, y + 0.02, z), 0.17, "dark", 20))
         nozzle = Vector((x, y1 - 0.14, z))
-        movers.append(cone(f"flame_{i}", nozzle, nozzle + Vector((0, -0.75, 0)), 0.10, 0.0, "flame", 12, origin=nozzle))
+        # The flame: an orange teardrop with a hot yellow-white core (each flickers on its own).
+        movers.append(flame(f"flame_{i}", nozzle, 1.05, 0.11, "flame"))
+        movers.append(flame(f"flame_{i + 2}", nozzle, 0.62, 0.065, "flame_core"))
     return parts, movers
 
 
@@ -281,7 +337,9 @@ def main():
     mat("bamboo", (0.80, 0.64, 0.36), 0.6)
     mat("rope", (0.72, 0.60, 0.42), 0.9)
     mat("fan", (0.92, 0.90, 0.85), 0.4)
-    mat("flame", (1.0, 0.55, 0.10), 0.5, glow=12.0)
+    # Stylised fire in layers: a deep orange, half see-through outer flame round a hot yellow core.
+    mat("flame", (1.0, 0.38, 0.05), 0.5, glow=3.0, alpha=0.55)
+    mat("flame_core", (1.0, 0.86, 0.35), 0.5, glow=6.0)
     mat("marigold", (0.99, 0.52, 0.04), 0.7)
     mat("marigold2", (0.99, 0.76, 0.08), 0.7)
     mat("lemon", (0.95, 0.88, 0.20), 0.5)

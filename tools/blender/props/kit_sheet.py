@@ -69,7 +69,14 @@ def main():
     scene.camera = cam
     scene.render.engine = "CYCLES"
     scene.cycles.samples = 24
-    scene.render.resolution_x, scene.render.resolution_y = 1800, max(300, int(1800 * 2.2 / x * (0.55 if side else 0.7)))
+    top = max((o.matrix_world @ v.co).z for o in keep for v in o.data.vertices)
+    if side:
+        # Fit the tallest piece: the frame as high as the tallest top plus a margin.
+        centre.z = top / 2
+        cam.location = centre + view.normalized() * 20
+        scene.render.resolution_x, scene.render.resolution_y = 1800, max(200, int(1800 * (top + 0.5) / (x * 1.05)))
+    else:
+        scene.render.resolution_x, scene.render.resolution_y = 1800, max(300, int(1800 * 2.2 / x * 0.7))
     scene.render.filepath = out
     bpy.ops.render.render(write_still=True)
     print(f"[kit_sheet] {out}")
