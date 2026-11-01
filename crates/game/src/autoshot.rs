@@ -438,7 +438,35 @@ fn armoury_actor(
 ) {
     let Ok((mut tf, mut kin, mut inv, mut intent, mut health, mut act)) = q.single_mut() else { return };
     let spot = *arm.spot.get_or_insert_with(|| {
-        let (x, z) = (38.0, 104.0);
+        // Open, level ground: the nearest spot to the park's edge with no building or block within
+        // a few metres (inside one the warrior stood on nothing and played the fall).
+        let inside = |p: Vec2, pts: &[Vec2]| {
+            let mut c = false;
+            for i in 0..pts.len() {
+                let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
+                if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x) {
+                    c = !c;
+                }
+            }
+            c
+        };
+        let open = |x: f32, z: f32| {
+            let p = Vec2::new(x, z);
+            let h = |dx: f32, dz: f32| layout.terrain.height(x + dx, z + dz);
+            layout.blocks.iter().all(|b| b.pos.xz().distance(p) > 5.0)
+                && layout.footprints.iter().all(|f| [Vec2::ZERO, Vec2::X * 4.0, -Vec2::X * 4.0, Vec2::Y * 4.0, -Vec2::Y * 4.0].iter().all(|o| !inside(p + *o, &f.pts)))
+                && (h(1.0, 0.0) - h(-1.0, 0.0)).abs() < 0.1
+                && (h(0.0, 1.0) - h(0.0, -1.0)).abs() < 0.1
+        };
+        let (x, z) = (0..400)
+            .flat_map(|r| (0..(r * 6).max(1)).map(move |k| (r, k)))
+            .map(|(r, k)| {
+                let a = k as f32 / (r * 6).max(1) as f32 * std::f32::consts::TAU;
+                (38.0 + r as f32 * a.cos(), 104.0 + r as f32 * a.sin())
+            })
+            .find(|&(x, z)| open(x, z))
+            .unwrap_or((38.0, 104.0));
+        info!("[armoury] standing at ({x:.0}, {z:.0})");
         Vec3::new(x, layout.terrain.height(x, z) + HALF_HEIGHT + 0.05, z)
     });
     tf.translation = spot;
