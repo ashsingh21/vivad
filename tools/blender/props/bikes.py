@@ -75,6 +75,30 @@ def arc_band(p, y, z, r0, r1, a0, a1, hw, colour, seg=10):
     _new(p, colour)
 
 
+def loft(p, secs, colour, seg=16):
+    """A smooth body through a run of sections: each (centre, half-width, half-height, squareness),
+    the section square-ish at squareness 0.3, elliptical at 1, set across the path (its width
+    along X; its height across the path's direction and X). Ends capped. Tanks, panels, bodywork."""
+    bm = p.bm
+    pts = [Vector(c) for c, *_ in secs]
+    rings = []
+    for i, (c, hw, hh, sq) in enumerate(secs):
+        t = (pts[min(i + 1, len(pts) - 1)] - pts[max(i - 1, 0)]).normalized()
+        up = Vector((1, 0, 0)).cross(t).normalized()
+        ring = []
+        for j in range(seg):
+            a = 2 * math.pi * j / seg
+            ca, sa = math.cos(a), math.sin(a)
+            ring.append(bm.verts.new(pts[i] + Vector((1, 0, 0)) * hw * math.copysign(abs(ca) ** sq, ca) + up * hh * math.copysign(abs(sa) ** sq, sa)))
+        rings.append(ring)
+    for i in range(len(rings) - 1):
+        for j in range(seg):
+            bm.faces.new((rings[i][j], rings[i][(j + 1) % seg], rings[i + 1][(j + 1) % seg], rings[i + 1][j]))
+    bm.faces.new(rings[0])
+    bm.faces.new(list(reversed(rings[-1])))
+    _new(p, colour)
+
+
 def cushion(p, y0, y1, z, w0, w1, h0, h1, colour, seg=14, n=10, crown=0.35):
     """A padded seat from y0 (its nose) to y1 (its tail) sitting on z: half-width w and height h
     blending from nose to tail, a rounded-square section (fuller over the top: `crown`), the ends
@@ -155,9 +179,13 @@ def motorbike(Piece, name, k):
     p.cyl(bar + Vector((-hw, -0.06, 0.02)), bar + Vector((hw, -0.06, 0.02)), 0.012, CHROME if k.get("chrome_bar", True) else BLACK, 6)
     for x in (-hw, hw):
         p.cyl(bar + Vector((x * 0.78, -0.06, 0.02)), bar + Vector((x * 1.05, -0.06, 0.02)), 0.018, BLACK, 8)
+    # Mirrors on stalks, angled out.
     for x in (-1, 1):
-        p.cyl(bar + Vector((x * hw * 0.55, -0.05, 0.03)), bar + Vector((x * hw * 0.55, -0.05, 0.10)), 0.006, BLACK, 4)
-        p.ball(bar + Vector((x * hw * 0.62, -0.03, 0.12)), 0.035, CHROME, 1, 0.5)
+        root = bar + Vector((x * hw * 0.6, -0.05, 0.03))
+        head_m = root + Vector((x * 0.07, 0.02, 0.22))
+        p.cyl(root, head_m, 0.006, BLACK, 4)
+        p.cyl(head_m + Vector((0, -0.012, 0.03)), head_m + Vector((0, 0.008, 0.03)), 0.05, BLACK, 12)
+        p.cyl(head_m + Vector((0, -0.016, 0.03)), head_m + Vector((0, -0.012, 0.03)), 0.044, CHROME, 12)
     # Headlamp.
     lamp = head + Vector((0, 0.12, -0.10))
     style = k["lamp"]
@@ -165,11 +193,17 @@ def motorbike(Piece, name, k):
         p.cyl(lamp + Vector((0, -0.08, 0)), lamp, 0.095, k.get("lamp_shell", CHROME), 16)
         p.cyl(lamp, lamp + Vector((0, 0.012, 0)), 0.085, LAMP, 16)
     elif style == "visor":
-        p.hull([lamp + Vector((x, y, z)) for x in (-0.11, 0.11) for (y, z) in ((-0.1, -0.08), (0.03, -0.09), (-0.1, 0.12), (0.0, 0.10))], k["paint"])
-        p.box(tuple(lamp + Vector((-0.08, 0.025, -0.07))), tuple(lamp + Vector((0.08, 0.04, 0.03))), LAMP)
+        # A cowl round the lamp, its visor peaked over it.
+        loft(p, [(lamp + Vector((0, -0.10, 0.01)), 0.09, 0.10, 0.5), (lamp + Vector((0, -0.02, 0.01)), 0.11, 0.11, 0.45),
+                 (lamp + Vector((0, 0.03, 0.02)), 0.10, 0.10, 0.5)], k["paint"])
+        loft(p, [(lamp + Vector((0, -0.02, 0.10)), 0.08, 0.025, 0.5), (lamp + Vector((0, 0.06, 0.12)), 0.06, 0.012, 0.6)], k["paint"])
+        p.cyl(lamp + Vector((0, 0.02, -0.01)), lamp + Vector((0, 0.045, -0.01)), 0.075, LAMP, 16)
     else:  # twin pilot lamps under a sharp cowl
-        p.hull([lamp + Vector((x, y, z)) for x in (-0.13, 0.13) for (y, z) in ((-0.12, -0.12), (0.06, -0.10), (-0.12, 0.18), (-0.02, 0.16))], k["paint"])
-        p.box(tuple(lamp + Vector((-0.07, 0.05, -0.08))), tuple(lamp + Vector((0.07, 0.07, 0.0))), LAMP)
+        # A sharp fairing, its nose low, raked back to a small screen.
+        loft(p, [(lamp + Vector((0, 0.06, -0.06)), 0.10, 0.07, 0.4), (lamp + Vector((0, -0.02, 0.02)), 0.14, 0.14, 0.35),
+                 (lamp + Vector((0, -0.10, 0.10)), 0.13, 0.12, 0.4)], k["paint"])
+        loft(p, [(lamp + Vector((0, -0.04, 0.14)), 0.09, 0.02, 0.6), (lamp + Vector((0, -0.12, 0.24)), 0.07, 0.01, 0.6)], (0.18, 0.20, 0.24))
+        p.box(tuple(lamp + Vector((-0.07, 0.07, -0.08))), tuple(lamp + Vector((0.07, 0.09, -0.01))), LAMP)
         for x in (-0.1, 0.1):
             p.box(tuple(lamp + Vector((x - 0.025, 0.04, 0.03))), tuple(lamp + Vector((x + 0.025, 0.06, 0.06))), LAMP)
     # Backbone, tank, seat.
@@ -177,17 +211,17 @@ def motorbike(Piece, name, k):
     p.cyl(head + Vector((0, 0, -0.04)), seat_end, 0.025, BLACK, 6)
     t = k["tank"]  # (y front, y back, bottom z, top z, half width)
     ty0, ty1, tz0, tz1, thw = t
-    # Rounded in section: narrow at the top and the knees' tuck below, widest at mid height.
+    # Lofted: a teardrop in plan, domed on top, rounded in section (squarer for a sharp tank).
     tank = []
-    for i in range(5):
-        f = i / 4
+    n = 8
+    for i in range(n + 1):
+        f = i / n
         y = ty0 + (ty1 - ty0) * f
-        swell = math.sin(math.pi * (0.15 + 0.7 * f))
-        top = tz1 + k.get("tank_bulge", 0.02) * swell - 0.03 * f
-        bot = tz0 + 0.02 * (1 - f)
-        for x in (-1, 1):
-            tank += [(x * thw * 0.55 * swell, y, top), (x * thw * swell, y, (top + bot) * 0.5 + 0.02), (x * thw * 0.7 * swell, y, bot)]
-    p.hull(tank, k["paint"])
+        swell = math.sin(math.pi * (0.08 + 0.84 * f)) ** 0.6
+        top = tz1 + k.get("tank_bulge", 0.02) * math.sin(math.pi * f) - 0.04 * f * f
+        bot = tz0 + 0.03 * (1 - f)
+        tank.append(((0.0, y, (top + bot) / 2), thw * (0.35 + 0.65 * swell), (top - bot) / 2 * (0.6 + 0.4 * swell), k.get("tank_sq", 0.55)))
+    loft(p, tank, k["paint"])
     if k.get("tank_stripe"):
         for x in (-1, 1):
             p.hull([(x * (thw * 0.98 + 0.004), y, z) for (y, z) in ((ty0 - 0.08, tz0 + 0.06), (ty0 - 0.1, tz1 - 0.05), (ty1 + 0.08, tz1 - 0.07), (ty1 + 0.08, tz0 + 0.05))]
@@ -214,9 +248,12 @@ def motorbike(Piece, name, k):
         else:
             cushion(p, sy0 + 0.01, sy1, sz - 0.04, shw * 0.8, shw, 0.10, 0.09, SEAT)
     # Side panel under the seat, and the tail.
-    p.hull([(x, y, z) for x in (-0.14, 0.14) for (y, z) in ((sy0 - 0.02, sz - 0.05), (sy0 - 0.30, sz - 0.05), (sy0 - 0.06, sz - 0.25), (sy0 - 0.26, sz - 0.22))], k.get("panel", k["paint"]))
+    loft(p, [((0, sy0 - 0.03, sz - 0.14), 0.12, 0.08, 0.45), ((0, sy0 - 0.15, sz - 0.15), 0.145, 0.10, 0.4),
+             ((0, sy0 - 0.28, sz - 0.13), 0.13, 0.08, 0.45)], k.get("panel", k["paint"]))
     if k.get("tail_cowl"):
-        p.hull([(x, y, z) for x in (-0.11, 0.11) for (y, z) in ((sy1 + 0.1, sz - 0.08), (sy1 - 0.12, sz - 0.12), (sy1 - 0.14, sz + 0.06), (sy1 + 0.12, sz))], k["paint"])
+        # The tail, tapering back and up under the seat's end.
+        loft(p, [((0, sy1 + 0.12, sz - 0.05), 0.12, 0.06, 0.5), ((0, sy1 - 0.02, sz - 0.03), 0.10, 0.06, 0.5),
+                 ((0, sy1 - 0.14, sz + 0.0), 0.05, 0.035, 0.6)], k["paint"])
     p.box((-0.06, sy1 - 0.14, sz - 0.07), (0.06, sy1 - 0.10, sz - 0.02), RED_LAMP)
     p.box((-0.10, sy1 - 0.12, sz - 0.30), (0.10, sy1 - 0.10, sz - 0.16), PLATE)
     # Rear suspension and swingarm.
@@ -227,7 +264,16 @@ def motorbike(Piece, name, k):
     # Engine: crankcase, the cylinder raked forward, its cooling fins.
     e = k["engine"]  # (y back, y front, bottom z, top z, half width)
     ey0, ey1, ez0, ez1, ehw = e
-    p.hull([(x, y, z) for x in (-ehw, ehw) for (y, z) in ((ey0, ez0 + 0.05), (ey1, ez0), (ey0 + 0.03, ez1), (ey1 - 0.06, ez1 + 0.02))], ENGINE)
+    zc, hh = (ez0 + ez1) / 2, (ez1 - ez0) / 2
+    loft(p, [((0, ey0, zc + 0.02), ehw * 0.85, hh * 0.8, 0.45), ((0, ey0 + 0.04, zc + 0.01), ehw, hh, 0.4),
+             ((0, ey1 - 0.04, zc - 0.01), ehw, hh, 0.4), ((0, ey1, zc - 0.02), ehw * 0.85, hh * 0.75, 0.45)], ENGINE)
+    # Clutch and magneto covers bulging from each side, the gear lever, and the frame's down tube to
+    # the engine's front: it hangs from the frame, not in mid-air.
+    cover = Vector((0, (ey0 + ey1) / 2 - 0.02, zc - 0.01))
+    for x in (-1, 1):
+        p.cyl(cover + Vector((x * ehw, 0, 0)), cover + Vector((x * (ehw + 0.035), 0, 0)), min(hh * 0.95, 0.13), k.get("cover", ENGINE), 16, r2=min(hh * 0.8, 0.11))
+    p.cyl(head + Vector((0, 0.0, -0.12)), Vector((0, ey1 - 0.02, ez1 - 0.03)), 0.022, k.get("frame", BLACK), 6)
+    p.cyl(Vector((0, ey1 - 0.02, ez1 - 0.03)), Vector((0, ey1, ez0 + 0.04)), 0.022, k.get("frame", BLACK), 6)
     cy_base = Vector((0, ey1 - 0.08, ez1))
     cy_dir = Vector((0, math.sin(math.radians(k.get("cyl_tilt", 20))), math.cos(math.radians(k.get("cyl_tilt", 20)))))
     cyl_len = k.get("cyl_len", 0.22)
@@ -270,6 +316,10 @@ def motorbike(Piece, name, k):
     arc_band(p, yr, R, R + 0.02, R + 0.03, rg[1], rg[2], k["tyre_r"] * 0.5 + 0.03, rg[0], 10)
     for x in (-1, 1):
         p.box((x * 0.13 - 0.02, yf + 0.0, R + 0.12), (x * 0.13 + 0.02, yf + 0.04, R + 0.16), (0.98, 0.55, 0.06))
+    # The front number plate, upright on the mudguard's nose (blank).
+    a = math.radians(fg[1] + 25)
+    plate = Vector((0, yf + (R + 0.04) * math.cos(a), R + (R + 0.04) * math.sin(a)))
+    p.box(tuple(plate + Vector((-0.09, -0.005, 0.0))), tuple(plate + Vector((0.09, 0.005, 0.09))), PLATE)
     lean(p)
     return p.finish(0.025)
 
@@ -297,7 +347,7 @@ def discover(Piece):
     blue = (0.10, 0.24, 0.62)
     return motorbike(Piece, "discover", dict(
         R=0.30, tyre_f=0.08, tyre_r=0.09, wb=1.30, wire=False, rim=BLACK, fork=0.70, rake=26,
-        lamp="visor", paint=blue, tank=(0.34, 0.02, 0.76, 0.93, 0.13), shroud=blue, tank_stripe=(0.80, 0.82, 0.86),
+        lamp="visor", paint=blue, tank=(0.34, 0.02, 0.76, 0.93, 0.14), tank_sq=0.45, tank_stripe=(0.80, 0.82, 0.86),
         seat_z=0.80, tail=0.08, tail_cowl=True, panel=blue, engine=(-0.08, 0.24, 0.22, 0.45, 0.11), cyl_tilt=75,
         cyl_len=0.17, cyl_r=0.05, fins=5, fin_r=0.085, exhaust="commuter", front_guard=(BLACK, 30, 115),
         rear_guard=(BLACK, 80, 150), bar=0.35, chrome_bar=False))

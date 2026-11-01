@@ -211,17 +211,43 @@ def auto():
 
 
 def scooter():
+    """The everyday automatic scooter: a curved leg shield, a flat floor, a rounded body swelling
+    under the seat, the engine unit on the left, 10-inch alloys."""
     p = Piece("scooter")
-    p.hull([(x, y, z) for x in (-0.17, 0.17) for (y, z) in ((-0.75, 0.30), (-0.75, 0.62), (0.15, 0.25), (0.15, 0.45))], "scooter")
-    p.hull([(x, y, z) for x in (-0.22, 0.22) for (y, z) in ((0.30, 0.25), (0.62, 0.30), (0.45, 1.00), (0.58, 1.00))], "scooter")
-    bikes.cushion(p, -0.05, -0.72, 0.60, 0.13, 0.16, 0.13, 0.14, C["black"])
-    p.box((-0.12, 0.10, 0.24), (0.12, 0.45, 0.30), "grey")
-    p.cyl((0, 0.55, 0.95), (0, 0.56, 1.10), 0.03, "black", 6)
-    p.cyl((-0.33, 0.56, 1.10), (0.33, 0.56, 1.10), 0.02, "chrome", 6)
-    p.cyl((0, 0.60, 1.05), (0, 0.66, 1.05), 0.06, "lamp", 8)
-    p.wheel((0, -0.62, 0.2), 0.2, 0.09)
-    p.wheel((0, 0.62, 0.2), 0.2, 0.09)
-    return p.finish(0.05)
+    red, dark, grey = C["scooter"], (0.16, 0.16, 0.17), (0.40, 0.41, 0.43)
+    R, yr, yf = 0.23, -0.60, 0.62
+    for y in (yr, yf):
+        bikes.wheel(p, y, R, 0.09, False, bikes.ALLOY, hub_r=0.05)
+    # Front: fork, leg shield rising and curving back to the handlebar cowl, the lamp in it.
+    p.cyl((0, yf, R), (0, 0.50, 0.62), 0.028, "black", 8)
+    bikes.loft(p, [((0, 0.53, 0.30), 0.19, 0.10, 0.5), ((0, 0.50, 0.55), 0.21, 0.07, 0.5),
+                   ((0, 0.47, 0.80), 0.20, 0.06, 0.5), ((0, 0.43, 0.97), 0.15, 0.06, 0.55)], red)
+    bikes.loft(p, [((0, 0.52, 1.04), 0.12, 0.06, 0.55), ((0, 0.44, 1.07), 0.13, 0.07, 0.55), ((0, 0.34, 1.06), 0.10, 0.05, 0.6)], red)
+    p.cyl((0, 0.53, 1.03), (0, 0.57, 1.03), 0.05, "lamp", 14)
+    p.cyl((-0.33, 0.40, 1.08), (0.33, 0.40, 1.08), 0.012, "black", 6)
+    for x in (-1, 1):
+        p.cyl((x * 0.25, 0.40, 1.08), (x * 0.35, 0.40, 1.08), 0.019, "black", 8)
+        p.cyl((x * 0.20, 0.40, 1.09), (x * 0.26, 0.42, 1.30), 0.006, "black", 4)
+        p.cyl((x * 0.26, 0.41, 1.33), (x * 0.26, 0.43, 1.33), 0.045, "black", 12)
+        p.box((x * 0.18 - 0.02, 0.56, 0.98), (x * 0.18 + 0.02, 0.58, 1.01), (0.98, 0.55, 0.06))
+    bikes.arc_band(p, yf, R, R + 0.025, R + 0.04, 20, 150, 0.07, red, 10)
+    # The floor, and the body under the seat.
+    bikes.loft(p, [((0, 0.44, 0.28), 0.17, 0.035, 0.4), ((0, 0.10, 0.27), 0.17, 0.035, 0.4), ((0, -0.08, 0.28), 0.16, 0.035, 0.4)], dark)
+    bikes.loft(p, [((0, -0.02, 0.40), 0.15, 0.13, 0.6), ((0, -0.20, 0.46), 0.19, 0.18, 0.55), ((0, -0.48, 0.48), 0.20, 0.18, 0.55),
+                   ((0, -0.70, 0.52), 0.16, 0.13, 0.6), ((0, -0.80, 0.56), 0.10, 0.08, 0.7)], red)
+    bikes.cushion(p, -0.08, -0.74, 0.62, 0.12, 0.15, 0.10, 0.11, C["black"])
+    # Engine unit and swingarm on the left, the silencer on the right.
+    bikes.loft(p, [((-0.10, -0.26, 0.26), 0.05, 0.08, 0.5), ((-0.10, -0.45, 0.24), 0.06, 0.09, 0.5), ((-0.08, -0.62, 0.23), 0.05, 0.06, 0.6)], grey)
+    p.cyl((0.10, -0.38, 0.22), (0.15, -0.82, 0.30), 0.045, "black", 12, r2=0.035)
+    # Grab rail, tail lamp, plates.
+    for x in (-1, 1):
+        p.cyl((x * 0.15, -0.58, 0.70), (x * 0.12, -0.84, 0.68), 0.012, "chrome", 6)
+    p.cyl((-0.12, -0.84, 0.68), (0.12, -0.84, 0.68), 0.012, "chrome", 6)
+    p.box((-0.07, -0.84, 0.55), (0.07, -0.80, 0.60), "red")
+    p.box((-0.09, -0.82, 0.38), (0.09, -0.81, 0.50), "white", round=False)
+    # The front plate, on the leg shield's face.
+    p.box((-0.07, 0.605, 0.40), (0.07, 0.615, 0.48), "white", round=False)
+    return p.finish(0.02)
 
 
 def thela():
