@@ -250,12 +250,39 @@ def motorbike(Piece, name, k):
     # Side panel under the seat, and the tail.
     loft(p, [((0, sy0 - 0.03, sz - 0.14), 0.12, 0.08, 0.45), ((0, sy0 - 0.15, sz - 0.15), 0.145, 0.10, 0.4),
              ((0, sy0 - 0.28, sz - 0.13), 0.13, 0.08, 0.45)], k.get("panel", k["paint"]))
+    rg = k["rear_guard"]
     if k.get("tail_cowl"):
-        # The tail, tapering back and up under the seat's end.
-        loft(p, [((0, sy1 + 0.12, sz - 0.05), 0.12, 0.06, 0.5), ((0, sy1 - 0.02, sz - 0.03), 0.10, 0.06, 0.5),
-                 ((0, sy1 - 0.14, sz + 0.0), 0.05, 0.035, 0.6)], k["paint"])
-    p.box((-0.06, sy1 - 0.14, sz - 0.07), (0.06, sy1 - 0.10, sz - 0.02), RED_LAMP)
-    p.box((-0.10, sy1 - 0.12, sz - 0.30), (0.10, sy1 - 0.10, sz - 0.16), PLATE)
+        # The tail: from under the seat, sweeping back and curving up to a rounded lamp, tapering.
+        t0, t1 = sy0 - 0.20, sy1 - 0.16
+        tail = []
+        for i in range(9):
+            f = i / 8
+            tail.append(((0, t0 + (t1 - t0) * f, sz - 0.11 + 0.15 * f * f), 0.13 * (1 - 0.55 * f), 0.075 * (1 - 0.45 * f), 0.5))
+        loft(p, tail, k["paint"])
+        end = Vector((0, t1, sz + 0.04))
+        loft(p, [(end + Vector((0, 0.04, -0.005)), 0.06, 0.032, 0.6), (end + Vector((0, -0.025, 0.0)), 0.05, 0.026, 0.75)], RED_LAMP)
+        # Grab rail following the tail's curve, and the plate hung under it.
+        for x in (-1, 1):
+            prev = None
+            for i in range(6):
+                f = i / 5
+                q = Vector((x * (0.15 - 0.05 * f), t0 + 0.12 + (t1 + 0.06 - t0 - 0.12) * f, sz - 0.06 + 0.12 * f * f))
+                if prev:
+                    p.cyl(prev, q, 0.011, k.get("rail", BLACK), 6)
+                prev = q
+        p.cyl((0, t1 + 0.06, sz - 0.07), (0, t1 - 0.02, sz - 0.20), 0.01, BLACK, 4)
+        p.box((-0.10, t1 - 0.05, sz - 0.32), (0.10, t1 - 0.035, sz - 0.19), PLATE)
+    else:
+        # A classic tail: the mudguard runs on round the wheel, its lamp on the end, the plate below.
+        a = math.radians(rg[2] - 30)
+        r = R + 0.05
+        lamp_at = Vector((0, yr + r * math.cos(a), R + r * math.sin(a)))
+        out = Vector((0, math.cos(a), math.sin(a)))
+        p.cyl(lamp_at - out * 0.01, lamp_at + out * 0.05, 0.048, CHROME, 14)
+        p.cyl(lamp_at + out * 0.05, lamp_at + out * 0.07, 0.042, RED_LAMP, 14, r2=0.03)
+        b = math.radians(rg[2] - 8)
+        plate = Vector((0, yr + (R + 0.04) * math.cos(b), R + (R + 0.04) * math.sin(b)))
+        p.box(tuple(plate + Vector((-0.10, -0.006, -0.12))), tuple(plate + Vector((0.10, 0.006, 0.0))), PLATE)
     # Rear suspension and swingarm.
     pivot = Vector((0, 0.0, 0.40))
     for x in (-0.11, 0.11):
@@ -312,7 +339,6 @@ def motorbike(Piece, name, k):
     # Mudguards.
     fg = k["front_guard"]  # (colour, from deg, to deg)
     arc_band(p, yf, R, R + 0.02, R + 0.03, fg[1], fg[2], k["tyre_f"] * 0.5 + 0.025, fg[0], 10)
-    rg = k["rear_guard"]
     arc_band(p, yr, R, R + 0.02, R + 0.03, rg[1], rg[2], k["tyre_r"] * 0.5 + 0.03, rg[0], 10)
     for x in (-1, 1):
         p.box((x * 0.13 - 0.02, yf + 0.0, R + 0.12), (x * 0.13 + 0.02, yf + 0.04, R + 0.16), (0.98, 0.55, 0.06))
@@ -330,7 +356,7 @@ def thumper(Piece):
         lamp="round", lamp_shell=BLACK, paint=(0.06, 0.06, 0.07), tank=(0.40, 0.05, 0.80, 0.98, 0.15), tank_bulge=0.04,
         tank_stripe=CHROME, sprung=True, seat_z=0.80, tail=0.12, panel=(0.06, 0.06, 0.07),
         engine=(-0.10, 0.28, 0.24, 0.52, 0.12), cyl_tilt=10, cyl_len=0.26, cyl_r=0.07, fins=8, fin_r=0.11,
-        exhaust="peashooter", front_guard=((0.06, 0.06, 0.07), 10, 140), rear_guard=((0.06, 0.06, 0.07), 50, 185),
+        exhaust="peashooter", front_guard=((0.06, 0.06, 0.07), 10, 140), rear_guard=((0.06, 0.06, 0.07), 45, 215),
         chain_guard=(0.06, 0.06, 0.07), bar=0.38))
 
 
@@ -338,7 +364,7 @@ def commuter(Piece):
     return motorbike(Piece, "commuter", dict(
         R=0.31, tyre_f=0.07, tyre_r=0.08, wb=1.24, wire=False, rim=BLACK, fork=0.68, rake=26,
         lamp="visor", paint=(0.07, 0.07, 0.08), tank=(0.32, 0.02, 0.74, 0.90, 0.12), tank_stripe=(0.80, 0.10, 0.10),
-        seat_z=0.79, tail=0.10, panel=(0.80, 0.10, 0.10), engine=(-0.08, 0.22, 0.22, 0.44, 0.10), cyl_tilt=80,
+        seat_z=0.79, tail=0.10, tail_cowl=True, rail=(0.70, 0.70, 0.72), panel=(0.80, 0.10, 0.10), engine=(-0.08, 0.22, 0.22, 0.44, 0.10), cyl_tilt=80,
         cyl_len=0.16, cyl_r=0.05, fins=5, fin_r=0.08, exhaust="commuter", front_guard=((0.07, 0.07, 0.08), 30, 120),
         rear_guard=((0.07, 0.07, 0.08), 70, 160), chain_guard=(0.07, 0.07, 0.08), bar=0.34, slider=(0.70, 0.70, 0.72)))
 
@@ -360,7 +386,7 @@ def twostroke(Piece):
         lamp="round", paint=red, tank=(0.30, 0.04, 0.76, 0.90, 0.11), tank_bulge=0.03, tank_stripe=(0.95, 0.95, 0.92),
         seat_z=0.77, tail=0.10, panel=BLACK, engine=(-0.06, 0.22, 0.24, 0.44, 0.10), cyl_tilt=25, cyl_len=0.15,
         cyl_r=0.055, fins=6, fin_r=0.085, fin_col=(0.62, 0.63, 0.65), exhaust="expansion",
-        front_guard=(CHROME, 20, 130), rear_guard=(CHROME, 60, 170), bar=0.34))
+        front_guard=(CHROME, 20, 130), rear_guard=(CHROME, 50, 210), bar=0.34))
 
 
 def sport150(Piece):
