@@ -67,9 +67,13 @@ impl AnimSets {
 /// A foot coming down (from the locomotion cycle's contact points), for footstep sounds.
 #[derive(Message, Clone, Copy)]
 pub struct Footstep {
+    /// Whose foot (the warrior's sim entity).
+    pub who: Entity,
     /// Where the foot lands (ground level under the warrior).
     pub pos: Vec3,
     pub speed: f32,
+    /// Crouched (quiet: no footstep marker on others' screens).
+    pub crouched: bool,
 }
 
 /// Per-warrior blend state, on the visual entity.
@@ -348,7 +352,7 @@ fn drive(
                         anim.phase = (anim.phase + dt * rate / wsum).fract();
                         let crossed = anim.phase < before || (before < 0.5 && anim.phase >= 0.5);
                         if crossed && speed > 0.8 {
-                            steps.write(Footstep { pos: tf.translation - Vec3::Y * shared::sim::HALF_HEIGHT, speed });
+                            steps.write(Footstep { who: wv.sim, pos: tf.translation - Vec3::Y * shared::sim::HALF_HEIGHT, speed, crouched: low });
                         }
                     }
                     // Upper-body action from what's in hand. A new swing starts when the time

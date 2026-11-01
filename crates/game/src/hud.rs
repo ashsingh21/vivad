@@ -20,7 +20,7 @@ impl Plugin for HudPlugin {
             .init_resource::<Feed>()
             .add_systems(Startup, build_hud)
             .add_systems(Update, (vitals, hotbar, prompts, feed, reticle, hit_marker, top_right, minimap, overlay, perf))
-            .add_systems(PostUpdate, (damage_numbers, hurt_markers).after(crate::camera::CameraSystems));
+            .add_systems(PostUpdate, (damage_numbers, hurt_markers, step_markers).after(crate::camera::CameraSystems));
     }
 }
 
@@ -57,6 +57,16 @@ struct DamageNumber {
     amount: f32,
     size: f32,
     age: f32,
+}
+
+/// A footstep marker round the crosshair for a nearby warrior who isn't crouching.
+#[derive(Component)]
+struct StepMarker {
+    from: Entity,
+    last: Vec3,
+    age: f32,
+    /// How loud (1 close and fast, toward 0 at the edge of earshot).
+    loud: f32,
 }
 
 /// A red bar round the crosshair pointing at whoever just hit the local player.
@@ -668,6 +678,90 @@ fn hurt_markers(
     }
 }
 
+
+/// Footsteps heard: a pair of footprints round the crosshair toward each warrior stepping within
+/// earshot who isn't crouched (crouching is silent), farther for faster feet: 12 m walking, 25 m
+/// running, 35 m sprinting. Brighter the closer and louder; each fades out a second after its last
+/// step, following its warrior as the view turns.
+#[allow(clippy::type_complexity)]
+fn step_markers(
+    mut commands: Commands,
+    mut steps: MessageReader<crate::animation::Footstep>,
+    local: Query<(Entity, &Transform), With<LocalPlayer>>,
+    sims: Query<&Transform, (With<Warrior>, Without<LocalPlayer>)>,
+    cam: Query<&GlobalTransform, With<crate::camera::MainCamera>>,
+    window: Query<&Window>,
+    mut markers: Query<(Entity, &mut StepMarker, &mut Node, &mut UiTransform, &Children)>,
+    mut feet: Query<&mut BackgroundColor>,
+    time: Res<Time>,
+) {
+    const RADIUS: f32 = 135.0;
+    let Ok((me, my_tf)) = local.single() else { return };
+    for s in steps.read() {
+        if s.who == me || s.crouched {
+            continue;
+        }
+        let range = if s.speed > shared::sim::movement::WALK_SPEED + 0.5 {
+            35.0
+        } else if s.speed > shared::sim::movement::AIM_SPEED + 0.5 {
+            25.0
+        } else {
+            12.0
+        };
+        let d = s.pos.distance(my_tf.translation);
+        if d > range {
+            continue;
+        }
+        let loud = (1.0 - d / range).clamp(0.25, 1.0);
+        if let Some((_, mut m, ..)) = markers.iter_mut().find(|(_, m, ..)| m.from == s.who) {
+            m.age = 0.0;
+            m.last = s.pos;
+            m.loud = loud;
+            continue;
+        }
+        let foot = |dx: f32, dy: f32| {
+            (
+                Node { position_type: PositionType::Absolute, left: px(dx), top: px(dy), width: px(7.0), height: px(13.0), border_radius: BorderRadius::MAX, ..default() },
+                BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.0)),
+            )
+        };
+        commands
+            .spawn((
+                StepMarker { from: s.who, last: s.pos, age: 0.0, loud },
+                Node { position_type: PositionType::Absolute, width: px(20.0), height: px(22.0), ..default() },
+                UiTransform::default(),
+            ))
+            .with_children(|p| {
+                p.spawn(foot(1.0, 6.0));
+                p.spawn(foot(12.0, 0.0));
+            });
+    }
+    let (Ok(cam_g), Ok(win)) = (cam.single(), window.single()) else { return };
+    let (fwd, right) = (cam_g.forward().as_vec3().with_y(0.0).normalize_or(Vec3::NEG_Z), cam_g.right().as_vec3().with_y(0.0).normalize_or(Vec3::X));
+    let centre = Vec2::new(win.width(), win.height()) * 0.5;
+    let dt = time.delta_secs();
+    for (e, mut m, mut node, mut ui, children) in &mut markers {
+        m.age += dt;
+        if m.age > 1.0 {
+            commands.entity(e).despawn();
+            continue;
+        }
+        if let Ok(t) = sims.get(m.from) {
+            m.last = t.translation;
+        }
+        let d = m.last - my_tf.translation;
+        let a = d.dot(right).atan2(d.dot(fwd));
+        node.left = px(centre.x + RADIUS * a.sin() - 10.0);
+        node.top = px(centre.y - RADIUS * a.cos() - 11.0);
+        ui.rotation = Rot2::radians(a);
+        let alpha = (0.35 + 0.6 * m.loud) * (1.0 - ((m.age - 0.4) / 0.6).clamp(0.0, 1.0));
+        for c in children.iter() {
+            if let Ok(mut bg) = feet.get_mut(c) {
+                bg.0.set_alpha(alpha);
+            }
+        }
+    }
+}
 
 /// Set a text only if it changed: writing the same string still marks it changed, and a changed
 /// text re-measures and re-lays out the UI (on the browser's one thread, every frame).
