@@ -1,5 +1,7 @@
 //! Bot warriors. They only write `PlayerIntent`, exactly like a human controller would.
 
+use std::f32::consts::{PI, TAU};
+
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use rand::RngExt;
@@ -13,6 +15,9 @@ use super::{BotSkill,
 use super::nav::{NavGrid, NoPath};
 use crate::items::{AstraEffect, ItemDb, ItemKind};
 use crate::map::MapLayout;
+
+/// How fast a bot can turn to aim (radians a second): quick, but a person's, not a snap.
+const TURN_RATE: f32 = 10.5;
 
 #[derive(Component, Clone, Debug)]
 pub struct BotBrain {
@@ -291,14 +296,21 @@ pub(crate) fn drive_bots(
             }
             // Shots follow the over-the-shoulder aim ray (like a player's crosshair), not the eye
             // line, so solve the angles from that ray's origin (two fixed-point steps suffice).
+            // Up close (a melee swing's range) the shoulder ray's origin is off to the side of the
+            // target and the angle from it swings wildly tick to tick: aim from the eye there.
             let (mut yaw, mut pitch) = yaw_pitch_to(eye, aim_at);
-            for _ in 0..2 {
-                let probe = PlayerIntent { yaw, pitch, ..default() };
-                let (origin, _) = super::aim_ray(pos, &probe);
-                (yaw, pitch) = yaw_pitch_to(origin, aim_at);
+            if dist > 4.0 {
+                for _ in 0..2 {
+                    let probe = PlayerIntent { yaw, pitch, ..default() };
+                    let (origin, _) = super::aim_ray(pos, &probe);
+                    (yaw, pitch) = yaw_pitch_to(origin, aim_at);
+                }
             }
             let wobble = brain.aim_error * (1.0 + dist / 40.0);
-            intent.yaw = yaw + rng.random_range(-wobble..wobble);
+            // Turn as a person can, fast but not instantly: no snapping round in one tick.
+            let want = yaw + rng.random_range(-wobble..wobble);
+            let turn = ((want - intent.yaw + PI).rem_euclid(TAU)) - PI;
+            intent.yaw += turn.clamp(-TURN_RATE * dt, TURN_RATE * dt);
             intent.pitch = pitch + rng.random_range(-wobble..wobble) * 0.6;
             let on_beat = (m.elapsed * 0.4 + brain.tempo.1).fract() < brain.tempo.0;
             if brain.seen_for > brain.react && on_beat {
@@ -325,8 +337,10 @@ pub(crate) fn drive_bots(
                 brain.strafe_timer = if brain.calm { rng.random_range(1.5..3.5) } else { rng.random_range(0.6..1.6) };
                 brain.strafe = -brain.strafe;
             }
-            let forward = if matches!(held, Some(ItemKind::Melee { .. })) {
-                1.0
+            let melee = matches!(held, Some(ItemKind::Melee { .. }));
+            let forward = if melee {
+                // Close in, then stand and swing: running on past the target is what circled it.
+                if dist > 1.8 { 1.0 } else { 0.0 }
             } else if dist > 35.0 {
                 0.7
             } else if dist < 10.0 {
@@ -335,6 +349,8 @@ pub(crate) fn drive_bots(
                 0.0
             };
             let (side, ahead) = if brain.calm { (0.3, forward * 0.6) } else { (0.8, forward) };
+            // No sidestepping in a melee once within a few steps (it orbited the target).
+            let side = if melee && dist < 4.0 { 0.0 } else { side };
             intent.move_axis = Vec2::new(brain.strafe * side, ahead);
             if !brain.calm && rng.random_bool(0.01) {
                 intent.pressed |= btn::JUMP;
