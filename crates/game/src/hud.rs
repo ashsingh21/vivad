@@ -248,6 +248,7 @@ fn prompts(
     pickups: Query<(&Transform, &Pickup)>,
     db: Res<ItemDb>,
     m: Res<Match>,
+    ride: Res<crate::visuals::DropRide>,
     mut prompt: Query<&mut Text, With<Prompt>>,
     mut bar: Query<&mut Visibility, With<ProgressBar>>,
     mut fill: Query<&mut Node, With<ProgressFill>>,
@@ -270,10 +271,12 @@ fn prompts(
     if dead {
     } else if kin.mode == MoveMode::Vimana {
         let over = me.x.abs() < 240.0 && me.z.abs() < 240.0;
-        s = if over && m.state == MatchState::Flight {
-            "[Space] Vimana se chhalang lagao".into()
-        } else {
-            "Pushpaka Vimana Bharat ki taraf...".into()
+        let jugaad = *ride == crate::visuals::DropRide::Jugaad;
+        s = match (over && m.state == MatchState::Flight, jugaad) {
+            (true, true) => "[Space] Auto se kood jao!".into(),
+            (true, false) => "[Space] Vimana se chhalang lagao".into(),
+            (false, true) => "Udta Auto Dilli ki taraf... meter chalu hai".into(),
+            (false, false) => "Pushpaka Vimana Bharat ki taraf...".into(),
         };
     } else if kin.mode == MoveMode::Freefall {
         s = "[Space] Garuda pankh kholo".into();

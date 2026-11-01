@@ -21,7 +21,8 @@ pub struct VisualsPlugin;
 
 impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (setup_assets, setup_sky).chain())
+        app.init_resource::<DropRide>()
+            .add_systems(Startup, (setup_assets, setup_sky).chain())
             .add_systems(
                 Update,
                 (
@@ -41,6 +42,7 @@ impl Plugin for VisualsPlugin {
                     dress_vimana,
                     warm_up_shaders,
                     sway_vimana,
+                    run_jugaad,
                     update_zone_wall,
                     cleanup_orphans,
                 ),
@@ -860,25 +862,73 @@ fn warm_up_shaders(
     }
 }
 
-/// The Pushpaka Vimana model (tools/blender/architecture/vimana.py), riding a little on the air.
+/// What everyone rides in on: the Udta Auto by default, the Pushpaka Vimana with
+/// VIVAD_VIMANA=pushpaka. Looks only: the sim's vimana is the same either way.
+#[derive(Resource, Clone, Copy, PartialEq, Eq)]
+pub enum DropRide {
+    /// tools/blender/props/jugaad.py
+    Jugaad,
+    /// tools/blender/architecture/vimana.py
+    Pushpaka,
+}
+
+impl Default for DropRide {
+    fn default() -> Self {
+        if std::env::var("VIVAD_VIMANA").is_ok_and(|v| v.starts_with("push")) { DropRide::Pushpaka } else { DropRide::Jugaad }
+    }
+}
+
+/// The drop ride's model, riding a little on the air.
 #[derive(Component)]
 struct VimanaHull;
 
-fn dress_vimana(mut commands: Commands, q: Query<Entity, Added<Vimana>>, assets: Res<AssetServer>) {
+/// A moving part of the jugaad: a fan rotor (spun about its hub) or a rocket flame (flickering).
+#[derive(Component)]
+enum JugaadPart {
+    Fan(f32),
+    Flame(f32),
+}
+
+fn dress_vimana(mut commands: Commands, q: Query<Entity, Added<Vimana>>, assets: Res<AssetServer>, ride: Res<DropRide>) {
     for e in &q {
         commands.entity(e).insert(Visibility::default());
+        let path = match *ride {
+            DropRide::Jugaad => "models/props/jugaad.glb",
+            DropRide::Pushpaka => "models/props/vimana.gltf",
+        };
         commands
-            .spawn((
-                WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset("models/props/vimana.gltf"))),
-                Transform::default(),
-                VimanaHull,
-                ChildOf(e),
-            ))
+            .spawn((WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(path))), Transform::default(), VimanaHull, ChildOf(e)))
             .observe(|ready: On<WorldInstanceReady>, children: Query<&Children>, names: Query<&Name>, mut commands: Commands| {
                 // Riders see it close up; from the ground it is 120 m away.
                 crate::characters::apply_lod_ranges(ready.entity, &[(0.0..0.0, 70.0..80.0), (70.0..80.0, 2000.0..2100.0)], None,
                                                     &children, &names, &mut commands);
+                for d in children.iter_descendants(ready.entity) {
+                    let Ok(name) = names.get(d) else { continue };
+                    let k = name.as_str().rsplit('_').next().and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
+                    if name.starts_with("fan_") {
+                        // Neighbours turn opposite ways, at slightly different speeds.
+                        commands.entity(d).insert(JugaadPart::Fan(if k as i32 % 2 == 0 { 9.0 } else { -8.3 }));
+                    } else if name.starts_with("flame_") {
+                        commands.entity(d).insert(JugaadPart::Flame(k * 1.7));
+                    }
+                }
             });
+    }
+}
+
+/// Fans whirl; rocket flames flutter in length and width.
+fn run_jugaad(time: Res<Time>, mut q: Query<(&JugaadPart, &mut Transform)>) {
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    for (part, mut tf) in &mut q {
+        match *part {
+            JugaadPart::Fan(speed) => tf.rotate_local_y(speed * dt),
+            JugaadPart::Flame(phase) => {
+                let a = t * 31.0 + phase;
+                let long = 0.85 + 0.2 * a.sin() + 0.1 * (a * 2.3).sin();
+                let wide = 0.95 + 0.08 * (a * 1.7).cos();
+                tf.scale = Vec3::new(wide, wide, long);
+            }
+        }
     }
 }
 

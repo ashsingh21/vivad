@@ -81,7 +81,7 @@ fn grading() -> bevy::render::view::ColorGrading {
     g
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn follow(
     local: Query<(Entity, &PlayerIntent, &Kinematic), With<LocalPlayer>>,
     visuals: Query<(&WarriorVisual, &Transform), Without<MainCamera>>,
@@ -90,6 +90,7 @@ fn follow(
     spatial: SpatialQuery,
     time: Res<Time>,
     punch: Res<crate::fx::CameraPunch>,
+    ride: Res<crate::visuals::DropRide>,
 ) {
     let Ok((mut ct, mut proj, mut mc)) = cam.single_mut() else { return };
     let Ok((me, intent, kin)) = local.single() else { return };
@@ -99,6 +100,8 @@ fn follow(
     let dt = time.delta_secs();
 
     let (pivot, want_dist, shoulder, fov): (Vec3, f32, f32, f32) = match kin.mode {
+        // The auto's fans stand 14 m over its floor: framed from farther back and higher.
+        MoveMode::Vimana if *ride == crate::visuals::DropRide::Jugaad => (m.vimana_pos() + Vec3::Y * 8.0, 40.0, 0.0, 70.0),
         MoveMode::Vimana => (m.vimana_pos() + Vec3::Y * 4.0, 26.0, 0.0, 70.0),
         MoveMode::Freefall | MoveMode::Gliding => (body + Vec3::Y * EYE_OFFSET, 7.5, 0.0, 78.0),
         MoveMode::Ground if aiming => (body + Vec3::Y * EYE_OFFSET, 1.9, CAMERA_SHOULDER * 0.85, 48.0),

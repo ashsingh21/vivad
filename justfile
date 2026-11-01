@@ -26,6 +26,10 @@ architecture:
 glider:
     {{blender}} -b --factory-startup -P tools/blender/props/glider.py 2>&1 | grep -E '^\[|Error|Traceback' || true
 
+# The Udta Auto, the default drop ride (VIVAD_VIMANA=pushpaka for the vimana).
+jugaad:
+    {{blender}} -b --factory-startup -P tools/blender/props/jugaad.py 2>&1 | grep -E '^\[|Error|Traceback' || true
+
 figures:
     {{blender}} -b -P tools/blender/architecture/figures.py 2>&1 | grep -E '^\[|Error|Traceback' || true
 

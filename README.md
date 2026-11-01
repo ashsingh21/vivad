@@ -35,6 +35,8 @@ LMB attack / draw (hold for Pinaka), RMB aim, E open chest / pick up, R reload (
 1-6 or mouse wheel hotbar, Shift sprint, F3 performance overlay, F4 cycles quality (Low / Medium / High),
 Esc releases the mouse. Quality is picked from the GPU at start; `VIVAD_QUALITY=low just play` forces one.
 `VIVAD_NO_POST=1` turns off the bloom and vignette, for comparisons.
+
+`VIVAD_VIMANA=pushpaka` brings back the Pushpaka Vimana as the drop ride instead of the Udta Auto (the default).
 Maps, all from OpenStreetMap at real scale: Connaught Place (`just play`), Chandni Chowk (`just play map=chandni`),
 Hauz Khas (`map=hauzkhas`), India Gate (`map=indiagate`); `map=bharat` is the ancient-India one. Hosting with
 `just host Arjuna map=chandni` gives a room code that tells joiners the map. In Chandni Chowk and Hauz Khas up to
