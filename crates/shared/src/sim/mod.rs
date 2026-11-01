@@ -64,6 +64,8 @@ pub mod btn {
     pub const INTERACT: u16 = 1 << 4;
     pub const SPRINT: u16 = 1 << 5;
     pub const CROUCH: u16 = 1 << 6;
+    /// Walking instead of running (movement::AIM_SPEED).
+    pub const WALK: u16 = 1 << 7;
 }
 
 /// Everything a controller (human, bot or network peer) can ask a warrior to do this tick.

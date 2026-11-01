@@ -127,7 +127,7 @@ fn move_warriors(
             }
             MoveMode::Ground => {
                 let crouch = intent.held(btn::CROUCH);
-                let mut speed = if intent.held(btn::AIM) {
+                let mut speed = if intent.held(btn::AIM) || (intent.held(btn::WALK) && !intent.held(btn::SPRINT)) {
                     AIM_SPEED
                 } else if intent.held(btn::SPRINT) && intent.move_axis.y > 0.3 {
                     SPRINT_SPEED

@@ -17,6 +17,7 @@ pub enum Act {
     Interact,
     Sprint,
     Crouch,
+    Walk,
     NextSlot,
     PrevSlot,
     Restart,
@@ -52,6 +53,8 @@ impl Default for Bindings {
                 (Act::Interact, vec![Key(KeyCode::KeyE), Key(KeyCode::KeyF), Pad(GamepadButton::West)]),
                 (Act::Sprint, vec![Key(KeyCode::ShiftLeft), Pad(GamepadButton::LeftThumb)]),
                 (Act::Crouch, vec![Key(KeyCode::ControlLeft), Key(KeyCode::KeyC), Pad(GamepadButton::RightThumb)]),
+                // On a pad the stick walks by how far it's pushed.
+                (Act::Walk, vec![Key(KeyCode::AltLeft)]),
                 (Act::NextSlot, vec![Pad(GamepadButton::RightTrigger)]),
                 (Act::PrevSlot, vec![Pad(GamepadButton::LeftTrigger)]),
                 (Act::Restart, vec![Key(KeyCode::KeyR), Key(KeyCode::Enter), Pad(GamepadButton::Start)]),
@@ -161,6 +164,7 @@ fn write_intent(
     // The crouch toggle (the system's own: a thread-local flickered as the system ran on one
     // worker thread or another).
     mut crouched: Local<bool>,
+    mut walking: Local<bool>,
 ) {
     let Ok(mut intent) = q.single_mut() else { return };
     let grabbed = cursor.grab_mode != CursorGrabMode::None;
@@ -225,6 +229,15 @@ fn write_intent(
     }
     if *crouched {
         held |= btn::CROUCH;
+    }
+    // Walk toggles too (Left Alt, Option on a Mac); sprinting or jumping goes back to running.
+    if state.just_pressed(Act::Walk) {
+        *walking = !*walking;
+    } else if state.just_pressed(Act::Sprint) || state.just_pressed(Act::Jump) {
+        *walking = false;
+    }
+    if *walking {
+        held |= btn::WALK;
     }
     intent.released |= before & !held;
     intent.held = held;
@@ -328,6 +341,7 @@ fn scripted_keys(m: Option<Res<Match>>, mut keys: ResMut<ButtonInput<KeyCode>>, 
                     "KeyC" => KeyCode::KeyC,
                     "ShiftLeft" => KeyCode::ShiftLeft,
                     "ControlLeft" => KeyCode::ControlLeft,
+                    "AltLeft" => KeyCode::AltLeft,
                     "Space" => KeyCode::Space,
                     _ => return None,
                 };
