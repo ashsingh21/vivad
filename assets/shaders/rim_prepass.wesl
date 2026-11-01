@@ -6,9 +6,11 @@ import bevy_pbr::{
     prepass::io::{Vertex, VertexOutput, decompress_vertex},
     render::{mesh_functions, skinning, view_transformations::position_world_to_clip},
 };
-import super::cloth::sway;
+import super::cloth::{sway, unpack_velocity};
+import bevy_render::globals::Globals;
 
-@group(constants::MATERIAL_BIND_GROUP) @binding(101) var<uniform> motion: vec4<f32>;
+// The prepass view's globals (bevy_pbr's prepass view bind group: 0 the view, 1 the globals).
+@group(0) @binding(1) var<uniform> globals: Globals;
 
 @vertex
 fn vertex(vertex_in: Vertex) -> VertexOutput {
@@ -20,6 +22,8 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
 @else
     var world_from_local = mesh_world_from_local;
     var world = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
+@if(VERTEX_UVS_B)
+    let motion = vec4<f32>(unpack_velocity(mesh_functions::get_tag(vertex_in.instance_index)), globals.time);
 @if(VERTEX_UVS_B)
     world = vec4<f32>(sway(world.xyz, vertex.uv_b.x, motion), 1.0);
     out.world_position = world;

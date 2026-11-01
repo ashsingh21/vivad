@@ -12,15 +12,14 @@ import bevy_pbr::render::{
     forward_io::{Vertex, VertexOutput, FragmentOutput, decompress_vertex},
     view_transformations::position_world_to_clip,
 };
-import super::cloth::sway;
+import super::cloth::{sway, unpack_velocity};
+import bevy_pbr::render::mesh_view_bindings::globals;
 
 @if(VISIBILITY_RANGE_DITHER)
 import bevy_pbr::render::pbr_functions::visibility_range_dither;
 
 // rgb: rim colour (linear), a: strength.
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> rim: vec4<f32>;
-// xyz: the warrior's velocity, w: time (crate::rim; cloth.wesl).
-@group(constants::MATERIAL_BIND_GROUP) @binding(101) var<uniform> motion: vec4<f32>;
 
 // bevy_pbr's mesh vertex stage (skinned; no morph targets, which the characters don't have), the
 // loose cloth swayed in world space after skinning.
@@ -38,8 +37,10 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
 @if(VERTEX_NORMALS && !SKINNED)
     out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex_in.instance_index);
     var world = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
-@if(VERTEX_UVS_B)
+@if(VERTEX_UVS_B) {
+    let motion = vec4<f32>(unpack_velocity(mesh_functions::get_tag(vertex_in.instance_index)), globals.time);
     world = vec4<f32>(sway(world.xyz, vertex.uv_b.x, motion), 1.0);
+}
     out.world_position = world;
     out.position = position_world_to_clip(world.xyz);
 @if(VERTEX_UVS_A)

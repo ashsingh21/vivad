@@ -3,12 +3,14 @@
 //! - a rim light, a silhouette glow, so players read against busy, colourful streets;
 //! - cloth that moves: loose garments (the kurti's skirt and panels, the gamchha's ends, shirt
 //!   hems, and the hair; their second UV set says how loose, tools/blender/characters/finish.py) trail
-//!   behind the warrior's motion, lift when it falls and flutter, from its velocity each frame.
+//!   behind the warrior's motion, lift when it falls and flutter, from its velocity each frame
+//!   (packed into each part's `MeshTag`: the materials themselves never change, and are shared).
 //!
 //! A few vertex and fragment instructions on the characters only: on at every quality level.
 
 use std::collections::HashMap;
 
+use bevy::mesh::MeshTag;
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
 use bevy::render::render_resource::AsBindGroup;
@@ -32,9 +34,6 @@ pub struct Rim {
     /// rgb: colour (linear), a: strength.
     #[uniform(100)]
     pub rim: Vec4,
-    /// xyz: the warrior's velocity (m/s, world), w: time (s): for the cloth.
-    #[uniform(101)]
-    pub motion: Vec4,
 }
 
 impl MaterialExtension for Rim {
@@ -56,15 +55,18 @@ impl MaterialExtension for Rim {
 #[derive(Component)]
 pub struct RimTarget(pub Entity);
 
-/// Each warrior's rimmed copy of each material, made once.
-#[derive(Resource, Default)]
-struct Converted(HashMap<(Entity, AssetId<StandardMaterial>), Handle<RimMaterial>>);
+/// A converted part: its cloth follows this warrior's motion, through its `MeshTag`.
+#[derive(Component)]
+struct Sways(Entity);
 
-/// A warrior's materials, its last position and its smoothed velocity.
-type Swaying = (Vec<Handle<RimMaterial>>, Option<Vec3>, Vec3);
-
+/// The rimmed copy of each material, made once and shared by every warrior wearing it (the
+/// motion goes per mesh, in its tag, so the materials never change and batch together).
 #[derive(Resource, Default)]
-struct Cloth(HashMap<Entity, Swaying>);
+struct Converted(HashMap<AssetId<StandardMaterial>, Handle<RimMaterial>>);
+
+/// Each warrior's last position and smoothed velocity.
+#[derive(Resource, Default)]
+struct Cloth(HashMap<Entity, (Option<Vec3>, Vec3)>);
 
 /// A pale sky-warm white: reads as light, not as a coloured outline.
 const RIM: Vec4 = Vec4::new(1.0, 0.95, 0.88, 0.22);
@@ -75,31 +77,33 @@ fn convert(
     standard: Res<Assets<StandardMaterial>>,
     mut rimmed: ResMut<Assets<RimMaterial>>,
     mut done: ResMut<Converted>,
-    mut cloth: ResMut<Cloth>,
 ) {
     for (e, m, target) in &q {
         let Some(base) = standard.get(&m.0) else { continue };
-        let handle = done
-            .0
-            .entry((target.0, m.0.id()))
-            .or_insert_with(|| {
-                let h = rimmed.add(ExtendedMaterial { base: base.clone(), extension: Rim { rim: RIM, motion: Vec4::ZERO } });
-                cloth.0.entry(target.0).or_default().0.push(h.clone());
-                h
-            })
-            .clone();
-        commands.entity(e).remove::<(MeshMaterial3d<StandardMaterial>, RimTarget)>().insert(MeshMaterial3d(handle));
+        let handle = done.0.entry(m.0.id()).or_insert_with(|| rimmed.add(ExtendedMaterial { base: base.clone(), extension: Rim { rim: RIM } })).clone();
+        commands
+            .entity(e)
+            .remove::<(MeshMaterial3d<StandardMaterial>, RimTarget)>()
+            .insert((MeshMaterial3d(handle), Sways(target.0), MeshTag::new(pack(Vec3::ZERO))));
     }
 }
 
+/// A velocity packed for the shader (cloth.wesl's unpack_velocity): 10 bits a component, x and z
+/// over +-16 m/s, y over +-48.
+fn pack(v: Vec3) -> u32 {
+    let q = |c: f32, range: f32| (((c / range).clamp(-1.0, 1.0) * 0.5 + 0.5) * 1023.0).round() as u32;
+    q(v.x, 16.0) | q(v.y, 48.0) << 10 | q(v.z, 16.0) << 20
+}
+
 /// Each warrior's velocity, from how far it moved since the last frame (smoothed, so cloth eases
-/// rather than snapping), into its materials; warriors gone are forgotten.
-fn sway(time: Res<Time>, warriors: Query<&GlobalTransform>, mut cloth: ResMut<Cloth>, mut done: ResMut<Converted>, mut rimmed: ResMut<Assets<RimMaterial>>) {
+/// rather than snapping), into its parts' tags (only when it changes); warriors gone are forgotten.
+fn sway(time: Res<Time>, warriors: Query<&GlobalTransform>, mut cloth: ResMut<Cloth>, mut parts: Query<(&Sways, &mut MeshTag)>) {
     let dt = time.delta_secs().max(1e-4);
-    let t = time.elapsed_secs_wrapped();
     cloth.0.retain(|e, _| warriors.contains(*e));
-    done.0.retain(|(e, _), _| warriors.contains(*e));
-    for (e, (mats, prev, vel)) in cloth.0.iter_mut() {
+    for (sways, _) in &parts {
+        cloth.0.entry(sways.0).or_default();
+    }
+    for (e, (prev, vel)) in cloth.0.iter_mut() {
         let Ok(tf) = warriors.get(*e) else { continue };
         let p = tf.translation();
         let v = prev.map_or(Vec3::ZERO, |q| (p - q) / dt);
@@ -107,10 +111,10 @@ fn sway(time: Res<Time>, warriors: Query<&GlobalTransform>, mut cloth: ResMut<Cl
         let v = if v.length() > 60.0 { Vec3::ZERO } else { v };
         *vel = vel.lerp(v, (dt * 8.0).min(1.0));
         *prev = Some(p);
-        for h in mats.iter() {
-            if let Some(mut m) = rimmed.get_mut(h) {
-                m.extension.motion = vel.extend(t);
-            }
+    }
+    for (sways, mut tag) in &mut parts {
+        if let Some((_, vel)) = cloth.0.get(&sways.0) {
+            tag.set_if_neq(MeshTag::new(pack(*vel)));
         }
     }
 }

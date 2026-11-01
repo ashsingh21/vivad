@@ -3,6 +3,13 @@
 // w time s). Shared by the main pass (rim.wesl) and the prepass (rim_prepass.wesl), which must move
 // vertices identically.
 
+// The warrior's velocity, packed into its meshes' tag by crate::rim (no per-frame material
+// writes): 10 bits a component, x and z over +-16 m/s, y over +-48 (falling).
+fn unpack_velocity(tag: u32) -> vec3<f32> {
+    let q = vec3<f32>(f32(tag & 1023u), f32((tag >> 10u) & 1023u), f32((tag >> 20u) & 1023u)) / 1023.0 * 2.0 - 1.0;
+    return q * vec3<f32>(16.0, 48.0, 16.0);
+}
+
 fn sway(p: vec3<f32>, flex: f32, motion: vec4<f32>) -> vec3<f32> {
     let v = motion.xyz;
     let t = motion.w;
