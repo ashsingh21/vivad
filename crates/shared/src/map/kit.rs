@@ -27,6 +27,9 @@ fn collider(name: &str) -> Option<Shape> {
     Some(match name {
         "auto" => Shape::Box(Vec3::new(1.4, 1.8, 2.6)),
         "scooter" => Shape::Box(Vec3::new(0.45, 1.1, 1.65)),
+        // Motorcycles parked on their side stands (leaning), and the roadster bicycle.
+        "thumper" | "commuter" | "discover" | "twostroke" | "sport150" => Shape::Box(Vec3::new(0.7, 1.1, 2.0)),
+        "roadster" => Shape::Box(Vec3::new(0.5, 1.0, 1.75)),
         "thela" => Shape::Box(Vec3::new(1.25, 1.0, 2.1)),
         "chai" => Shape::Box(Vec3::new(1.7, 1.0, 0.8)),
         "crates" => Shape::Box(Vec3::new(1.24, 0.94, 0.42)),
@@ -44,7 +47,7 @@ fn reach(name: &str) -> f32 {
         "auto" | "thela" | "chai" => 1.6,
         "mumty" => 2.1,
         "clothesline" => 2.2,
-        "scooter" | "crates" | "solar" => 1.0,
+        "scooter" | "crates" | "solar" | "thumper" | "commuter" | "discover" | "twostroke" | "sport150" | "roadster" => 1.0,
         _ => 0.6,
     }
 }
@@ -111,7 +114,22 @@ fn street_free(map: &MapLayout, houses: &[Vec<Vec2>], p: Vec2, r: f32, half: f32
 /// Pieces along the roads: on each side of each stretch, a piece every 6-14 m just off the
 /// carriageway, and a pole every ~30 m.
 pub fn streets(b: &mut Builder, rng: &mut SmallRng, roads: &[(Vec<Vec2>, f32, bool)], houses: &[Vec<Vec2>], half: f32) {
-    const STREET: [(&str, f32); 8] = [("auto", 0.16), ("scooter", 0.22), ("thela", 0.12), ("chai", 0.08), ("drum", 0.1), ("crates", 0.12), ("chairs", 0.08), ("pot", 0.12)];
+    const STREET: [(&str, f32); 14] = [
+        ("auto", 0.14),
+        ("scooter", 0.08),
+        ("thumper", 0.04),
+        ("commuter", 0.05),
+        ("discover", 0.03),
+        ("twostroke", 0.02),
+        ("sport150", 0.03),
+        ("roadster", 0.04),
+        ("thela", 0.11),
+        ("chai", 0.07),
+        ("drum", 0.09),
+        ("crates", 0.11),
+        ("chairs", 0.07),
+        ("pot", 0.12),
+    ];
     for (pts, width, minor) in roads {
         for seg in pts.windows(2) {
             let (a, c) = (seg[0], seg[1]);
@@ -147,7 +165,7 @@ pub fn streets(b: &mut Builder, rng: &mut SmallRng, roads: &[(Vec<Vec2>, f32, bo
                     if street_free(b.map, houses, p, r, half) {
                         let yaw = match name {
                             // Parked along the kerb, either way round.
-                            "auto" | "scooter" | "thela" => facing(d) + if rng.random_range(0.0..1.0) < 0.5 { 0.0 } else { std::f32::consts::PI },
+                            "auto" | "scooter" | "thela" | "thumper" | "commuter" | "discover" | "twostroke" | "sport150" | "roadster" => facing(d) + if rng.random_range(0.0..1.0) < 0.5 { 0.0 } else { std::f32::consts::PI },
                             // Stalls and chairs face the road.
                             "chai" | "chairs" => facing(-n * side),
                             _ => rng.random_range(0.0..std::f32::consts::TAU),

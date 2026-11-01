@@ -20,12 +20,14 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "lib"))
+sys.path.insert(0, HERE)
 
 import bmesh  # noqa: E402
 import bpy  # noqa: E402
 from mathutils import Matrix, Vector  # noqa: E402
 
 import bake  # noqa: E402
+import bikes  # noqa: E402
 import export  # noqa: E402
 import numpy as np  # noqa: E402
 
@@ -62,7 +64,8 @@ class Piece:
         self.bw = self.bm.edges.layers.float.new("bevel_weight_edge")
 
     def paint(self, colour, round=False):
-        c = lin(C[colour])
+        """`colour`: a name in C, or an sRGB triple."""
+        c = lin(C[colour] if isinstance(colour, str) else colour)
         for f in self.bm.faces:
             if not f.tag:
                 for loop in f.loops:
@@ -211,7 +214,7 @@ def scooter():
     p = Piece("scooter")
     p.hull([(x, y, z) for x in (-0.17, 0.17) for (y, z) in ((-0.75, 0.30), (-0.75, 0.62), (0.15, 0.25), (0.15, 0.45))], "scooter")
     p.hull([(x, y, z) for x in (-0.22, 0.22) for (y, z) in ((0.30, 0.25), (0.62, 0.30), (0.45, 1.00), (0.58, 1.00))], "scooter")
-    p.box((-0.16, -0.70, 0.62), (0.16, -0.05, 0.74), "black")
+    bikes.cushion(p, -0.05, -0.72, 0.60, 0.13, 0.16, 0.13, 0.14, C["black"])
     p.box((-0.12, 0.10, 0.24), (0.12, 0.45, 0.30), "grey")
     p.cyl((0, 0.55, 0.95), (0, 0.56, 1.10), 0.03, "black", 6)
     p.cyl((-0.33, 0.56, 1.10), (0.33, 0.56, 1.10), 0.02, "chrome", 6)
@@ -394,6 +397,8 @@ def main():
     objs = []
     for build in (auto, scooter, thela, chai, pole, drum, crates, chairs, pot, cooler, dish, solar, clothesline, mumty):
         objs += build()
+    for build in bikes.BIKES:
+        objs += build(Piece)
     bpy.ops.object.select_all(action="DESELECT")
     for o in objs:
         o.select_set(True)
@@ -406,4 +411,5 @@ def main():
     print(f"[street_kit] {OUT}: {tris}")
 
 
-main()
+if __name__ == "__main__":
+    main()
