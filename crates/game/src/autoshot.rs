@@ -154,6 +154,11 @@ impl Plugin for AutoshotPlugin {
                     ("cp_park_air", v(-20.8, 55.0, 78.2), v(5.0, 0.0, -31.3)),
                     // Central Park's made hills: from above, from the lookout on the big one (at
                     // (-32.7, -104.2)), at its foot, and the rocky one (at (71.9, -36.2)).
+                    // An outer building's ground-floor hall (centred (57, 134)): from the street, and
+                    // inside.
+                    ("cp_hall_out", v(80.0, 1.8, 128.0), v(62.0, 2.6, 133.0)),
+                    ("cp_hall_in", v(52.0, 1.7, 134.0), v(70.0, 1.8, 134.0)),
+                    ("cp_hall_in2", v(57.0, 1.7, 128.0), v(57.0, 1.8, 145.0)),
                     ("cp_hills_air", v(70.0, 70.0, 50.0), v(-10.0, 0.0, -60.0)),
                     ("cp_hill_top", v(-30.0, 12.9, -101.0), v(40.0, 6.0, 10.0)),
                     ("cp_hill_foot", v(10.0, 1.8, -60.0), v(-32.7, 7.0, -104.2)),

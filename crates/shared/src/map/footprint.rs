@@ -84,6 +84,15 @@ pub fn solid(fp: &Footprint) -> (Vec<Vec3>, Vec<[u32; 3]>) {
         let (pa, pb, pc) = (pos[(k + a) as usize], pos[(k + b) as usize], pos[(k + c) as usize]);
         tris.push(if (pb - pa).cross(pc - pa).y >= 0.0 { [k + a, k + b, k + c] } else { [k + a, k + c, k + b] });
     }
+    // Standing on a hall (crate::map::delhi): its underside, the hall's ceiling, facing down.
+    if fp.base > 0.05 {
+        let k = pos.len() as u32;
+        pos.extend(pts.iter().map(|p| Vec3::new(p.x, fp.base, p.y)));
+        for [a, b, c] in triangulate(pts) {
+            let (pa, pb, pc) = (pos[(k + a) as usize], pos[(k + b) as usize], pos[(k + c) as usize]);
+            tris.push(if (pb - pa).cross(pc - pa).y <= 0.0 { [k + a, k + b, k + c] } else { [k + a, k + c, k + b] });
+        }
+    }
     (pos, tris)
 }
 

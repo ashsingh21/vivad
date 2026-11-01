@@ -618,9 +618,28 @@ fn build_footprints(
         // Trim mostly white; now and then the wall's own colour, deeper.
         let trim = if r(5) < 0.75 || !painted { lin(TRIM_WHITE) } else { lin(wall.map(|c| c * 0.78)) };
         let height = fp.top - fp.base;
+        // Standing on a hall (crate::map::delhi's real ground floor): no painted shops, the
+        // sunshade over the hall, windows from the first storey up, and a plaster ceiling under.
+        let raised = fp.base > 0.5;
         // A row of shops along the street when there's a storey to spare above them.
-        let shops = height > STOREY * 1.6 && r(3) < 0.8;
-        let split = (fp.base + STOREY).min(fp.top);
+        let shops = !raised && height > STOREY * 1.6 && r(3) < 0.8;
+        let split = if raised { fp.base } else { (fp.base + STOREY).min(fp.top) };
+        if raised {
+            let t = trims.entry((cx, cz)).or_default();
+            let ceiling = lin([0.86, 0.84, 0.80]);
+            for [i, j, k] in shared::map::footprint::triangulate(&fp.pts) {
+                let p = [fp.pts[i as usize], fp.pts[j as usize], fp.pts[k as usize]].map(|q| Vec3::new(q.x, fp.base, q.y));
+                let p = if (p[1] - p[0]).cross(p[2] - p[0]).y <= 0.0 { p } else { [p[0], p[2], p[1]] };
+                let base = t.pos.len() as u32;
+                for q in p {
+                    t.pos.push(q.to_array());
+                    t.nrm.push([0.0, -1.0, 0.0]);
+                    t.uv.push([q.x / 4.0, q.z / 4.0]);
+                    t.col.push(ceiling);
+                }
+                t.idx.extend_from_slice(&[base, base + 1, base + 2]);
+            }
+        }
         let n = fp.pts.len();
         let mut along = 0.0;
         let ccw = fp.pts.iter().zip(fp.pts.iter().cycle().skip(1)).map(|(a, b)| a.x * b.y - b.x * a.y).sum::<f32>() > 0.0;
@@ -693,7 +712,7 @@ fn build_footprints(
                 let storeys = ((fp.top - fp.base) / STOREY + 0.01).floor() as i32;
                 for bay in first..last {
                     let s = (bay as f32 + 0.5) * BAY - along;
-                    for st in 1..storeys {
+                    for st in (!raised as i32)..storeys {
                         let floor = fp.base + st as f32 * STOREY;
                         if floor < screened {
                             continue;

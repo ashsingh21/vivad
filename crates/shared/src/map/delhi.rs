@@ -17,7 +17,7 @@ use rand::rngs::SmallRng;
 use rand::{RngExt, SeedableRng};
 use serde::Deserialize;
 
-use super::build::{Builder, FLOOR_H, Frame};
+use super::build::{Builder, FLOOR_H, Frame, Opening};
 use super::terrain::{self, Pad, TerrainSpec, ground};
 use super::{ChestKind, Footprint, MapLayout, Mat, Poi, Prop};
 
@@ -491,6 +491,8 @@ fn footprints(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp
     let lived_in = matches!(id, super::MapId::Chandni | super::MapId::HauzKhas);
     let chest_odds = ((if lived_in { 60.0 } else { 110.0 }) / in_play.max(1) as f64).min(0.5);
     let mut entered = vec![];
+    let outlines: Vec<Vec<Vec2>> = data.buildings.iter().map(|b| b.pts.iter().map(v2).collect()).collect();
+    let mut halls = 0;
     for bld in &data.buildings {
         let pts: Vec<Vec2> = bld.pts.iter().map(v2).collect();
         let c = pts.iter().sum::<Vec2>() / pts.len() as f32;
@@ -524,7 +526,21 @@ fn footprints(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp
         // A kiosk or a guard hut mapped with a tall building's levels would stand as a thin
         // tower: anything under 4.5 m across is one storey.
         let top = if narrow(&pts) < 4.5 { bld.h.min(3.6) } else { bld.h };
-        b.map.footprints.push(Footprint { pts, base: bld.base.unwrap_or(0.0), top, mat });
+        let mut base = bld.base.unwrap_or(0.0);
+        // Most bigger buildings open at the street: a hall on the ground floor, the building's
+        // mass standing on it.
+        if base == 0.0
+            && halls < MAX_HALLS
+            && top >= HALL + 3.0
+            && narrow(&pts) >= 6.0
+            && c.abs().max_element() < HALF - 10.0
+            && !matches!(bld.kind.as_str(), "mosque" | "temple" | "ruins")
+        {
+            hall(b, rng, &pts, &outlines);
+            base = HALL;
+            halls += 1;
+        }
+        b.map.footprints.push(Footprint { pts, base, top, mat });
         // A chest at the foot of every other building inside the play area, on the pavement.
         if c.abs().max_element() < HALF - 8.0 && rng.random_bool(chest_odds) {
             let k = rng.random_range(0..bld.pts.len());
@@ -537,6 +553,133 @@ fn footprints(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp
         }
     }
     entered
+}
+
+/// The ground-floor hall's height, to the underside of the building above it.
+const HALL: f32 = 4.2;
+/// Halls a map, at most: each is a hundred-odd pieces.
+const MAX_HALLS: usize = 60;
+
+/// A building's ground floor as a hall to go into (the building's mass stands on it, from `HALL`
+/// up): rusticated stone walls along its outline, with arches and shop windows where it faces the
+/// street (blank where it backs onto a neighbour), a signboard over each; inside, a grid of
+/// columns, tube lights, counters and clutter to take cover behind, a chest and finds.
+fn hall(b: &mut Builder, rng: &mut SmallRng, pts: &[Vec2], others: &[Vec<Vec2>]) {
+    const T: f32 = 0.3;
+    let w = Frame::new(Vec3::ZERO, 0.0);
+    let n = pts.len();
+    let ccw = pts.iter().zip(pts.iter().cycle().skip(1)).map(|(a, b)| a.x * b.y - b.x * a.y).sum::<f32>() > 0.0;
+    let outward = |e: Vec2| if ccw { Vec2::new(e.y, -e.x) } else { Vec2::new(-e.y, e.x) }.normalize_or_zero();
+    // The wall's middle line: the outline moved in by half a wall and 5 cm (its face just inside
+    // the building's above, so the two never share a plane), mitred at the corners.
+    let inset = T * 0.5 + 0.05;
+    let normals: Vec<Vec2> = (0..n).map(|i| outward(pts[(i + 1) % n] - pts[i])).collect();
+    let line: Vec<Vec2> = (0..n)
+        .map(|i| {
+            let (n0, n1) = (normals[(i + n - 1) % n], normals[i]);
+            let m = (n0 + n1).normalize_or(n1);
+            pts[i] - m * (inset / m.dot(n1).max(0.5))
+        })
+        .collect();
+    let built = |p: Vec2| others.iter().any(|o| o[0].distance(p) < 150.0 && super::footprint::contains(o, p));
+    let c = pts.iter().sum::<Vec2>() / n as f32;
+    // Which sides face the street; with none (a building in a courtyard), its longest side does.
+    let side_len = |i: usize| pts[i].distance(pts[(i + 1) % n]);
+    let mut street: Vec<bool> = (0..n)
+        .map(|i| {
+            let mid = (pts[i] + pts[(i + 1) % n]) * 0.5;
+            !built(mid + normals[i] * 1.5) && !built(mid + normals[i] * 3.0)
+        })
+        .collect();
+    if !(0..n).any(|i| street[i] && side_len(i) > 3.4) {
+        let longest = (0..n).max_by(|&i, &j| side_len(i).total_cmp(&side_len(j))).unwrap_or(0);
+        street[longest] = true;
+    }
+    for i in 0..n {
+        let (a, q) = (line[i], line[(i + 1) % n]);
+        let len = a.distance(q);
+        if len < 0.05 {
+            continue;
+        }
+        let dir = (q - a) / len;
+        let out = normals[i];
+        // Run on past each end, so neighbouring walls overlap at the corners (no notch).
+        let (a, q) = (a - dir * (T * 0.5 + 0.015), q + dir * (T * 0.5 + 0.015));
+        let len = a.distance(q);
+        let mut ops = vec![];
+        if street[i] && len > 3.4 {
+            let k = ((len / 5.5).floor() as usize).max(1);
+            for j in 0..k {
+                let at = len * (j as f32 + 0.5) / k as f32;
+                let door = j % 2 == 0;
+                ops.push(if door { Opening::arch(at, 2.2, 3.1) } else { Opening { at, width: 2.4, bottom: 0.9, top: 3.0 } });
+                let p = a + dir * at;
+                let face = p + out * (T * 0.5 + 0.06);
+                b.map.signs.push(super::ShopSign { pos: Vec3::new(face.x, 3.62, face.y), facing: out, width: 2.6, height: 0.7, kind: super::SignKind::Board });
+                if !door {
+                    b.map.signs.push(super::ShopSign { pos: Vec3::new(p.x, 1.95, p.y), facing: out, width: 2.4, height: 2.1, kind: super::SignKind::Glass });
+                }
+            }
+        }
+        // Up into the building above, its top hidden there.
+        b.wall(w, a, q, 0.0, HALL + 0.1, T, Mat::Rustic, &ops);
+    }
+    // Inside: along the longest side's direction, a grid of square columns, wider apart in the
+    // bigger halls (about six across the hall's breadth, never under 8 m), and a tube light by
+    // every other one.
+    let (i, _) = (0..n).map(|i| (i, pts[i].distance(pts[(i + 1) % n]))).fold((0, 0.0), |m, (i, l)| if l > m.1 { (i, l) } else { m });
+    let u = (pts[(i + 1) % n] - pts[i]).normalize_or(Vec2::X);
+    let v = u.perp();
+    let clear = |p: Vec2, r: f32| super::footprint::contains(pts, p) && (0..n).all(|k| seg_dist(p, pts[k], pts[(k + 1) % n]) > r);
+    let (lo, hi) = pts.iter().fold((Vec2::MAX, Vec2::MIN), |(lo, hi), p| {
+        let l = Vec2::new((*p - c).dot(u), (*p - c).dot(v));
+        (lo.min(l), hi.max(l))
+    });
+    let grid = ((hi - lo).min_element() / 6.0).max(8.0);
+    let at = |x: f32, y: f32| c + u * x + v * y;
+    let yaw_u = (-u.y).atan2(u.x);
+    let mut free = vec![];
+    let mut x = lo.x + grid * 0.5;
+    let mut k = 0;
+    while x < hi.x - 1.0 {
+        let mut y = lo.y + grid * 0.5;
+        while y < hi.y - 1.0 {
+            let p = at(x, y);
+            if clear(p, 2.0) {
+                b.bx(Frame::new(Vec3::new(p.x, 0.0, p.y), yaw_u), Vec3::new(0.0, HALL * 0.5, 0.0), Vec3::new(0.6, HALL, 0.6), Mat::Stucco);
+                let l = at(x + grid * 0.5, y);
+                if k % 2 == 0 && clear(l, 1.0) {
+                    b.map.signs.push(super::ShopSign { pos: Vec3::new(l.x, HALL - 0.03, l.y), facing: v, width: 0.14, height: 1.2, kind: super::SignKind::Light });
+                }
+                let f = at(x + grid * 0.5, y + grid * 0.5);
+                if clear(f, 1.6) {
+                    free.push(f);
+                }
+                k += 1;
+            }
+            y += grid;
+        }
+        x += grid;
+    }
+    // A few things to take cover behind, not a warehouse of them.
+    while free.len() > 10 {
+        free.swap_remove(rng.random_range(0..free.len()));
+    }
+    // Between the columns: counters and clutter, one chest a hall, finds.
+    for (k, p) in free.iter().enumerate() {
+        match (k + rng.random_range(0..3)) % 4 {
+            0 => b.bx(Frame::new(Vec3::new(p.x, 0.0, p.y), yaw_u), Vec3::new(0.0, 0.5, 0.0), Vec3::new(2.4, 1.0, 0.8), Mat::Wood),
+            1 => super::kit::place(b, ["crates", "drum", "cooler", "chairs"][rng.random_range(0..4)], Vec3::new(p.x, 0.0, p.y), rng.random_range(0.0..std::f32::consts::TAU)),
+            2 => b.loot(w, Vec3::new(p.x, 0.3, p.y)),
+            _ => {}
+        }
+    }
+    if let Some(p) = free.get(rng.random_range(0..free.len().max(1))).or(free.first()) {
+        let p = *p + v * 1.2;
+        if clear(p, 1.0) {
+            b.chest(w, Vec3::new(p.x, 0.0, p.y), yaw_u, ChestKind::Peti);
+        }
+    }
 }
 
 /// About how wide an outline is across its narrow side: the short side of the rectangle with its
