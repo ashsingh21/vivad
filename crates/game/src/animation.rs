@@ -82,9 +82,7 @@ impl AnimSet {
     /// `name` in the held weapon's set (`prefix`: "rifle_", "pistol_" or none) where the file has
     /// it, a pistol's sprint and crouch falling back to its run and the plain crouch.
     fn pick(&self, prefix: &str, name: &'static str) -> &'static str {
-        // A pistol is carried low on the run, the arms swinging (the pack's runs hold it up at the
-        // chest, a tactical jog that reads stiff): it comes up to aim or fire (the pistol_aim layer).
-        if prefix.is_empty() || (prefix == "pistol_" && (name.starts_with("run_") || name.starts_with("sprint_"))) {
+        if prefix.is_empty() {
             return name;
         }
         let want = format!("{prefix}{name}");

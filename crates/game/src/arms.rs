@@ -167,8 +167,8 @@ fn segment(a: Vec3, b: Vec3) -> Transform {
 
 /// Stand raised bows upright with their backs to the aim, blending from the plain grip by the draw
 /// clip's weight; point guns the way they're held whatever the wrist does: raised, along the aim;
-/// carried, a long gun from the right hand toward the left (both hands on it), a pistol low and
-/// forward. Runs after transform propagation and rewrites the weapon's and its socket's global
+/// carried, a long gun from the right hand toward the left (both hands on it), a pistol along
+/// the forearm. Runs after transform propagation and rewrites the weapon's and its socket's global
 /// transforms for this frame (their local transforms keep the grip).
 #[allow(clippy::type_complexity)]
 fn orient_bows(
@@ -194,15 +194,19 @@ fn orient_bows(
         let held = hand_g.mul_transform(grip);
         let aim = intent.aim_dir();
         let ahead = aim.with_y(0.0).normalize_or(Vec3::NEG_Z);
-        // Carried: a long gun along the hands (right toward left), a pistol low and forward.
-        let carry = if long {
-            tf.get(body.hand_l)
-                .map(|(_, l)| (l.translation() - hand_g.translation()).normalize_or(ahead))
+        // Carried: a long gun along the hands (right toward left), a pistol along the forearm
+        // (elbow to wrist, the way a held pistol points), never back past the side.
+        let along = |other: Entity, sign: f32| {
+            tf.get(other)
+                .map(|(_, g)| ((g.translation() - hand_g.translation()) * sign).normalize_or(ahead))
                 .ok()
                 .filter(|d| d.dot(ahead) > 0.2)
                 .unwrap_or(ahead)
+        };
+        let carry = if long {
+            along(body.hand_l, 1.0)
         } else {
-            (ahead - Vec3::Y * 0.6).normalize()
+            parents.get(hand).map(|p| along(p.parent(), -1.0)).unwrap_or(ahead)
         };
         let f = if gun { carry.lerp(aim, w).normalize_or(aim) } else { aim };
         let (raise, cant) = if gun { (1.0, if long { 0.0 } else { CANT * w }) } else { (w, CANT) };

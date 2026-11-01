@@ -66,6 +66,8 @@ enum Use {
     Hold,
     /// One press of fire, shot mid-swing.
     Strike,
+    /// Carried at a run, on the spot (a treadmill: the run is pinned back each tick).
+    Run,
 }
 
 #[derive(Clone, Copy)]
@@ -99,6 +101,7 @@ impl Armoury {
             Use::Aim => "aim",
             Use::Hold => "hold",
             Use::Strike => "strike",
+            Use::Run => "run",
         };
         let view = match p.view {
             View::Front => "front",
@@ -236,15 +239,20 @@ impl Plugin for AutoshotPlugin {
                 p("bat", Use::Carry, View::Front, 0.0),
                 p("bat", Use::Strike, View::Front, 0.0),
                 p("bat", Use::Strike, View::Side, 0.0),
+                p("bat", Use::Run, View::Side, 0.0),
                 p("tamancha", Use::Carry, View::Front, 0.0),
+                p("tamancha", Use::Run, View::Side, 0.0),
+                p("tamancha", Use::Run, View::Front, 0.0),
                 p("tamancha", Use::Aim, View::Front, 0.0),
                 p("tamancha", Use::Aim, View::Side, 0.0),
                 p("tamancha", Use::Aim, View::Back, 0.0),
                 p("tamancha", Use::Aim, View::Side, 0.5),
                 p("katta", Use::Carry, View::Front, 0.0),
+                p("katta", Use::Run, View::Side, 0.0),
                 p("katta", Use::Aim, View::Side, 0.0),
                 p("katta", Use::Aim, View::Back, 0.0),
                 p("dunali", Use::Carry, View::Side, 0.0),
+                p("dunali", Use::Run, View::Side, 0.0),
                 p("dunali", Use::Aim, View::Side, 0.0),
                 p("gulel", Use::Hold, View::Side, 0.0),
                 p("gulel", Use::Hold, View::Front, -0.4),
@@ -435,9 +443,11 @@ fn armoury_actor(
     });
     tf.translation = spot;
     kin.mode = MoveMode::Ground;
-    kin.velocity = Vec3::ZERO;
     health.hp = 40.0;
     let Some(pose) = arm.poses.get(arm.index).copied() else { return };
+    if pose.state != Use::Run {
+        kin.velocity = Vec3::ZERO;
+    }
     let t = arm.t;
     let def = db.get(pose.item);
     let stack = |count| Some(ItemStack { id: pose.item.into(), rarity: Rarity::Epic, count });
@@ -453,7 +463,7 @@ fn armoury_actor(
             inv.selected = 1;
         }
     }
-    if pose.state == Use::Carry {
+    if matches!(pose.state, Use::Carry | Use::Run) {
         act.since_attack = act.since_attack.max(5.0);
     }
     intent.yaw = 0.0;
@@ -479,10 +489,10 @@ fn armoury_actor(
             }
         }
     }
-    intent.move_axis = Vec2::ZERO;
+    intent.move_axis = if pose.state == Use::Run { Vec2::Y } else { Vec2::ZERO };
     intent.select = None;
     intent.held = match pose.state {
-        Use::Carry => 0,
+        Use::Carry | Use::Run => 0,
         Use::Aim => btn::AIM,
         Use::Hold => btn::FIRE | btn::AIM,
         Use::Strike => if t >= STRIKE_AT { btn::FIRE } else { 0 },
