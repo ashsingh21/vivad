@@ -41,15 +41,19 @@ struct TexSet {
     normal: Handle<Image>,
 }
 
+/// A texture set under assets/textures/: `name` is its folder and prefix, e.g. "india/plaster".
 fn load_set(assets: &AssetServer, pending: &mut PendingMips, name: &str) -> TexSet {
-    let base = assets.load(format!("textures/india/{name}_basecolor.png"));
-    let normal = assets
-        .load_builder()
-        .with_settings(|s: &mut ImageLoaderSettings| s.is_srgb = false)
-        .load(format!("textures/india/{name}_normal.png"));
+    let base = assets.load(format!("textures/{name}_basecolor.png"));
+    let normal = load_linear(assets, pending, &format!("textures/{name}_normal.png"));
     pending.0.push(base.clone());
-    pending.0.push(normal.clone());
     TexSet { base, normal }
+}
+
+/// A texture of data rather than colour (normals, roughness and metal): read as linear.
+fn load_linear(assets: &AssetServer, pending: &mut PendingMips, path: &str) -> Handle<Image> {
+    let h = assets.load_builder().with_settings(|s: &mut ImageLoaderSettings| s.is_srgb = false).load(path.to_string());
+    pending.0.push(h.clone());
+    h
 }
 
 /// Which blocks the batcher draws (doors are dynamic and drawn per entity).
@@ -124,7 +128,10 @@ impl MeshBuf {
         for (n, u, v) in [(Vec3::X, Vec3::NEG_Z, Vec3::Y), (Vec3::NEG_X, Vec3::Z, Vec3::Y), (Vec3::Y, Vec3::X, Vec3::NEG_Z), (Vec3::NEG_Y, Vec3::X, Vec3::Z), (Vec3::Z, Vec3::X, Vec3::Y), (Vec3::NEG_Z, Vec3::NEG_X, Vec3::Y)] {
             let (cn, eu, ev) = (n * h, u * u.abs().dot(h), v * v.abs().dot(h));
             let p = [cn - eu - ev, cn + eu - ev, cn + eu + ev, cn - eu + ev].map(|q| c + rot * q);
-            self.quad_col(p, rot * n, [Vec2::ZERO; 4], [col; 4]);
+            // Metric, from the face's own axes, so a tiling texture lines up along a run of them.
+            let (wu, wv) = (rot * u, rot * v);
+            let uv = p.map(|q| Vec2::new(q.dot(wu), -q.dot(wv)) / TILE);
+            self.quad_col(p, rot * n, uv, [col; 4]);
         }
     }
 
@@ -144,6 +151,9 @@ impl MeshBuf {
         // The cross-section as (z, y), anticlockwise from the +z face's foot.
         let sec = [(a, -b + e), (a, b - e), (a - e, b), (-a + e, b), (-a, b - e), (-a, -b + e), (-a + e, -b), (a - e, -b)];
         let at = |x: f32, (z, y): (f32, f32)| c + rot * Vec3::new(x, y, z);
+        // Metric UVs: along the bar, and round its section.
+        let x0 = c.dot(rot * Vec3::X);
+        let mut round = 0.0;
         for k in 0..8 {
             let (s0, s1) = (sec[k], sec[(k + 1) % 8]);
             let n = rot * Vec3::new(0.0, -(s1.0 - s0.0), s1.1 - s0.1).normalize();
@@ -152,14 +162,17 @@ impl MeshBuf {
             // Warmed a touch as it darkens: lit only by the blue sky, it would read as blue paint.
             let w = 1.0 - k;
             let c = [col[0] * k * (1.0 + 0.3 * w), col[1] * k, col[2] * k * (1.0 - 0.4 * w), col[3]];
-            self.quad_col([at(-l, s0), at(l, s0), at(l, s1), at(-l, s1)], n, [Vec2::ZERO; 4], [c; 4]);
+            let step = Vec2::new(s1.0 - s0.0, s1.1 - s0.1).length();
+            let (ua, ub, va, vb) = ((x0 - l) / TILE, (x0 + l) / TILE, round / TILE, (round + step) / TILE);
+            round += step;
+            self.quad_col([at(-l, s0), at(l, s0), at(l, s1), at(-l, s1)], n, [Vec2::new(ua, va), Vec2::new(ub, va), Vec2::new(ub, vb), Vec2::new(ua, vb)], [c; 4]);
         }
         for (x, n) in [(l, Vec3::X), (-l, Vec3::NEG_X)] {
             let base = self.pos.len() as u32;
             for q in sec {
                 self.pos.push(at(x, q).to_array());
                 self.nrm.push((rot * n).to_array());
-                self.uv.push([0.0, 0.0]);
+                self.uv.push([q.0 / TILE, -q.1 / TILE]);
                 self.col.push(col);
             }
             for k in 1..7u32 {
@@ -400,7 +413,8 @@ fn image_from(w: usize, h: usize, px: impl Fn(usize, usize) -> [f32; 3]) -> Imag
                TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::default())
 }
 
-/// The upper storeys: two bays by two storeys, each window different (plain, shuttered, with an AC
+/// A small painted stand-in for the facade texture (tools/textures/city.py), for the distant skyline:
+/// two bays by two storeys, each window different (plain, shuttered, with an AC
 /// unit under it, behind a balcony rail), with rain stains running down from the sills. Near-white,
 /// tinted per material and per building.
 pub(crate) fn facade_image() -> Image {
@@ -455,42 +469,6 @@ pub(crate) fn facade_image() -> Image {
     })
 }
 
-/// The ground storey: two bays of shopfront under a beam, one shuttered, one open onto shelves.
-fn shop_image() -> Image {
-    let n = 128usize;
-    image_from(2 * n, n, |x, y| {
-        let bay = x / n;
-        let (u, v) = ((x % n) as f32 / n as f32, y as f32 / n as f32);
-        let grain = 0.94 + 0.06 * hash01(x as u32 / 3, y as u32 / 3, 7);
-        // Piers between shops, and the beam the signboards hang on.
-        if !(0.06..0.94).contains(&u) || v < 0.20 {
-            let dirt = if v > 0.8 { 0.75 + 0.25 * (1.0 - (v - 0.8) / 0.2) } else { 1.0 };
-            return [0.86 * grain * dirt, 0.84 * grain * dirt, 0.80 * grain * dirt];
-        }
-        if bay == 0 {
-            // A rolling shutter: ribbed grey steel, rustier toward the bottom.
-            let rib = if (y % 4) == 0 { 0.72 } else { 1.0 };
-            let rust = ((v - 0.2) / 0.8).max(0.0);
-            [(0.58 + 0.10 * rust) * rib * grain, (0.58 - 0.05 * rust) * rib * grain, (0.58 - 0.12 * rust) * rib * grain]
-        } else {
-            // An open shop: dark inside, shelves of goods in every colour.
-            let shelf = ((v - 0.20) / 0.80 * 4.0).fract();
-            if shelf < 0.08 {
-                return [0.35, 0.28, 0.22];
-            }
-            if shelf > 0.35 && v < 0.85 {
-                let item = hash01(x as u32 / 6, (((v - 0.20) / 0.80) * 4.0) as u32, 3);
-                let c = [[0.75, 0.20, 0.18], [0.90, 0.70, 0.20], [0.20, 0.45, 0.70], [0.85, 0.85, 0.80], [0.25, 0.55, 0.30]][(item * 4.99) as usize];
-                let gap = (x % 6) == 0;
-                if !gap {
-                    return c.map(|k| k * 0.6);
-                }
-            }
-            [0.10, 0.09, 0.08]
-        }
-    })
-}
-
 /// A sagging cable from `a` to `b`: a thin square tube in a few straight pieces.
 fn wire(buf: &mut MeshBuf, a: Vec3, b: Vec3, sag: f32) {
     let col = [0.02, 0.02, 0.02, 1.0];
@@ -524,25 +502,25 @@ fn bunting(buf: &mut MeshBuf, a: Vec3, b: Vec3, sag: f32, seed: u32) {
 }
 
 /// A city map's buildings (MapLayout::footprints), merged per chunk and material: walls in the
-/// facade, roofs in plain plaster.
-#[allow(clippy::too_many_arguments)]
+/// facade, roofs and trim in plaster.
 fn build_footprints(
     commands: &mut Commands,
     layout: &MapLayout,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
-    images: &mut Assets<Image>,
+    assets: &AssetServer,
     pending: &mut PendingMips,
     roof: Handle<StandardMaterial>,
-    signs_tex: Handle<Image>,
 ) {
     if layout.footprints.is_empty() {
         return;
     }
-    let facade = images.add(facade_image());
-    let shopfront = images.add(shop_image());
-    pending.0.push(facade.clone());
-    pending.0.push(shopfront.clone());
+    // The facades' painted relief (tools/textures/city.py): colour, normals, and roughness and metal
+    // so glass and steel catch the sun.
+    let facade = (load_set(assets, pending, "panga/facade"), load_linear(assets, pending, "textures/panga/facade_mr.png"));
+    let shopfront = (load_set(assets, pending, "panga/shop"), load_linear(assets, pending, "textures/panga/shop_mr.png"));
+    let signs_tex: Handle<Image> = assets.load("textures/panga/signs.png");
+    pending.0.push(signs_tex.clone());
     // Where buildings stand, a metre a cell: whether a wall faces the street or a neighbour, and
     // how far across the lane the building opposite is.
     let span = layout.terrain.size.max(2.0 * layout.half_extent);
@@ -676,7 +654,7 @@ fn build_footprints(
                 }
             }
             // Sills and lintels at each window of the upper storeys, where they can be seen,
-            // where the window texture puts them (crate::buildings::facade_image): a window a bay,
+            // where the window texture puts them (tools/textures/city.py): a window a bay,
             // its sill 0.75-0.92 m up a storey, its head at 2.9-3.06 m; the balcony's opening goes
             // down to a slab at 0.62 m.
             if fp.top > screened + STOREY {
@@ -843,10 +821,21 @@ fn build_footprints(
     }
     let mut facade_mats: HashMap<(Mat, bool), Handle<StandardMaterial>> = HashMap::new();
     for ((_, _, mat, shop), buf) in walls {
-        let texture = if shop { shopfront.clone() } else { facade.clone() };
+        let (set, mr) = if shop { &shopfront } else { &facade };
         let m = facade_mats
             .entry((mat, shop))
-            .or_insert_with(|| materials.add(StandardMaterial { base_color: if matches!(mat, Mat::Brick | Mat::RedSandstone | Mat::Sandstone) { tint(mat) } else { Color::WHITE }, base_color_texture: Some(texture), perceptual_roughness: 0.85, ..default() }))
+            .or_insert_with(|| {
+                materials.add(StandardMaterial {
+                    base_color: if matches!(mat, Mat::Brick | Mat::RedSandstone | Mat::Sandstone) { tint(mat) } else { Color::WHITE },
+                    base_color_texture: Some(set.base.clone()),
+                    normal_map_texture: Some(set.normal.clone()),
+                    metallic_roughness_texture: Some(mr.clone()),
+                    // Both scaled by the texture's.
+                    perceptual_roughness: 1.0,
+                    metallic: 1.0,
+                    ..default()
+                })
+            })
             .clone();
         let (mesh, centre) = buf.into_mesh();
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(m), Transform::from_translation(centre), OfMap));
@@ -872,7 +861,7 @@ fn build_footprints(
     for (_, buf) in trims {
         trim_tris += buf.idx.len() / 3;
         let (mesh, centre) = buf.into_mesh();
-        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(plain.clone()), Transform::from_translation(centre), OfMap));
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(roof.clone()), Transform::from_translation(centre), OfMap));
     }
     info!("city: trim {trim_tris} triangles");
     for (_, buf) in roofs {
@@ -899,12 +888,11 @@ fn build_chunks(
     assets: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut images: ResMut<Assets<Image>>,
 ) {
     let mut pending = PendingMips::default();
     let mut sets = HashMap::new();
     for name in ["sandstone", "plaster", "brick", "granite", "wood", "thatch"] {
-        sets.insert(name, load_set(&assets, &mut pending, name));
+        sets.insert(name, load_set(&assets, &mut pending, &format!("india/{name}")));
     }
     let mut groups: HashMap<(i32, i32, Mat, bool), MeshBuf> = HashMap::new();
     for b in layout.blocks.iter().filter(|b| is_static_visual(b)) {
@@ -950,9 +938,7 @@ fn build_chunks(
         }
     }
     let roof = mat_cache.entry(Mat::Plaster).or_insert_with(|| material_for(Mat::Plaster, &sets, &mut materials)).clone();
-    let signs_tex = assets.load("textures/panga/signs.png");
-    pending.0.push(signs_tex.clone());
-    build_footprints(&mut commands, &layout, &mut meshes, &mut materials, &mut images, &mut pending, roof, signs_tex);
+    build_footprints(&mut commands, &layout, &mut meshes, &mut materials, &assets, &mut pending, roof);
     info!("architecture: {} static blocks merged into {} chunk meshes", layout.blocks.iter().filter(|b| is_static_visual(b)).count(), n);
     commands.insert_resource(pending);
 }

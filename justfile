@@ -34,6 +34,10 @@ jugaad:
 street-kit:
     {{blender}} -b --factory-startup -P tools/blender/props/street_kit.py 2>&1 | grep -E '^\[|Error|Traceback' || true
 
+# The city facade and shopfront textures: colour, normal, roughness/metal (numpy, no Blender).
+city-textures:
+    python3 tools/textures/city.py
+
 figures:
     {{blender}} -b -P tools/blender/architecture/figures.py 2>&1 | grep -E '^\[|Error|Traceback' || true
 
