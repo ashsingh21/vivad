@@ -7,7 +7,8 @@
 //!
 //! The 3D view renders into an image no taller than the level allows and is stretched over the
 //! window, so a Retina screen doesn't shade four pixels for every one a 1080p screen does; the HUD
-//! is drawn over it at full resolution.
+//! is drawn over it at full resolution. Sustained slow frames take a sixth off those rows
+//! (`RowsGovernor`).
 
 use bevy::anti_alias::contrast_adaptive_sharpening::ContrastAdaptiveSharpening;
 use bevy::anti_alias::fxaa::Fxaa;
@@ -64,6 +65,8 @@ impl Quality {
     /// The ambient occlusion setting (None: off).
     fn ssao(self) -> Option<ScreenSpaceAmbientOcclusion> {
         match self {
+            // Measured on an M4 on the NCR's Karol Bagh, Low samples at Ultra's radius: 3 to 12 ms a
+            // frame, most of it the normal prepass it brings, so not on Medium.
             Quality::Low | Quality::Medium => None,
             Quality::High => Some(ScreenSpaceAmbientOcclusion { radius: 0.6, ..default() }),
             // Medium: Ultra's samples cost an M4 about 3 ms a frame for little that shows at this radius.
@@ -98,9 +101,9 @@ impl Quality {
         }
     }
 
-    /// The far plane from the air, where the haze can thin out and the whole city shows.
-    fn far_plane_aloft(self, big_map: bool) -> f32 {
-        if big_map { self.far_plane(big_map).max(4000.0) } else { self.far_plane(big_map) }
+    /// The far plane from the air on a big map, where the haze can thin out and the city shows.
+    fn far_plane_aloft(self) -> f32 {
+        if self == Quality::Low { 2600.0 } else { 4000.0 }
     }
 
     /// TAA needs the depth and motion prepass; Low does without it and uses FXAA.
@@ -179,6 +182,70 @@ pub struct LodShadow;
 #[derive(Resource)]
 pub struct LodScale(pub f32);
 
+/// The safety net under a slow street: from Medium up, a sustained slow frame takes the 3D view down
+/// a sixth of its rows, which sheds a third of its pixels, and steady frames bring them back. Only
+/// in real play: VIVAD_ROWS, VIVAD_TOUR and VIVAD_NO_VSYNC (which every measurement uses) leave it
+/// off, so that numbers mean what they say.
+#[derive(Resource)]
+struct RowsGovernor {
+    /// Whether the rows are cut.
+    cut: bool,
+    /// Seconds of slow frames, or of steady ones.
+    run: f32,
+    /// Seconds of steady frames it takes to try the full rows again: doubles on each failure.
+    patience: f32,
+    /// Seconds since the rows came back.
+    since_back: f32,
+    /// The running mean of the frame time, seconds.
+    mean: f32,
+    on: bool,
+}
+
+impl Default for RowsGovernor {
+    fn default() -> Self {
+        let off = ["VIVAD_ROWS", "VIVAD_TOUR", "VIVAD_NO_VSYNC"].iter().any(|k| std::env::var(k).is_ok());
+        Self { cut: false, run: 0.0, patience: RowsGovernor::PATIENCE, since_back: 1e6, mean: 1.0 / 60.0, on: !off }
+    }
+}
+
+impl RowsGovernor {
+    /// Frame times that count as slow and as steady (a 60 Hz display's, a touch under), seconds.
+    const SLOW: f32 = 1.0 / 48.0;
+    const STEADY: f32 = 1.0 / 57.0;
+    /// Seconds of slow frames that cut the rows.
+    const CUT_AFTER: f32 = 3.0;
+    /// Seconds of steady frames before trying the full rows, at first and at the most.
+    const PATIENCE: f32 = 20.0;
+    const MOST: f32 = 160.0;
+    /// Coming back and going slow again within this many seconds counts as a failure.
+    const TRIAL: f32 = 12.0;
+
+    /// One frame of `dt` seconds. True when the rows change.
+    fn step(&mut self, dt: f32) -> bool {
+        // A hitch is something loading, not the level's cost.
+        if dt > 0.1 {
+            return false;
+        }
+        self.mean += (dt - self.mean) * (dt * 2.0).min(1.0);
+        self.since_back += dt;
+        if self.cut {
+            self.run = if self.mean < Self::STEADY { self.run + dt } else { 0.0 };
+            if self.run >= self.patience {
+                (self.cut, self.run, self.since_back) = (false, 0.0, 0.0);
+                return true;
+            }
+        } else {
+            self.run = if self.mean > Self::SLOW { self.run + dt } else { 0.0 };
+            if self.run >= Self::CUT_AFTER {
+                self.patience = if self.since_back < Self::TRIAL { (self.patience * 2.0).min(Self::MOST) } else { Self::PATIENCE };
+                (self.cut, self.run) = (true, 0.0);
+                return true;
+            }
+        }
+        false
+    }
+}
+
 /// Window points per pixel of the 3D view's image, for placing HUD marks over world positions.
 #[derive(Resource)]
 pub struct ViewScale(pub f32);
@@ -210,7 +277,7 @@ impl Plugin for QualityPlugin {
             .and_then(|q| web_sys::UrlSearchParams::new_with_str(&q).ok()?.get("quality"))
             .and_then(|s| Quality::parse(&s));
         let first = forced.unwrap_or(Quality::High);
-        app.insert_resource(first).insert_resource(ViewScale(1.0)).insert_resource(LodScale(first.lod_scale()));
+        app.insert_resource(first).insert_resource(ViewScale(1.0)).insert_resource(LodScale(first.lod_scale())).init_resource::<RowsGovernor>();
         if forced.is_none() {
             app.insert_resource(Undecided);
         }
@@ -336,6 +403,8 @@ fn spawn_view(mut commands: Commands, mut images: ResMut<Assets<Image>>, cam: Qu
 #[allow(clippy::too_many_arguments)]
 fn fit_view(
     q: Res<Quality>,
+    time: Res<Time<Real>>,
+    mut governor: ResMut<RowsGovernor>,
     layout: Res<shared::map::MapLayout>,
     window: Query<&Window, With<PrimaryWindow>>,
     mut view: ResMut<View3d>,
@@ -346,7 +415,11 @@ fn fit_view(
 ) {
     let Ok(w) = window.single() else { return };
     let full = w.physical_size().max(UVec2::ONE);
-    let rows = std::env::var("VIVAD_ROWS").ok().and_then(|s| s.parse().ok()).or(q.max_rows(is_big(&layout))).map_or(full.y, |m: u32| m.min(full.y));
+    if governor.on && *q != Quality::Low && governor.step(time.delta_secs()) {
+        info!("3D view at {} of its rows", if governor.cut { "five sixths" } else { "all" });
+    }
+    let level_rows = q.max_rows(is_big(&layout)).map(|m| if governor.cut { m / 6 * 5 } else { m });
+    let rows = std::env::var("VIVAD_ROWS").ok().and_then(|s| s.parse().ok()).or(level_rows).map_or(full.y, |m: u32| m.min(full.y));
     let size = UVec2::new(((full.x as u64 * rows as u64) / full.y as u64).max(1) as u32, rows);
     scale.0 = w.width() / size.x as f32;
     if size == view.size {
@@ -467,7 +540,7 @@ fn haze_by_height(q: Res<Quality>, layout: Res<shared::map::MapLayout>, mut cam:
     let Ok((at, mut projection, fog)) = cam.single_mut() else { return };
     let Projection::Perspective(p) = projection.as_mut() else { return };
     let t = ((at.translation().y - THINS.0) / (THINS.1 - THINS.0)).clamp(0.0, 1.0);
-    let far = q.far_plane(true).lerp(q.far_plane_aloft(true), t * t * (3.0 - 2.0 * t));
+    let far = q.far_plane(true).lerp(q.far_plane_aloft(), t * t * (3.0 - 2.0 * t));
     if (far - p.far).abs() < 0.5 {
         return;
     }
@@ -564,4 +637,63 @@ pub fn entity_report(
         all.iter().count(), meshes.iter().count(), pickups.iter().count(), chests.iter().count(), targets.iter().count(),
         blocks.iter().count(), colliders.iter().count(), changed.iter().count()
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(g: &mut RowsGovernor, fps: f32, seconds: f32) -> u32 {
+        let dt = 1.0 / fps;
+        (0..(seconds * fps) as u32).filter(|_| g.step(dt)).count() as u32
+    }
+
+    fn governor() -> RowsGovernor {
+        RowsGovernor { on: true, ..default() }
+    }
+
+    #[test]
+    fn slow_frames_cut_the_rows_and_steady_ones_bring_them_back() {
+        let mut g = governor();
+        run(&mut g, 60.0, 30.0);
+        assert!(!g.cut, "steady frames leave the rows alone");
+        run(&mut g, 40.0, 6.0);
+        assert!(g.cut, "sustained slow frames cut them");
+        run(&mut g, 60.0, RowsGovernor::PATIENCE + 2.0);
+        assert!(!g.cut, "steady frames bring them back");
+    }
+
+    #[test]
+    fn a_short_slow_patch_changes_nothing() {
+        let mut g = governor();
+        run(&mut g, 60.0, 5.0);
+        run(&mut g, 40.0, 1.0);
+        run(&mut g, 60.0, 5.0);
+        assert!(!g.cut);
+    }
+
+    #[test]
+    fn a_street_that_stays_slow_doesnt_flip_back_and_forth() {
+        let mut g = governor();
+        run(&mut g, 40.0, 6.0);
+        let first = g.patience;
+        // Fine at the cut rows, slow at the full ones: each trial waits longer than the last.
+        for _ in 0..3 {
+            let wait = g.patience + 2.0;
+            run(&mut g, 60.0, wait);
+            assert!(!g.cut);
+            run(&mut g, 40.0, 6.0);
+            assert!(g.cut);
+        }
+        assert!(g.patience > first * 4.0, "patience {}", g.patience);
+    }
+
+    #[test]
+    fn a_hitch_is_not_a_slow_frame() {
+        let mut g = governor();
+        for _ in 0..200 {
+            g.step(0.5);
+        }
+        assert!(!g.cut);
+    }
 }
