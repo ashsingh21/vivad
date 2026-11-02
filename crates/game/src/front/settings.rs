@@ -38,6 +38,10 @@ impl Default for Saved {
 /// Today, as a count of days. The day turns at midnight in Delhi.
 pub fn today() -> u64 {
     const IST: u64 = 19_800;
+    // The browser has no clock this way, and no file to outlast the day.
+    if cfg!(target_arch = "wasm32") {
+        return 0;
+    }
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     (now + IST) / 86_400
 }
