@@ -45,7 +45,7 @@ const DRY_MEAN: vec3<f32> = vec3<f32>(0.2530, 0.1960, 0.1128);
 const TURF_MEAN: vec3<f32> = vec3<f32>(0.0783, 0.1065, 0.0301);
 const BARE_MEAN: vec3<f32> = vec3<f32>(0.2429, 0.2049, 0.1473);
 const KERB_MEAN: vec3<f32> = vec3<f32>(0.3185, 0.3013, 0.2633);
-const DUST_MEAN: vec3<f32> = vec3<f32>(0.2140, 0.1789, 0.1329);
+const DUST_MEAN: vec3<f32> = vec3<f32>(0.1873, 0.1706, 0.1400);
 
 // How much each surface reflects, Bevy's 0 to 1 (0.5 is 4 %). Grass and dry earth hardly do: at the
 // default a low sun laid a milky sheen over the land.
@@ -127,7 +127,7 @@ fn fragment(vertex_output: VertexOutput, @builtin(front_facing) is_front: bool) 
         let spread = 0.12 + 0.38 * smoothstep(0.01, 0.12, foot);
         let t = smoothstep(0.5 - spread, 0.5 + spread, green * 1.5 - 0.25 + (orm.b - 0.5) * 0.35 + (broad - 0.5) * 0.65);
         if (t < 0.996) {
-            add_surface(&sum, w.z * (1.0 - t), mix(vec3<f32>(1.0), mix(DRY_MEAN, BARE_MEAN, bare), own), 1.0 - 0.65 * bare, dry_color, dry_normal, orm, p, dx, dy, DRY_TILE);
+            add_surface(&sum, w.z * (1.0 - t), mix(vec3<f32>(1.0), mix(DRY_MEAN, BARE_MEAN, bare), own), 1.0 - 0.45 * bare, dry_color, dry_normal, orm, p, dx, dy, DRY_TILE);
         }
         if (t > 0.004) {
             add_surface(&sum, w.z * t, mix(vec3<f32>(1.0), TURF_MEAN, own), 1.0, turf_color, turf_normal, tiled(turf_orm, p, dx, dy, TURF_TILE), p, dx, dy, TURF_TILE);
@@ -145,7 +145,7 @@ fn fragment(vertex_output: VertexOutput, @builtin(front_facing) is_front: bool) 
         // Dust along every road's edge, thicker in drifts; the gutter only under a kerb.
         let inside = saturate(e / max(aa, 0.03));
         sum.color *= 1.0 - 0.42 * inside * at_pavement * (1.0 - smoothstep(0.02, 0.5, e));
-        let dust = inside * (1.0 - smoothstep(0.1, 3.0, e)) * (0.5 + 0.34 * wander);
+        let dust = inside * (1.0 - smoothstep(0.1, 1.5, e)) * (0.34 + 0.24 * wander);
         sum.color = mix(sum.color, mix(sum.color, 0.5 * DUST_MEAN, own), saturate(dust));
         // A stone every 75 cm or so, each its own shade.
         let stone = fract(sin(dot(floor(p / 0.75), vec2<f32>(12.9898, 78.233))) * 43758.5453);

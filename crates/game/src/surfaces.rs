@@ -465,7 +465,65 @@ fn surface_edges(t: &Terrain) -> Vec<[f32; 3]> {
             }
         }
     }
-    blurred(&near, n)
+    let edges = blurred(&near, n);
+    along_edges(&edges, &blurred(&blurred(&edges, n), n), n)
+}
+
+/// What's left of the grid's stairs is a slow ripple along an edge, on a road a few degrees off the
+/// grid, too long for a blur. So each sample walks along the edge it is near, by the slope of
+/// `guide`, a smoother copy of `field`, and takes the mean of what it meets: an edge's ripple
+/// averages out, and a curve is followed round. The walks run 20 m each way on a big map.
+fn along_edges(field: &[[f32; 3]], guide: &[[f32; 3]], n: usize) -> Vec<[f32; 3]> {
+    const STEPS: usize = 10;
+    // Distances of interest: a kerb's and a gutter's widths are well inside this, in metres.
+    const NEAR: f32 = 2.4;
+    let inside = |p: Vec2| p.x >= 1.0 && p.y >= 1.0 && p.x + 2.0 < n as f32 && p.y + 2.0 < n as f32;
+    let at = |f: &[[f32; 3]], i: usize, j: usize, s: usize| f[j * n + i][s];
+    let slope = |p: Vec2, s: usize| {
+        let (i, j) = (p.x.round() as usize, p.y.round() as usize);
+        Vec2::new(at(guide, i + 1, j, s) - at(guide, i - 1, j, s), at(guide, i, j + 1, s) - at(guide, i, j - 1, s)).normalize_or_zero()
+    };
+    let sample = |p: Vec2, s: usize| {
+        let (i, j) = (p.x as usize, p.y as usize);
+        let (fx, fz) = (p.x.fract(), p.y.fract());
+        let near = at(field, i, j, s) * (1.0 - fx) + at(field, i + 1, j, s) * fx;
+        let far = at(field, i, j + 1, s) * (1.0 - fx) + at(field, i + 1, j + 1, s) * fx;
+        near * (1.0 - fz) + far * fz
+    };
+    let mut out = field.to_vec();
+    out.par_chunk_map_mut(ComputeTaskPool::get(), n, |j, row| {
+        for (i, cell) in row.iter_mut().enumerate() {
+            let start = Vec2::new(i as f32, j as f32);
+            if !inside(start) {
+                continue;
+            }
+            for s in 0..3 {
+                if field[j * n + i][s].abs() > NEAR {
+                    continue;
+                }
+                let (mut sum, mut total) = (field[j * n + i][s], 1.0);
+                for way in [1.0, -1.0] {
+                    let (mut p, mut last) = (start, Vec2::ZERO);
+                    for k in 1..=STEPS {
+                        let mut along = slope(p, s).perp() * way;
+                        if along.dot(last) < 0.0 {
+                            along = -along;
+                        }
+                        p += along;
+                        last = along;
+                        if along == Vec2::ZERO || !inside(p) {
+                            break;
+                        }
+                        let w = (-2.0 * (k as f32 / STEPS as f32).powi(2)).exp();
+                        sum += sample(p, s) * w;
+                        total += w;
+                    }
+                }
+                cell[s] = sum / total;
+            }
+        }
+    });
+    out
 }
 
 /// A short blur along each row of `n`, then along each column.
