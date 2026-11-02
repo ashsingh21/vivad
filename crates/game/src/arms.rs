@@ -282,9 +282,24 @@ fn orient_bows(
             Some(wg) => {
                 let (scale, rot, pos) = wg.to_scale_rotation_translation();
                 let onto = Quat::IDENTITY.slerp(Quat::from_rotation_arc(rot * Vec3::NEG_Z, aim), w);
-                GlobalTransform::from(Transform { translation: pos, rotation: onto * rot, scale })
+                // Reloading: the gun comes up in front of the chest, muzzle high, rolled toward the
+                // left hand.
+                let tip = anim.reload.map_or(0.0, |p| (p * PI).sin().powf(0.5));
+                let high = (ahead + Vec3::Y * RELOAD_LIFT).normalize();
+                let up = Quat::IDENTITY.slerp(Quat::from_rotation_arc(rot * Vec3::NEG_Z, high), tip);
+                let tilt = Quat::from_axis_angle(high, RELOAD_ROLL * tip) * up;
+                GlobalTransform::from(Transform { translation: pos, rotation: tilt * onto * rot, scale })
             }
             None => GlobalTransform::from(Transform { translation: pos, rotation: rot.slerp(raised, raise), scale }),
+        };
+        // A shot kicks the gun back along the barrel and the muzzle up.
+        let socket_g = if gun && anim.kick > 0.0 {
+            let (scale, rot, pos) = socket_g.to_scale_rotation_translation();
+            let k = anim.kick * anim.kick;
+            let translation = pos + rot * Vec3::Z * KICK_BACK * k;
+            GlobalTransform::from(Transform { translation, rotation: Quat::from_axis_angle(rot * Vec3::X, KICK_UP * k) * rot, scale })
+        } else {
+            socket_g
         };
         if let Ok((_, mut g)) = tf.get_mut(socket) {
             *g = socket_g;
@@ -302,7 +317,9 @@ fn orient_bows(
             // Under the fore-end, the palm up against the wood, the hand angled across the barrel
             // from the left so the fingers come up round its far side.
             let fore = forend(&rig.model);
-            let contact = socket_g.transform_point(fore);
+            let on_wood = socket_g.transform_point(fore);
+            let belt = tf.get(body.spine[0]).map_or(on_wood, |(_, g)| g.translation() - ahead.cross(Vec3::Y) * 0.2 + ahead * 0.06 - Vec3::Y * 0.1);
+            let contact = anim.reload.map_or(on_wood, |p| reload_hand(p, on_wood, socket_g.transform_point(MAGAZINE), belt));
             let fingers = (along * 0.55 + right * 0.85).normalize();
             let palm = (up - fingers * up.dot(fingers)).normalize();
             // The hand's own frame (knuckle direction, palm) onto those.
@@ -340,6 +357,32 @@ fn orient_bows(
         }
     }
 }
+
+/// A reload by the left hand, `p` being how far through it: off the fore-end to the magazine, down
+/// to the belt with the old one, a moment there, back up with the new one, and onto the wood.
+fn reload_hand(p: f32, wood: Vec3, magazine: Vec3, belt: Vec3) -> Vec3 {
+    let ease = |from: f32, to: f32| {
+        let t = ((p - from) / (to - from)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    match p {
+        p if p < 0.18 => wood.lerp(magazine, ease(0.0, 0.18)),
+        p if p < 0.62 => magazine.lerp(belt, ease(0.2, 0.42)),
+        p if p < 0.86 => belt.lerp(magazine, ease(0.62, 0.84)),
+        _ => magazine.lerp(wood, ease(0.86, 1.0)),
+    }
+}
+
+/// Where the left hand takes a long gun's magazine, in the gun's frame.
+const MAGAZINE: Vec3 = Vec3::new(0.0, -0.09, -0.15);
+/// How far a shot throws a gun back (m) and its muzzle up (radians), and the shoulders (radians).
+const KICK_BACK: f32 = 0.035;
+const KICK_UP: f32 = 0.045;
+const KICK_LEAN: f32 = 0.03;
+/// A reloaded gun's barrel: this much up for each of ahead. And how far it rolls toward the left
+/// hand (radians).
+const RELOAD_LIFT: f32 = 0.7;
+const RELOAD_ROLL: f32 = -0.5;
 
 /// Where the left palm meets a long gun, in the gun's frame (its origin the grip, barrel -Z, up
 /// +Y): under the fore-end where the captured left hand closes, 26 cm ahead of the grip, against
@@ -554,7 +597,7 @@ fn pose_torso(
                 lean = Quat::from_axis_angle(axis, amp);
             }
         }
-        let pitch = if dead || kin.mode != MoveMode::Ground { 0.0 } else { intent.pitch.clamp(-1.1, 1.1) * anim.aim_share };
+        let pitch = if dead || kin.mode != MoveMode::Ground { 0.0 } else { intent.pitch.clamp(-1.1, 1.1) * anim.aim_share + KICK_LEAN * anim.kick };
         if pitch.abs() < 1e-3 && lean == Quat::IDENTITY {
             continue;
         }

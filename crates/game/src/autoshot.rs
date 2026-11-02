@@ -138,6 +138,8 @@ enum Use {
     RunBack,
     /// Crouch-walking forward.
     Crouch,
+    /// Part way through a reload, the shot taken at `after` seconds into it.
+    Reload,
 }
 
 #[derive(Clone, Copy)]
@@ -185,6 +187,7 @@ impl Armoury {
             Use::Run => "run",
             Use::RunBack => "runback",
             Use::Crouch => "crouch",
+            Use::Reload => "reload",
         };
         let view = match p.view {
             View::Front => "front",
@@ -396,6 +399,11 @@ impl Plugin for AutoshotPlugin {
                     p(gun, Use::Run, View::Back, 0.0),
                     p(gun, Use::Aim, View::Back, 0.0),
                 ]);
+            }
+            for after in [0.3, 1.0, 1.7] {
+                for view in [View::Side, View::Front] {
+                    poses.push(Pose { item: "saintalis", state: Use::Reload, view, pitch: 0.0, target: None, after });
+                }
             }
             if let Ok(only) = std::env::var("VIVAD_ARMOURY_ONLY").map(|s| s.trim().to_owned()).and_then(|s| if s.is_empty() { Err(std::env::VarError::NotPresent) } else { Ok(s) }) {
                 let keys: Vec<String> = only.split(',').map(str::to_owned).collect();
@@ -943,7 +951,7 @@ fn armoury_actor(
     match &def.kind {
         ItemKind::Melee { .. } if pose.item == db.default_melee => inv.selected = 0,
         ItemKind::Bow { magazine, .. } => {
-            inv.slots[0] = stack(*magazine);
+            inv.slots[0] = stack(*magazine - (pose.state == Use::Reload) as u32);
             inv.arrows = 60;
             inv.selected = 1;
         }
@@ -952,7 +960,7 @@ fn armoury_actor(
             inv.selected = 1;
         }
     }
-    if matches!(pose.state, Use::Carry | Use::Run | Use::RunBack | Use::Crouch) {
+    if matches!(pose.state, Use::Carry | Use::Run | Use::RunBack | Use::Crouch | Use::Reload) {
         act.since_attack = act.since_attack.max(5.0);
     }
     intent.yaw = 0.0;
@@ -1024,7 +1032,7 @@ fn return_aim(intent: &mut PlayerIntent, pose: Pose, t: f32, arm: &mut Armoury) 
     };
     intent.select = None;
     intent.held = match pose.state {
-        Use::Carry | Use::Shoulder | Use::Run | Use::RunBack => 0,
+        Use::Carry | Use::Shoulder | Use::Run | Use::RunBack | Use::Reload => 0,
         Use::Crouch => btn::CROUCH,
         Use::Aim => btn::AIM,
         Use::Hold => btn::FIRE | btn::AIM,
@@ -1032,6 +1040,10 @@ fn return_aim(intent: &mut PlayerIntent, pose: Pose, t: f32, arm: &mut Armoury) 
         // One shot, and no second when the bolt is back: the clip watches what it did.
         Use::Snipe => btn::AIM | if (STRIKE_AT..STRIKE_AT + 0.4).contains(&t) { btn::FIRE } else { 0 },
     };
+    if pose.state == Use::Reload && t >= STRIKE_AT && !arm.pressed {
+        intent.pressed |= btn::RELOAD;
+        arm.pressed = true;
+    }
     let press_at = if matches!(pose.state, Use::Strike | Use::Snipe) { STRIKE_AT } else { 0.2 };
     if intent.held(btn::FIRE) && t >= press_at && !arm.pressed {
         intent.pressed |= btn::FIRE;
@@ -1076,7 +1088,7 @@ fn armoury_camera(
     if let Some((eye, look)) = view {
         *ct = Transform::from_translation(eye).looking_at(look, Vec3::Y);
     }
-    let at = if matches!(pose.state, Use::Strike | Use::Snipe) { STRIKE_AT + pose.after } else { POSE_TIME };
+    let at = if matches!(pose.state, Use::Strike | Use::Snipe | Use::Reload) { STRIKE_AT + pose.after } else { POSE_TIME };
     if let Some(fps) = arm.frames.filter(|_| arm.t >= STRIKE_AT - 0.5 && arm.t >= arm.next) {
         let path = format!("{}/frame_{:05}.png", arm.dir, arm.frame);
         commands.spawn(Screenshot::primary_window()).observe(save_small(path));

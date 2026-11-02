@@ -77,6 +77,8 @@ const LAND_TIME: f32 = 0.28;
 /// From this fall speed (m/s), and all the way by the second.
 const LAND_FROM: f32 = 3.5;
 const LAND_FULL: f32 = 14.0;
+/// How long a shot's kick lasts in the hands (seconds).
+const KICK_TIME: f32 = 0.11;
 /// A long gun's left-hand hold is worked out inside this range of the camera (metres).
 const HOLD_SHOWS: f32 = 40.0;
 
@@ -154,6 +156,10 @@ pub struct WarriorAnim {
     pub aim_share: f32,
     /// Close enough to the camera for the left hand's hold on a long gun to show (crate::arms).
     pub near: bool,
+    /// How far through a reload (0..1), while one is on (crate::arms works the hand through it).
+    pub reload: Option<f32>,
+    /// A gun's kick from the last shot, 1 as it goes off, falling away (crate::arms).
+    pub kick: f32,
     /// The fall speed in the air, then how hard the landing was (0..1) and the time since it.
     falling: f32,
     landed: f32,
@@ -277,6 +283,8 @@ pub fn bind(commands: &mut Commands, sets: &AnimSets, variant: usize, rig_root: 
         since_pose: 0.0,
         aim_share: 0.0,
         near: true,
+        reload: None,
+        kick: 0.0,
         falling: 0.0,
         landed: 0.0,
         since_landing: 0.0,
@@ -441,6 +449,13 @@ fn drive(
         let vel = (hist.curr - hist.prev) / fixed.timestep().as_secs_f32().max(1e-4);
         let local = tf.rotation.inverse() * vel;
         let (forward, right) = (-local.z, local.x);
+        anim.reload = match inv.current().map(|s| &db.get(&s.id).kind) {
+            Some(ItemKind::Bow { reload, .. }) if act.reload_left > 0.0 && *reload > 0.0 => Some(1.0 - act.reload_left / reload),
+            _ => None,
+        };
+        anim.kick = if gun_in_hand(inv, &db) { (1.0 - act.since_attack / KICK_TIME).max(0.0) } else { 0.0 };
+        // A gun comes down off the aim to be reloaded.
+        let aiming = intent.held(btn::AIM) && !(gun_in_hand(inv, &db) && act.reload_left > 0.0);
         if !matches!(kin.mode, MoveMode::Vimana | MoveMode::Riding) && !kin.grounded {
             anim.falling = anim.falling.max(-vel.y);
         } else if anim.falling > 0.0 {
@@ -492,7 +507,7 @@ fn drive(
                     // Holding a gun: its own whole-body set (the gun held as you move), where the
                     // file has it; a bow, the bat and empty hands move with the plain ones. A long
                     // gun aimed moves with its aiming set, and at its gaits' speeds.
-                    let aim_moves = gun == Some(true) && intent.held(btn::AIM) && !kin.sliding && set.has("rifleaim_run_f");
+                    let aim_moves = gun == Some(true) && aiming && !kin.sliding && set.has("rifleaim_run_f");
                     // Sliding with a long gun: its own whole-body slide, the gun already up.
                     let gun_slide = gun == Some(true) && kin.sliding && set.has("rifle_slide");
                     let (prefix, gaits) = match gun {
@@ -584,7 +599,7 @@ fn drive(
                             // Sliding, a long gun comes up ready to shoot, as when aiming. A pistol
                             // stays in the hand: on the slide's lean back its aim points at the sky.
                             let sliding = loco.iter().any(|(n, _)| *n == "slide");
-                            bow_draw(k, act, loaded, intent.held(btn::AIM) || (sliding && crate::visuals::long_gun(id))).filter(|_| !aim_moves && !gun_slide).map(|d| {
+                            bow_draw(k, act, loaded, aiming || (sliding && crate::visuals::long_gun(id))).filter(|_| !aim_moves && !gun_slide).map(|d| {
                                 if crate::visuals::long_gun(id) {
                                     ("rifle_aim", 0.0)
                                 } else if gun && set.has("pistol_aim") {
