@@ -39,6 +39,8 @@ impl Plugin for WarriorAnimationPlugin {
 const LOCOMOTION: [&str; 13] =
     ["idle", "walk_f", "walk_b", "walk_l", "walk_r", "run_f", "run_b", "run_l", "run_r", "sprint_f", "crouch_idle", "crouch_f", "slide"];
 const FULL_BODY: [&str; 5] = ["jump", "fall", "freefall", "glide", "death"];
+/// In the air the legs do this and the arms keep hold of what's in them.
+const AIR_LEGS: [&str; 2] = ["jump", "fall"];
 /// Locomotion the file may or may not have (Mixamo's, tools/blender/characters/anims.py, built where
 /// its downloads are): the crouch's other directions, and whole-body sets for holding a long gun
 /// or a pistol. Picked where present (`AnimSet::has`), else the plain ones.
@@ -70,6 +72,11 @@ const SWING_CONTACT: f32 = 0.5;
 /// A raised guard holds the swing's cocked pose, this far through the clip.
 const GUARD_POSE: f32 = 0.17;
 const FADE_RATE: f32 = 12.0;
+/// A landing: for this long the knees give (the crouch's idle blended in, so the feet stay down).
+const LAND_TIME: f32 = 0.28;
+/// From this fall speed (m/s), and all the way by the second.
+const LAND_FROM: f32 = 3.5;
+const LAND_FULL: f32 = 14.0;
 /// A long gun's left-hand hold is worked out inside this range of the camera (metres).
 const HOLD_SHOWS: f32 = 40.0;
 
@@ -147,6 +154,10 @@ pub struct WarriorAnim {
     pub aim_share: f32,
     /// Close enough to the camera for the left hand's hold on a long gun to show (crate::arms).
     pub near: bool,
+    /// The fall speed in the air, then how hard the landing was (0..1) and the time since it.
+    falling: f32,
+    landed: f32,
+    since_landing: f32,
 }
 
 fn load_sets(mut commands: Commands, assets: Res<AssetServer>) {
@@ -219,7 +230,7 @@ fn build_graphs(
             let h = clip(name).or_else(|| clip(stand_in(name))).expect("checked above");
             set.durations.insert(name, clips.get(&h).map(|c| c.duration()).unwrap_or(1.0).max(1e-3));
             let full = graph.add_clip(h.clone(), 1.0, root);
-            let masked = if LOCOMOTION.contains(&name) || OPTIONAL_LOCOMOTION.contains(&name) {
+            let masked = if LOCOMOTION.contains(&name) || OPTIONAL_LOCOMOTION.contains(&name) || AIR_LEGS.contains(&name) {
                 Some(graph.add_clip_with_mask(h, 1 << UPPER, 1.0, root))
             } else if UPPER_BODY.contains(&name) || OPTIONAL_UPPER.contains(&name) {
                 Some(graph.add_clip_with_mask(h, 1 << LOWER, 1.0, root))
@@ -227,6 +238,14 @@ fn build_graphs(
                 None
             };
             set.nodes.insert(name, (full, masked));
+        }
+        // A gun's standing hold on the torso alone, for over the legs in the air.
+        for (hold, from) in [("rifle_hold", "rifle_idle"), ("pistol_hold", "pistol_idle")] {
+            if let Some(h) = clip(from) {
+                set.durations.insert(hold, clips.get(&h).map(|c| c.duration()).unwrap_or(1.0).max(1e-3));
+                let torso = graph.add_clip_with_mask(h, 1 << LOWER, 1.0, root);
+                set.nodes.insert(hold, (torso, Some(torso)));
+            }
         }
         set.paths = paths;
         set.graph = Some(graphs.add(graph));
@@ -258,6 +277,9 @@ pub fn bind(commands: &mut Commands, sets: &AnimSets, variant: usize, rig_root: 
         since_pose: 0.0,
         aim_share: 0.0,
         near: true,
+        falling: 0.0,
+        landed: 0.0,
+        since_landing: 0.0,
     })
 }
 
@@ -373,6 +395,16 @@ fn clip_speed(name: &str) -> f32 {
     }
 }
 
+fn gun_in_hand(inv: &Inventory, db: &ItemDb) -> bool {
+    inv.current().is_some_and(|s| matches!(db.get(&s.id).kind, ItemKind::Bow { .. }) && crate::visuals::shot_kind(&s.id) == crate::visuals::Shot::Bullet)
+}
+
+/// How far one locomotion cycle of this blend carries the body: each clip's own stride, by weight,
+/// in the way it goes. Idle has none.
+fn blended_stride(loco: &[(&'static str, f32)], dur: impl Fn(&str) -> f32) -> f32 {
+    loco.iter().fold(Vec2::ZERO, |sum, (n, w)| sum + clip_way(n) * *w * clip_speed(n) * dur(n)).length()
+}
+
 /// The way a locomotion clip moves, as (right, forward).
 fn clip_way(name: &str) -> Vec2 {
     match name.as_bytes().last() {
@@ -409,6 +441,17 @@ fn drive(
         let vel = (hist.curr - hist.prev) / fixed.timestep().as_secs_f32().max(1e-4);
         let local = tf.rotation.inverse() * vel;
         let (forward, right) = (-local.z, local.x);
+        if !matches!(kin.mode, MoveMode::Vimana | MoveMode::Riding) && !kin.grounded {
+            anim.falling = anim.falling.max(-vel.y);
+        } else if anim.falling > 0.0 {
+            anim.landed = ((anim.falling - LAND_FROM) / (LAND_FULL - LAND_FROM)).clamp(0.0, 1.0);
+            anim.since_landing = 0.0;
+            anim.falling = 0.0;
+        }
+        anim.since_landing += dt;
+
+        // What's in hand, if it's a gun: a long one?
+        let gun = gun_in_hand(inv, &db).then(|| inv.current().is_some_and(|s| crate::visuals::long_gun(&s.id)));
 
         // Targets: (clip, use the masked node?, weight, time in the clip).
         let mut want: Vec<(&'static str, bool, f32, f32)> = vec![];
@@ -427,7 +470,19 @@ fn drive(
                 MoveMode::Gliding => want.push(("glide", false, 1.0, clock % dur("glide"))),
                 MoveMode::Ground if !kin.grounded => {
                     let n = if vel.y > 1.0 { "jump" } else { "fall" };
-                    want.push((n, false, 1.0, if n == "jump" { dur(n) * 0.5 } else { clock % dur(n) }));
+                    let t = if n == "jump" { dur(n) * 0.5 } else { clock % dur(n) };
+                    // The clip's arms fly up; a warrior keeps hold of what he's carrying.
+                    let hold = match (gun, inv.current().map(|s| &db.get(&s.id).kind)) {
+                        (Some(true), _) => Some("rifle_hold"),
+                        (Some(false), _) => Some("pistol_hold"),
+                        (_, Some(ItemKind::Melee { .. })) => Some("melee_guard"),
+                        _ => None,
+                    };
+                    let hold = hold.filter(|h| set.has(h));
+                    want.push((n, hold.is_some(), 1.0, t));
+                    if let Some(h) = hold {
+                        want.push((h, true, 1.0, clock % dur(h)));
+                    }
                 }
                 _ => {
                     // Low (the crouch button held, which every peer sees): sliding while still fast,
@@ -437,14 +492,6 @@ fn drive(
                     // Holding a gun: its own whole-body set (the gun held as you move), where the
                     // file has it; a bow, the bat and empty hands move with the plain ones. A long
                     // gun aimed moves with its aiming set, and at its gaits' speeds.
-                    let gun = match inv.current() {
-                        Some(st) if matches!(db.get(&st.id).kind, ItemKind::Bow { .. })
-                            && crate::visuals::shot_kind(&st.id) == crate::visuals::Shot::Bullet =>
-                        {
-                            Some(crate::visuals::long_gun(&st.id))
-                        }
-                        _ => None,
-                    };
                     let aim_moves = gun == Some(true) && intent.held(btn::AIM) && !kin.sliding && set.has("rifleaim_run_f");
                     // Sliding with a long gun: its own whole-body slide, the gun already up.
                     let gun_slide = gun == Some(true) && kin.sliding && set.has("rifle_slide");
@@ -475,13 +522,25 @@ fn drive(
                     } else {
                         locomotion_weights(forward, right, gaits)
                     };
+                    // Down off a jump or a fall, the knees give, less at a run.
+                    let give = 0.35 + 0.5 * anim.landed;
+                    let give = if anim.landed > 0.0 && anim.since_landing < LAND_TIME && !low {
+                        give * (anim.since_landing / LAND_TIME * std::f32::consts::PI).sin() * (1.0 - 0.6 * (speed / WALK_SPEED).min(1.0))
+                    } else {
+                        0.0
+                    };
+                    let mut loco = loco;
+                    if give > 0.01 {
+                        loco.iter_mut().for_each(|(_, w)| *w *= 1.0 - give);
+                        loco.push(("crouch_idle", give));
+                    }
                     let loco: Vec<(&'static str, f32)> = loco.into_iter().map(|(n, w)| (set.pick(prefix, n), w)).collect();
                     // Advance the shared cycle so the blended stride covers the real ground speed:
                     // below a clip's speed the blend with idle shrinks the stride and the cadence
                     // holds, and on a diagonal, where two clips at right angles blend to 0.71 of a
                     // stride, the cadence makes it up. Either way the feet don't slide.
                     let speed = forward.hypot(right);
-                    let stride = loco.iter().fold(Vec2::ZERO, |sum, (n, w)| sum + clip_way(n) * *w * clip_speed(n) * dur(n)).length();
+                    let stride = blended_stride(&loco, dur);
                     if stride > 1e-3 {
                         // Contacts are at the cycle's start (left foot) and middle (right).
                         let before = anim.phase;
@@ -522,9 +581,10 @@ fn drive(
                         Some(k @ ItemKind::Bow { .. }) => {
                             let id = inv.current().map(|s| s.id.as_str()).unwrap_or_default();
                             let gun = crate::visuals::shot_kind(id) == crate::visuals::Shot::Bullet;
-                            // Sliding, the gun comes up ready to shoot, as when aiming.
+                            // Sliding, a long gun comes up ready to shoot, as when aiming. A pistol
+                            // stays in the hand: on the slide's lean back its aim points at the sky.
                             let sliding = loco.iter().any(|(n, _)| *n == "slide");
-                            bow_draw(k, act, loaded, intent.held(btn::AIM) || (sliding && gun)).filter(|_| !aim_moves && !gun_slide).map(|d| {
+                            bow_draw(k, act, loaded, intent.held(btn::AIM) || (sliding && crate::visuals::long_gun(id))).filter(|_| !aim_moves && !gun_slide).map(|d| {
                                 if crate::visuals::long_gun(id) {
                                     ("rifle_aim", 0.0)
                                 } else if gun && set.has("pistol_aim") {
@@ -624,6 +684,40 @@ fn drive(
             if t >= 0.0 {
                 a.seek_to(t);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Cycles a second for this ground speed and way, every clip lasting a second.
+    fn cadence(speed: f32, angle: f32) -> f32 {
+        let (right, forward) = (speed * angle.sin(), speed * angle.cos());
+        speed / blended_stride(&locomotion_weights(forward, right, PLAIN_GAITS), |_| 1.0)
+    }
+
+    #[test]
+    fn the_cadence_holds_below_a_clip_s_speed() {
+        for speed in [0.3, 0.9, 1.5, STROLL_SPEED] {
+            assert!((cadence(speed, 0.0) - 1.0).abs() < 1e-3, "{speed} m/s");
+        }
+    }
+
+    #[test]
+    fn a_diagonal_makes_up_its_stride() {
+        let diagonal = cadence(WALK_SPEED, std::f32::consts::FRAC_PI_4);
+        assert!((diagonal - std::f32::consts::SQRT_2).abs() < 1e-3, "{diagonal}");
+    }
+
+    #[test]
+    fn the_rifle_set_plays_at_its_captured_pace() {
+        // At the speed a clip was captured at, its cycle plays at exactly its own length.
+        for (name, dur) in [("rifle_run_f", 0.75), ("rifleaim_walk_l", 1.2), ("rifle_sprint_f", 0.6)] {
+            let speed = clip_speed(name);
+            assert!(speed > 0.0, "{name}");
+            assert!((speed / blended_stride(&[(name, 1.0)], |_| dur) - 1.0 / dur).abs() < 1e-3, "{name}");
         }
     }
 }

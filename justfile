@@ -108,6 +108,7 @@ face-lab variant opts="":
 # Warrior animation clips, per rig (needs build/char_<variant>_final.blend from `just characters`).
 # Prints foot slide per clip; add `-- male --preview DIR --clips run_f,idle` for pose renders.
 anims:
+    @test -d tools/blender/characters/mixamo -a -d tools/blender/characters/mocaponline || (echo "anims needs the Mixamo and MoCap Online downloads, not in git: without them it writes clips with no guns. The baked *_anims.glb in git are the ones to use." && exit 1)
     for v in male female; do {{blender}} -b -P tools/blender/characters/anims.py -- $v 2>&1 | grep -E '^\[|Error|Traceback' || true; done
 
 # Check every clip by the numbers (feet skating or sinking, knees and elbows, hands, pops), one
@@ -151,6 +152,7 @@ armoury only="":
 # The guns from MoCap Online's rifle pack (bandook, tamancha), the ones its animations hold:
 # just pack-guns, or just pack-guns bandook
 pack-guns *names:
+    @test -d tools/blender/characters/mocaponline || (echo "pack-guns needs the MoCap Online download, not in git." && exit 1)
     {{blender}} -b --factory-startup -P tools/blender/weapons/pack_guns.py -- {{names}} 2>&1 | grep -E '^\[|Error|Traceback|  File' || true
 
 # Panga's street armoury (bat, katta, tamancha, dunali, gulel): just desi, or just desi katta

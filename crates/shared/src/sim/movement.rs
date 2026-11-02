@@ -361,3 +361,46 @@ pub(super) fn move_warriors(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Seconds from `from` until the feet reach `want`.
+    fn time_to(from: Vec3, want: Vec3) -> f32 {
+        let (dt, mut v, mut t) = (1.0 / 60.0, from, 0.0);
+        while v.distance(want) > 1e-3 {
+            v = on_foot(v, want, WALK_SPEED, dt);
+            t += dt;
+            assert!(t < 5.0);
+        }
+        t
+    }
+
+    #[test]
+    fn a_body_has_weight() {
+        let (run, sprint) = (Vec3::X * WALK_SPEED, Vec3::X * SPRINT_SPEED);
+        assert!((0.17..0.22).contains(&time_to(Vec3::ZERO, run)), "from a stand to a run");
+        assert!((0.12..0.17).contains(&time_to(run, Vec3::ZERO)), "a run to a stop");
+        assert!((0.33..0.42).contains(&time_to(run, sprint)), "a run into a sprint");
+        assert!(time_to(run, -run) > 0.25, "a full turn about");
+    }
+
+    #[test]
+    fn a_sprint_still_turns_quickly() {
+        let (now, want) = (Vec3::X * 6.0, Vec3::Z * SPRINT_SPEED);
+        let (dt, mut v) = (1.0 / 60.0, now);
+        for _ in 0..24 {
+            v = on_foot(v, want, WALK_SPEED, dt);
+        }
+        assert!(v.normalize().dot(Vec3::Z) > 0.95, "still headed {v} after 0.4 s");
+    }
+
+    #[test]
+    fn every_long_gun_moves_like_one() {
+        for gun in ["dunali", "bandook", "vajra9", "trishul_carbine", "saintalis", "thaana_slr", "thri_not_thri", "toradar"] {
+            assert!(long_gun(gun), "{gun}");
+        }
+        assert!(!long_gun("tamancha") && !long_gun("katta"));
+    }
+}
