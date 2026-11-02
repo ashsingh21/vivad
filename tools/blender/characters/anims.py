@@ -1018,6 +1018,69 @@ def stand_up(rig, name, lean, tuck, face):
           + (f", elbows in {tuck} deg" if tuck else "") + (", chest to the front" if face else ""))
 
 
+# Runs whose back bends backward at the waist (stand_up straightened the spine over hips still tipped
+# forward with the stride: chest out, seat back), lined up again.
+STRAIGHT = ("run_f", "run_l", "run_r", "sprint_f", *(f"rifle_run_{d}" for d in "fblr"), "rifle_sprint_f",
+            *(f"rifleaim_run_{d}" for d in "fblr"))
+BACK = ("pelvis", "spine_01", "spine_02", "spine_03")
+
+
+def straighten(rig, name, k=0.8):
+    """Take `k` of the backward bend out of `name`'s torso, frame by frame: the hips and each spine
+    bone pitched (from their rest) toward the hips-to-neck line's pitch, so the back runs straight
+    along the lean; the legs (the feet where they were), the arms (and so a gun's hold) and the
+    head kept as they were."""
+    sc = bpy.context.scene
+
+    def pitch(n):
+        d = rig.tail(n) - rig.head(n)
+        return math.atan2(-d.y, d.z)
+
+    def line():
+        v = rig.head("neck_01") - rig.head("pelvis")
+        return math.atan2(-v.y, v.z)
+
+    rig.obj.animation_data.action = None
+    rig.rest()
+    rest = {n: pitch(n) for n in BACK}
+    rest_line = line()
+    act = bpy.data.actions[name]
+    rig.obj.animation_data.action = act
+    f0, f1 = map(int, act.frame_range)
+    poses = []
+    for f in range(f0, f1 + 1):
+        sc.frame_set(f)
+        poses.append({pb.name: pb.matrix_basis.copy() for pb in rig.pb})
+    new_action(rig, name)
+    before, after = [], []
+    keep = ("thigh_l", "thigh_r", "clavicle_l", "clavicle_r", "head")
+    for i, pose in enumerate(poses):
+        for pb in rig.pb:
+            pb.matrix_basis = pose[pb.name]
+        bpy.context.view_layer.update()
+        was = {n: rig.world_rot(n) for n in keep}
+        feet = rig.head("foot_l") + rig.head("foot_r")
+        t = line() - rest_line
+        before.append(max(abs(pitch(n) - rest[n] - t) for n in BACK))
+        for n in BACK:
+            turn = k * (t - (pitch(n) - rest[n]))
+            if n == "pelvis":
+                # The hips about the line through the hip joints (turned with the stride or a
+                # strafe), which stays put; only as far as that line runs across the body.
+                hips = rig.head("thigh_l") - rig.head("thigh_r")
+                hips.normalize()
+                rig._apply(n, Matrix.Rotation(turn * abs(hips.x), 4, hips if hips.x > 0 else -hips), rig.head("thigh_l"))
+            else:
+                rig.rotate(n, LEFT, turn)
+        for n in keep:
+            rig.set_world_rot(n, was[n])
+        # The hips' turn moves the hip joints: the body shifted so the feet stay where they were.
+        rig.move("pelvis", (feet - rig.head("foot_l") - rig.head("foot_r")) / 2)
+        after.append(max(abs(pitch(n) - rest[n] - t) for n in BACK))
+        rig.key(i + 1)
+    print(f"[anims] {name}: back bent {math.degrees(sum(before) / len(before)):.0f} -> {math.degrees(sum(after) / len(after)):.0f} deg off its lean")
+
+
 # Clips whose head turns on purpose (a swing's follow-through, a fall), left as they are.
 LOOK_FREE = ("melee_", "death", "freefall", "glide", "consume", "bow_draw")
 
@@ -1639,6 +1702,9 @@ def main():
                 # Turned square first, then straightened.
                 stand_up(rig, name, 90, 0, True)
             stand_up(rig, name, lean, tuck, False)
+    for name in STRAIGHT:
+        if name in bpy.data.actions:
+            straighten(rig, name)
     # Sliding with a long gun: sat up in the slide, the gun up in both hands as when aiming
     # (the game plays it whole, no aim laid over).
     if "slide" in bpy.data.actions and "rifleaim_idle" in bpy.data.actions:

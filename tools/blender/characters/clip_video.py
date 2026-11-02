@@ -115,6 +115,19 @@ def main():
         if name in SEQUENCES:
             for _ in sequence(arm, SEQUENCES[name]):
                 shoot(name)
+            continue
+        act = bpy.data.actions.get(name)
+        if act is None:
+            print(f"[video] no clip {name}")
+            continue
+        arm.animation_data.action = act
+        arm.location = (0, 0, 0)
+        f0, f1 = map(int, act.frame_range)
+        # Looped to about four seconds (a long idle cut there).
+        frames = [f0 + i % (f1 - f0) for i in range(max(f1 - f0, min(4 * FPS, 3 * (f1 - f0))))][:4 * FPS]
+        for f in frames:
+            sc.frame_set(f)
+            shoot(name)
     with open(os.path.join(tmp, "labels.txt"), "w") as fh:
         fh.write("\n".join(labels))
     print(f"[video] {n} frames in {tmp}")
