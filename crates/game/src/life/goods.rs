@@ -55,6 +55,14 @@ const DETAIL_REACH: f32 = 74.0;
 const DETAIL_LET_GO: f32 = 92.0;
 /// Past this, a patch's overhead stops casting: the sun's far cascade is coarse there anyway.
 const SHADE_TO: f32 = 72.0;
+/// A table stops a bullet at any range, so it has to show as far as anyone shoots: past the goods a
+/// row is plain boxes under a plain tarp, out to here, from a patch's middle.
+const DISTANT_FROM: f32 = 300.0;
+const DISTANT_TO: f32 = 320.0;
+const DISTANT_REACH: f32 = 336.0;
+const DISTANT_LET_GO: f32 = 356.0;
+/// The tarps of a row seen from afar, linear.
+const DISTANT_TARPS: [(&str, [f32; 3]); 3] = [("distant_blue", [0.05, 0.10, 0.22]), ("distant_orange", [0.42, 0.17, 0.05]), ("distant_white", [0.44, 0.42, 0.38])];
 /// How far a stall keeps from a parked vehicle's middle.
 const PARKED_CLEAR: f32 = 3.2;
 /// Above the ground, the camera is too far up for goods to show.
@@ -116,6 +124,8 @@ enum Level {
     Over,
     Near,
     Far,
+    /// Tables and tarps alone, past where the rest ends.
+    Distant,
 }
 
 /// What a patch holds, once worked out, and its meshes.
@@ -125,6 +135,7 @@ struct Patch {
     over: Option<Entity>,
     far: Option<Entity>,
     near: Option<Entity>,
+    distant: Option<Entity>,
     /// The meshes asked for since this patch came into reach, so an empty one isn't asked for again.
     tried: Vec<Level>,
     /// Whether its overhead casts a shadow.
@@ -137,8 +148,40 @@ impl Patch {
             Level::Over => &mut self.over,
             Level::Near => &mut self.near,
             Level::Far => &mut self.far,
+            Level::Distant => &mut self.distant,
         }
     }
+}
+
+/// A table as seen from far off, the size of what stops a bullet, and the tarp over it.
+fn distant_piece(tarp: [f32; 3]) -> Piece {
+    const WOOD: [f32; 3] = [0.10, 0.075, 0.05];
+    let (half, top) = (Vec3::new(shared::map::stalls::TABLE.x, 0.0, shared::map::stalls::TABLE.z) * 0.5, shared::map::stalls::TABLE.y);
+    let mut p = Piece::default();
+    let mut quad = |corners: [Vec3; 4], up: Vec3, c: [f32; 3]| {
+        let base = p.pos.len() as u32;
+        for q in corners {
+            p.pos.push(q);
+            p.nrm.push(up);
+            p.uv.push(WHITE_TEXEL);
+            p.col.push([c[0], c[1], c[2], 1.0]);
+        }
+        p.idx.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+    };
+    let c = |x: f32, y: f32, z: f32| Vec3::new(x * half.x, y, z * half.z);
+    quad([c(-1.0, 0.0, -1.0), c(1.0, 0.0, -1.0), c(1.0, top, -1.0), c(-1.0, top, -1.0)], Vec3::NEG_Z, WOOD);
+    quad([c(1.0, 0.0, 1.0), c(-1.0, 0.0, 1.0), c(-1.0, top, 1.0), c(1.0, top, 1.0)], Vec3::Z, WOOD);
+    quad([c(1.0, 0.0, -1.0), c(1.0, 0.0, 1.0), c(1.0, top, 1.0), c(1.0, top, -1.0)], Vec3::X, WOOD);
+    quad([c(-1.0, 0.0, 1.0), c(-1.0, 0.0, -1.0), c(-1.0, top, -1.0), c(-1.0, top, 1.0)], Vec3::NEG_X, WOOD);
+    quad([c(-1.0, top, -1.0), c(1.0, top, -1.0), c(1.0, top, 1.0), c(-1.0, top, 1.0)], Vec3::Y, WOOD);
+    quad([c(-1.3, 2.5, -1.8), c(1.3, 2.5, -1.8), c(1.3, 2.5, 1.8), c(-1.3, 2.5, 1.8)], Vec3::Y, tarp);
+    p
+}
+
+/// The tables of a patch, as seen from far off.
+fn distant(market: &Market, key: (i32, i32)) -> Vec<(&'static str, Vec3, f32)> {
+    let ids = market.stalls_near(patch_centre(key), PATCH * 0.5 + 1.0);
+    ids.map(|id| market.stalls[id as usize]).filter(|s| s.kind == super::StallKind::Row && patch_at(s.pos.xz()) == key).map(|s| (DISTANT_TARPS[(hash(s.pos.x.to_bits(), s.pos.z.to_bits(), 2) * 2.99) as usize].0, s.pos, s.yaw)).collect()
 }
 
 /// Whether a piece hangs overhead.
@@ -199,6 +242,7 @@ fn patch_entity(commands: &mut Commands, mesh: Handle<Mesh>, material: Handle<St
         Level::Over => (VisibilityRange { start_margin: 0.0..0.0, end_margin: FADE_FROM..FADE_TO, use_aabb: false }, "life over"),
         Level::Near => (VisibilityRange { start_margin: 0.0..0.0, end_margin: DETAIL_FROM..DETAIL_TO, use_aabb: false }, "life goods"),
         Level::Far => (VisibilityRange { start_margin: DETAIL_FROM..DETAIL_TO, end_margin: FADE_FROM..FADE_TO, use_aabb: false }, "life far"),
+        Level::Distant => (VisibilityRange { start_margin: FADE_FROM..FADE_TO, end_margin: DISTANT_FROM..DISTANT_TO, use_aabb: false }, "life distant"),
     };
     let mut e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), Transform::from_xyz(c.x, 0.0, c.y), bounds, NoAutoAabb, range, Tagged(tag), OfMap));
     if level != Level::Over {
@@ -248,6 +292,9 @@ fn read_pieces() -> Result<(HashMap<String, Piece>, Image), String> {
     let kit_bytes = std::fs::read(&kit_path).map_err(|e| e.to_string())?;
     let kit = gltf::Gltf::from_slice(&kit_bytes).map_err(|e| e.to_string())?;
     read_file(&kit, kit.blob.as_deref().ok_or("no binary chunk")?, &["scooter_LOD0", "thela_LOD1"])?;
+    for (name, tarp) in DISTANT_TARPS {
+        out.insert(name.to_owned(), distant_piece(tarp));
+    }
     // Under this light the goods' plain colours came out as blocks of paint: cloth and tarps fade
     // and dull in a street's sun and dust, and the eye should go to the warriors.
     for (_, piece) in out.iter_mut().filter(|(name, _)| !name.contains("_LOD")) {
@@ -672,11 +719,20 @@ fn stream(
             }
             patch.tried.retain(|l| *l != Level::Near);
         }
+        if aloft || d > DISTANT_LET_GO {
+            if let Some(e) = patch.distant.take() {
+                commands.entity(e).despawn();
+            }
+            patch.tried.retain(|l| *l != Level::Distant);
+        }
         let keep = !aloft && d < LET_GO;
         if !keep {
             for e in [patch.far.take(), patch.over.take()].into_iter().flatten() {
                 commands.entity(e).despawn();
             }
+            patch.tried.retain(|l| *l == Level::Distant);
+            patch.content = None;
+            patch.casting = false;
         } else if (d < SHADE_TO) != patch.casting
             && let Some(e) = patch.over
         {
@@ -687,31 +743,32 @@ fn stream(
                 commands.entity(e).insert(bevy::light::NotShadowCaster);
             }
         }
-        keep
+        !aloft && d < DISTANT_LET_GO
     });
     if aloft || goods.job.is_some() {
         return;
     }
     let Some(pieces) = goods.pieces.clone() else { return };
     // The nearest thing missing, one at a time.
-    let reach = (REACH / PATCH).ceil() as i32;
+    let reach = (DISTANT_REACH / PATCH).ceil() as i32;
     let (ci, cj) = patch_at(at);
     let mut best: Option<(f32, (i32, i32), Level)> = None;
     for i in ci - reach..=ci + reach {
         for j in cj - reach..=cj + reach {
             let key = (i, j);
             let d = patch_centre(key).distance(at);
-            if d >= REACH {
+            if d >= DISTANT_REACH {
                 continue;
             }
             let patch = goods.live.get(&key);
             // Overhead first: it is what shows from furthest. A patch that came out empty stays so.
-            let wanted = [(Level::Over, d - 30.0, d < REACH), (Level::Near, d - 15.0, d < DETAIL_REACH), (Level::Far, d, d < REACH)];
+            let wanted = [(Level::Over, d - 30.0, d < REACH), (Level::Near, d - 15.0, d < DETAIL_REACH), (Level::Far, d, d < REACH), (Level::Distant, d + 40.0, d >= FADE_FROM - 16.0)];
             for (level, rank, needed) in wanted {
                 let missing = patch.is_none_or(|p| match level {
                     Level::Over => p.over.is_none(),
                     Level::Near => p.near.is_none(),
                     Level::Far => p.far.is_none(),
+                    Level::Distant => p.distant.is_none(),
                 });
                 let tried = patch.is_some_and(|p| p.tried.contains(&level));
                 if needed && missing && !tried && best.is_none_or(|b| rank < b.0) {
@@ -723,6 +780,13 @@ fn stream(
     let Some((_, key, level)) = best else { return };
     let patch = goods.live.entry(key).or_default();
     patch.tried.push(level);
+    let c = patch_centre(key);
+    let origin = Vec3::new(c.x, 0.0, c.y);
+    if level == Level::Distant {
+        let placed = distant(&market, key);
+        goods.job = Some((key, level, AsyncComputeTaskPool::get().spawn(async move { merge(&pieces, &placed, &[], &[], origin) })));
+        return;
+    }
     let content = patch
         .content
         .get_or_insert_with(|| {
@@ -736,8 +800,6 @@ fn stream(
             Arc::new(c)
         })
         .clone();
-    let c = patch_centre(key);
-    let origin = Vec3::new(c.x, 0.0, c.y);
     goods.job = Some((
         key,
         level,
@@ -747,6 +809,7 @@ fn stream(
                 Level::Over => of(content.placed.iter().filter(|p| overhead(p.0)).copied().collect(), &content.wires, &content.banners),
                 Level::Near => of(content.placed.iter().filter(|p| !overhead(p.0)).copied().collect(), &[], &[]),
                 Level::Far => of(content.placed.iter().filter(|p| !overhead(p.0)).filter_map(|(n, p, y)| Some((far_piece(n, p.x.fract().abs())?, *p, *y))).collect(), &[], &[]),
+                Level::Distant => None,
             }
         }),
     ));
@@ -914,10 +977,24 @@ mod tests {
                     if !c.placed.is_empty() {
                         assert!(merge(&pieces, &c.placed, &c.wires, &c.banners, origin).is_some());
                     }
+                    // What shows of the patch from far off is every table in it.
+                    let far = distant(&market, k);
+                    assert_eq!(far.len(), c.placed.iter().filter(|(n, ..)| n.starts_with("roof_")).count());
+                    assert!(far.iter().all(|(n, ..)| pieces.contains_key(*n)));
                 }
             }
         }
         assert!(seen.len() > 30, "only {} kinds of goods out", seen.len());
+    }
+
+    /// Seen from far off a table is the size of what stops a bullet.
+    #[test]
+    fn a_distant_table_is_the_size_of_a_table() {
+        let piece = distant_piece([1.0, 1.0, 1.0]);
+        let table = shared::map::stalls::TABLE;
+        let body: Vec<&Vec3> = piece.pos.iter().filter(|v| v.y < 2.0).collect();
+        let reach = |f: fn(&Vec3) -> f32| body.iter().map(|v| f(v)).fold(0.0, f32::max);
+        assert_eq!((reach(|v| v.x) * 2.0, reach(|v| v.y), reach(|v| v.z) * 2.0), (table.x, table.y, table.z));
     }
 
     #[test]

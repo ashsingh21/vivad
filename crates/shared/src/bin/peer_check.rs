@@ -60,6 +60,10 @@ fn describe(seed: u64) -> (String, String) {
 
     let m = world.resource::<Match>().clone();
     out += &format!("vimana {:?} -> {:?}\n", m.vimana_from, m.vimana_to);
+    // The market's tables are solid: every peer must stand the same ones.
+    let rows = &world.resource::<shared::map::MapLayout>().stalls;
+    let tables = rows.tables().fold((0u32, 0u64), |(n, sum), s| (n + 1, sum.wrapping_mul(31).wrapping_add(s.pos.x.to_bits() as u64 ^ (s.pos.z.to_bits() as u64) << 21 ^ (s.yaw.to_bits() as u64) << 42)));
+    out += &format!("tables {tables:?} in {} colliders\n", rows.patches().len());
     let mut names: Vec<String> = world.query::<&Warrior>().iter(world).map(|w| w.name.clone()).collect();
     names.sort();
     out += &format!("warriors {names:?}\n");
