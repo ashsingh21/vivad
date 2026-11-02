@@ -1,15 +1,16 @@
-//! The Ultra level's surfaces: real plaster, marble, asphalt, pavers, earth and glass in place of
-//! the painted ones, on Connaught Place and the other city maps. Nothing here runs below Ultra,
-//! and the level can change in play (F4, or the start-up choice a frame in), so each material is
-//! changed where it stands: its handle stays on the meshes, and the textures are only loaded the
-//! first time Ultra is chosen, and only shown once they are all in.
+//! The real surfaces: plaster, marble, asphalt, pavers, earth and glass in place of the painted
+//! ones, from Medium up (`Quality::surfaces`), with the facades' parallax on Ultra alone. The level
+//! can change in play (F4, or the start-up choice a frame in), so each material is changed where it
+//! stands: its handle stays on the meshes, and the textures are only loaded the first time a level
+//! wants them, and only shown once they are all in.
 //!
-//! The textures are in assets/textures/ultra, built by tools/textures/cp_surfaces.py and
-//! tools/texpack (`just textures-pack`) from the CC0 scans listed in sources.json there.
+//! The textures are in assets/textures/ultra, built by tools/textures/cp_surfaces.py,
+//! tools/textures/ncr_ground.py and tools/texpack (`just textures-pack`) from the CC0 scans listed
+//! in sources.json there.
 //!
 //! Switches, for comparisons:
-//!   VIVAD_NO_SURFACES=1  Ultra on the lower levels' surfaces.
-//!   VIVAD_NO_PARALLAX=1  no depth in the facades' windows (their parallax is the costly part).
+//!   VIVAD_NO_SURFACES=1  the painted surfaces on every level.
+//!   VIVAD_NO_PARALLAX=1  no depth in the facades' windows, even on Ultra (the costly part).
 //!
 //! Reflections come from the environment map, not screen-space reflections, and that is a finding
 //! rather than a shortcut. In Bevy 0.20's sources SSR runs after the deferred lighting pass and
@@ -21,15 +22,16 @@
 //! VIVAD_NO_SSR to honour; glass and water are forward, reflect the sky the Ultra level generates
 //! (crate::ultra), and don't reflect the city.
 
-use bevy::asset::{LoadState, uuid_handle};
+use bevy::asset::LoadState;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor};
 use bevy::math::Affine2;
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, ParallaxMappingMethod};
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat};
 use bevy::shader::ShaderRef;
+use bevy::tasks::{ComputeTaskPool, ParallelSliceMut};
 use shared::map::MapLayout;
-use shared::map::terrain::{Terrain, ground};
+use shared::map::terrain::{Terrain, fbm, ground};
 use shared::sim::MapTerrain;
 
 use crate::buildings::TILE;
@@ -55,12 +57,11 @@ impl Plugin for SurfacesPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(MaterialPlugin::<GroundMaterial>::default())
             .init_resource::<UltraSurfaces>()
-            .add_systems(Startup, add_shader)
             .add_systems(Update, (sync, sync_ground).chain());
     }
 }
 
-/// How a material changes on Ultra.
+/// How a material changes for the real surfaces.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Surface {
     /// White plaster on a world-mapped block, colonnade or roof.
@@ -69,6 +70,8 @@ pub enum Surface {
     Marble,
     /// The upper storeys' generated facade.
     Facade,
+    /// The same bays in bare brick. Its colour is its own: nothing tints it.
+    Brick,
     /// The ground storey's generated shopfronts.
     Shop,
     /// Plate glass: near mirror-smooth, and all its colour from what it reflects.
@@ -77,7 +80,7 @@ pub enum Surface {
     Water,
 }
 
-/// One material with an Ultra look, and its plain self while that is showing.
+/// One material with a real surface, and its plain self while that is showing.
 struct Entry {
     handle: Handle<StandardMaterial>,
     surface: Surface,
@@ -112,10 +115,12 @@ struct Textures {
     plaster: Set,
     marble: Set,
     facade: Set,
+    brick: Set,
     shop: Set,
     asphalt: Set,
     pavers: Set,
-    soil: Set,
+    dry: Set,
+    turf: Set,
     water: Handle<Image>,
     /// Carries the sampler the ground's detail maps share (`GroundSurfaces`).
     white: Handle<Image>,
@@ -123,7 +128,7 @@ struct Textures {
 
 impl Textures {
     fn images(&self) -> impl Iterator<Item = &Handle<Image>> {
-        [&self.plaster, &self.marble, &self.facade, &self.shop, &self.asphalt, &self.pavers, &self.soil].into_iter().flat_map(Set::images).chain([&self.water])
+        [&self.plaster, &self.marble, &self.facade, &self.brick, &self.shop, &self.asphalt, &self.pavers, &self.dry, &self.turf].into_iter().flat_map(Set::images).chain([&self.water])
     }
 
     fn load(assets: &AssetServer, images: &mut Assets<Image>) -> Self {
@@ -145,10 +150,12 @@ impl Textures {
             plaster: set("plaster", false),
             marble: set("marble", false),
             facade: set("facade", true),
+            brick: set("brick", true),
             shop: set("shop", true),
             asphalt: set("asphalt", false),
             pavers: set("pavers", false),
-            soil: set("soil", false),
+            dry: set("dry", false),
+            turf: set("turf", false),
             water: tiled(assets, "water_normal".into(), false),
             white: images.add(white),
         }
@@ -192,6 +199,12 @@ pub struct UltraSurfaces {
     /// Whether the switches allow any of this.
     allowed: bool,
     parallax: bool,
+    /// Whether the facades are dressed with their depth (a level with `Quality::is_ultra`).
+    relief: bool,
+    /// Frames left of asking every mesh to look up its material again (`sync`).
+    refresh: u32,
+    /// Which of the `SWEEP` shares of the meshes is looking its material up this frame.
+    sweep: usize,
 }
 
 impl Default for UltraSurfaces {
@@ -205,6 +218,9 @@ impl Default for UltraSurfaces {
             ground_on: false,
             allowed: std::env::var("VIVAD_NO_SURFACES").is_err(),
             parallax: std::env::var("VIVAD_NO_PARALLAX").is_err(),
+            relief: false,
+            refresh: 0,
+            sweep: 0,
         }
     }
 }
@@ -216,14 +232,14 @@ impl UltraSurfaces {
         self.ground = None;
     }
 
-    /// Gives a material its Ultra look whenever that level is showing.
+    /// Gives a material its real surface whenever a level shows those.
     pub fn add(&mut self, handle: Handle<StandardMaterial>, surface: Surface) {
         if !self.entries.iter().any(|e| e.handle == handle) {
             self.entries.push(Entry { handle, surface, plain: None });
         }
     }
 
-    /// Whether the Ultra surfaces are what's on screen.
+    /// Whether the real surfaces are what's on screen.
     pub fn showing(&self) -> bool {
         self.on
     }
@@ -239,10 +255,18 @@ impl UltraSurfaces {
                 t.marble.dress(m);
                 m.uv_transform = Affine2::from_scale(Vec2::splat(TILE / MARBLE_TILE));
             }
-            Surface::Facade | Surface::Shop => {
-                let set = if surface == Surface::Facade { &t.facade } else { &t.shop };
+            Surface::Facade | Surface::Brick | Surface::Shop => {
+                let set = match surface {
+                    Surface::Facade => &t.facade,
+                    Surface::Brick => &t.brick,
+                    _ => &t.shop,
+                };
                 set.dress(m);
-                if self.parallax {
+                if surface == Surface::Brick {
+                    m.base_color = Color::WHITE;
+                }
+                m.depth_map = None;
+                if self.relief {
                     m.depth_map = set.depth.clone();
                     m.parallax_depth_scale = FACADE_DEPTH / FACADE_WIDTH;
                     m.max_parallax_layer_count = PARALLAX_LAYERS;
@@ -264,11 +288,33 @@ impl UltraSurfaces {
     }
 }
 
-/// Starts the textures loading on the first call for Ultra, and flips the materials once they
-/// have all arrived. If one can't be read (a GPU without BC formats, say), Ultra keeps the plain
-/// surfaces and says so once.
-fn sync(quality: Res<Quality>, assets: Res<AssetServer>, mut images: ResMut<Assets<Image>>, mut state: ResMut<UltraSurfaces>, mut materials: ResMut<Assets<StandardMaterial>>) {
-    let want = quality.is_ultra() && state.allowed;
+/// Frames a change of surfaces keeps meshes looking up their materials: a material can take a few
+/// frames to be ready on the GPU, once its images are.
+const REFRESH_FRAMES: u32 = 30;
+/// One mesh in this many looks up its material each frame all the time, so that a mesh that missed
+/// the moment heals itself in a few seconds rather than staying wrong for the match.
+const SWEEP: usize = 240;
+
+/// Starts the textures loading the first time a level wants them, and flips the materials once
+/// they have all arrived; a change of level dresses them again, for the parallax. If one can't be
+/// read (a GPU without BC formats, say), the level keeps the plain surfaces and says so once.
+///
+/// Bevy keeps a material's place in its bindless slabs on the mesh, and takes it only when the mesh
+/// itself changes. New textures can move a material to another slab, when its slab is full, and then
+/// a mesh that stood still goes on drawing with whatever took its place: walls with another
+/// material's textures, differently each run. So after a flip every mesh is marked as changed for
+/// a moment, by its visibility: the cheapest thing that makes the renderer read a mesh again, and
+/// a few at a time after that.
+#[allow(clippy::too_many_arguments)]
+fn sync(
+    quality: Res<Quality>,
+    assets: Res<AssetServer>,
+    mut images: ResMut<Assets<Image>>,
+    mut state: ResMut<UltraSurfaces>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut drawn: Query<&mut ViewVisibility, With<Mesh3d>>,
+) {
+    let want = quality.surfaces() && state.allowed;
     if want && state.textures.is_none() {
         state.textures = Some(Textures::load(&assets, &mut images));
     }
@@ -278,27 +324,43 @@ fn sync(quality: Res<Quality>, assets: Res<AssetServer>, mut images: ResMut<Asse
         });
     if want && !ready {
         if !state.failed && state.textures.as_ref().is_some_and(|t| t.images().any(|h| matches!(assets.get_load_state(h), Some(LoadState::Failed(_))))) {
-            warn!("surfaces: a texture in assets/textures/ultra would not load; Ultra keeps the plain surfaces");
+            warn!("surfaces: a texture in assets/textures/ultra would not load; the plain surfaces stay");
             state.failed = true;
         }
         return;
     }
     let state = &mut *state;
     state.on = want;
+    let relief = quality.is_ultra() && state.parallax;
+    let redress = relief != state.relief;
+    state.relief = relief;
     let mut entries = std::mem::take(&mut state.entries);
     for e in &mut entries {
-        if e.plain.is_some() == want {
+        let shown = e.plain.is_some();
+        let walls = matches!(e.surface, Surface::Facade | Surface::Brick | Surface::Shop);
+        if shown == want && !(want && redress && walls) {
             continue;
         }
         let Some(mut m) = materials.get_mut(&e.handle) else { continue };
+        state.refresh = REFRESH_FRAMES;
         if want {
-            e.plain = Some(m.clone());
+            if !shown {
+                e.plain = Some(m.clone());
+            }
             state.dress(e.surface, &mut m);
         } else if let Some(plain) = e.plain.take() {
             *m = plain;
         }
     }
     state.entries = entries;
+    let every = state.refresh > 0;
+    state.refresh = state.refresh.saturating_sub(1);
+    state.sweep = (state.sweep + 1) % SWEEP;
+    for (k, mut visibility) in drawn.iter_mut().enumerate() {
+        if every || k % SWEEP == state.sweep {
+            visibility.set_changed();
+        }
+    }
 }
 
 /// The ground on a city map is one mesh under several surfaces, so its detail is chosen per pixel
@@ -311,10 +373,12 @@ pub type GroundMaterial = ExtendedMaterial<StandardMaterial, GroundSurfaces>;
 /// shader stage, and Bevy's forward pipeline on Ultra is close to that.
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
 pub struct GroundSurfaces {
-    /// World XZ to mask UV: uv = (xz + x) * y + z.
+    /// World XZ to mask UV: uv = (xz + x) * y + z. w: 1 where the base colour is a tint of each
+    /// surface's own colour (`surface_mean`), 0 where it is the painted colour itself.
     #[uniform(100)]
     pub place: Vec4,
-    /// Share of each surface, one texel per terrain sample. r: asphalt, g: pavers, b: earth.
+    /// Per terrain sample. r, g, b: metres inside asphalt, pavers and land, negative outside, 0.5
+    /// at the edge and running out at `REACH`. a: what the land is (`land_cover`).
     #[texture(101)]
     pub mask: Handle<Image>,
     #[texture(102)]
@@ -330,150 +394,257 @@ pub struct GroundSurfaces {
     #[texture(107)]
     pub pavers_orm: Handle<Image>,
     #[texture(108)]
-    pub soil_color: Handle<Image>,
+    pub dry_color: Handle<Image>,
     #[texture(109)]
-    pub soil_normal: Handle<Image>,
+    pub dry_normal: Handle<Image>,
     #[texture(110)]
-    pub soil_orm: Handle<Image>,
+    pub dry_orm: Handle<Image>,
+    #[texture(111)]
+    pub turf_color: Handle<Image>,
+    #[texture(112)]
+    pub turf_normal: Handle<Image>,
+    #[texture(113)]
+    pub turf_orm: Handle<Image>,
 }
-
-const GROUND_SHADER: Handle<Shader> = uuid_handle!("6f0d2a57-3c1e-4a9b-8f64-2b7f1ce0a5d3");
 
 impl MaterialExtension for GroundSurfaces {
     fn fragment_shader() -> ShaderRef {
-        ShaderRef::Handle(GROUND_SHADER)
+        "shaders/ground.wesl".into()
     }
 }
 
-/// In the source rather than assets/shaders so this module stands alone. Same frame as
-/// assets/shaders/rim.wesl: the standard PBR fragment, with its surface swapped before lighting.
-/// The terrain has no tangents; on ground this flat they follow from the normal and world X.
-const GROUND_WESL: &str = r#"
-import bevy_pbr::render::{
-    pbr_bindings::base_color_sampler,
-    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
-    pbr_fragment::pbr_input_from_standard_material,
-    forward_io::{VertexOutput, FragmentOutput},
-};
+/// How far the mask's distances run, metres (assets/shaders/ground.wesl): a kerb's and a gutter's
+/// width are measured on them, and this is three terrain samples on a big map.
+const REACH: f32 = 6.0;
 
-@if(VISIBILITY_RANGE_DITHER)
-import bevy_pbr::render::pbr_functions::visibility_range_dither;
-
-@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> place: vec4<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(101) var mask: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(102) var asphalt_color: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(103) var asphalt_normal: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(104) var asphalt_orm: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(105) var pavers_color: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(106) var pavers_normal: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(107) var pavers_orm: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(108) var soil_color: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(109) var soil_normal: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(110) var soil_orm: texture_2d<f32>;
-
-// Metres per repeat (tools/textures/cp_surfaces.py).
-const ASPHALT_TILE: f32 = 12.0;
-const PAVERS_TILE: f32 = 6.0;
-const SOIL_TILE: f32 = 6.0;
-
-// Linear colour (as a ratio, 0.5 meaning as painted), normal XY, occlusion and roughness, summed
-// over the surfaces under a pixel.
-struct Layers {
-    color: vec3<f32>,
-    normal: vec2<f32>,
-    occlusion: f32,
-    roughness: f32,
+/// Which of the mask's three surfaces a ground class is.
+fn surface(class: u8) -> usize {
+    match class {
+        ground::ROAD | ground::PARKING => 0,
+        ground::PARK | ground::PATH | ground::WATER | ground::OPEN | ground::SAND => 2,
+        _ => 1,
+    }
 }
 
-fn add_surface(sum: ptr<function, Layers>, weight: f32, color: texture_2d<f32>, normal: texture_2d<f32>, orm: texture_2d<f32>, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) {
-    let c = textureSampleGrad(color, base_color_sampler, uv, dx, dy).rgb;
-    let n = textureSampleGrad(normal, base_color_sampler, uv, dx, dy).rg * 2.0 - 1.0;
-    let m = textureSampleGrad(orm, base_color_sampler, uv, dx, dy);
-    (*sum).color += c * weight;
-    (*sum).normal += n * weight;
-    (*sum).occlusion += m.r * weight;
-    (*sum).roughness += m.g * weight;
+/// What land is at a sample, the mask's alpha: 0 bare earth, 0.5 dry grass, 1 green turf.
+fn land_cover(class: u8, cover: f32) -> f32 {
+    match class {
+        ground::PATH | ground::SAND | ground::WATER => 0.0,
+        _ => 0.5 + 0.5 * smooth(0.3, 0.7, cover),
+    }
 }
 
-@fragment
-fn fragment(vertex_output: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
-    var in = vertex_output;
-@if(VISIBILITY_RANGE_DITHER)
-    visibility_range_dither(in.position, in.visibility_range_dither);
-
-    var pbr_input = pbr_input_from_standard_material(in, is_front);
-
-    let p = in.world_position.xz;
-    let dx = dpdx(p);
-    let dy = dpdy(p);
-    // The mask is about a metre a texel: a wandering threshold makes its edges a kerb's irregular
-    // line rather than a blur.
-    let wander = sin(p.x * 1.7 + 1.5 * sin(p.y * 2.3)) * sin(p.y * 1.9 + 1.5 * sin(p.x * 1.1));
-    let share = textureSampleLevel(mask, base_color_sampler, (p + place.x) * place.y + place.z, 0.0).rgb;
-    var w = smoothstep(vec3<f32>(0.40), vec3<f32>(0.60), share + 0.1 * wander);
-    let total = w.x + w.y + w.z;
-    if (total < 0.001) {
-        w = share / max(share.x + share.y + share.z, 0.001);
-    } else {
-        w /= total;
-    }
-
-    // Only what's showing is read: most pixels are one surface, and pay for three maps, not nine.
-    var sum = Layers(vec3<f32>(0.0), vec2<f32>(0.0), 0.0, 0.0);
-    if (w.x > 0.004) {
-        add_surface(&sum, w.x, asphalt_color, asphalt_normal, asphalt_orm, p / ASPHALT_TILE, dx / ASPHALT_TILE, dy / ASPHALT_TILE);
-    }
-    if (w.y > 0.004) {
-        add_surface(&sum, w.y, pavers_color, pavers_normal, pavers_orm, p / PAVERS_TILE, dx / PAVERS_TILE, dy / PAVERS_TILE);
-    }
-    if (w.z > 0.004) {
-        add_surface(&sum, w.z, soil_color, soil_normal, soil_orm, p / SOIL_TILE, dx / SOIL_TILE, dy / SOIL_TILE);
-    }
-
-    // The painted colour and baked contact shadow stay; the maps add the grain.
-    let base = pbr_input.material.base_color;
-    pbr_input.material.base_color = vec4<f32>(base.rgb * sum.color * 2.0, base.a);
-    pbr_input.material.perceptual_roughness = sum.roughness;
-    pbr_input.diffuse_occlusion *= sum.occlusion;
-
-    let up = pbr_input.world_normal;
-    let t = normalize(vec3<f32>(1.0, 0.0, 0.0) - up * up.x);
-    let b = cross(up, t);
-    let z = sqrt(saturate(1.0 - dot(sum.normal, sum.normal)));
-    pbr_input.N = normalize(t * sum.normal.x + b * sum.normal.y + up * z);
-
-    var out: FragmentOutput;
-    out.color = apply_pbr_lighting(pbr_input);
-    out.color = main_pass_post_lighting_processing(pbr_input, out.color);
-    return out;
-}
-"#;
-
-fn add_shader(mut shaders: ResMut<Assets<Shader>>) {
-    let _ = shaders.insert(&GROUND_SHADER, Shader::from_wesl(GROUND_WESL, "shaders/ground.wesl"));
+fn smooth(lo: f32, hi: f32, x: f32) -> f32 {
+    let t = ((x - lo) / (hi - lo)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
-/// The mask of which surface covers each terrain sample.
-fn ground_mask(t: &Terrain) -> Image {
-    let n = t.n;
-    let mut data = vec![255u8; n * n * 4];
-    for i in 0..n {
-        for j in 0..n {
-            let share = match t.ground.get(i * n + j).copied().unwrap_or(ground::PAVEMENT) {
-                ground::ROAD | ground::PARKING => [255, 0, 0],
-                ground::PARK | ground::PATH | ground::WATER | ground::OPEN | ground::SAND => [0, 0, 255],
-                _ => [0, 255, 0],
-            };
-            data[(j * n + i) * 4..(j * n + i) * 4 + 3].copy_from_slice(&share);
+/// The colour the ground shader gives a class's surface, before its tint (keep in step with the
+/// constants in assets/shaders/ground.wesl). A big map's colour is stored as its ratio to this, so
+/// that it carries the broad changes across an edge between two surfaces and doesn't smear them
+/// over the two metres between samples.
+pub(crate) fn surface_mean(class: u8, cover: f32) -> LinearRgba {
+    let lin = |c: [f32; 3]| Color::srgb(c[0], c[1], c[2]).to_linear();
+    match surface(class) {
+        0 => lin(ASPHALT_MEAN),
+        1 => lin(PAVERS_MEAN),
+        _ => {
+            let a = land_cover(class, cover);
+            let (dry, other, t) = if a < 0.5 { (lin(DRY_MEAN), lin(BARE_MEAN), 1.0 - a * 2.0) } else { (lin(DRY_MEAN), lin(TURF_MEAN), a * 2.0 - 1.0) };
+            dry.mix(&other, t)
         }
     }
+}
+
+const ASPHALT_MEAN: [f32; 3] = [0.31, 0.305, 0.305];
+const PAVERS_MEAN: [f32; 3] = [0.53, 0.505, 0.465];
+const DRY_MEAN: [f32; 3] = [0.54, 0.48, 0.37];
+const TURF_MEAN: [f32; 3] = [0.31, 0.36, 0.19];
+const BARE_MEAN: [f32; 3] = [0.53, 0.49, 0.42];
+
+/// Each sample's distance to the edge of each surface, signed, in rows of z. An edge runs midway
+/// between two samples of different surfaces, and a short blur takes the stairs of the two-metre
+/// grid out of it.
+fn surface_edges(t: &Terrain) -> Vec<[f32; 3]> {
+    let n = t.n;
+    let step = t.step();
+    let at = |i: usize, j: usize| surface(t.ground.get(i * n + j).copied().unwrap_or(ground::PAVEMENT));
+    let reach = (REACH / step).ceil() as i32 + 1;
+    let mut near = vec![[REACH; 3]; n * n];
+    for j in 0..n {
+        for i in 0..n {
+            let a = at(i, j);
+            for (di, dj) in [(1, 0), (0, 1)] {
+                let (ni, nj) = (i + di, j + dj);
+                if ni >= n || nj >= n || at(ni, nj) == a {
+                    continue;
+                }
+                let b = at(ni, nj);
+                let (ex, ez) = (i as f32 + di as f32 * 0.5, j as f32 + dj as f32 * 0.5);
+                for z in (j as i32 - reach).max(0)..=(j as i32 + reach).min(n as i32 - 1) {
+                    for x in (i as i32 - reach).max(0)..=(i as i32 + reach).min(n as i32 - 1) {
+                        let d = step * Vec2::new(x as f32 - ex, z as f32 - ez).length();
+                        let cell = &mut near[z as usize * n + x as usize];
+                        cell[a] = cell[a].min(d);
+                        cell[b] = cell[b].min(d);
+                    }
+                }
+            }
+        }
+    }
+    for j in 0..n {
+        for i in 0..n {
+            let own = at(i, j);
+            for (s, d) in near[j * n + i].iter_mut().enumerate() {
+                if s != own {
+                    *d = -*d;
+                }
+            }
+        }
+    }
+    along_edges(&blurred(&near, n), n)
+}
+
+/// What's left of the grid's stairs is a slow ripple along an edge, on a road a few degrees off the
+/// grid, too long for a blur. So each sample near an edge walks along it and takes the mean of what
+/// it meets. The walk can't follow the field it reads, or it would ride the ripple and read one
+/// value all the way: it goes by the edges' direction over tens of metres, the main axis of the
+/// field's slopes on a coarse grid, which the stairs don't reach and a curve still bends. A walk
+/// that leaves its edge stops, so a junction keeps its corners.
+fn along_edges(field: &[[f32; 3]], n: usize) -> Vec<[f32; 3]> {
+    /// Samples to a cell of the direction grid, and the blurs over it: about 12 samples of reach.
+    const CELL: usize = 4;
+    const WIDEN: usize = 9;
+    /// Steps of one sample each way, and the spread of their weights.
+    const STEPS: usize = 14;
+    const SPREAD: f32 = 6.0;
+    /// Metres from an edge that are worth the walk, and how far from where it started a walk's
+    /// reading may stray.
+    const NEAR: f32 = 2.4;
+    const LOST: f32 = 1.6;
+    let m = n / CELL + 1;
+    let mut slopes = vec![[0.0f32; 3]; m * m];
+    for j in 1..n - 1 {
+        for i in 1..n - 1 {
+            let k = j * n + i;
+            for s in 0..3 {
+                if field[k][s].abs() < NEAR {
+                    let (gx, gz) = (field[k + 1][s] - field[k - 1][s], field[k + n][s] - field[k - n][s]);
+                    let cell = &mut slopes[(j / CELL) * m + i / CELL];
+                    *cell = [cell[0] + gx * gx, cell[1] + gx * gz, cell[2] + gz * gz];
+                }
+            }
+        }
+    }
+    for _ in 0..WIDEN {
+        slopes = blurred(&slopes, m);
+    }
+    let direction: Vec<Vec2> = slopes.iter().map(|t| Vec2::from_angle(0.5 * (2.0 * t[1]).atan2(t[0] - t[2])).perp()).collect();
+    let inside = |p: Vec2| p.x >= 1.0 && p.y >= 1.0 && p.x + 2.0 < n as f32 && p.y + 2.0 < n as f32;
+    let sample = |p: Vec2, s: usize| {
+        let (i, j) = (p.x as usize, p.y as usize);
+        let (fx, fz) = (p.x.fract(), p.y.fract());
+        let near = field[j * n + i][s] * (1.0 - fx) + field[j * n + i + 1][s] * fx;
+        let far = field[(j + 1) * n + i][s] * (1.0 - fx) + field[(j + 1) * n + i + 1][s] * fx;
+        near * (1.0 - fz) + far * fz
+    };
+    let mut out = field.to_vec();
+    out.par_chunk_map_mut(ComputeTaskPool::get(), n, |j, row| {
+        for (i, cell) in row.iter_mut().enumerate() {
+            let start = Vec2::new(i as f32, j as f32);
+            if !inside(start) {
+                continue;
+            }
+            for s in 0..3 {
+                let own = field[j * n + i][s];
+                if own.abs() > NEAR {
+                    continue;
+                }
+                let (mut sum, mut total) = (own, 1.0);
+                for way in [1.0, -1.0] {
+                    let mut p = start;
+                    let mut last = direction[(j / CELL) * m + i / CELL] * way;
+                    for k in 1..=STEPS {
+                        let along = direction[(p.y as usize / CELL) * m + p.x as usize / CELL];
+                        last = if along.dot(last) < 0.0 { -along } else { along };
+                        p += last;
+                        if !inside(p) {
+                            break;
+                        }
+                        let v = sample(p, s);
+                        if (v - own).abs() > LOST {
+                            break;
+                        }
+                        let w = (-0.5 * (k as f32 / SPREAD).powi(2)).exp();
+                        sum += v * w;
+                        total += w;
+                    }
+                }
+                cell[s] = sum / total;
+            }
+        }
+    });
+    out
+}
+
+/// A short blur along each row of `n`, then along each column.
+fn blurred(field: &[[f32; 3]], n: usize) -> Vec<[f32; 3]> {
+    const TAPS: [f32; 5] = [0.0625, 0.25, 0.375, 0.25, 0.0625];
+    let pass = |from: &[[f32; 3]], stride: usize| {
+        let mut out = from.to_vec();
+        out.par_chunk_map_mut(ComputeTaskPool::get(), n, |j, row| {
+            for (i, cell) in row.iter_mut().enumerate() {
+                let k = j * n + i;
+                if k < 2 * stride || k + 2 * stride >= n * n {
+                    continue;
+                }
+                let mut sum = [0.0; 3];
+                for (t, w) in TAPS.iter().enumerate() {
+                    let c = from[k + t * stride - 2 * stride];
+                    for (total, v) in sum.iter_mut().zip(c) {
+                        *total += v * w;
+                    }
+                }
+                *cell = sum;
+            }
+        });
+        out
+    };
+    pass(&pass(field, 1), n)
+}
+
+/// The mask of which surface covers each terrain sample: see `GroundSurfaces::mask`.
+fn ground_mask(t: &Terrain) -> Image {
+    let n = t.n;
+    let big = n >= crate::visuals::BIG_TERRAIN;
+    let edges = surface_edges(t);
+    let mut data = vec![255u8; n * n * 4];
+    data.par_chunk_map_mut(ComputeTaskPool::get(), n * 4, |j, row| {
+        for (i, texel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            let k = i * n + j;
+            let class = t.ground.get(k).copied().unwrap_or(ground::PAVEMENT);
+            let (x, z) = (t.coord(i), t.coord(j));
+            let cover = if surface(class) != 2 {
+                0.0
+            } else if big {
+                crate::grass::paint_big(x, z, class, t.h[k], t.size * 0.5).1
+            } else {
+                crate::grass::paint_city(x, z, class).1
+            };
+            // The open land wears through to bald earth in patches.
+            let bald = if class == ground::OPEN { smooth(0.6, 0.74, fbm(x / 17.0, z / 17.0, 3, 57)) * (1.0 - smooth(0.3, 0.5, cover)) } else { 0.0 };
+            let e = edges[j * n + i];
+            let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+            *texel = [byte(0.5 + e[0] / (2.0 * REACH)), byte(0.5 + e[1] / (2.0 * REACH)), byte(0.5 + e[2] / (2.0 * REACH)), byte(land_cover(class, cover) - 0.4 * bald)];
+        }
+    });
     Image::new(Extent3d { width: n as u32, height: n as u32, depth_or_array_layers: 1 }, TextureDimension::D2, data, TextureFormat::Rgba8Unorm, bevy::asset::RenderAssetUsages::RENDER_WORLD)
 }
 
 /// World XZ to the mask's UV: texel i's centre on terrain sample i.
 fn mask_place(t: &Terrain) -> Vec4 {
     let n = t.n as f32;
-    Vec4::new(t.size * 0.5, 1.0 / (t.step() * n), 0.5 / n, 0.0)
+    Vec4::new(t.size * 0.5, 1.0 / (t.step() * n), 0.5 / n, if t.n >= crate::visuals::BIG_TERRAIN { 1.0 } else { 0.0 })
 }
 
 /// Moves the terrain's tiles to and from the ground material. It follows `sync`, so it changes
@@ -492,6 +663,9 @@ fn sync_ground(
     let want = state.on && !layout.terrain.ground.is_empty();
     let flipped = want != state.ground_on;
     state.ground_on = want;
+    if flipped {
+        state.refresh = REFRESH_FRAMES;
+    }
     for children in &terrain {
         if !flipped && !children.is_changed() {
             continue;
@@ -501,12 +675,11 @@ fn sync_ground(
                 let Ok(plain) = tiles.get(tile) else { continue };
                 if state.ground.is_none() {
                     let (Some(t), Some(base)) = (state.textures.as_ref(), standard.get(&plain.0)) else { continue };
+                    let started = bevy::platform::time::Instant::now();
                     let mut base = base.clone();
-                    // A big map's paint stays (crate::visuals::ground: it has this sampler's
+                    // A big map's colour, as a tint (crate::visuals::ground: it has this sampler's
                     // settings). Otherwise the image's only use is the sampler: see `GroundSurfaces`.
-                    if base.base_color_texture.is_none() {
-                        base.base_color_texture = Some(t.white.clone());
-                    }
+                    base.base_color_texture = Some(if layout.terrain.n >= crate::visuals::BIG_TERRAIN { images.add(crate::visuals::tint_image(&layout)) } else { t.white.clone() });
                     let extension = GroundSurfaces {
                         place: mask_place(&layout.terrain),
                         mask: images.add(ground_mask(&layout.terrain)),
@@ -516,12 +689,16 @@ fn sync_ground(
                         pavers_color: t.pavers.base.clone(),
                         pavers_normal: t.pavers.normal.clone(),
                         pavers_orm: t.pavers.orm.clone(),
-                        soil_color: t.soil.base.clone(),
-                        soil_normal: t.soil.normal.clone(),
-                        soil_orm: t.soil.orm.clone(),
+                        dry_color: t.dry.base.clone(),
+                        dry_normal: t.dry.normal.clone(),
+                        dry_orm: t.dry.orm.clone(),
+                        turf_color: t.turf.base.clone(),
+                        turf_normal: t.turf.normal.clone(),
+                        turf_orm: t.turf.orm.clone(),
                     };
                     let ground = grounds.add(ExtendedMaterial { base, extension });
                     state.ground = Some((plain.0.clone(), ground));
+                    info!("ground surfaces: mask and tint in {:.2}s", started.elapsed().as_secs_f32());
                 }
                 if let Some((_, ground)) = &state.ground {
                     commands.entity(tile).remove::<MeshMaterial3d<StandardMaterial>>().insert(MeshMaterial3d(ground.clone()));
@@ -530,5 +707,67 @@ fn sync_ground(
                 commands.entity(tile).remove::<MeshMaterial3d<GroundMaterial>>().insert(MeshMaterial3d(plain.clone()));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::tasks::TaskPool;
+
+    /// How far a road's edge in the mask strays from the straight line it was drawn from, either
+    /// way, in metres, for a road `angle` degrees off a two-metre grid.
+    fn straying(angle: f32) -> f32 {
+        ComputeTaskPool::get_or_init(TaskPool::default);
+        let (n, step, half_width) = (129, 2.0, 5.0);
+        let (sin, cos) = angle.to_radians().sin_cos();
+        let across = |x: f32, z: f32| z * cos - x * sin;
+        let mut t = Terrain { n, size: (n - 1) as f32 * step, h: vec![0.0; n * n], road_d: vec![], ground: vec![ground::PAVEMENT; n * n] };
+        for i in 0..n {
+            for j in 0..n {
+                if across(t.coord(i), t.coord(j)).abs() < half_width {
+                    t.ground[i * n + j] = ground::ROAD;
+                }
+            }
+        }
+        let edges = surface_edges(&t);
+        // Up each column in the middle of the map, to where the road's far edge crosses it.
+        let mut off = vec![];
+        for i in 34..95 {
+            for j in 1..n - 1 {
+                let (inside, outside) = (edges[j * n + i][0], edges[(j + 1) * n + i][0]);
+                if inside > 0.0 && outside <= 0.0 {
+                    off.push(across(t.coord(i), t.coord(j) + step * inside / (inside - outside)));
+                }
+            }
+        }
+        assert!(off.len() > 40, "the edge was found in {} columns", off.len());
+        let mean = off.iter().sum::<f32>() / off.len() as f32;
+        off.iter().map(|o| (o - mean).abs()).fold(0.0, f32::max)
+    }
+
+    #[test]
+    fn a_kerb_runs_straight_off_the_grid() {
+        // Near 1 in 2 the grid beats with the line over hundreds of metres, too slowly to see.
+        for (angle, limit) in [(3.0, 0.12), (5.0, 0.12), (11.0, 0.12), (27.0, 0.35), (45.0, 0.01)] {
+            let worst = straying(angle);
+            assert!(worst < limit, "{angle} degrees: strays {worst} m");
+        }
+    }
+
+    #[test]
+    fn every_class_is_one_surface_and_turf_needs_cover() {
+        for class in [ground::ROAD, ground::PARKING] {
+            assert_eq!(surface(class), 0);
+        }
+        for class in [ground::PAVEMENT, ground::PLAZA] {
+            assert_eq!(surface(class), 1);
+        }
+        for class in [ground::PARK, ground::PATH, ground::WATER, ground::OPEN, ground::SAND] {
+            assert_eq!(surface(class), 2);
+        }
+        assert_eq!(land_cover(ground::SAND, 1.0), 0.0);
+        assert_eq!(land_cover(ground::OPEN, 0.0), 0.5);
+        assert_eq!(land_cover(ground::PARK, 1.0), 1.0);
     }
 }

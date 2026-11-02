@@ -43,11 +43,19 @@ const NEAR: f32 = 13.0;
 const FAR: f32 = 40.0;
 /// A thinned chunk is rebuilt denser once the camera is this much closer than when it was built.
 const REBUILD: f32 = 3.0;
+/// A chunk's blades curve (seven triangles each) when the camera is within this of it, and are
+/// three triangles each past it, where nothing shows a blade's curve but its lean.
+const FINE: f32 = 8.0;
+/// A fine chunk goes back to plain blades this far out.
+const COARSE: f32 = 20.0;
+/// Milliseconds a frame may spend growing chunks. They are built on the main thread, a few
+/// milliseconds each on full cover, and a player crossing a park can want dozens at once.
+const BUILD_MS: f32 = 2.5;
 /// Clumps per square metre at full cover, and blades per clump; plus short single blades
 /// scattered between the clumps (per square metre) so the ground between them isn't bare.
 const CLUMPS: f32 = 10.0;
 const BLADES: (u32, u32) = (10, 20);
-const CARPET: f32 = 40.0;
+const CARPET: f32 = 80.0;
 /// Share of the full blade count grown: the quality level's (crate::quality), or VIVAD_GRASS=<0..1>.
 /// Half looks the same (the painted ground carries the colour) and saves a third of the frame
 /// where grass fills the view.
@@ -56,7 +64,7 @@ fn density(level: f32) -> f32 {
 }
 
 /// Share of blades that are dry straw.
-const DRY: f32 = 0.06;
+const DRY: f32 = 0.03;
 
 pub type GrassMaterial = ExtendedMaterial<StandardMaterial, GrassWind>;
 
@@ -90,16 +98,16 @@ pub fn paint_city(x: f32, z: f32, class: u8) -> (LinearRgba, f32) {
     let mix = |a: LinearRgba, b: LinearRgba, t: f32| a.mix(&b, t.clamp(0.0, 1.0));
     let n = fbm(x / 3.0, z / 3.0, 2, 5);
     let (c, cover) = match class {
-        ground::ROAD => (mix(lin([0.34, 0.33, 0.34]), lin([0.42, 0.40, 0.38]), fbm(x / 9.0, z / 9.0, 2, 71) * 1.4 - 0.2), 0.0),
-        ground::PARKING => (lin([0.42, 0.41, 0.42]), 0.0),
-        ground::PLAZA => (mix(lin([0.62, 0.55, 0.47]), lin([0.55, 0.42, 0.36]), fbm(x / 4.0, z / 4.0, 2, 73)), 0.0),
-        ground::PARK => (mix(lin([0.30, 0.44, 0.16]), lin([0.23, 0.38, 0.13]), fbm(x / 22.0, z / 22.0, 3, 91) * 1.6 - 0.3), 1.0),
+        ground::ROAD => (mix(lin([0.28, 0.28, 0.29]), lin([0.33, 0.325, 0.32]), fbm(x / 9.0, z / 9.0, 2, 71) * 1.4 - 0.2), 0.0),
+        ground::PARKING => (lin([0.33, 0.325, 0.33]), 0.0),
+        ground::PLAZA => (mix(lin([0.54, 0.50, 0.44]), lin([0.48, 0.40, 0.35]), fbm(x / 4.0, z / 4.0, 2, 73)), 0.0),
+        ground::PARK => (mix(lin([0.33, 0.40, 0.20]), lin([0.28, 0.35, 0.17]), fbm(x / 22.0, z / 22.0, 3, 91) * 1.6 - 0.3), 1.0),
         // Under the water: silt (seen through the surface).
         ground::WATER => (mix(lin([0.22, 0.24, 0.18]), lin([0.30, 0.28, 0.20]), fbm(x / 5.0, z / 5.0, 2, 79)), 0.0),
         // Lanes and park paths: trodden earth and old brick.
-        ground::PATH => (mix(lin([0.55, 0.45, 0.34]), lin([0.50, 0.36, 0.28]), fbm(x / 3.0, z / 3.0, 2, 83)), 0.0),
+        ground::PATH => (mix(lin([0.52, 0.47, 0.40]), lin([0.47, 0.41, 0.34]), fbm(x / 3.0, z / 3.0, 2, 83)), 0.0),
         // Pavement: worn sandstone-grey slabs, darker where it's dusty.
-        _ => (mix(lin([0.70, 0.66, 0.60]), lin([0.62, 0.57, 0.50]), fbm(x / 7.0, z / 7.0, 2, 77) * 1.4 - 0.2), 0.0),
+        _ => (mix(lin([0.56, 0.54, 0.50]), lin([0.50, 0.47, 0.43]), fbm(x / 7.0, z / 7.0, 2, 77) * 1.4 - 0.2), 0.0),
     };
     let v = 0.92 + 0.16 * n;
     (LinearRgba::new(c.red * v, c.green * v, c.blue * v, 1.0), cover)
@@ -121,15 +129,15 @@ pub fn paint_big(x: f32, z: f32, class: u8, h: f32, edge: f32) -> (LinearRgba, f
         ground::OPEN => {
             let (broad, patch) = (fbm(x / 210.0, z / 210.0, 3, 11), fbm(x / 48.0, z / 48.0, 3, 23));
             let lush = (broad * 1.5 + patch * 0.9 - 1.0).clamp(0.0, 1.0);
-            let dry = mix(lin([0.66, 0.58, 0.42]), lin([0.60, 0.56, 0.36]), fbm(x / 21.0, z / 21.0, 2, 37) * 1.6 - 0.3);
-            let mut c = mix(dry, lin([0.36, 0.42, 0.21]), lush);
+            let dry = mix(lin([0.57, 0.51, 0.40]), lin([0.47, 0.43, 0.31]), fbm(x / 21.0, z / 21.0, 2, 37) * 1.6 - 0.3);
+            let mut c = mix(dry, lin([0.31, 0.36, 0.19]), lush);
             let high = ((h - HIGH.0) / (HIGH.1 - HIGH.0)).clamp(0.0, 1.0);
             // East of the river the only high ground is the mound; the ridge is west of it.
-            c = mix(c, if x > 500.0 { lin([0.47, 0.44, 0.38]) } else { lin([0.27, 0.36, 0.17]) }, high);
+            c = mix(c, if x > 500.0 { lin([0.47, 0.44, 0.38]) } else { lin([0.30, 0.35, 0.19]) }, high);
             (c * v, 0.15 + 0.6 * lush)
         }
         ground::SAND => {
-            let dry = mix(lin([0.78, 0.71, 0.58]), lin([0.72, 0.64, 0.50]), fbm(x / 26.0, z / 26.0, 3, 41) * 1.5 - 0.25);
+            let dry = mix(lin([0.58, 0.54, 0.45]), lin([0.54, 0.49, 0.40]), fbm(x / 26.0, z / 26.0, 3, 41) * 1.5 - 0.25);
             (mix(lin([0.48, 0.44, 0.36]), dry, (h + 0.48) / 0.14) * v, 0.0)
         }
         _ => paint_city(x, z, class),
@@ -252,8 +260,8 @@ impl Blockers {
 pub struct Grass {
     material: Handle<GrassMaterial>,
     blockers: Blockers,
-    /// Built chunks: entity and the share of blades kept.
-    live: HashMap<(i32, i32), (Entity, f32)>,
+    /// Built chunks: entity, the share of blades kept, and whether they curve (`FINE`).
+    live: HashMap<(i32, i32), (Entity, f32, bool)>,
     density: f32,
     /// The density changed: every chunk is rebuilt.
     regrow: bool,
@@ -288,7 +296,7 @@ fn setup(mut commands: Commands, layout: Res<MapLayout>, mut materials: ResMut<A
 /// Another map: grass kept off its own buildings, and every chunk grown again.
 fn regrow(mut commands: Commands, mut grass: ResMut<Grass>, layout: Res<MapLayout>) {
     grass.blockers = Blockers::new(&layout);
-    for (_, (e, _)) in grass.live.drain() {
+    for (_, (e, ..)) in grass.live.drain() {
         commands.entity(e).try_despawn();
     }
 }
@@ -325,18 +333,16 @@ fn stream_chunks(
     let regrow = std::mem::take(&mut grass.regrow);
     let gone: Vec<_> = grass.live.keys().copied().filter(|&k| regrow || !near || reach(k) > DROP).collect();
     for k in gone {
-        if let Some((e, _)) = grass.live.remove(&k) {
+        if let Some((e, ..)) = grass.live.remove(&k) {
             commands.entity(e).despawn();
         }
     }
     if !near {
         return;
     }
+    let nearest = |k: (i32, i32)| (reach(k) - CHUNK * std::f32::consts::FRAC_1_SQRT_2).max(0.0);
     // The share of blades the shader still shows at the chunk's nearest point.
-    let keep_at = |k: (i32, i32)| {
-        let d = (reach(k) - CHUNK * std::f32::consts::FRAC_1_SQRT_2).max(0.0);
-        ((FAR - d) / (FAR - NEAR) + 0.03).clamp(0.0, 1.0)
-    };
+    let keep_at = |k: (i32, i32)| ((FAR - nearest(k)) / (FAR - NEAR) + 0.03).clamp(0.0, 1.0);
     let lim = layout.half_extent + 20.0;
     let r = (BUILD / CHUNK).ceil() as i32 + 1;
     let (ci, cj) = ((eye.x / CHUNK).floor() as i32, (eye.z / CHUNK).floor() as i32);
@@ -345,16 +351,21 @@ fn stream_chunks(
         .filter(|&k| reach(k) < BUILD)
         .filter(|&k| match grass.live.get(&k) {
             None => true,
-            // Come closer since it was built: it needs more blades.
-            Some(&(_, kept)) => kept < 1.0 && keep_at(k) > kept + REBUILD / (FAR - NEAR),
+            // Come closer since it was built: it needs more blades, or finer ones. Gone away: fewer.
+            Some(&(_, kept, fine)) => kept < 1.0 && keep_at(k) > kept + REBUILD / (FAR - NEAR) || !fine && nearest(k) < FINE || fine && nearest(k) > COARSE,
         })
         .filter(|&k| ((k.0 as f32 + 0.5) * CHUNK).abs() < lim && ((k.1 as f32 + 0.5) * CHUNK).abs() < lim)
         .collect();
     want.sort_by(|a, b| reach(*a).total_cmp(&reach(*b)));
-    // A few per frame, nearest first.
-    for k in want.into_iter().take(6) {
+    // As many as the frame can spare, nearest first.
+    let started = bevy::platform::time::Instant::now();
+    for k in want {
+        if started.elapsed().as_secs_f32() * 1000.0 > BUILD_MS {
+            break;
+        }
         let keep = keep_at(k);
-        let e = match build_chunk(k, &layout.terrain, &grass.blockers, keep, grass.density, layout.style == shared::map::MapStyle::Ncr) {
+        let fine = nearest(k) < FINE;
+        let e = match build_chunk(k, &layout.terrain, &grass.blockers, keep, fine, grass.density, layout.style == shared::map::MapStyle::Ncr) {
             Some((mesh, origin)) => commands
                 .spawn((
                     Mesh3d(meshes.add(mesh)),
@@ -367,7 +378,7 @@ fn stream_chunks(
             // Bare ground: remember it so it isn't rebuilt every frame.
             None => commands.spawn(Transform::default()).id(),
         };
-        if let Some((old, _)) = grass.live.insert(k, (e, keep)) {
+        if let Some((old, ..)) = grass.live.insert(k, (e, keep, fine)) {
             commands.entity(old).despawn();
         }
     }
@@ -388,12 +399,13 @@ struct Blades {
 }
 
 impl Blades {
-    /// A tapering blade of four segments curving over along `lean_dir`.
+    /// A tapering blade curving over along `lean_dir`: four segments, or two past `FINE`.
     #[allow(clippy::too_many_arguments)]
-    fn blade(&mut self, root: Vec3, height: f32, width: f32, side: Vec3, lean_dir: Vec3, lean: f32, normal: Vec3, (root_c, tip_c): (LinearRgba, LinearRgba), rank: f32) {
+    fn blade(&mut self, fine: bool, root: Vec3, height: f32, width: f32, side: Vec3, lean_dir: Vec3, lean: f32, normal: Vec3, (root_c, tip_c): (LinearRgba, LinearRgba), rank: f32) {
         let base = self.pos.len() as u32;
         let at = |f: f32| root + Vec3::Y * (height * f * (1.0 - 0.25 * f * lean / height.max(1e-3))) + lean_dir * (lean * f * f);
-        for (f, w) in [(0.0, 1.0), (0.3, 0.85), (0.6, 0.6), (0.85, 0.3)] {
+        let rings: &[(f32, f32)] = if fine { &[(0.0, 1.0), (0.3, 0.85), (0.6, 0.6), (0.85, 0.3)] } else { &[(0.0, 1.0), (0.55, 0.7)] };
+        for &(f, w) in rings {
             let c = root_c.mix(&tip_c, f);
             for s in [-0.5, 0.5] {
                 self.pos.push((at(f) + side * (width * w * s)).to_array());
@@ -406,19 +418,24 @@ impl Blades {
         self.nrm.push(normal.to_array());
         self.uv.push([rank, 1.0]);
         self.col.push([tip_c.red, tip_c.green, tip_c.blue, height]);
-        self.idx.extend([0, 1, 3, 0, 3, 2, 2, 3, 5, 2, 5, 4, 4, 5, 7, 4, 7, 6, 6, 7, 8].map(|i| base + i));
+        if fine {
+            self.idx.extend([0, 1, 3, 0, 3, 2, 2, 3, 5, 2, 5, 4, 4, 5, 7, 4, 7, 6, 6, 7, 8].map(|i| base + i));
+        } else {
+            self.idx.extend([0, 1, 3, 0, 3, 2, 2, 3, 4].map(|i| base + i));
+        }
     }
 }
 
 /// Builds chunk `k` with only the blades of rank below `keep` (the rest would be sunk by the
 /// shader at the chunk's distance).
-fn build_chunk(k: (i32, i32), t: &Terrain, blockers: &Blockers, keep: f32, density: f32, ncr: bool) -> Option<(Mesh, Vec3)> {
+#[allow(clippy::too_many_arguments)]
+fn build_chunk(k: (i32, i32), t: &Terrain, blockers: &Blockers, keep: f32, fine: bool, density: f32, ncr: bool) -> Option<(Mesh, Vec3)> {
     let x0 = Vec2::new(k.0 as f32, k.1 as f32) * CHUNK;
     let c = x0 + Vec2::splat(CHUNK * 0.5);
     let origin = Vec3::new(c.x, on_mesh(t, &t.h, c.x, c.y), c.y);
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15 ^ ((k.0 as u64) << 32 | (k.1 as u32 as u64)).wrapping_mul(0x2545_F491_4F6C_DD1D) | 1);
-    let tip_tint = lin([0.55, 0.68, 0.28]);
-    let (cool, warm, straw) = (lin([0.17, 0.33, 0.15]), lin([0.47, 0.54, 0.2]), lin([0.72, 0.64, 0.4]));
+    let tip_tint = lin([0.42, 0.50, 0.24]);
+    let (cool, warm, straw) = (lin([0.17, 0.33, 0.15]), lin([0.47, 0.54, 0.2]), lin([0.50, 0.44, 0.28]));
     let mut mesh = Blades::default();
     let k = density;
     let clumps = (CHUNK * CHUNK * CLUMPS * k) as usize;
@@ -433,22 +450,26 @@ fn build_chunk(k: (i32, i32), t: &Terrain, blockers: &Blockers, keep: f32, densi
             None if ncr => paint_ncr(p.x, p.y, h, n),
             None => paint(p.x, p.y, h, n, rd),
         };
-        // Thicker in the lush patches, thin at the edges of dry ground and paths.
+        // Thicker in the lush patches, thin at the edges of dry ground and paths. The carpet of
+        // single blades is what makes it grass, so it goes thin last.
         let lush = fbm(p.x / 9.0, p.y / 9.0, 2, 33);
-        if rng.f() > cover * (0.55 + 0.9 * lush) || blockers.blocked(Vec3::new(p.x, h, p.y)) {
+        let is_clump = i < clumps;
+        let share = if is_clump { cover } else { cover.sqrt() };
+        if rng.f() > share * (0.55 + 0.9 * lush) || blockers.blocked(Vec3::new(p.x, h, p.y)) {
             continue;
         }
-        let is_clump = i < clumps;
         let (blades, spread) = if is_clump { (BLADES.0 + (rng.f() * (BLADES.1 - BLADES.0 + 1) as f32) as u32, 0.13) } else { (1, 0.0) };
-        let tall = (0.6 + 0.5 * lush) * (0.7 + 0.3 * cover) * if is_clump { 1.0 } else { 0.45 };
-        // Each clump its own shade: some deep and bluish, some yellower in the sun.
+        let tall = (0.6 + 0.5 * lush) * (0.7 + 0.3 * cover) * if is_clump { 1.0 } else { 0.62 };
+        // Each clump its own shade: some deep and bluish, some yellower in the sun. None on dry
+        // ground, whose blades are the colour of the land.
+        let green = ((ground.green / ground.red.max(0.01) - 0.95) / 0.35).clamp(0.0, 1.0);
         let tint = if rng.f() < 0.5 { cool } else { warm };
-        let clump_c = ground.mix(&tint, rng.range(0.0, 0.4));
+        let clump_c = ground.mix(&tint, rng.range(0.0, 0.3) * green);
         for _ in 0..blades {
             let q = p + Vec2::new(rng.range(-spread, spread), rng.range(-spread, spread));
             let root = Vec3::new(q.x, on_mesh(t, &t.h, q.x, q.y) - 0.02, q.y) - origin;
             let height = rng.range(0.16, 0.42) * tall;
-            let width = rng.range(0.014, 0.03);
+            let width = rng.range(0.022, 0.048);
             let yaw = rng.f() * TAU;
             let side = Vec3::new(yaw.cos(), 0.0, yaw.sin());
             let face = Vec3::new(-yaw.sin(), 0.0, yaw.cos());
@@ -461,13 +482,13 @@ fn build_chunk(k: (i32, i32), t: &Terrain, blockers: &Blockers, keep: f32, densi
             let (root_c, tip_c) = if rng.f() < DRY {
                 (straw * 0.55, straw * shade)
             } else {
-                (clump_c * (0.42 * shade), clump_c.mix(&tip_tint, rng.range(0.1, 0.3)) * (1.05 * shade))
+                (clump_c * (0.5 * shade), clump_c.mix(&tip_tint, rng.range(0.05, 0.25) * green) * (1.05 * shade))
             };
             // Every draw is made whatever `keep` is, so a rebuild at another density puts the
             // same blades in the same places.
             let rank = rng.f();
             if rank < keep {
-                mesh.blade(root, height, width, side, lean_dir, lean, normal, (root_c, tip_c), rank);
+                mesh.blade(fine, root, height, width, side, lean_dir, lean, normal, (root_c, tip_c), rank);
             }
         }
     }

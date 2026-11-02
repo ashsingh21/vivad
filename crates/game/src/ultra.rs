@@ -1,7 +1,7 @@
-//! The Ultra level's sky and finish: Bevy's physical atmosphere with a sky-generated environment
-//! light, the sun on the clock, TonyMcMapface and an exposure set by the sun's height. Every other level keeps the
-//! painted sky (crate::sky), the fixed sun, AgX and fixed exposure, and F4 moves cleanly between
-//! the two (`apply`, from crate::quality).
+//! The Ultra level's sky and finish on the small maps: Bevy's physical atmosphere with a sky-generated
+//! environment light, the sun on the clock and an exposure set by the sun's height. Every other
+//! level, and the NCR on all of them, keeps the dome of crate::sky, the fixed sun and fixed exposure,
+//! and F4 moves cleanly between the two (`apply`, from crate::quality).
 //!
 //! Switches, for comparisons:
 //!   VIVAD_NO_ATMO=1      Ultra on the painted sky and fixed sun, with distance fog.
@@ -9,7 +9,7 @@
 //!                        frame on an M4, and once on, Bevy 0.20 keeps metering after the component
 //!                        is removed, so leaving Ultra with F4 would dim the lower levels.
 //!   VIVAD_EV=<ev100>     one fixed exposure, no metering.
-//!   VIVAD_TONEMAP=agx    AgX on Ultra too, to compare with TonyMcMapface.
+//!   VIVAD_TONEMAP=agx    AgX, to compare with TonyMcMapface.
 //!   VIVAD_HOUR=<h>       pins the clock (`18.5` or `18:30`).
 //!   VIVAD_ATMO_FULL=1    Bevy's full-size lookup tables instead of the lean set.
 //!   VIVAD_ATMO_ENV=<n>   environment map size in pixels, a power of two; 0 for none.
@@ -139,7 +139,9 @@ fn sync(
     let Ok((camera, mut exposure, hemisphere)) = cam.single_mut() else { return };
     let ncr = layout.style == shared::map::MapStyle::Ncr;
 
-    let want_atmosphere = ultra && std::env::var("VIVAD_NO_ATMO").is_err();
+    // Not on the NCR, whose hazy day is the dome's: there Ultra is High with more of everything,
+    // and the same sky.
+    let want_atmosphere = ultra && !ncr && std::env::var("VIVAD_NO_ATMO").is_err();
     if want_atmosphere && !state.atmosphere {
         if let Ok((e, tf, light)) = sun.single() {
             state.saved = Some(Painted {
@@ -414,7 +416,7 @@ mod tests {
 
     fn cycle(ncr: bool) {
         // VIVAD_NO_ATMO / VIVAD_AUTOEXP / VIVAD_EV: run the suite with them set to test the switches.
-        let atmosphere = std::env::var("VIVAD_NO_ATMO").is_err();
+        let atmosphere = !ncr && std::env::var("VIVAD_NO_ATMO").is_err();
         let metered = std::env::var("VIVAD_AUTOEXP").is_ok() && std::env::var("VIVAD_EV").is_err();
         let mut app = app(ncr);
         let cam = camera(&mut app);
@@ -475,7 +477,7 @@ mod tests {
             assert!(w.get::<AutoExposure>(cam).is_none());
             assert!(w.get::<SunDisk>(sun).is_none());
             assert!(w.get::<DistanceFog>(cam).is_some());
-            assert_eq!(*w.get::<Tonemapping>(cam).unwrap(), Tonemapping::AgX);
+            assert_eq!(*w.get::<Tonemapping>(cam).unwrap(), Tonemapping::TonyMcMapface);
             assert_eq!(w.get::<Exposure>(cam).unwrap().ev100, crate::camera::fixed_ev());
             assert_eq!(*w.get::<Transform>(sun).unwrap(), sun_at);
             assert_eq!(w.get::<DirectionalLight>(sun).unwrap().illuminance, 27_000.0);

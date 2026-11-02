@@ -1,5 +1,6 @@
 # What `just textures-pack` encodes: <kind> <input> <output>, relative to this file.
-# Inputs come from tools/textures/cp_surfaces.py; kinds are explained in tools/texpack/src/main.rs.
+# Inputs come from tools/textures/cp_surfaces.py, ncr_ground.py and sky.py; kinds are explained in
+# tools/texpack/src/main.rs.
 
 color  ../../build/ultra_src/plaster_basecolor.png ../../assets/textures/ultra/plaster_basecolor.ktx2
 normal ../../build/ultra_src/plaster_normal.png ../../assets/textures/ultra/plaster_normal.ktx2
@@ -13,15 +14,25 @@ data   ../../build/ultra_src/asphalt_orm.png ../../assets/textures/ultra/asphalt
 color  ../../build/ultra_src/pavers_basecolor.png ../../assets/textures/ultra/pavers_basecolor.ktx2
 normal ../../build/ultra_src/pavers_normal.png ../../assets/textures/ultra/pavers_normal.ktx2
 data   ../../build/ultra_src/pavers_orm.png ../../assets/textures/ultra/pavers_orm.ktx2
-color  ../../build/ultra_src/soil_basecolor.png ../../assets/textures/ultra/soil_basecolor.ktx2
-normal ../../build/ultra_src/soil_normal.png ../../assets/textures/ultra/soil_normal.ktx2
-data   ../../build/ultra_src/soil_orm.png ../../assets/textures/ultra/soil_orm.ktx2
+color  ../../build/ultra_src/dry_basecolor.png ../../assets/textures/ultra/dry_basecolor.ktx2
+normal ../../build/ultra_src/dry_normal.png ../../assets/textures/ultra/dry_normal.ktx2
+data   ../../build/ultra_src/dry_orm.png ../../assets/textures/ultra/dry_orm.ktx2
+color  ../../build/ultra_src/turf_basecolor.png ../../assets/textures/ultra/turf_basecolor.ktx2
+normal ../../build/ultra_src/turf_normal.png ../../assets/textures/ultra/turf_normal.ktx2
+data   ../../build/ultra_src/turf_orm.png ../../assets/textures/ultra/turf_orm.ktx2
 color  ../../build/ultra_src/facade_basecolor.png ../../assets/textures/ultra/facade_basecolor.ktx2
 normal ../../build/ultra_src/facade_normal.png ../../assets/textures/ultra/facade_normal.ktx2
 data   ../../build/ultra_src/facade_orm.png ../../assets/textures/ultra/facade_orm.ktx2
 height ../../build/ultra_src/facade_depth.png ../../assets/textures/ultra/facade_depth.ktx2
+color  ../../build/ultra_src/brick_basecolor.png ../../assets/textures/ultra/brick_basecolor.ktx2
+normal ../../build/ultra_src/brick_normal.png ../../assets/textures/ultra/brick_normal.ktx2
+data   ../../build/ultra_src/brick_orm.png ../../assets/textures/ultra/brick_orm.ktx2
+height ../../build/ultra_src/brick_depth.png ../../assets/textures/ultra/brick_depth.ktx2
 color  ../../build/ultra_src/shop_basecolor.png ../../assets/textures/ultra/shop_basecolor.ktx2
 normal ../../build/ultra_src/shop_normal.png ../../assets/textures/ultra/shop_normal.ktx2
 data   ../../build/ultra_src/shop_orm.png ../../assets/textures/ultra/shop_orm.ktx2
 height ../../build/ultra_src/shop_depth.png ../../assets/textures/ultra/shop_depth.ktx2
 normal ../../build/ultra_src/water_normal.png ../../assets/textures/ultra/water_normal.ktx2
+
+# The sky, from tools/textures/sky.py.
+color  ../../build/sky_src/sky_basecolor.png ../../assets/textures/sky/sky_basecolor.ktx2

@@ -11,8 +11,9 @@
 //!   always on, a little under the nearer LODs: the paint is by position, so where two LODs overlap
 //!   they show the same pixels. That is a few dozen draws where it was one for each patch in view.
 //!
-//! All of it shares one material, and on Ultra crate::surfaces moves it to the ground shader with
-//! the paint image as its base colour. Meshes go to the GPU and leave main memory.
+//! All of it shares one material, and from Medium up crate::surfaces moves it to the ground shader,
+//! with the same colour as a tint of that shader's surfaces. Meshes go to the GPU and leave main
+//! memory.
 
 use std::collections::HashMap;
 
@@ -58,7 +59,7 @@ pub(super) fn spawn(
 ) {
     let t = &layout.terrain;
     let started = bevy::platform::time::Instant::now();
-    let paint = images.add(paint_image(layout));
+    let paint = images.add(paint_image(layout, false));
     let painted = started.elapsed();
     let material = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.95, base_color_texture: Some(paint), ..default() });
     commands.entity(terrain).insert(Visibility::default());
@@ -126,8 +127,8 @@ pub(super) fn spawn(
     info!("ground: {} of {} cells flat, {patches} relief patches in {clusters} far meshes ({vertices} vertices), paint {}x{} in {:.2}s, {:.2}s in all", span.iter().filter(|c| flat(**c)).count(), span.len(), t.n, t.n, painted.as_secs_f32(), started.elapsed().as_secs_f32());
 }
 
-/// World XZ to the paint image's UV: texel i's centre on terrain sample i, as the Ultra level's
-/// ground mask has it (crate::surfaces).
+/// World XZ to the paint image's UV: texel i's centre on terrain sample i, as the ground mask has
+/// it (crate::surfaces).
 fn uv(t: &Terrain, x: f32, z: f32) -> [f32; 2] {
     let (scale, half) = (1.0 / (t.step() * t.n as f32), t.size * 0.5);
     let texel = 0.5 / t.n as f32;
@@ -288,8 +289,13 @@ fn foot_shade(layout: &MapLayout) -> Vec<f32> {
     shade
 }
 
+/// The map's colour as crate::surfaces wants it: over each surface's own, at 0.5 for no change.
+pub(crate) fn tint_image(layout: &MapLayout) -> Image {
+    paint_image(layout, true)
+}
+
 /// The map's colour, mips included: what a small map keeps per vertex.
-fn paint_image(layout: &MapLayout) -> Image {
+fn paint_image(layout: &MapLayout, tint: bool) -> Image {
     let t = &layout.terrain;
     let n = t.n;
     let shade = foot_shade(layout);
@@ -301,8 +307,12 @@ fn paint_image(layout: &MapLayout) -> Image {
             for (i, texel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 let x = t.coord(i);
                 let k = i * n + j;
-                let (c, _) = crate::grass::paint_big(x, z, t.ground[k], t.h[k], t.size * 0.5);
-                let c = c * shade[k];
+                let (c, cover) = crate::grass::paint_big(x, z, t.ground[k], t.h[k], t.size * 0.5);
+                let mut c = c * shade[k];
+                if tint {
+                    let m = crate::surfaces::surface_mean(t.ground[k], cover);
+                    c = LinearRgba::rgb(c.red / m.red * 0.5, c.green / m.green * 0.5, c.blue / m.blue * 0.5);
+                }
                 let s = Srgba::from(LinearRgba::new(c.red, c.green, c.blue, 1.0)).to_u8_array();
                 texel.copy_from_slice(&s);
             }

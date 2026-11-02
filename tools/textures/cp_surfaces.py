@@ -1,10 +1,10 @@
-"""The Ultra level's surfaces for Connaught Place, composited from what is already on disk: the
-CC0 Poly Haven scans in assets/models/samples/delhi_street/textures/vendor (painted_plaster_wall,
-concrete_floor, asphalt_02; assets/textures/ultra/sources.json has the credit) and procedural
-layers. Nothing is downloaded. Writes PNGs to build/ultra_src, which `just textures-pack` turns
-into assets/textures/ultra/*.ktx2 (tools/textures/ultra_pack.txt).
+"""The real surfaces of the city's walls and streets, composited from CC0 Poly Haven scans: those in
+assets/models/samples/delhi_street/textures/vendor (painted_plaster_wall, concrete_floor,
+asphalt_02), those in build/look_src, out of git (brick_wall_02, dirty_concrete), and procedural
+layers. assets/textures/ultra/sources.json has the credits. Writes PNGs to build/ultra_src, which
+`just textures-pack` turns into assets/textures/ultra/*.ktx2 (tools/textures/ultra_pack.txt).
 
-python3 tools/textures/cp_surfaces.py [plaster marble asphalt pavers soil facade shop water]
+python3 tools/textures/cp_surfaces.py [plaster marble asphalt pavers facade brick shop water]
 
 Conventions, each forced by how crate::buildings and crate::surfaces map these:
 - World-mapped blocks have v = world height / TILE, so their image rows grow UPWARD on a wall: row
@@ -54,6 +54,18 @@ def read(name, size=None):
     if size and size != im.size[0]:
         im = im.resize((size, size), Image.LANCZOS)
     return np.asarray(im, dtype=np.float32) / 255.0
+
+
+def read_tiled(name, repeats, size):
+    """A scan from build/look_src (Poly Haven, CC0, kept out of git), `repeats` times each way in
+    a square of `size` px, still tiling."""
+    im = Image.open(os.path.join(ROOT, "build", "look_src", name)).convert("RGB")
+    w, h = im.size
+    sheet = Image.new("RGB", (w * repeats, h * repeats))
+    for x in range(repeats):
+        for y in range(repeats):
+            sheet.paste(im, (x * w, y * h))
+    return np.asarray(sheet.resize((size, size), Image.LANCZOS), dtype=np.float32) / 255.0
 
 
 def save(name, rgb):
@@ -326,19 +338,6 @@ def pavers():
     save("pavers_orm", np.stack([occ, rough, np.zeros_like(rough)], -1))
 
 
-def soil():
-    """Park earth and trodden paths: the concrete floor scan reads as dry clay. 6 m a tile, its
-    colour drained, since the ground paint already says green or brown."""
-    n = 1024
-    diff = to_linear(read("concrete_floor_diff_1k.png", 512))
-    nor = read("concrete_floor_nor_gl_1k.png", 512)
-    arm = read("concrete_floor_arm_1k.jpg", 512)
-    diff, nor, arm = scatter([(diff, False), (nor, True), (arm, False)], 512, n, n, 81)
-    save("soil_basecolor", to_srgb(as_ratio(diff, grey=1.0)))
-    save("soil_normal", nor)
-    save("soil_orm", np.stack([arm[..., 0], np.clip(arm[..., 1] + 0.08, 0, 1), np.zeros((n, n), np.float32)], -1))
-
-
 class Painter:
     """A facade being laid up in layers: where a mask is set, a layer replaces what's under it.
     Heights are metres from the wall's face; depth is what parallax sees (inward only), so things
@@ -388,13 +387,35 @@ def inner_edge(mask, reach):
     return np.clip(1.0 - d / reach, 0.0, 1.0) * mask
 
 
-def facade():
+def grime(size):
+    """Soft dark smudges from the dirty_concrete scan, 0 clean to 1 at the worst, tiling: its grit
+    and straw blurred out of it, and only what is darker than the concrete kept."""
+    lum = luminance(to_linear(read_tiled("dirty_concrete_diff_2k.jpg", 1, size)))
+    soft = ndimage.gaussian_filter(lum, 14.0, mode="wrap")
+    return smooth(0.0, 0.34, 1.0 - soft / np.percentile(soft, 80))
+
+
+def brick_wall(size):
+    """Bare brick, the brick_wall_02 scan three times a tile: about 2.2 m each, as it stands."""
+    diff = to_linear(read_tiled("brick_wall_02_diff_2k.jpg", 3, size))
+    nor = read_tiled("brick_wall_02_nor_gl_2k.jpg", 3, size)
+    arm = read_tiled("brick_wall_02_arm_2k.jpg", 3, size)
+    return diff, nor, arm[..., 1], arm[..., 0]
+
+
+def facade(name="facade", walls=None):
     """The upper storeys: crate::buildings::facade_image's two bays by two storeys, each window
-    different, in real materials. Near-white: the mesh's vertex colour tints it per building."""
+    different, in real materials. Near-white plaster, stained: the mesh's vertex colour tints it
+    per building. `walls` is another wall to build the same bays in."""
     n = 1024
     N = 2 * n
     metres = (2 * BAY) / N
-    albedo, nor, rough, occ = wall_plaster(n, N, N, 91)
+    albedo, nor, rough, occ = walls(N) if walls else wall_plaster(n, N, N, 91)
+    if not walls:
+        # Weather over the whole wall, mostly hanging down from the storey above.
+        stain = grime(N)
+        hang = ndimage.gaussian_filter(stain * (0.6 + 0.8 * periodic_noise(N, N, 34, 99)), (46.0, 2.5), mode="wrap")
+        albedo = albedo * (1.0 - np.maximum(stain * 0.09, hang * 0.26)[..., None] * np.array([0.92, 1.0, 1.14], np.float32))
     p = Painter(albedo, rough, occ, nor)
     yy, xx = np.mgrid[0:N, 0:N].astype(np.float32)
     cx, cy = (xx // n).astype(np.int32), (yy // n).astype(np.int32)
@@ -460,7 +481,7 @@ def facade():
     rail = (kind == 3) & box(0.20, 0.80, 0.52, 0.80) & (((xx % 24.0) < 7.0) | box(0.20, 0.80, 0.52, 0.545) | box(0.20, 0.80, 0.755, 0.78))
     p.put(rail, linear_rgb(0.18, 0.17, 0.17), rough=0.55, occ=0.85, height=0.02, depth=0.0)
 
-    p.finish("facade", metres)
+    p.finish(name, metres)
 
 
 def shop():
@@ -551,8 +572,13 @@ def water():
     save("water_normal", normal_from_height(h * 0.012, 16.0 / n))
 
 
+def brick():
+    """The same bays in bare brick, for brick buildings."""
+    facade("brick", brick_wall)
+
+
 def main():
-    jobs = {"plaster": plaster, "marble": marble, "asphalt": asphalt, "pavers": pavers, "soil": soil, "facade": facade, "shop": shop, "water": water}
+    jobs = {"plaster": plaster, "marble": marble, "asphalt": asphalt, "pavers": pavers, "facade": facade, "brick": brick, "shop": shop, "water": water}
     for name in sys.argv[1:] or jobs:
         jobs[name]()
 
