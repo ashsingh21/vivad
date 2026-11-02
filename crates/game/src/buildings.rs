@@ -553,7 +553,7 @@ impl Paint {
 }
 
 /// A cheap hash of a few integers to 0..1, for texture detail that doesn't repeat by the pixel.
-fn hash01(a: u32, b: u32, c: u32) -> f32 {
+pub(crate) fn hash01(a: u32, b: u32, c: u32) -> f32 {
     let mut h = a.wrapping_mul(0x9e37_79b1) ^ b.wrapping_mul(0x85eb_ca77) ^ c.wrapping_mul(0xc2b2_ae3d);
     h ^= h >> 15;
     h = h.wrapping_mul(0x2c1b_3c6d);
