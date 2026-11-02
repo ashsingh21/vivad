@@ -15,7 +15,7 @@ use bevy::anti_alias::smaa::Smaa;
 use bevy::anti_alias::taa::TemporalAntiAliasing;
 use bevy::camera::{ImageRenderTarget, RenderTarget};
 use bevy::light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, ShadowFilteringMethod};
-use bevy::pbr::{ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
+use bevy::pbr::{DistanceFog, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
 use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
 use bevy::render::renderer::RenderAdapterInfo;
@@ -96,6 +96,11 @@ impl Quality {
             (Quality::Medium, true) => 2200.0,
             (Quality::High | Quality::Ultra, true) => 3000.0,
         }
+    }
+
+    /// The far plane from the air, where the haze can thin out and the whole city shows.
+    fn far_plane_aloft(self, big_map: bool) -> f32 {
+        if big_map { self.far_plane(big_map).max(3000.0) } else { self.far_plane(big_map) }
     }
 
     /// TAA needs the depth and motion prepass; Low does without it and uses FXAA.
@@ -210,7 +215,7 @@ impl Plugin for QualityPlugin {
             app.insert_resource(Undecided);
         }
         app.add_systems(Startup, spawn_view.after(crate::camera::spawn_camera))
-            .add_systems(Update, (choose.run_if(resource_exists::<Undecided>), settle.run_if(resource_exists::<Settle>), cycle, fit_view, apply.run_if(|q: Res<Quality>, swaps: Res<shared::sim::MapSwaps>| q.is_changed() || shared::sim::map_reloaded(swaps)), far_shadows).chain());
+            .add_systems(Update, (choose.run_if(resource_exists::<Undecided>), settle.run_if(resource_exists::<Settle>), cycle, fit_view, apply.run_if(|q: Res<Quality>, swaps: Res<shared::sim::MapSwaps>| q.is_changed() || shared::sim::map_reloaded(swaps)), far_shadows, haze_by_height).chain());
         if std::env::var("VIVAD_TRIS").is_ok() {
             app.add_systems(Last, (tri_report, entity_report));
         }
@@ -448,6 +453,32 @@ fn apply(
         for (e, _) in &cam {
             commands.entity(e).insert(crate::camera::big_map_fog(far_plane));
         }
+    }
+}
+
+/// Haze lies low over the city: on a big map the view opens up as the camera climbs out of it, and
+/// the far plane, the dome and the fog's reach with it. Street level is untouched.
+fn haze_by_height(q: Res<Quality>, layout: Res<shared::map::MapLayout>, mut cam: Query<(&GlobalTransform, &mut Projection, Option<&mut DistanceFog>), With<MainCamera>>, painted: Query<&ChildOf, With<crate::sky::PaintedSky>>, mut transforms: Query<&mut Transform>) {
+    /// Metres up that the haze starts to thin, and is as thin as it gets.
+    const THINS: (f32, f32) = (60.0, 140.0);
+    if !is_big(&layout) || q.is_ultra() {
+        return;
+    }
+    let Ok((at, mut projection, fog)) = cam.single_mut() else { return };
+    let Projection::Perspective(p) = projection.as_mut() else { return };
+    let t = ((at.translation().y - THINS.0) / (THINS.1 - THINS.0)).clamp(0.0, 1.0);
+    let far = q.far_plane(true).lerp(q.far_plane_aloft(true), t * t * (3.0 - 2.0 * t));
+    if (far - p.far).abs() < 0.5 {
+        return;
+    }
+    p.far = far;
+    if let Some(mut fog) = fog {
+        *fog = crate::camera::big_map_fog(far);
+    }
+    if let Some(rig) = painted.iter().next().map(|c| c.parent())
+        && let Ok(mut t) = transforms.get_mut(rig)
+    {
+        t.scale = Vec3::splat(far / 1000.0);
     }
 }
 
