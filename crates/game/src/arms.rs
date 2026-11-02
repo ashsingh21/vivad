@@ -239,12 +239,17 @@ fn orient_bows(
         }
         let held = hand_g.mul_transform(grip);
         // Carried: a long gun along the hands (right toward left), a pistol along the forearm
-        // (elbow to wrist, the way a held pistol points), never back past the side.
+        // (elbow to wrist, the way a held pistol points), eased toward ahead as that line swings
+        // round to the side, never back past it. Eased, not cut over: the rifle run's left hand
+        // swings from behind the right to ahead of it every step, and a cut-over snapped the gun
+        // (and the left arm reaching for it) between the two twice a stride.
         let along = |other: Entity, sign: f32| {
             tf.get(other)
-                .map(|(_, g)| ((g.translation() - hand_g.translation()) * sign).normalize_or(ahead))
-                .ok()
-                .filter(|d| d.dot(ahead) > 0.2)
+                .map(|(_, g)| {
+                    let d = ((g.translation() - hand_g.translation()) * sign).normalize_or(ahead);
+                    let t = ((0.55 - d.dot(ahead)) / 0.5).clamp(0.0, 1.0);
+                    d.lerp(ahead, t * t * (3.0 - 2.0 * t)).normalize_or(ahead)
+                })
                 .unwrap_or(ahead)
         };
         let carry = if long {

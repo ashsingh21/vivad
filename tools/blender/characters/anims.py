@@ -449,9 +449,9 @@ MIXAMO_CLIPS = [
     # drop off a ledge for the fall, both hips-at-rest so the legs move under the body.
     ("jump", "Jumping Up", 0.0, {"window": (33, 51), "air": True}),
     ("fall", "Jumping", 0.0, {"window": (61, 79), "pingpong": True, "air": True}),
-    # Sliding: the held stretch of the slide, sat up, head level, as you can shoot from it.
-    ("slide", "Running Slide", 0.0, {"window": (24, 44), "pingpong": True,
-                                     "keep": {"spine_01": 0.45, "spine_02": 0.4, "spine_03": 0.4, "neck_01": 0.3, "head": 0.1}}),
+    # Sliding: the slide's feet-first stretch, the lead leg out ahead, the other tucked, sat up with
+    # the head level (you can shoot from it); held there and back. (Later it lies back on an arm.)
+    ("slide", "Running Slide", 0.0, {"window": (16, 24), "pingpong": True}),
 ]
 
 
