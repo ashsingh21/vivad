@@ -320,6 +320,78 @@ def paint_scooter():
         o.data.materials.append(shell if "polysurface1_" in name else rubber if max(size) > 0.3 or "pcube" in name else metal)
 
 
+def paint_truck():
+    """Flat colours on every part: its four textures look like stock photographs, the tyre's still carrying
+    a picture library's watermark, so none is used. Faded blue cab, steel bed, black trim. The windscreen
+    of the model stands clear of its frame, so a new one is cut to the frame."""
+    fill_hole(bpy.data.objects["Object_11"], (0, 1.33, 1.55))
+    # It came with no steering wheel: one on the right.
+    bpy.ops.mesh.primitive_torus_add(major_radius=0.17, minor_radius=0.013, major_segments=14, minor_segments=4, location=(0.31, 1.17, 1.33), rotation=(math.radians(62), 0, 0))
+    bpy.context.active_object.name = "Object_19_ring"
+    bpy.ops.mesh.primitive_cylinder_add(vertices=6, radius=0.02, depth=0.5, location=(0.31, 1.28, 1.20), rotation=(math.radians(62), 0, 0))
+    bpy.context.active_object.name = "Object_19_column"
+    for o in meshes():
+        if o.name.startswith("Object_19_"):
+            o.data.transform(o.matrix_world)
+            o.matrix_world = Matrix.Identity(4)
+    table = (
+        (r"^Object_(11|13|25|27|96|98)$", flat("cab", (0.095, 0.17, 0.26), 0.42)),
+        (r"^Object_15$", flat("bed", (0.15, 0.17, 0.19), 0.6, 0.3)),
+        (r"^Object_(84|86|7|78|106|19|19_ring|19_column|82)$", flat("trim", (0.018, 0.018, 0.02), 0.6)),
+        (r"^Object_108$", flat("seat", (0.05, 0.045, 0.04), 0.75)),
+        (r"^Object_(17|80|100|102)$", flat("under", (0.03, 0.03, 0.03), 0.65, 0.4)),
+        (r"^Object_88$", flat("lamp", (0.72, 0.74, 0.76), 0.22, 0.7)),
+        (r"^Object_94$", flat("amber", (0.8, 0.28, 0.02), 0.25)),
+        (r"^Object_110$", flat("red", (0.55, 0.02, 0.015), 0.25)),
+        (r"^Object_(115|120|125|130)$", flat("tyre", (0.03, 0.03, 0.03), 0.8)),
+        (r"^Object_(117|122|127|132)$", flat("rim", (0.42, 0.43, 0.44), 0.45, 0.7)),
+        (r"^Object_(21|23|104)$", glass(alpha=0.42)),
+    )
+    for o in meshes():
+        for pattern, m in table:
+            if re.search(pattern, o.name):
+                o.data.materials.clear()
+                o.data.materials.append(m)
+                if m.name == "pane":
+                    o.name = f"glass_{o.name}"
+                break
+
+
+def weather_truck(a, base, rough, metal):
+    """Dust, a rusting bed, its pressed ribs, ribbed lamp glass, and a tread cut in the rubber: the tyre's
+    picture went with the watermark."""
+    body, wheel = bpy.data.objects["body"], next(o for o in meshes() if o.name.startswith("wheel_"))
+    h, w = a.shape[:2]
+    at = spots(base, body)
+    on = ~np.isnan(at[..., 0])
+    x, y, z = (np.nan_to_num(at[..., i]) for i in range(3))
+    # Ribs along the bed's sides and tail.
+    side = on & (z > 0.52) & (z < 1.03) & (y < 0.28) & ((np.abs(x) > 0.72) | (y < -1.86))
+    for z0 in (0.68, 0.84):
+        a[side & (z > z0 - 0.016) & (z < z0), :3] *= 0.68
+        a[side & (z >= z0) & (z < z0 + 0.016), :3] = np.clip(a[side & (z >= z0) & (z < z0 + 0.016), :3] * 1.18, 0, 1)
+    # The bed floor, worn to rust where loads drag.
+    n = grime(h, w, 11)
+    floor = on & (z > 0.5) & (z < 0.72) & (y < 0.28) & (y > -1.86) & (np.abs(x) < 0.72)
+    k = (np.clip((n - 0.42) * 5, 0, 1) * floor * 0.75)[..., None]
+    a[..., :3] = a[..., :3] * (1 - k) + np.array((0.30, 0.20, 0.13)) * k
+    road_dust(a, at, on, high=0.95, amount=0.7)
+    # Lamp glass, ribbed.
+    lens = on & (y > 1.55) & (z > 0.8) & (z < 1.12) & (a[..., :3].mean(2) > 0.55)
+    a[lens, :3] *= (0.88 + 0.12 * np.sin(x * 300) * np.sin(z * 170))[lens][:, None]
+    at = spots(base, wheel)
+    on = ~np.isnan(at[..., 0])
+    r = np.nan_to_num(np.hypot(at[..., 1], at[..., 2]))
+    wide = at[on][:, 0].max() - at[on][:, 0].min()
+    x = np.nan_to_num(at[..., 0]) - (at[on][:, 0].max() + at[on][:, 0].min()) / 2
+    th = np.nan_to_num(np.arctan2(at[..., 2], at[..., 1]))
+    tread = on & (r > 0.93 * r[on].max()) & (np.abs(x) < 0.48 * wide)
+    cuts = (np.abs(np.abs(x) - 0.2 * wide) < 0.022) | (np.abs(x) < 0.012) | ((np.abs(x) > 0.2 * wide) & (np.sin(th * 44 + 40 * np.abs(x)) > 0.72))
+    a[tread & cuts, :3] *= 0.35
+    # The hub, dark steel and not a white ball.
+    a[on & (r < 0.5 * r[on].max()), :3] *= 0.5
+
+
 def paint_bullet():
     """The tank says one maker's name, the side panels another's, the plate is a real plate: gone."""
     img = image_named("Image_0")
@@ -379,6 +451,13 @@ CFG = {
         panes=(((-0.5129, 0.2919, 1.1849), (-0.0232, 0.2919, 1.1849), (-0.0232, 0.1738, 1.5085), (-0.5129, 0.1738, 1.5085)),
                ((0.0232, 0.2919, 1.1849), (0.5129, 0.2919, 1.1849), (0.5129, 0.1738, 1.5085), (0.0232, 0.1738, 1.5085)))),
     "scooter": dict(src="scooter/honda_smart_dio_z4_2006_1__ef6060/model.glb", turn=-90, length=1.78, body=11000, paint=paint_scooter),
+    # An engine, gearbox and battery nobody can see are most of its 153,000 triangles.
+    "gaadi_minitruck": dict(src="props/mini_truck__71e499/model.glb", turn=0, length=3.8, narrow=0.92, body=11000, paint=paint_truck, atlas=weather_truck, maps=("Metallic", "Roughness"), small=("rough",), sides=30, sides_from=0.85,
+                            drop=r"^Object_(5|9|30|32|34|36|38|40|42|44|46|48|50|52|54|56|58|60|62|64|66|68|70|72|74|76|90|92|112)$",
+                            wheels=r"^Object_1(15|17|20|22|25|27|30|32)$",
+                            parts=((r"^Object_11$", 2500), (r"^Object_(25|27)$", 900), (r"^Object_15$", 950), (r"^Object_84$", 500), (r"^Object_86$", 500), (r"^Object_108$", 500), (r"^Object_13$", 300), (r"^Object_106$", 300),
+                                   (r"^Object_88$", 170), (r"^Object_94$", 90), (r"^Object_(96|98)$", 150), (r"^Object_17$", 400), (r"^Object_80$", 100), (r"^Object_(100|102)$", 100), (r"Object_(21|23)$", 60),
+                                   (r"^Object_(115|120|125|130)$", 250), (r"^Object_(117|122|127|132)$", 230))),
     "commuter": dict(src="commuter_bike/pulsar_135_ls_2__accbf2/model.glb", turn=0, length=2.02, body=12000, drop=r"^placa", level=True),
     "bullet": dict(src="heavy_bike/classic_motorcycle__f246ff/model.glb", turn=None, length=2.14, body=14000, paint=paint_bullet, level=True),
     "car": dict(src="small_car/stylized_suzuki_alto_works__467f2e/model.glb", turn=180, length=3.4, body=7000, paint=paint_car),
