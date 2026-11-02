@@ -803,9 +803,9 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
 
 
 PISTOL_DROP = 0.6
-# A long gun's clips: the rifle pack's own, whole body (its stance puts the left hand on the gun; the
-# game places the gun and brings both hands to it); False: the plain moves under our own carry.
-RIFLE_PACK = False
+# Guns' clips: the rifle and pistol packs' own, whole body and untouched (the game fits our guns to
+# their hands); False: the plain moves under our own carry.
+RIFLE_PACK = True
 # A long gun carried: the shoulders turned this far (radians), the left one forward.
 RIFLE_TURN = 0.7
 # ...and the torso straightened to this forward lean (radians; the jog leans well past it).
@@ -1278,7 +1278,7 @@ def main():
     # tactical jog, hunched, arms locked out), and still: a long gun at low ready (our own hold,
     # fitted to the gun: the packs' left hand isn't where our fore-end is), a pistol in both hands
     # at low ready.
-    for d in "fblr":
+    for d in "fblr" if not RIFLE_PACK else "":
         for m in ("walk", "run"):
             if "pistol_idle" in bpy.data.actions:
                 cycles[f"pistol_{m}_{d}"] = carry(rig, f"pistol_{m}_{d}", f"{m}_{d}", "pistol_idle", drop=PISTOL_DROP)
@@ -1306,7 +1306,8 @@ def main():
     hold_pose(rig, "melee_swing", 12, melee_swing_pose)
     hold_pose(rig, "melee_swing_b", 12, lambda r, t: melee_swing_pose(r, t, SWING_BACK))
     hold_pose(rig, "bow_draw", 20, bow_draw_pose)
-    hold_pose(rig, "rifle_aim", 10, rifle_aim_pose)
+    if not (RIFLE_PACK and "rifle_aim" in bpy.data.actions):
+        hold_pose(rig, "rifle_aim", 10, rifle_aim_pose)
     hold_pose(rig, "consume", 30, consume_pose)
     print(f"[anims] {variant}: leg {rig.leg:.3f} m, cycles {cycles}, IK reach clamped on {rig.clamped} leg poses")
     print(f"[anims] stance duty: {rig.duty}")

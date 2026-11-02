@@ -214,29 +214,24 @@ fn orient_bows(
         let aim_flat = aim.with_y(0.0).normalize_or(Vec3::NEG_Z);
         let facing = tf.get(body.root).map(|(_, g)| (g.rotation() * Vec3::Z).with_y(0.0).normalize_or(aim_flat)).unwrap_or(aim_flat);
         let ahead = facing.lerp(aim_flat, w).normalize_or(aim_flat);
-        // A long gun is placed here rather than by the clips (whose arms ride hips the legs layer
-        // tilts its own way, and were authored round other guns): carried, the stock tucked under
-        // the right arm and the barrel down and across; aimed, the butt in the shoulder's pocket and
-        // the barrel along the aim; the right hand brought to the grip, the left (below) to the
-        // fore-end.
+        // Carried, a long gun is held as the rifle pack's clips hold it (in the right hand, along the
+        // line to the left). Aimed, it's shouldered here (the aim clip's arms ride hips the legs
+        // layer tilts its own way): the butt in the shoulder's pocket, the barrel along the aim,
+        // the right hand brought to the grip. Either way the left hand (below) takes the fore-end.
         let mut long_f = None;
-        if gun && long {
+        if gun && long && w > 1e-3 {
             let chain = parents.get(hand).map(|p| p.parent()).ok().and_then(|l| parents.get(l).ok().map(|u| (u.parent(), l)));
             if let (Some(sh), Some((upper, lower))) = (body.shoulder_r.and_then(|s| tf.get(s).ok()).map(|(_, g)| g.translation()), chain) {
                 let right = ahead.cross(Vec3::Y);
-                let (dip, across) = CARRY_TILT;
-                let low = (ahead * dip.cos() - Vec3::Y * dip.sin() - right * across).normalize();
-                let f = low.lerp(aim, w).normalize_or(aim);
-                let up = Vec3::Y.reject_from(f).normalize_or(Vec3::Y);
-                let rot = Quat::from_mat3(&Mat3::from_cols(up.cross(-f), up, -f));
-                let pocket = |(fwd, inward, high): (f32, f32, f32)| ahead * fwd - right * inward + Vec3::Y * high;
-                let butt = sh + pocket(CARRY_POCKET).lerp(pocket(SHOULDER_POCKET), w);
-                let socket_at = butt + f * BUTT;
-                let (hs, _, _) = hand_g.to_scale_rotation_translation();
+                let up = Vec3::Y.reject_from(aim).normalize_or(Vec3::Y);
+                let rot = Quat::from_mat3(&Mat3::from_cols(up.cross(-aim), up, -aim));
+                let (fwd, inward, high) = SHOULDER_POCKET;
+                let socket_at = sh + ahead * fwd - right * inward + Vec3::Y * high + aim * BUTT;
+                let (hs, hr, ht) = hand_g.to_scale_rotation_translation();
                 let want_rot = rot * grip.rotation.inverse();
                 let want_at = socket_at - want_rot * (grip.translation * hs);
-                reach(upper, lower, hand, want_at, Vec3::NEG_Y + right * 0.8, want_rot, &kids, &mut tf);
-                long_f = Some(f);
+                reach(upper, lower, hand, ht.lerp(want_at, w), Vec3::NEG_Y + right * 0.8, hr.slerp(want_rot, w), &kids, &mut tf);
+                long_f = (w > 0.999).then_some(aim);
                 if let Ok((_, g)) = tf.get(hand) {
                     hand_g = *g;
                 }
@@ -253,9 +248,7 @@ fn orient_bows(
                 .unwrap_or(ahead)
         };
         let carry = if long {
-            // Never steeper than ~14 degrees down (a run's forward lean tips the hands with it).
-            let d = along(body.hand_l, 1.0);
-            d.with_y(d.y.max(-0.25)).normalize_or(ahead)
+            along(body.hand_l, 1.0)
         } else {
             parents.get(hand).map(|p| along(p.parent(), -1.0)).unwrap_or(ahead)
         };
@@ -340,11 +333,6 @@ fn gun_check(body: &Body, socket: &GlobalTransform, ahead: Vec3, palm: Vec3, han
 
 /// Where a shouldered butt sits from the right shoulder joint (m): ahead, in toward the chest, up.
 const SHOULDER_POCKET: (f32, f32, f32) = (0.07, 0.04, -0.02);
-/// Carried: the butt under the right shoulder, a little out to the side (from the shoulder joint,
-/// as above): the gun along the right of the chest, in view from behind.
-const CARRY_POCKET: (f32, f32, f32) = (-0.05, -0.12, -0.1);
-/// Carried: the barrel's dip below level (radians) and its lean across the body (toward the left).
-const CARRY_TILT: (f32, f32) = (0.14, 0.02);
 
 /// The dunali's butt plate behind the grip (m, its model's +Z extent).
 const BUTT: f32 = 0.43;
