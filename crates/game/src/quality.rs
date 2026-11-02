@@ -100,7 +100,7 @@ impl Quality {
 
     /// The far plane from the air, where the haze can thin out and the whole city shows.
     fn far_plane_aloft(self, big_map: bool) -> f32 {
-        if big_map { self.far_plane(big_map).max(3000.0) } else { self.far_plane(big_map) }
+        if big_map { self.far_plane(big_map).max(4000.0) } else { self.far_plane(big_map) }
     }
 
     /// TAA needs the depth and motion prepass; Low does without it and uses FXAA.
