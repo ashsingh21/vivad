@@ -90,16 +90,16 @@ pub fn paint_city(x: f32, z: f32, class: u8) -> (LinearRgba, f32) {
     let mix = |a: LinearRgba, b: LinearRgba, t: f32| a.mix(&b, t.clamp(0.0, 1.0));
     let n = fbm(x / 3.0, z / 3.0, 2, 5);
     let (c, cover) = match class {
-        ground::ROAD => (mix(lin([0.34, 0.33, 0.34]), lin([0.42, 0.40, 0.38]), fbm(x / 9.0, z / 9.0, 2, 71) * 1.4 - 0.2), 0.0),
-        ground::PARKING => (lin([0.42, 0.41, 0.42]), 0.0),
-        ground::PLAZA => (mix(lin([0.62, 0.55, 0.47]), lin([0.55, 0.42, 0.36]), fbm(x / 4.0, z / 4.0, 2, 73)), 0.0),
+        ground::ROAD => (mix(lin([0.30, 0.30, 0.31]), lin([0.36, 0.35, 0.34]), fbm(x / 9.0, z / 9.0, 2, 71) * 1.4 - 0.2), 0.0),
+        ground::PARKING => (lin([0.36, 0.355, 0.36]), 0.0),
+        ground::PLAZA => (mix(lin([0.54, 0.50, 0.44]), lin([0.48, 0.40, 0.35]), fbm(x / 4.0, z / 4.0, 2, 73)), 0.0),
         ground::PARK => (mix(lin([0.30, 0.44, 0.16]), lin([0.23, 0.38, 0.13]), fbm(x / 22.0, z / 22.0, 3, 91) * 1.6 - 0.3), 1.0),
         // Under the water: silt (seen through the surface).
         ground::WATER => (mix(lin([0.22, 0.24, 0.18]), lin([0.30, 0.28, 0.20]), fbm(x / 5.0, z / 5.0, 2, 79)), 0.0),
         // Lanes and park paths: trodden earth and old brick.
-        ground::PATH => (mix(lin([0.55, 0.45, 0.34]), lin([0.50, 0.36, 0.28]), fbm(x / 3.0, z / 3.0, 2, 83)), 0.0),
+        ground::PATH => (mix(lin([0.50, 0.42, 0.33]), lin([0.46, 0.35, 0.28]), fbm(x / 3.0, z / 3.0, 2, 83)), 0.0),
         // Pavement: worn sandstone-grey slabs, darker where it's dusty.
-        _ => (mix(lin([0.70, 0.66, 0.60]), lin([0.62, 0.57, 0.50]), fbm(x / 7.0, z / 7.0, 2, 77) * 1.4 - 0.2), 0.0),
+        _ => (mix(lin([0.56, 0.54, 0.50]), lin([0.50, 0.47, 0.43]), fbm(x / 7.0, z / 7.0, 2, 77) * 1.4 - 0.2), 0.0),
     };
     let v = 0.92 + 0.16 * n;
     (LinearRgba::new(c.red * v, c.green * v, c.blue * v, 1.0), cover)
@@ -121,15 +121,15 @@ pub fn paint_big(x: f32, z: f32, class: u8, h: f32, edge: f32) -> (LinearRgba, f
         ground::OPEN => {
             let (broad, patch) = (fbm(x / 210.0, z / 210.0, 3, 11), fbm(x / 48.0, z / 48.0, 3, 23));
             let lush = (broad * 1.5 + patch * 0.9 - 1.0).clamp(0.0, 1.0);
-            let dry = mix(lin([0.66, 0.58, 0.42]), lin([0.60, 0.56, 0.36]), fbm(x / 21.0, z / 21.0, 2, 37) * 1.6 - 0.3);
-            let mut c = mix(dry, lin([0.36, 0.42, 0.21]), lush);
+            let dry = mix(lin([0.50, 0.44, 0.32]), lin([0.46, 0.43, 0.29]), fbm(x / 21.0, z / 21.0, 2, 37) * 1.6 - 0.3);
+            let mut c = mix(dry, lin([0.32, 0.38, 0.19]), lush);
             let high = ((h - HIGH.0) / (HIGH.1 - HIGH.0)).clamp(0.0, 1.0);
             // East of the river the only high ground is the mound; the ridge is west of it.
             c = mix(c, if x > 500.0 { lin([0.47, 0.44, 0.38]) } else { lin([0.27, 0.36, 0.17]) }, high);
             (c * v, 0.15 + 0.6 * lush)
         }
         ground::SAND => {
-            let dry = mix(lin([0.78, 0.71, 0.58]), lin([0.72, 0.64, 0.50]), fbm(x / 26.0, z / 26.0, 3, 41) * 1.5 - 0.25);
+            let dry = mix(lin([0.58, 0.54, 0.45]), lin([0.54, 0.49, 0.40]), fbm(x / 26.0, z / 26.0, 3, 41) * 1.5 - 0.25);
             (mix(lin([0.48, 0.44, 0.36]), dry, (h + 0.48) / 0.14) * v, 0.0)
         }
         _ => paint_city(x, z, class),
