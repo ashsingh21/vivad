@@ -144,6 +144,10 @@
         // elim-place
         (id: "place.2", at: ["elim.place.2"], ok: false, check: Read, text: "Itne paas! Dilli abhi door hai", mean: "So close! Delhi is still far.", note: "Second place. Old saying."),
         (id: "place.top5", at: ["elim.place.top5"], ok: false, check: Plain, text: "Achha panga tha", mean: "That was a good fight.", note: "Places 3 to 5."),
+        (id: "known.old", at: ["known.old"], ok: false, check: Read, text: "Purani Dilli: yahan desi maal milta hai", mean: "Old Delhi: country-made arms turn up here.", note: "Once a match on arrival: what turns up goes by the place."),
+        (id: "known.raj", at: ["known.raj"], ok: false, check: Read, text: "Angrezon ki Dilli: rifle aur lathi yahin milti hai", mean: "The Raj's Delhi: rifles and lathis turn up here."),
+        (id: "known.new", at: ["known.new"], ok: false, check: Read, text: "Naya shehar: yahan naye hathiyar milte hain", mean: "The new city: modern weapons turn up here."),
+        (id: "known.open", at: ["known.open"], ok: false, check: Read, text: "Khula maidan: doorbeen wali rifle yahin milti hai", mean: "Open ground: scoped rifles turn up here."),
         (id: "place.near", at: ["elim.near"], ok: false, check: Read, text: "Top {top} se bas {n} kadam door", mean: "Just {n} steps short of the top {top}.", note: "Under the result, when a place misses the top 5 or top 10 by little."),
         (id: "best.today", at: ["best.today"], ok: false, check: Plain, text: "Aaj ka best: #{p}", mean: "Today's best: number {p}."),
         (id: "best.new", at: ["best.new"], ok: false, check: Plain, text: "Aaj ka naya best: #{p}!", mean: "A new best today: number {p}!"),

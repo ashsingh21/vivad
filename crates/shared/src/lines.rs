@@ -229,7 +229,7 @@ mod tests {
             ("elim.place.low", &[]), ("elim.near", &["top", "n"]), ("best.today", &["p"]), ("best.new", &["p"]), ("next.again", &[]), ("next.wait", &[]), ("win.title", &[]), ("win.sub", &[]), ("win.feed.you", &[]), ("win.feed", &["k"]),
             ("drop.far", &["map"]), ("drop.jump", &[]), ("drop.end", &[]), ("drop.ride", &[]), ("drop.open", &[]), ("drop.ground", &[]), ("match.start", &["n", "map"]),
             ("alert.next", &["place"]), ("alert.soon", &["t"]), ("alert.doors", &[]), ("alert.moving", &["place"]), ("alert.outside", &[]), ("alert.first", &[]),
-            ("alert.last", &[]), ("alert.tiny", &[]), ("alert.loot", &[]), ("alert.thanks", &[]),
+            ("known.old", &[]), ("known.raj", &[]), ("known.new", &[]), ("known.open", &[]), ("alert.last", &[]), ("alert.tiny", &[]), ("alert.loot", &[]), ("alert.thanks", &[]),
             ("hud.vitals", &["hp", "sh"]), ("hud.ammo", &["n"]), ("hud.reload", &[]), ("hud.draw", &[]), ("hud.counts", &["alive", "kills"]), ("hud.wait", &["t"]),
             ("hud.move", &["t"]), ("hud.idle", &[]), ("hud.safe.far", &["d"]), ("hud.safe.in", &[]), ("hud.vote", &[]), ("hud.place", &["p", "n"]), ("hud.broke", &["item"]),
             ("prompt.peti", &[]), ("prompt.ghada", &[]), ("prompt.pickup", &["item", "rarity"]), ("prompt.drink", &["item"]), ("prompt.backfire", &[]),

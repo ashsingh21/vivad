@@ -12,6 +12,7 @@ use bevy::prelude::*;
 use rand::RngExt;
 use shared::items::{ItemDb, ItemKind};
 use shared::lines::{Lines, with};
+use shared::sim::bots::BotBrain;
 use shared::sim::combat::Projectile;
 use shared::sim::melee::{BrokeMsg, GuardMsg};
 use shared::sim::{Action, Eliminated, FeedMsg, HitMsg, Inventory, Kinematic, LocalPlayer, MatchConfig, MoveMode, PlayerIntent, Warrior, btn};
@@ -533,7 +534,8 @@ fn drift_puffs(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &m
 }
 
 /// A scope seen from in front catches the sun: far rifles show where they are, more the more nearly
-/// they point at you. A small point of light, the same size on the screen near or far.
+/// they point at you. A small point of light, the same size on the screen near or far. A player is
+/// at the scope while holding aim; a bot, whose rifle is always up, while it has somebody to shoot.
 #[derive(Component)]
 struct Glint(Entity);
 
@@ -547,7 +549,7 @@ const SUN_UP: (f32, f32) = (6.0, 19.0);
 #[allow(clippy::type_complexity)]
 fn scope_glints(
     mut commands: Commands,
-    warriors: Query<(Entity, &Transform, &PlayerIntent, &Inventory, &Kinematic), (With<Warrior>, Without<LocalPlayer>, Without<Eliminated>)>,
+    warriors: Query<(Entity, &Transform, &PlayerIntent, &Inventory, &Kinematic, Option<&BotBrain>), (With<Warrior>, Without<LocalPlayer>, Without<Eliminated>)>,
     mut glints: Query<(Entity, &Glint, &mut Transform), Without<Warrior>>,
     camera: Query<&GlobalTransform, With<crate::camera::MainCamera>>,
     db: Res<ItemDb>,
@@ -562,8 +564,9 @@ fn scope_glints(
     let day = (SUN_UP.0..SUN_UP.1).contains(&hour);
     let t = time.elapsed_secs();
     let mut now: Vec<(Entity, Vec3, f32)> = vec![];
-    for (e, tf, intent, inv, kin) in &warriors {
-        if !day || kin.mode != MoveMode::Ground || !intent.held(btn::AIM) || inv.current().is_none_or(|s| db.get(&s.id).kind.scope().is_none()) {
+    for (e, tf, intent, inv, kin, brain) in &warriors {
+        let looking = intent.held(btn::AIM) || brain.is_some_and(|b| b.target.is_some());
+        if !day || !looking || kin.mode != MoveMode::Ground || inv.current().is_none_or(|s| db.get(&s.id).kind.scope().is_none()) {
             continue;
         }
         let aim = intent.aim_dir();
