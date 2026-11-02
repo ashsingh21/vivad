@@ -1211,33 +1211,74 @@ def death_pose(rig, t):
     rig.rotate("head", UP, 0.5 * f)
 
 
+# The slide clip's parts, in frames: dropping into it from a running stride, the slide held (a loop:
+# the game repeats it while sliding), getting up into a crouch (crates/game/src/animation.rs).
+SLIDE_IN, SLIDE_HOLD, SLIDE_OUT = 8, 30, 8
+
+# Its poses as settings: hip height (fraction of standing), the hips tipped forward (+) or back and
+# rolled, the spine bringing the chest back up (0..1), each ankle (sideways from its own hip, ahead
+# as a fraction of the leg (negative behind), height off the ground), the knees' pull, the feet's
+# pitch and yaw, and each arm's (swing, elbow, out).
+SLIDE_KEYS = {
+    # Mid-stride, the left foot reaching down ahead, the right trailing.
+    "run": dict(seat=0.92, tilt=0.12, roll=0.0, spine=0.0, lead=(0.02, 0.3, 0.1), lead_pole=(0, -1, 0.1),
+                fold=(0.0, -0.25, 0.32), fold_pole=(0, -1, 0.0), lead_foot=(0.0, 0.0), fold_foot=(-0.4, 0.0),
+                arm_l=(0.5, 1.2, 0.15), arm_r=(-0.4, 1.0, 0.15)),
+    # Sat on the right hip: the left leg out ahead, knee soft, heel down, toes up; the right folded
+    # under it, knee out to the side, foot under the left knee; the back up; the arms out for balance.
+    "seat": dict(seat=0.0, tilt=-0.55, roll=-0.12, spine=1.0, lead=(0.04, 0.97, 0.1), lead_pole=(0.2, 0, 1),
+                 fold=(None, 0.42, 0.09), fold_pole=(-1, -0.3, 0.15), lead_foot=(0.35, 0.15), fold_foot=(-0.9, -1.2),
+                 arm_l=(1.15, 0.45, 0.6), arm_r=(-0.35, 0.3, 1.1)),
+    # Up on the feet, crouched.
+    "crouch": dict(seat=0.62, tilt=0.3, roll=0.0, spine=0.0, lead=(0.03, 0.14, 0.1), lead_pole=(0, -1, 0.2),
+                   fold=(-0.03, -0.1, 0.1), fold_pole=(0, -1, 0.2), lead_foot=(0.0, 0.0), fold_foot=(0.0, 0.0),
+                   arm_l=(0.3, 0.6, 0.2), arm_r=(0.3, 0.6, 0.2)),
+}
+
+
 def slide_pose(rig, t):
-    """A baseball slide, sat up: on the ground on the right hip, the left leg out ahead (knee soft,
-    heel down, toes up), the right folded under it (knee out to the side, shin flat, foot tucked
-    under the left knee), the back upright leaning a little back, the head level, the arms out
-    for balance clear of the ground. A small judder over the ground."""
+    """A baseball slide, sat up (SLIDE_KEYS), as one clip: the drop into it (the lead leg kicking
+    out ahead of the hips sinking), the slide held with a small judder over the ground, and the
+    get-up into a crouch."""
+    f = t * (SLIDE_IN + SLIDE_HOLD + SLIDE_OUT)
+    if f < SLIDE_IN:
+        a, z, u = SLIDE_KEYS["run"], SLIDE_KEYS["seat"], f / SLIDE_IN
+    elif f <= SLIDE_IN + SLIDE_HOLD:
+        a = z = SLIDE_KEYS["seat"]
+        u = 1.0
+    else:
+        a, z, u = SLIDE_KEYS["seat"], SLIDE_KEYS["crouch"], (f - SLIDE_IN - SLIDE_HOLD) / SLIDE_OUT
+    # The legs lead the hips: out (or under) first, the body following.
+    k, kl = smooth(u), smooth(min(1.0, u * 1.5))
+    mix = lambda key, w: lerp(a[key], z[key], w)
+    vec = lambda key, w: Vector(a[key]).lerp(Vector(z[key]), w)
+    held = max(0.0, min(1.0, (f - SLIDE_IN) / SLIDE_HOLD)) if SLIDE_IN <= f <= SLIDE_IN + SLIDE_HOLD else 0.0
+    b, j = math.sin(2 * math.pi * held), math.sin(4 * math.pi * held)
     look = rig.world_rot("head")
-    b = math.sin(2 * math.pi * t)
-    j = math.sin(4 * math.pi * t)
     ground = min(rig.ankle_z.values()) - 0.07
-    rig.move("pelvis", (0, 0, ground + SLIDE_SEAT - rig.pelvis_rest.z + 0.006 * j))
-    # Tipped back at the hips, the spine bringing the chest nearly upright again, rolled a little
-    # onto the folded leg.
-    rig.rotate("pelvis", LEFT, -0.55)
-    rig.rotate("pelvis", FWD, -0.12)
-    rig.rotate("spine_01", LEFT, 0.2)
-    rig.rotate("spine_02", LEFT, 0.12 + 0.01 * b)
-    rig.rotate("spine_03", LEFT, 0.06)
-    rig.rotate("spine_02", FWD, 0.08)
+    stand = rig.pelvis_rest.z - ground
+    rig.move("pelvis", (0, 0, ground + lerp(SLIDE_SEAT + (stand - SLIDE_SEAT) * a["seat"], SLIDE_SEAT + (stand - SLIDE_SEAT) * z["seat"], k)
+                        - rig.pelvis_rest.z + 0.006 * j))
+    rig.rotate("pelvis", LEFT, mix("tilt", k))
+    rig.rotate("pelvis", FWD, mix("roll", k))
+    sp = mix("spine", k)
+    rig.rotate("spine_01", LEFT, 0.2 * sp)
+    rig.rotate("spine_02", LEFT, (0.12 + 0.01 * b) * sp)
+    rig.rotate("spine_03", LEFT, 0.06 * sp)
+    rig.rotate("spine_02", FWD, 0.08 * sp)
     hl, hr = rig.head("thigh_l"), rig.head("thigh_r")
     lead = rig.thigh["l"] + rig.shin["l"]
-    rig.leg_ik("l", (hl.x + 0.04, hl.y - lead * 0.97, rig.ankle_z["l"] + ground + 0.02), UP + LEFT * 0.2)
-    rig.foot_pitch("l", 0.35, yaw=0.15)
-    rig.leg_ik("r", (hl.x - 0.02, hl.y - lead * 0.42, ground + 0.09), Vector((-1, -0.3, 0.15)))
-    rig.foot_pitch("r", -0.9, yaw=-1.2)
-    arm_swing(rig, "l", 1.15 + 0.04 * b, 0.45, out=0.6)
-    arm_swing(rig, "r", -0.35 - 0.04 * b, 0.3, out=1.1)
+    # The folded foot's sideways place: under the left knee (None), from the right hip.
+    fx = lambda key: (hl.x - 0.02 - hr.x) if key[0] is None else key[0]
+    lx, ly, lz = vec("lead", kl)
+    rig.leg_ik("l", (hl.x + lx, hl.y - lead * ly, ground + lz), vec("lead_pole", kl))
+    rig.foot_pitch("l", lerp(a["lead_foot"][0], z["lead_foot"][0], kl), yaw=lerp(a["lead_foot"][1], z["lead_foot"][1], kl))
+    ry, rz = lerp(a["fold"][1], z["fold"][1], kl), lerp(a["fold"][2], z["fold"][2], kl)
+    rig.leg_ik("r", (hr.x + lerp(fx(a["fold"]), fx(z["fold"]), kl), hr.y - lead * ry, ground + rz), vec("fold_pole", kl))
+    rig.foot_pitch("r", lerp(a["fold_foot"][0], z["fold_foot"][0], kl), yaw=lerp(a["fold_foot"][1], z["fold_foot"][1], kl))
     for s in "lr":
+        sw, el, out = vec(f"arm_{s}", k)
+        arm_swing(rig, s, sw + (0.04 if s == "l" else -0.04) * b, el, out=out)
         relax_fingers(rig, s, 0.4)
     rig.set_world_rot("head", look)
 
@@ -1585,7 +1626,7 @@ def main():
         if run in bpy.data.actions and arms in bpy.data.actions:
             arms_from(rig, run, arms)
     # The slide is our own pose (no library clip sits up in it: they lie back, curl, put a hand down).
-    hold_pose(rig, "slide", 30, slide_pose)
+    hold_pose(rig, "slide", SLIDE_IN + SLIDE_HOLD + SLIDE_OUT, slide_pose)
     for name, lean, tuck, face in POSTURE:
         if name in bpy.data.actions:
             if face:

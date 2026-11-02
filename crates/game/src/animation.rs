@@ -68,6 +68,24 @@ const UPPER: u32 = 1;
 /// The authored swing lasts this long (melee_swing is 12 frames at 30 fps).
 const SWING_TIME: f32 = 0.4;
 const FADE_RATE: f32 = 12.0;
+/// The slide clip's drop into it and its get-up (tools/blender/characters/anims.py SLIDE_IN,
+/// SLIDE_OUT: 8 frames at 30 fps each); the held slide between them loops.
+const SLIDE_IN: f32 = 8.0 / 30.0;
+const SLIDE_OUT: f32 = 8.0 / 30.0;
+
+/// Where in the slide clip (lasting `dur`) to be: dropping in, then the hold looped while the slide
+/// lasts; once it ends, the get-up.
+fn slide_time(dur: f32, clock: f32, from: Option<f32>, end: Option<f32>) -> f32 {
+    match (from, end) {
+        (Some(s), _) => {
+            let x = clock - s;
+            let hold = (dur - SLIDE_IN - SLIDE_OUT).max(1e-3);
+            if x < SLIDE_IN { x } else { SLIDE_IN + (x - SLIDE_IN) % hold }
+        }
+        (None, Some(e)) => (dur - SLIDE_OUT + (clock - e)).min(dur - 1e-3),
+        _ => 0.0,
+    }
+}
 
 struct AnimSet {
     gltf: Handle<Gltf>,
@@ -141,6 +159,10 @@ pub struct WarriorAnim {
     since_pose: f32,
     /// How much of the aim pitch the torso takes (eased with the held item).
     pub aim_share: f32,
+    /// When (`clock`) the slide under way began, or the last one ended: its clip drops in, holds,
+    /// and gets up (`slide_time`).
+    slide_from: Option<f32>,
+    slide_end: Option<f32>,
 }
 
 fn load_sets(mut commands: Commands, assets: Res<AssetServer>) {
@@ -251,6 +273,8 @@ pub fn bind(commands: &mut Commands, sets: &AnimSets, variant: usize, rig_root: 
         bow_weight: 0.0,
         since_pose: 0.0,
         aim_share: 0.0,
+        slide_from: None,
+        slide_end: None,
     })
 }
 
@@ -427,15 +451,25 @@ fn drive(
                         _ => None,
                     };
                     let aim_moves = gun == Some(true) && intent.held(btn::AIM) && !kin.sliding && set.has("rifleaim_run_f");
+                    // Sliding (low and still fast), or just out of it and getting up.
+                    let sliding = low && speed > CROUCH_SPEED + 1.2;
+                    if sliding {
+                        anim.slide_from.get_or_insert(clock);
+                        anim.slide_end = None;
+                    } else if anim.slide_from.take().is_some() {
+                        anim.slide_end = Some(clock);
+                    }
+                    let in_slide = sliding || anim.slide_end.is_some_and(|e| clock - e < SLIDE_OUT);
+                    let (slide_from, slide_end) = (anim.slide_from, anim.slide_end);
                     // Sliding with a long gun: its own whole-body slide, the gun already up.
-                    let gun_slide = gun == Some(true) && kin.sliding && set.has("rifle_slide");
+                    let gun_slide = gun == Some(true) && in_slide && set.has("rifle_slide");
                     let (prefix, gaits) = match gun {
                         Some(true) if aim_moves => ("rifleaim_", RIFLE_AIM_GAITS),
                         Some(true) => ("rifle_", RIFLE_GAITS),
                         Some(false) => ("pistol_", PLAIN_GAITS),
                         None => ("", PLAIN_GAITS),
                     };
-                    let loco = if low && speed > CROUCH_SPEED + 1.2 {
+                    let loco = if in_slide {
                         vec![("slide", 1.0)]
                     } else if low {
                         // The crouch walk in the direction of travel (two nearest by angle), over
@@ -521,7 +555,13 @@ fn drive(
                     let phase = anim.phase;
                     // Clips that would barely show are left out (each costs a pass over the bones).
                     for (n, w) in loco.into_iter().filter(|(_, w)| *w >= 0.05) {
-                        let t = if clip_speed(n) == 0.0 { clock % dur(n) } else { phase * dur(n) };
+                        let t = if n.ends_with("slide") {
+                            slide_time(dur(n), clock, slide_from, slide_end)
+                        } else if clip_speed(n) == 0.0 {
+                            clock % dur(n)
+                        } else {
+                            phase * dur(n)
+                        };
                         want.push((n, action.is_some(), w, t));
                     }
                     if let Some((n, t)) = action {

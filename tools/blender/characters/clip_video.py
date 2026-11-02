@@ -31,6 +31,7 @@ CLIPS = ["rifle_slide_move", "rifle_idle", "rifle_walk_f", "rifle_run_f", "rifle
 FPS = 30
 # crates/game/src/animation.rs FADE_RATE; crates/shared/src/sim/movement.rs.
 FADE_RATE = 12.0
+SLIDE_IN = SLIDE_OUT = 8  # frames: anims.py
 SPRINT, SLIDE_SPEED, SLIDE_FRICTION, SLIDE_END, CROUCH = 8.6, 10.5, 6.5, 3.6, 1.4
 # (sprint, slide, crouch walk) clips.
 SEQUENCES = {"slide_move": ("sprint_f", "slide", "crouch_f"),
@@ -134,14 +135,17 @@ def pose_of(arm, act, f):
 def sequence(arm, names):
     """Play `names` (sprint, slide, crouch walk) through as the game does, yielding once per frame
     with the rig posed and moved: one second's sprint, the slide from SLIDE_SPEED slowing by
-    SLIDE_FRICTION to SLIDE_END, a second's crouch walk; each clip faded in at FADE_RATE, its cycle
-    advanced by distance travelled at the clip's own speed (the slide's by time)."""
+    SLIDE_FRICTION to SLIDE_END (its clip dropping in, then its hold looped), its get-up, a second's
+    crouch walk; each clip faded in at FADE_RATE, the gaits' cycles advanced by distance travelled
+    at the clip's own speed."""
     acts = [bpy.data.actions[n] for n in names]
     speeds = [SPRINT, 0.0, CROUCH]
     weights = [1.0, 0.0, 0.0]
     phase = [0.0, 0.0, 0.0]
     dt, y, v, stage, t = 1 / FPS, 0.0, SPRINT, 0, 0.0
     k = min(dt * FADE_RATE, 1.0)
+    f0, f1 = map(int, acts[1].frame_range)
+    hold = f1 - f0 - SLIDE_IN - SLIDE_OUT
     while True:
         if stage == 0 and t >= 1.0:
             stage, v, t = 1, SLIDE_SPEED, 0.0
@@ -149,12 +153,17 @@ def sequence(arm, names):
             v -= SLIDE_FRICTION * dt
             if v < SLIDE_END:
                 stage, v, t = 2, CROUCH, 0.0
-        elif stage == 2 and t >= 1.0:
+        elif stage == 2 and t * FPS >= SLIDE_OUT:
+            stage, t = 3, 0.0
+        elif stage == 3 and t >= 1.0:
             return
-        weights = [w + ((1.0 if i == stage else 0.0) - w) * k for i, w in enumerate(weights)]
+        weights = [w + ((1.0 if i == (0, 1, 1, 2)[stage] else 0.0) - w) * k for i, w in enumerate(weights)]
         y -= v * dt
-        for i in range(3):
-            phase[i] += dt * FPS * (v / speeds[i] if speeds[i] else 1.0)
+        for i in (0, 2):
+            phase[i] += dt * FPS * v / speeds[i]
+        x = t * FPS
+        phase[1] = (x if x < SLIDE_IN else SLIDE_IN + (x - SLIDE_IN) % hold) if stage == 1 else \
+            (f1 - f0 - SLIDE_OUT + min(x, SLIDE_OUT - 0.01)) if stage == 2 else phase[1]
         poses = [pose_of(arm, a, p) for a, p in zip(acts, phase)]
         arm.animation_data.action = None
         total = 0.0
