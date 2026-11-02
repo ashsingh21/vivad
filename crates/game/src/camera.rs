@@ -44,7 +44,7 @@ pub fn spawn_camera(mut commands: Commands, mut images: ResMut<Assets<Image>>, l
     if ncr {
         cam.insert(
             EnvironmentMapLight::hemispherical_gradient(&mut images, Color::srgb(0.66, 0.70, 0.74), Color::srgb(0.78, 0.78, 0.76), Color::srgb(0.36, 0.33, 0.29))
-                .with_intensity(2600.0),
+                .with_intensity(3600.0),
         );
     }
 }

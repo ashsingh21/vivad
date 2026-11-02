@@ -443,7 +443,7 @@ pub(crate) fn setup_sky(layout: Res<shared::map::MapLayout>, mut commands: Comma
         // frame's largest GPU cost.
         CascadeShadowConfigBuilder::default().build(),
     ));
-    commands.insert_resource(GlobalAmbientLight { color: Color::srgb(1.0, 0.97, 0.93), brightness: if ncr { 1100.0 } else { 1800.0 }, ..default() });
+    commands.insert_resource(GlobalAmbientLight { color: Color::srgb(1.0, 0.97, 0.93), brightness: if ncr { 1500.0 } else { 1800.0 }, ..default() });
     // The Pralaya wall.
     commands.spawn((
         ZoneWall,

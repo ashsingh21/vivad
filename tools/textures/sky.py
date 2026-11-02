@@ -108,9 +108,9 @@ GAIN = 2.2
 # Highlights: straight to KNEE, then rolling off to what the 8 bits can hold.
 KNEE = 1.0
 # Delhi's sky is pale: the share of the photograph's colour that's kept.
-BLUE = 1.0
+BLUE = 0.86
 # Share of haze overhead, and how fast it thickens down to all haze at the horizon (degrees).
-HAZE_TOP = 0.16
+HAZE_TOP = 0.21
 HAZE_FALL = 10.0
 # The haze's own colour higher up: dust at the horizon, plain pale air over it (sRGB).
 HIGH_HAZE = (0.86, 0.90, 0.95)
