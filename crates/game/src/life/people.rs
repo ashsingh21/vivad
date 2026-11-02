@@ -1,4 +1,4 @@
-//! Harmless people and street animals: drawn only near the player, about 16 people and 8 to 12
+//! Harmless people and street animals: drawn only near the player, about 24 people and 8 to 12
 //! animals at most, none with a weapon. Each is one entity showing one mesh from a flip book
 //! (`flipbook`), so a busy lane costs a few draws and no bones.
 //!
@@ -37,7 +37,7 @@ impl Plugin for PeoplePlugin {
 }
 
 /// The most people near the player, and how far off they stop being drawn.
-const PEOPLE: usize = 16;
+const PEOPLE: usize = 24;
 const ANIMALS: usize = 9;
 /// How big the animals are: a street dog about 52 cm at the shoulder, a cow about 1.3 m.
 const DOG_SCALE: f32 = 0.27;
@@ -48,7 +48,7 @@ const FADE: f32 = 8.0;
 const GONE: f32 = DRAWN + FADE + 4.0;
 /// A shopper or a stroller this far off and out of view gives way to one nearer.
 const STRAYED: f32 = 56.0;
-/// How far out shoppers are looked for: sixteen people go further the closer they stay.
+/// How far out shoppers are looked for: a crowd goes further the closer it stays.
 const CROWD: f32 = 58.0;
 /// How near the centre of the view someone may turn up: past this, in a busy street, nobody sees.
 const SEEN_FROM: f32 = 40.0;
@@ -458,7 +458,7 @@ fn populate(
     let free = |p: Vec2| hidden(p) && inside(p) && !scares.scared(p, now) && walkable(&layout, &floor, &market, p);
     populate_animals(&mut commands, &books, &layout, busy, at, &walkers, &mut dice, now, &free);
     let mut room = want.saturating_sub(have);
-    // Sixteen people are a crowd only if they are where the player is looking: shoppers behind
+    // A crowd is a crowd only if it is where the player is looking: shoppers behind
     // him go, and turn up ahead.
     let in_view = walkers.iter().filter(|(_, w)| !w.role.animal() && w.pos.distance(at) < CROWD && ahead(w.pos) > 0.55).count();
     if in_view < want * 3 / 4 {
