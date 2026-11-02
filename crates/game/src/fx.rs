@@ -26,7 +26,7 @@ impl Plugin for FxPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraPunch>()
             .add_systems(Startup, setup)
-            .add_systems(Update, (add_streaks, muzzle_flash, misfire_smoke, blast_shake, hit_sparks, guard_sparks, broke_splinters, arrow_dust, landing_dust, fly_sparks, scope_glints, punch_camera, climb, hit_stop))
+            .add_systems(Update, (add_streaks, muzzle_flash, misfire_smoke, blast_shake, hit_sparks, guard_sparks, broke_splinters, arrow_dust, landing_dust, fly_sparks, drift_puffs, scope_glints, punch_camera, climb, hit_stop))
             .add_systems(PostUpdate, (update_streaks, swing_ribbons).after(TransformSystems::Propagate));
     }
 }
@@ -65,6 +65,8 @@ struct FxAssets {
     gulal: Handle<StandardMaterial>,
     dust: Handle<StandardMaterial>,
     smoke: Handle<StandardMaterial>,
+    /// Black powder's white cloud.
+    powder: Handle<StandardMaterial>,
     /// A scope's lens catching the sun.
     lens: Handle<StandardMaterial>,
 }
@@ -114,6 +116,13 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: Res
             base_color: Color::srgba(0.32, 0.31, 0.3, 0.5),
             alpha_mode: AlphaMode::Blend,
             unlit: true,
+            ..default()
+        }),
+        powder: mats.add(StandardMaterial {
+            base_color: Color::srgba(0.86, 0.85, 0.82, 0.3),
+            alpha_mode: AlphaMode::Blend,
+            perceptual_roughness: 1.0,
+            reflectance: 0.0,
             ..default()
         }),
         lens: glow(&mut mats, Color::WHITE, LinearRgba::rgb(90.0, 80.0, 60.0), 1.0),
@@ -465,7 +474,60 @@ fn muzzle_flash(mut commands: Commands, q: Query<(&Projectile, &Transform), Adde
         // Black powder: the big white puff that gives a Toradar's shooter away.
         if p.item == "toradar" {
             billow(&mut commands, &fx, &fx.smoke, at + ahead * 0.5, ahead, 22, 2.4, 0.2);
+            powder_cloud(&mut commands, &fx, at, ahead);
         }
+    }
+}
+
+/// A ball of black powder's smoke: it drifts off the muzzle, swells and thins for as long as it
+/// takes a far shooter to be seen.
+#[derive(Component)]
+struct Puff {
+    vel: Vec3,
+    life: f32,
+    max: f32,
+    size: f32,
+}
+
+/// Balls in the cloud, their size at birth, how many times over they swell, and seconds they hang.
+const PUFF_BALLS: usize = 16;
+const PUFF_SIZE: (f32, f32) = (0.35, 0.8);
+const PUFF_SWELL: f32 = 3.2;
+const PUFF_LIFE: (f32, f32) = (6.0, 9.0);
+
+fn powder_cloud(commands: &mut Commands, fx: &FxAssets, at: Vec3, ahead: Vec3) {
+    let mut rng = rand::rng();
+    let wind = Vec3::new(rng.random_range(-0.5..0.5), 0.0, rng.random_range(-0.5..0.5));
+    for k in 0..PUFF_BALLS {
+        // Strung out along the shot's first few metres, as a matchlock blows it.
+        let along = 0.4 + 2.6 * (k as f32 + rng.random_range(0.0..1.0)) / PUFF_BALLS as f32;
+        let off = Vec3::new(rng.random_range(-0.3..0.3), rng.random_range(-0.2..0.3), rng.random_range(-0.3..0.3));
+        let max = rng.random_range(PUFF_LIFE.0..PUFF_LIFE.1);
+        let size = rng.random_range(PUFF_SIZE.0..PUFF_SIZE.1);
+        let vel = ahead * rng.random_range(0.2..1.1) + wind + Vec3::Y * rng.random_range(0.05..0.25);
+        commands.spawn((
+            Puff { vel, life: max, max, size },
+            Mesh3d(fx.sphere.clone()),
+            MeshMaterial3d(fx.powder.clone()),
+            Transform::from_translation(at + ahead * along + off).with_scale(Vec3::splat(size)),
+            bevy::light::NotShadowCaster,
+        ));
+    }
+}
+
+fn drift_puffs(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &mut Puff, &mut Transform)>) {
+    let dt = time.delta_secs();
+    for (e, mut p, mut t) in &mut q {
+        p.life -= dt;
+        if p.life <= 0.0 {
+            commands.entity(e).despawn();
+            continue;
+        }
+        p.vel *= 1.0 - 0.5 * dt;
+        t.translation += p.vel * dt;
+        let age = 1.0 - p.life / p.max;
+        // Swells fast at first, and goes in its last fifth as it thins out.
+        t.scale = Vec3::splat(p.size * (1.0 + (PUFF_SWELL - 1.0) * age.sqrt()) * (p.life / p.max * 5.0).min(1.0));
     }
 }
 

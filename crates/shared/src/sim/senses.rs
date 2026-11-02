@@ -58,9 +58,10 @@ const LOOK_EVERY: f32 = 0.2;
 pub const RUN_NOISE: f32 = 30.0;
 pub const WALK_NOISE: f32 = 15.0;
 pub const CROUCH_NOISE: f32 = 8.0;
-/// How far a shot carries, and a gulel's twang.
+/// How far a shot carries, a gulel's twang, and a matchlock's boom and cloud of smoke.
 pub const SHOT_NOISE: f32 = 110.0;
 const TWANG_NOISE: f32 = 28.0;
+const TORADAR_NOISE: f32 = 260.0;
 /// Close enough to the place to start looking round; seconds given to the walk, and to the looking.
 const ARRIVE: f32 = 2.2;
 const SEARCH_WALK: f32 = 16.0;
@@ -241,7 +242,11 @@ pub fn hiding_spot(spatial: &SpatialQuery, walkable: &impl Fn(Vec2) -> bool, lay
 /// Each new arrow or astra (here or an echo of another peer's) is a noise where it left the hand.
 pub(crate) fn shot_noise(shots: Query<(&Transform, &Projectile), Added<Projectile>>, mut noise: MessageWriter<NoiseMsg>) {
     for (tf, shot) in &shots {
-        let radius = if shot.item == "gulel" { TWANG_NOISE } else { SHOT_NOISE };
+        let radius = match shot.item.as_str() {
+            "gulel" => TWANG_NOISE,
+            "toradar" => TORADAR_NOISE,
+            _ => SHOT_NOISE,
+        };
         noise.write(NoiseMsg { at: tf.translation, radius, source: Some(shot.owner) });
     }
 }
