@@ -67,6 +67,7 @@ impl Quality {
         match self {
             // Measured on an M4 on the NCR's Karol Bagh, Low samples at Ultra's radius: 3 to 12 ms a
             // frame, most of it the normal prepass it brings, so not on Medium.
+            Quality::Medium if std::env::var("VIVAD_MEDIUM_AO").is_ok() => Some(ScreenSpaceAmbientOcclusion { radius: 0.6, quality_level: ScreenSpaceAmbientOcclusionQualityLevel::Low, ..default() }),
             Quality::Low | Quality::Medium => None,
             Quality::High => Some(ScreenSpaceAmbientOcclusion { radius: 0.6, ..default() }),
             // Medium: Ultra's samples cost an M4 about 3 ms a frame for little that shows at this radius.

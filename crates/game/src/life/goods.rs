@@ -40,17 +40,17 @@ impl Plugin for GoodsPlugin {
 /// Metres a side of a patch of street: the mesh it all goes in.
 const PATCH: f32 = 64.0;
 /// How far from the camera a patch's middle may be for it to exist, and where it goes.
-const REACH: f32 = 128.0;
-const LET_GO: f32 = 148.0;
+const REACH: f32 = 164.0;
+const LET_GO: f32 = 184.0;
 /// Where a patch fades out, from its middle.
-const FADE_FROM: f32 = 104.0;
-const FADE_TO: f32 = 120.0;
+const FADE_FROM: f32 = 140.0;
+const FADE_TO: f32 = 156.0;
 /// Where the full goods hand over to their stand-ins, from a patch's middle, and how far off the
 /// full ones are ready and gone. A corner of a patch is 45 m from its middle.
-const DETAIL_FROM: f32 = 46.0;
-const DETAIL_TO: f32 = 56.0;
-const DETAIL_REACH: f32 = 64.0;
-const DETAIL_LET_GO: f32 = 80.0;
+const DETAIL_FROM: f32 = 56.0;
+const DETAIL_TO: f32 = 66.0;
+const DETAIL_REACH: f32 = 74.0;
+const DETAIL_LET_GO: f32 = 92.0;
 /// Past this, a patch's overhead stops casting: the sun's far cascade is coarse there anyway.
 const SHADE_TO: f32 = 72.0;
 /// Above the ground, the camera is too far up for goods to show.
