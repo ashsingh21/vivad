@@ -36,6 +36,7 @@ use crate::batch::batched;
 use crate::batch::probe::{Tagged, reading_meshes};
 use crate::characters::LodRange;
 use crate::quality::LodShadow;
+use crate::street::weathered;
 use crate::surfaces::{Surface, UltraSurfaces};
 
 /// Half a map wider than this, and it has tiers.
@@ -58,8 +59,8 @@ const FAR_BLOCK: f32 = 4.0;
 const COPING: f32 = 0.14;
 
 /// The street kit that is cover, with its collider's size (shared::map::kit) and its colours' mean
-/// (linear, by area, from tools/blender/props/street_kit.py's model). The rest is too small or too
-/// thin to hide a player and stops with the near tier.
+/// (linear, by area, from tools/blender/props/street_kit.py's model, before `weathered`). The rest is
+/// too small or too thin to hide a player and stops with the near tier.
 #[allow(clippy::approx_constant)] // Colours, not 1/pi.
 const COVER: [(&str, [f32; 3], [f32; 3]); 8] = [
     ("auto", [1.4, 1.8, 2.6], [0.354, 0.326, 0.039]),
@@ -72,8 +73,8 @@ const COVER: [(&str, [f32; 3], [f32; 3]); 8] = [
     ("drum", [0.6, 0.95, 0.6], [0.006, 0.119, 0.579]),
 ];
 
-/// The leaf atlas's mean colour and the bark's (linear, from the textures).
-const LEAVES: [f32; 3] = [0.066, 0.093, 0.017];
+/// A crown's mean colour, from the leaf atlas as crate::batch shades it, and the bark's (linear).
+const LEAVES: [f32; 3] = [0.036, 0.061, 0.017];
 const BARK: [f32; 3] = [0.063, 0.052, 0.039];
 
 /// Whether this map is drawn in tiers.
@@ -401,7 +402,8 @@ pub(super) fn build(
         let Some((size, col)) = cover.get(piece.name) else { continue };
         let size = Vec3::from(*size);
         let c = piece.pos + Vec3::Y * size.y * 0.5;
-        mid.entry(cell_at(c.x, c.z)).or_default().plain.open_box(c, Quat::from_rotation_y(piece.yaw), size, [col[0], col[1], col[2], 1.0]);
+        let [r, g, b] = weathered(*col);
+        mid.entry(cell_at(c.x, c.z)).or_default().plain.open_box(c, Quat::from_rotation_y(piece.yaw), size, [r, g, b, 1.0]);
     }
     for p in layout.props.iter().filter(|p| batched(p.model)) {
         let (y, h, r) = crown(p.model);

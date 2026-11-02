@@ -10,6 +10,7 @@ use std::collections::HashMap;
 
 use bevy::camera::visibility::VisibilityRange;
 use bevy::gltf::{Gltf, GltfMesh};
+use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
 use shared::map::MapLayout;
 use shared::sim::{OfMap, map_reloaded};
@@ -31,6 +32,10 @@ const CHUNK: f32 = 32.0;
 /// quality level's scale): the chunk's slack added.
 const SWITCH: f32 = 35.0;
 const FAR: f32 = 140.0;
+/// How much of a street kit colour the sun has taken, and what dust leaves of what remains: the model
+/// is painted as bought, and nothing on a Delhi street stays that way.
+const FADED: f32 = 0.38;
+const DUSTY: f32 = 0.80;
 
 #[derive(Resource)]
 pub(crate) struct Kit {
@@ -38,6 +43,8 @@ pub(crate) struct Kit {
     material: Handle<StandardMaterial>,
     /// Whether this map's pieces have been built.
     pub built: bool,
+    /// Whether the model's colours have been weathered, which they need only once.
+    weathered: bool,
 }
 
 fn load_kit(mut commands: Commands, assets: Res<AssetServer>, mut materials: ResMut<Assets<StandardMaterial>>) {
@@ -45,11 +52,31 @@ fn load_kit(mut commands: Commands, assets: Res<AssetServer>, mut materials: Res
         file: assets.load("models/props/street_kit.glb"),
         material: materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.75, ..default() }),
         built: false,
+        weathered: false,
     });
 }
 
 fn rebuild(mut kit: ResMut<Kit>) {
     kit.built = false;
+}
+
+/// A colour of the kit (linear) after some years outdoors.
+pub(crate) fn weathered(c: [f32; 3]) -> [f32; 3] {
+    let grey = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    c.map(|x| (x + (grey - x) * FADED) * DUSTY)
+}
+
+/// Weathers the model's vertex colours where they are loaded: every piece shares these meshes.
+fn weather(file: &Gltf, gltf_meshes: &Assets<GltfMesh>, meshes: &mut Assets<Mesh>) {
+    for mesh in file.named_meshes.values().filter_map(|h| gltf_meshes.get(h)).flat_map(|m| &m.primitives) {
+        let Some(mut mesh) = meshes.get_mut(&mesh.mesh) else { continue };
+        if let Some(VertexAttributeValues::Float32x4(colours)) = mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR) {
+            for c in colours {
+                let [r, g, b] = weathered([c[0], c[1], c[2]]);
+                *c = [r, g, b, c[3]];
+            }
+        }
+    }
 }
 
 /// A big map's kit near the camera: LOD1 has no end, as `near` takes the piece away with its cell.
@@ -88,6 +115,10 @@ fn build_kit(mut commands: Commands, mut kit: ResMut<Kit>, layout: Res<MapLayout
     }
     let Some(file) = gltfs.get(&kit.file) else { return };
     kit.built = true;
+    if !kit.weathered {
+        kit.weathered = true;
+        weather(file, &gltf_meshes, &mut meshes);
+    }
     if layout.kit.is_empty() {
         return;
     }
@@ -139,4 +170,17 @@ fn build_kit(mut commands: Commands, mut kit: ResMut<Kit>, layout: Res<MapLayout
         ));
     }
     info!("street kit: {} pieces in {n} chunk meshes", layout.kit.len());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn weathering_calms_a_colour_and_leaves_grey_grey() {
+        let blue = weathered([0.006, 0.119, 0.579]);
+        assert!(blue[2] - blue[0] < 0.6 * (0.579 - 0.006), "still as saturated: {blue:?}");
+        let grey = weathered([0.5, 0.5, 0.5]);
+        assert!((grey[0] - grey[2]).abs() < 1e-5 && grey[0] < 0.5, "grey should only darken: {grey:?}");
+    }
 }
