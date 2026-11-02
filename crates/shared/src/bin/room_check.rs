@@ -308,7 +308,10 @@ fn main() {
     println!("loot indoors: {indoors}, {upstairs} of it upstairs, {unreached} out of reach");
     failures += unreached;
     let gold = map.chests.iter().filter(|c| c.kind == shared::map::ChestKind::Kalash && hollow_at(c.pos.xz()).is_some()).count();
-    println!("kalash indoors {gold}, chests {} in all", map.chests.len());
+    let in_sets: Vec<_> = map.chests.iter().filter(|c| c.set.is_some()).collect();
+    let inside = in_sets.iter().filter(|c| hollow_at(c.pos.xz()).is_some()).count();
+    let finds = map.floor_loot.iter().filter(|p| hollow_at(p.xz()).is_some()).count();
+    println!("chests indoors {inside} of the {} in sets, kalash {gold}; floor finds indoors {finds} of {}; {} ring shops furnished with {} pieces", in_sets.len(), map.floor_loot.len(), map.ring_shops.len().div_ceil(2), map.ring_pieces.len());
     // Walks.
     let tall: Vec<usize> = (0..map.rooms.len()).filter(|k| map.rooms[*k].plan != Plan::Lobby).collect();
     let every = std::env::var("EVERY").ok().and_then(|s| s.parse().ok()).unwrap_or((tall.len() / 60).max(1));

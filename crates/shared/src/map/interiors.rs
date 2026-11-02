@@ -1429,7 +1429,7 @@ fn apply(map: &mut MapLayout, rooms: Vec<Interior>, shapes: Vec<(usize, [Vec2; 4
 /// About 60 of Connaught Place's open shops get the same furniture as the rooms, along their back
 /// walls, where the chests in the middle of each and the way in from the arch are clear of it.
 pub fn furnish_ring(map: &mut MapLayout) {
-    const EVERY: usize = 7;
+    const EVERY: usize = 2;
     const SETS: [&[&str]; 4] = [&["shelf", "counter", "shelf"], &["shelf", "shelf", "sacks"], &["almirah", "desk", "plastic_chair"], &["sacks", "water_drum", "shelf"]];
     if map.rooms.is_empty() {
         return;
@@ -1504,7 +1504,7 @@ pub fn move_loot(map: &mut MapLayout, spots: &[Spot], rng: &mut SmallRng) {
         let fits = |s: &Spot| if gold { s.roof || s.storey > 0 } else { s.storey == 0 };
         let far = |s: &Spot| s.pos.xz().distance_squared(c.pos.xz());
         let spot = (0..spots.len()).filter(|i| !used[*i] && fits(&spots[*i])).min_by(|a, b| far(&spots[*a]).total_cmp(&far(&spots[*b])));
-        if let Some(i) = spot.filter(|i| far(&spots[*i]) < 160.0 * 160.0) {
+        if let Some(i) = spot.filter(|i| far(&spots[*i]) < 240.0 * 240.0) {
             used[i] = true;
             *moved.entry(set).or_default() += 1;
             map.chests[k].pos = spots[i].pos;

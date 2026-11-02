@@ -22,7 +22,7 @@ use bevy::prelude::*;
 use bevy::render::view::window::screenshot::{Screenshot, save_to_disk};
 use shared::map::build::subtract_rect;
 use shared::map::interiors::{Cut, Interior, LANE, Piece, Plan, Room, SHELL, SLAB, STAIR_ROOM, Wall, WallKind, rects};
-use shared::map::{Block, Footprint, MapLayout, Shape};
+use shared::map::{Footprint, MapLayout};
 use shared::sim::{Eliminated, Health, Kinematic, LocalPlayer, MoveMode, OfMap, PlayerIntent, Warrior, map_reloaded};
 
 use super::{MeshBuf, Paint, PendingMips, TILE, hash01, lin, tiers};
@@ -284,10 +284,41 @@ fn reveals(buf: &mut MeshBuf, r: &Interior, wall: &Wall) {
     }
 }
 
-/// A box in a flat colour, for what stands free: `Block`s from the shared layout.
-fn block(buf: &mut MeshBuf, b: &Block, col: [f32; 4]) {
-    if let Shape::Box(size) = b.shape {
-        buf.solid_box(b.pos, b.rot, size, col);
+/// The inside of the paint, plain, just behind the room's wall. A third-person camera squeezed along
+/// a stair wall has its near plane through that wall, and past it there would otherwise be nothing
+/// but the outdoors: this way a wall stays a wall from any seat.
+fn shell_cap(buf: &mut MeshBuf, r: &Interior, wall: &Wall) {
+    let size = if wall.along_x { r.d } else { r.w };
+    let (at, sign) = if wall.at < size / 2.0 { (0.02, 1.0) } else { (size - 0.02, -1.0) };
+    let inward = if wall.along_x { r.z } else { r.x } * sign;
+    let tint = times(lin([0.72, 0.70, 0.66]), 1.0);
+    face(buf, r, wall.along_x, at, wall.s, wall.y, Vec3::new(inward.x, 0.0, inward.y), &wall.cuts, CEILING, tint, (1.0, 1.0), 0.0);
+}
+
+/// A wall that belongs to no room: both its faces and its ends. The stair room is in the building's
+/// own paint, over plain plaster; the spine between the flights is the stair well's old wall.
+fn free_wall(buf: &mut MeshBuf, r: &Interior, wall: &Wall, outside: [f32; 4], inner: [f32; 4]) {
+    let (row, tint) = if wall.y.0 >= r.roof - 0.01 { (CEILING, outside) } else { (OLD_WALL, inner) };
+    let t = wall.thick / 2.0;
+    let side = if wall.along_x { r.z } else { r.x };
+    let side = Vec3::new(side.x, 0.0, side.y);
+    for (at, n) in [(wall.at - t, -side), (wall.at + t, side)] {
+        let mut from = wall.y.0;
+        while from < wall.y.1 - 1e-3 {
+            let to = (from + ROW_M).min(wall.y.1);
+            face(buf, r, wall.along_x, at, wall.s, (from, to), n, &wall.cuts, row, tint, (0.9, 1.0), 0.0);
+            from = to;
+        }
+    }
+    reveals(buf, r, wall);
+    let along = if wall.along_x { r.x } else { r.z };
+    let along = Vec3::new(along.x, 0.0, along.y);
+    let p = |s: f32, y: f32, t: f32| if wall.along_x { r.at(s, y, t) } else { r.at(t, y, s) };
+    let v = row_v(CEILING, 0.5);
+    let uv = [Vec2::new(0.0, v), Vec2::new(0.02, v), Vec2::new(0.02, v + 0.02), Vec2::new(0.0, v + 0.02)];
+    for (s, n) in [(wall.s.0, -along), (wall.s.1, along)] {
+        let (a, b) = (wall.at - t, wall.at + t);
+        facing(buf, [p(s, wall.y.0, a), p(s, wall.y.0, b), p(s, wall.y.1, b), p(s, wall.y.1, a)], n, uv, [times(tint, 0.9); 4]);
     }
 }
 
@@ -310,6 +341,12 @@ fn flight(buf: &mut MeshBuf, r: &Interior, k: u32) {
         let (lo, hi) = (y0 + rise * (i as f32 - 0.5).max(0.0), y0 + rise * (i as f32 + 0.5));
         facing(buf, [r.at(a, lo, z.0), r.at(a, lo, z.1), r.at(a, hi, z.1), r.at(a, hi, z.0)], -along, uv(0.0, LANE / STRIP), [riser; 4]);
         facing(buf, [r.at(a, hi, z.0), r.at(a, hi, z.1), r.at(b, hi, z.1), r.at(b, hi, z.0)], Vec3::Y, uv(a / STRIP, (a + LANE) / STRIP), [tread; 4]);
+    }
+    // The edges of the floor it comes up through, at both ends of the well.
+    let edge = lin([0.70, 0.67, 0.62]);
+    for (x, n) in [(head, -along), (foot, along)] {
+        let p = [r.at(x, y1 - SLAB, z.0), r.at(x, y1 - SLAB, z.1), r.at(x, y1, z.1), r.at(x, y1, z.0)];
+        facing(buf, p, n, uv(0.0, LANE / STRIP), [edge; 4]);
     }
     // Its underside, from below.
     let under = lin([0.55, 0.53, 0.50]);
@@ -365,17 +402,15 @@ fn paint(buf: &mut MeshBuf, r: &Interior, fp: &Footprint) {
             floor_quad(buf, r, room.x, room.z, y_ceiling, Vec3::NEG_Y, CEILING, ceiling);
         }
     }
-    let inner = lin([0.80, 0.77, 0.70]);
+    let inner = lin([1.0, 0.97, 0.90]);
     for wall in &r.walls {
         match wall.kind {
-            WallKind::Shell | WallKind::Inner => reveals(buf, r, wall),
-            WallKind::Free => {
-                // The stair room is the building's own paint; the spine, its stairs'.
-                let col = if wall.y.0 >= r.roof - 0.01 { outside } else { times(inner, 0.9) };
-                for b in r.wall_solids(wall) {
-                    block(buf, &b, col);
-                }
+            WallKind::Shell => {
+                reveals(buf, r, wall);
+                shell_cap(buf, r, wall);
             }
+            WallKind::Inner => reveals(buf, r, wall),
+            WallKind::Free => free_wall(buf, r, wall, outside, inner),
             WallKind::Hidden => {}
         }
     }
