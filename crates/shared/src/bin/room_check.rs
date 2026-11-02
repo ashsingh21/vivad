@@ -48,6 +48,7 @@ fn walker(app: &mut App, at: Vec3) -> Entity {
         .spawn((
             Transform::from_translation(at),
             Kinematic { mode: MoveMode::Ground, ..default() },
+            Action::default(),
             PlayerIntent { move_axis: Vec2::Y, ..default() },
             RigidBody::Kinematic,
             Collider::capsule(CAPSULE_RADIUS, CAPSULE_LENGTH),
