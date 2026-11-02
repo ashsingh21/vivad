@@ -209,7 +209,7 @@ fn read_pieces() -> Result<(HashMap<String, Piece>, Image), String> {
     let atlas = std::fs::read(std::path::Path::new(crate::ASSET_DIR).join("models/life/goods_atlas.png")).map_err(|e| e.to_string())?;
     use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
     let mut atlas = Image::from_buffer(&atlas, ImageType::Extension("png"), CompressedImageFormats::NONE, true, ImageSampler::Default, tiers::usage()).map_err(|e| e.to_string())?;
-    crate::buildings::mip_chain(&mut atlas);
+    super::flipbook::plain_mips(&mut atlas);
     let file = gltf::Gltf::from_slice(&bytes).map_err(|e| e.to_string())?;
     let blob = file.blob.as_deref().ok_or("no binary chunk")?;
     let mut out = HashMap::new();

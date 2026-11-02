@@ -22,6 +22,15 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::buildings::tiers;
 
+/// Mips for a small texture, sampled plainly: sharp slanted cloth isn't worth anisotropic taps on
+/// every pixel of a market.
+pub(super) fn plain_mips(image: &mut Image) {
+    crate::buildings::mip_chain(image);
+    if let ImageSampler::Descriptor(d) = &mut image.sampler {
+        d.anisotropy_clamp = 1;
+    }
+}
+
 /// How a clip is taken.
 #[derive(Clone, Copy, Debug)]
 pub enum Take {
@@ -614,7 +623,7 @@ pub fn bake(spec: &Spec) -> Result<Baked, String> {
     let coats = spec.coats.iter().map(|path| {
         let bytes = read(path)?;
         let mut image = Image::from_buffer(&bytes, ImageType::Extension("png"), CompressedImageFormats::NONE, true, ImageSampler::Default, tiers::usage()).map_err(|e| format!("{path}: {e}"))?;
-        crate::buildings::mip_chain(&mut image);
+        plain_mips(&mut image);
         Ok::<Image, String>(image)
     });
     let coats: Vec<Image> = coats.collect::<Result<_, _>>()?;
@@ -629,7 +638,7 @@ pub fn bake(spec: &Spec) -> Result<Baked, String> {
                 TextureFormat::Rgba8UnormSrgb,
                 tiers::usage(),
             );
-            crate::buildings::mip_chain(&mut image);
+            plain_mips(&mut image);
             image
         });
     let images: Vec<Image> = coats.into_iter().chain(looks).collect();
