@@ -21,7 +21,7 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::render::view::window::screenshot::{Screenshot, save_to_disk};
 use shared::map::build::subtract_rect;
-use shared::map::interiors::{Cut, Interior, LANE, Piece, Plan, Room, SHELL, SLAB, STAIR_ROOM, Wall, WallKind, rects};
+use shared::map::interiors::{Cut, DOOR_W, Interior, LANE, Piece, Plan, Room, SHELL, SLAB, STAIR_ROOM, Wall, WallKind, rects};
 use shared::map::{Footprint, MapLayout};
 use shared::sim::{Eliminated, Health, Kinematic, LocalPlayer, MoveMode, OfMap, PlayerIntent, Warrior, map_reloaded};
 
@@ -724,6 +724,7 @@ fn swing_doors(
         let swing = leaf.swing * 1.75 * leaf.side * if spot.out.perp_dot(along) > 0.0 { 1.0 } else { -1.0 };
         tf.translation = Vec3::new(hinge.x, spot.pos.y, hinge.y);
         tf.rotation = Quat::from_rotation_y(yaw + swing);
+        tf.scale = Vec3::new(spot.width / DOOR_W, 1.0, 1.0);
     }
 }
 

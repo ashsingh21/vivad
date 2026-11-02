@@ -43,6 +43,7 @@ const SHOP_H: f32 = 0.80 * STOREY;
 /// glass over it as a fanlight.
 pub const DOOR_W: f32 = 1.6;
 pub const DOOR_H: f32 = 2.4;
+const WIDE_DOOR: f32 = 2.0;
 /// Doorways between rooms. On the ground floor wide enough for the bots' grid to fit a warrior
 /// through at any angle (0.4 m clearance a side on half-metre cells).
 const GROUND_DOOR: f32 = 1.6;
@@ -807,7 +808,9 @@ impl Maker<'_> {
                     let y = self.int.level(k).max(site.base + k as f32 * STOREY);
                     let storey = site.base + k as f32 * STOREY;
                     let (half, y0, y1, door) = if k == 0 && e == 0 && !site.shops && bay == site.door_bay {
-                        (DOOR_W / 2.0, self.int.floor, site.base + DOOR_H, true)
+                        // A balcony bay's painted rail is wider than a door: a double door takes it in.
+                        let half = if bay.rem_euclid(2) == 0 { WIDE_DOOR / 2.0 } else { DOOR_W / 2.0 };
+                        (half, self.int.floor, site.base + DOOR_H, true)
                     } else if k == 0 && site.shops {
                         if bay.rem_euclid(2) != 1 {
                             continue;
