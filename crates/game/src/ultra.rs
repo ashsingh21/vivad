@@ -151,8 +151,7 @@ fn sync(
             });
             commands.entity(e).insert(SunDisk { intensity: SUN_DISC_INTENSITY, ..SunDisk::EARTH });
         }
-        // Sky pixels the atmosphere draws over start from the clear colour; below Ultra the dome
-        // covers every one, so black can stay.
+        // Sky pixels the atmosphere draws over start from the clear colour.
         commands.insert_resource(ClearColor(Color::BLACK));
         let medium = state.medium.get_or_insert_with(|| media.add(ScatteringMedium::earth(256, 256).with_density_multiplier(env_f32("VIVAD_ATMO_DENSITY").unwrap_or(AIR_DENSITY)))).clone();
         commands.spawn((Atmosphere::earth(medium), UltraOnly));
@@ -171,6 +170,7 @@ fn sync(
         for e in &atmospheres {
             commands.entity(e).despawn();
         }
+        commands.insert_resource(ClearColor(crate::sky::clear()));
         // These first: removing the environment light also strips any EnvironmentMapLight, so the
         // hemisphere goes back on after it.
         commands.entity(camera).remove::<(AtmosphereSettings, AtmosphereEnvironmentMapLight)>();

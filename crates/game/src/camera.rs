@@ -99,10 +99,10 @@ fn big_map_haze(far: f32) -> FogFalloff {
 /// The picture's finish: TonyMcMapface and a near-neutral grade on every level. Also a soft glow round the sun's glints, lamps and muzzle flashes, and
 /// the frame's edges darkened a little to draw the eye to the middle: cheap, and most of what reads
 /// as a "finished" look. VIVAD_NO_POST=1 turns those two off, for comparisons.
-pub fn look(ncr: bool, ultra: bool) -> impl Bundle {
+pub fn look(_ncr: bool, ultra: bool) -> impl Bundle {
     // VIVAD_TONEMAP=agx: compare the looks.
     let tony = std::env::var("VIVAD_TONEMAP").as_deref() != Ok("agx");
-    (if tony { Tonemapping::TonyMcMapface } else { Tonemapping::AgX }, grading(ncr, ultra), post(ultra))
+    (if tony { Tonemapping::TonyMcMapface } else { Tonemapping::AgX }, grading(), post(ultra))
 }
 
 fn post(ultra: bool) -> (bevy::post_process::bloom::Bloom, bevy::post_process::effect_stack::Vignette) {
@@ -116,7 +116,7 @@ fn post(ultra: bool) -> (bevy::post_process::bloom::Bloom, bevy::post_process::e
 
 /// Only a touch of saturation: the light and the surfaces carry the picture.
 /// VIVAD_GRADE="saturation,contrast,highlight gain" overrides for tuning.
-fn grading(_ncr: bool, ultra: bool) -> bevy::render::view::ColorGrading {
+fn grading() -> bevy::render::view::ColorGrading {
     let v: Vec<f32> = std::env::var("VIVAD_GRADE").unwrap_or_default().split(',').filter_map(|s| s.parse().ok()).collect();
     let (dsat, dcon, dhi) = (1.05, 1.0, 1.0);
     let (sat, con, hi) = (v.first().copied().unwrap_or(dsat), v.get(1).copied().unwrap_or(dcon), v.get(2).copied().unwrap_or(dhi));
@@ -127,8 +127,6 @@ fn grading(_ncr: bool, ultra: bool) -> bevy::render::view::ColorGrading {
     g.midtones.contrast = con;
     g.highlights.contrast = con;
     g.highlights.gain = hi;
-    // A touch of afternoon warmth over the whole frame.
-    g.global.temperature = if ultra { 0.0 } else { 0.015 };
     g
 }
 

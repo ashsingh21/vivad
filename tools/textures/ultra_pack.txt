@@ -25,3 +25,6 @@ normal ../../build/ultra_src/shop_normal.png ../../assets/textures/ultra/shop_no
 data   ../../build/ultra_src/shop_orm.png ../../assets/textures/ultra/shop_orm.ktx2
 height ../../build/ultra_src/shop_depth.png ../../assets/textures/ultra/shop_depth.ktx2
 normal ../../build/ultra_src/water_normal.png ../../assets/textures/ultra/water_normal.ktx2
+
+# The sky, from tools/textures/sky.py.
+color  ../../build/sky_src/sky_basecolor.png ../../assets/textures/sky/sky_basecolor.ktx2
