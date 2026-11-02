@@ -36,7 +36,7 @@ use crate::batch::batched;
 use crate::batch::probe::{Tagged, reading_meshes};
 use crate::characters::LodRange;
 use crate::quality::LodShadow;
-use crate::street::weathered;
+use crate::street::{WEAR_MEAN, weathered};
 use crate::surfaces::{Surface, UltraSurfaces};
 
 /// Half a map wider than this, and it has tiers.
@@ -402,7 +402,7 @@ pub(super) fn build(
         let Some((size, col)) = cover.get(piece.name) else { continue };
         let size = Vec3::from(*size);
         let c = piece.pos + Vec3::Y * size.y * 0.5;
-        let [r, g, b] = weathered(*col);
+        let [r, g, b] = weathered(*col).map(|x| x * WEAR_MEAN);
         mid.entry(cell_at(c.x, c.z)).or_default().plain.open_box(c, Quat::from_rotation_y(piece.yaw), size, [r, g, b, 1.0]);
     }
     for p in layout.props.iter().filter(|p| batched(p.model)) {
