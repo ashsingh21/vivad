@@ -1694,6 +1694,12 @@ def main():
     for run, arms in HIGH_READY:
         if run in bpy.data.actions and arms in bpy.data.actions:
             arms_from(rig, run, arms)
+    # In the air with a long gun: the jump's and fall's legs and body, the gun held up in both hands
+    # as when aiming and pointed ahead (the plain ones throw the arms out and drop the gun).
+    for n in ("jump", "fall"):
+        if n in bpy.data.actions and "rifleaim_idle" in bpy.data.actions:
+            arms_from(rig, n, "rifleaim_idle", f"rifle_{n}")
+            level_gun(rig, f"rifle_{n}", "rifleaim_idle")
     # The slide is our own pose (no library clip sits up in it: they lie back, curl, put a hand down).
     hold_pose(rig, "slide", SLIDE_IN + SLIDE_HOLD + SLIDE_OUT, slide_pose)
     for name, lean, tuck, face in POSTURE:

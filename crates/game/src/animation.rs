@@ -42,9 +42,9 @@ const FULL_BODY: [&str; 5] = ["jump", "fall", "freefall", "glide", "death"];
 /// Locomotion the file may or may not have (Mixamo's, tools/blender/characters/anims.py, built where
 /// its downloads are): the crouch's other directions, and whole-body sets for holding a long gun
 /// or a pistol. Picked where present (`AnimSet::has`), else the plain ones.
-const OPTIONAL_LOCOMOTION: [&str; 46] = [
+const OPTIONAL_LOCOMOTION: [&str; 48] = [
     // A long gun aimed as you move: whole-body clips from the rifle pack.
-    "rifleaim_idle", "rifleaim_crouch_idle", "rifle_slide",
+    "rifleaim_idle", "rifleaim_crouch_idle", "rifle_slide", "rifle_jump", "rifle_fall",
     "rifleaim_walk_f", "rifleaim_walk_b", "rifleaim_walk_l", "rifleaim_walk_r",
     "rifleaim_run_f", "rifleaim_run_b", "rifleaim_run_l", "rifleaim_run_r",
     "rifleaim_crouch_f", "rifleaim_crouch_b", "rifleaim_crouch_l", "rifleaim_crouch_r",
@@ -432,7 +432,14 @@ fn drive(
                 MoveMode::Gliding => want.push(("glide", false, 1.0, clock % dur("glide"))),
                 MoveMode::Ground if !kin.grounded => {
                     let n = if vel.y > 1.0 { "jump" } else { "fall" };
-                    want.push((n, false, 1.0, if n == "jump" { dur(n) * 0.5 } else { clock % dur(n) }));
+                    // With a long gun, still held in both hands.
+                    let long = inv.current().is_some_and(|st| {
+                        matches!(db.get(&st.id).kind, ItemKind::Bow { .. })
+                            && crate::visuals::shot_kind(&st.id) == crate::visuals::Shot::Bullet
+                            && crate::visuals::long_gun(&st.id)
+                    });
+                    let n = if long { set.pick("rifle_", n) } else { n };
+                    want.push((n, false, 1.0, if n.ends_with("jump") { dur(n) * 0.5 } else { clock % dur(n) }));
                 }
                 _ => {
                     // Low (the crouch button held, which every peer sees): sliding while still fast,
