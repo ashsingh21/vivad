@@ -24,7 +24,8 @@ import numpy as np
 from mathutils import Matrix, Vector
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-MODELS = os.path.join(ROOT, "research", "vehicles", "models")
+# They are not in git: VIVAD_MODELS says where they are, from a worktree without them.
+MODELS = os.environ.get("VIVAD_MODELS", os.path.join(ROOT, "research", "vehicles", "models"))
 OUT = os.path.join(ROOT, "assets", "models", "vehicles")
 
 
@@ -204,8 +205,58 @@ def road_dust(a, at, mask, colour=(0.47, 0.42, 0.35), high=0.7, amount=0.8):
     a[..., :3] = np.where(mask[..., None], a[..., :3] * (1 - k) + np.array(colour) * k, a[..., :3])
 
 
+# The line a Delhi auto carries on the back of its hood: "Ghar kab aaoge", when will you come home
+# (assets/data/lines.ron, paint.1), white on black in Mukta Bold. Where it stands on the hood, seen
+# from behind, in metres, under the rear window, and the red of the paint.
+HOOD_LINE = os.path.join(os.path.dirname(__file__), "hood_line.png")
+HOOD_BOX = ((-0.40, 0.40), (1.07, 1.25))
+HOOD_RED = np.array((0.56, 0.02, 0.02))
+
+
+def hood_line(img, material):
+    """Stencils the line straight on from behind, onto every part of `material` that faces back: it
+    reads level whatever the cloth's texture coordinates do, and its folds still show through."""
+    stencil = pixels(bpy.data.images.load(HOOD_LINE))[..., 0]
+    sh, sw = stencil.shape
+    a = pixels(img)
+    h, w = a.shape[:2]
+    (x0, x1), (z0, z1) = HOOD_BOX
+    painted = 0
+    for o in meshes():
+        i = o.data.materials.find(material.name)
+        if i < 0:
+            continue
+        me = o.data
+        me.calc_loop_triangles()
+        uv = me.uv_layers.active.data
+        for t in me.loop_triangles:
+            if t.material_index != i or t.normal.y > -0.5:
+                continue
+            co = np.array([me.vertices[v].co[:] for v in t.vertices])
+            st = np.array([uv[k].uv[:] for k in t.loops]) * (w, h)
+            m = np.array([st[1] - st[0], st[2] - st[0]]).T
+            if abs(np.linalg.det(m)) < 1e-6:
+                continue
+            lo, hi = np.floor(st.min(0)).astype(int), np.ceil(st.max(0)).astype(int) + 1
+            xs, ys = (g.ravel() for g in np.meshgrid(np.arange(lo[0], hi[0]), np.arange(lo[1], hi[1])))
+            b = np.linalg.solve(m, np.stack([xs + 0.5 - st[0, 0], ys + 0.5 - st[0, 1]]))
+            p = co[0] + np.outer(b[0], co[1] - co[0]) + np.outer(b[1], co[2] - co[0])
+            s, r = (p[:, 0] - x0) / (x1 - x0), (p[:, 2] - z0) / (z1 - z0)
+            on = (b[0] >= -0.02) & (b[1] >= -0.02) & (b[0] + b[1] <= 1.02) & (s >= 0) & (s < 1) & (r >= 0) & (r < 1)
+            if not on.any():
+                continue
+            col, row = np.mod(xs[on], w), np.mod(ys[on], h)
+            ink = stencil[(r[on] * sh).astype(int), (s[on] * sw).astype(int)][:, None] * 0.97
+            fold = np.clip(a[row, col, 1:2] / 0.62, 0.7, 1.1)
+            a[row, col, :3] = a[row, col, :3] * (1 - ink) + HOOD_RED * fold * ink
+            painted += int(on.sum())
+    put_pixels(img, a)
+    print(f"[hood] {painted} texels of the line, box {HOOD_BOX}")
+
+
 def paint_auto():
-    """Delhi's colours: a green body under a yellow hood, as the street kit's parked autos."""
+    """Delhi's colours: a green body under a yellow hood, with the hood's line. The street kit's parked
+    autos stand under a grey tarp, so this is the look of one you can drive."""
     img = image_named("Body_01")
     a = pixels(img)
     rgb = a[..., :3].reshape(-1, 3).astype(np.float64)
@@ -240,6 +291,11 @@ def paint_auto():
                 # Not the panel behind the driver.
                 if p.material_index == i and p.center.z > 0.8 and not (abs(p.normal.y) > 0.9 and abs(p.center.y) < 0.1):
                     p.material_index = len(o.data.materials) - 1
+            back = [p for p in o.data.polygons if p.material_index == len(o.data.materials) - 1 and p.normal.y < -0.5]
+            if back:
+                cs = np.array([p.center[:] for p in back])
+                print(f"[hood] back of it: {len(back)} faces, x {cs[:, 0].min():.2f} to {cs[:, 0].max():.2f}, y {cs[:, 1].min():.2f} to {cs[:, 1].max():.2f}, z {cs[:, 2].min():.2f} to {cs[:, 2].max():.2f}")
+    hood_line(new, hood)
 
 
 def paint_tractor():
