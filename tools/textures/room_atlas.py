@@ -12,9 +12,11 @@ rows, and the vertices tint them, so the two wall rows are near white.
     5  worn concrete: godowns
     6  a whitewashed ceiling
 
-Raw scans stay in build/rooms, out of git (fetched by the commands in docs/references.md's rows):
-PaintedPlaster017 and Terrazzo013 (ambientCG), grey_plaster, damaged_plaster, interior_tiles,
-floor_tiles_06 and concrete_floor_worn_001 (Poly Haven), all CC0.
+Raw scans stay in build/rooms, out of git, all CC0 (rows in docs/references.md):
+- From Poly Haven, the 1k JPG diffuse of grey_plaster, damaged_plaster, interior_tiles, floor_tiles_06
+  and concrete_floor_worn_001, as <id>.jpg. https://api.polyhaven.com/files/<id> gives its URL.
+- From ambientCG, https://ambientcg.com/get?file=<id>_1K-JPG.zip for PaintedPlaster017 and Terrazzo013,
+  each unzipped into build/rooms/<id>/.
 
     python3 tools/textures/room_atlas.py
 """
