@@ -761,7 +761,11 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
     for n in ours if joints else ():
         kids = [c.name for c in bones[n].children if c.name in ours]
         if kids:
-            nxt[n] = (n, min(kids, key=lambda c: (bones[c].head_local - bones[n].tail_local).length))
+            # The chain's own carry-on where there is one (the chest to the neck, the hand to the
+            # middle knuckle), not just the nearest: a collarbone's or the thumb's head can sit
+            # nearer the tip, and lined up on it the chest tips sideways and the hand turns.
+            on = [c for c in kids if c.startswith(("spine_", "neck_", "head", "middle_01"))]
+            nxt[n] = (n, on[0] if on else min(kids, key=lambda c: (bones[c].head_local - bones[n].tail_local).length))
         elif bones[n].parent and bones[n].parent.name in ours:
             nxt[n] = (bones[n].parent.name, n)
     s_head = lambda n: W @ sb(n).head
