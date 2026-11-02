@@ -1,5 +1,5 @@
 {
-  "note": "Built by tools/textures/cp_surfaces.py and tools/texpack (just textures-pack). Every map here is either procedural or derived from the CC0 scans below; nothing else was used.",
+  "note": "Built by tools/textures/cp_surfaces.py, tools/textures/ncr_ground.py and tools/texpack (just textures-pack). Every map here is either procedural or derived from the CC0 scans below; nothing else was used.",
   "license": "CC0-1.0",
   "license_url": "https://polyhaven.com/license",
   "credit": "Poly Haven (polyhaven.com)",
@@ -14,7 +14,15 @@
     },
     "concrete_floor": {
       "source": "https://polyhaven.com/a/concrete_floor",
-      "used_in": ["soil", "pavers", "marble"]
+      "used_in": ["pavers", "marble"]
+    },
+    "withered_grass": {
+      "source": "https://polyhaven.com/a/withered_grass",
+      "used_in": ["dry"]
+    },
+    "sparse_grass": {
+      "source": "https://polyhaven.com/a/sparse_grass",
+      "used_in": ["turf"]
     }
   },
   "local_copies": "assets/models/samples/delhi_street/textures/vendor (sources.json there has URLs and hashes)",

@@ -4,8 +4,9 @@
 //! stands: its handle stays on the meshes, and the textures are only loaded the first time a level
 //! wants them, and only shown once they are all in.
 //!
-//! The textures are in assets/textures/ultra, built by tools/textures/cp_surfaces.py and
-//! tools/texpack (`just textures-pack`) from the CC0 scans listed in sources.json there.
+//! The textures are in assets/textures/ultra, built by tools/textures/cp_surfaces.py,
+//! tools/textures/ncr_ground.py and tools/texpack (`just textures-pack`) from the CC0 scans listed
+//! in sources.json there.
 //!
 //! Switches, for comparisons:
 //!   VIVAD_NO_SURFACES=1  the painted surfaces on every level.
@@ -28,8 +29,9 @@ use bevy::pbr::{ExtendedMaterial, MaterialExtension, ParallaxMappingMethod};
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat};
 use bevy::shader::ShaderRef;
+use bevy::tasks::{ComputeTaskPool, ParallelSliceMut};
 use shared::map::MapLayout;
-use shared::map::terrain::{Terrain, ground};
+use shared::map::terrain::{Terrain, fbm, ground};
 use shared::sim::MapTerrain;
 
 use crate::buildings::TILE;
@@ -114,7 +116,8 @@ struct Textures {
     shop: Set,
     asphalt: Set,
     pavers: Set,
-    soil: Set,
+    dry: Set,
+    turf: Set,
     water: Handle<Image>,
     /// Carries the sampler the ground's detail maps share (`GroundSurfaces`).
     white: Handle<Image>,
@@ -122,7 +125,7 @@ struct Textures {
 
 impl Textures {
     fn images(&self) -> impl Iterator<Item = &Handle<Image>> {
-        [&self.plaster, &self.marble, &self.facade, &self.shop, &self.asphalt, &self.pavers, &self.soil].into_iter().flat_map(Set::images).chain([&self.water])
+        [&self.plaster, &self.marble, &self.facade, &self.shop, &self.asphalt, &self.pavers, &self.dry, &self.turf].into_iter().flat_map(Set::images).chain([&self.water])
     }
 
     fn load(assets: &AssetServer, images: &mut Assets<Image>) -> Self {
@@ -147,7 +150,8 @@ impl Textures {
             shop: set("shop", true),
             asphalt: set("asphalt", false),
             pavers: set("pavers", false),
-            soil: set("soil", false),
+            dry: set("dry", false),
+            turf: set("turf", false),
             water: tiled(assets, "water_normal".into(), false),
             white: images.add(white),
         }
@@ -321,10 +325,12 @@ pub type GroundMaterial = ExtendedMaterial<StandardMaterial, GroundSurfaces>;
 /// shader stage, and Bevy's forward pipeline on Ultra is close to that.
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
 pub struct GroundSurfaces {
-    /// World XZ to mask UV: uv = (xz + x) * y + z.
+    /// World XZ to mask UV: uv = (xz + x) * y + z. w: 1 where the base colour is a tint of each
+    /// surface's own colour (`surface_mean`), 0 where it is the painted colour itself.
     #[uniform(100)]
     pub place: Vec4,
-    /// Share of each surface, one texel per terrain sample. r: asphalt, g: pavers, b: earth.
+    /// Per terrain sample. r, g, b: metres inside asphalt, pavers and land, negative outside, 0.5
+    /// at the edge and running out at `REACH`. a: what the land is (`land_cover`).
     #[texture(101)]
     pub mask: Handle<Image>,
     #[texture(102)]
@@ -340,11 +346,17 @@ pub struct GroundSurfaces {
     #[texture(107)]
     pub pavers_orm: Handle<Image>,
     #[texture(108)]
-    pub soil_color: Handle<Image>,
+    pub dry_color: Handle<Image>,
     #[texture(109)]
-    pub soil_normal: Handle<Image>,
+    pub dry_normal: Handle<Image>,
     #[texture(110)]
-    pub soil_orm: Handle<Image>,
+    pub dry_orm: Handle<Image>,
+    #[texture(111)]
+    pub turf_color: Handle<Image>,
+    #[texture(112)]
+    pub turf_normal: Handle<Image>,
+    #[texture(113)]
+    pub turf_orm: Handle<Image>,
 }
 
 impl MaterialExtension for GroundSurfaces {
@@ -353,27 +365,156 @@ impl MaterialExtension for GroundSurfaces {
     }
 }
 
-/// The mask of which surface covers each terrain sample.
-fn ground_mask(t: &Terrain) -> Image {
-    let n = t.n;
-    let mut data = vec![255u8; n * n * 4];
-    for i in 0..n {
-        for j in 0..n {
-            let share = match t.ground.get(i * n + j).copied().unwrap_or(ground::PAVEMENT) {
-                ground::ROAD | ground::PARKING => [255, 0, 0],
-                ground::PARK | ground::PATH | ground::WATER | ground::OPEN | ground::SAND => [0, 0, 255],
-                _ => [0, 255, 0],
-            };
-            data[(j * n + i) * 4..(j * n + i) * 4 + 3].copy_from_slice(&share);
+/// How far the mask's distances run, metres (assets/shaders/ground.wesl): a kerb's and a gutter's
+/// width are measured on them, and this is three terrain samples on a big map.
+const REACH: f32 = 6.0;
+
+/// Which of the mask's three surfaces a ground class is.
+fn surface(class: u8) -> usize {
+    match class {
+        ground::ROAD | ground::PARKING => 0,
+        ground::PARK | ground::PATH | ground::WATER | ground::OPEN | ground::SAND => 2,
+        _ => 1,
+    }
+}
+
+/// What land is at a sample, the mask's alpha: 0 bare earth, 0.5 dry grass, 1 green turf.
+fn land_cover(class: u8, cover: f32) -> f32 {
+    match class {
+        ground::PATH | ground::SAND | ground::WATER => 0.0,
+        _ => 0.5 + 0.5 * smooth(0.3, 0.7, cover),
+    }
+}
+
+fn smooth(lo: f32, hi: f32, x: f32) -> f32 {
+    let t = ((x - lo) / (hi - lo)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// The colour the ground shader gives a class's surface, before its tint (keep in step with the
+/// constants in assets/shaders/ground.wesl). A big map's colour is stored as its ratio to this, so
+/// that it carries the broad changes across an edge between two surfaces and doesn't smear them
+/// over the two metres between samples.
+pub(crate) fn surface_mean(class: u8, cover: f32) -> LinearRgba {
+    let lin = |c: [f32; 3]| Color::srgb(c[0], c[1], c[2]).to_linear();
+    match surface(class) {
+        0 => lin(ASPHALT_MEAN),
+        1 => lin(PAVERS_MEAN),
+        _ => {
+            let a = land_cover(class, cover);
+            let (dry, other, t) = if a < 0.5 { (lin(DRY_MEAN), lin(BARE_MEAN), 1.0 - a * 2.0) } else { (lin(DRY_MEAN), lin(TURF_MEAN), a * 2.0 - 1.0) };
+            dry.mix(&other, t)
         }
     }
+}
+
+const ASPHALT_MEAN: [f32; 3] = [0.33, 0.325, 0.325];
+const PAVERS_MEAN: [f32; 3] = [0.53, 0.505, 0.465];
+const DRY_MEAN: [f32; 3] = [0.54, 0.48, 0.37];
+const TURF_MEAN: [f32; 3] = [0.31, 0.36, 0.19];
+const BARE_MEAN: [f32; 3] = [0.53, 0.49, 0.42];
+
+/// Each sample's distance to the edge of each surface, signed, in rows of z. An edge runs midway
+/// between two samples of different surfaces, and a short blur takes the stairs of the two-metre
+/// grid out of it.
+fn surface_edges(t: &Terrain) -> Vec<[f32; 3]> {
+    let n = t.n;
+    let step = t.step();
+    let at = |i: usize, j: usize| surface(t.ground.get(i * n + j).copied().unwrap_or(ground::PAVEMENT));
+    let reach = (REACH / step).ceil() as i32 + 1;
+    let mut near = vec![[REACH; 3]; n * n];
+    for j in 0..n {
+        for i in 0..n {
+            let a = at(i, j);
+            for (di, dj) in [(1, 0), (0, 1)] {
+                let (ni, nj) = (i + di, j + dj);
+                if ni >= n || nj >= n || at(ni, nj) == a {
+                    continue;
+                }
+                let b = at(ni, nj);
+                let (ex, ez) = (i as f32 + di as f32 * 0.5, j as f32 + dj as f32 * 0.5);
+                for z in (j as i32 - reach).max(0)..=(j as i32 + reach).min(n as i32 - 1) {
+                    for x in (i as i32 - reach).max(0)..=(i as i32 + reach).min(n as i32 - 1) {
+                        let d = step * Vec2::new(x as f32 - ex, z as f32 - ez).length();
+                        let cell = &mut near[z as usize * n + x as usize];
+                        cell[a] = cell[a].min(d);
+                        cell[b] = cell[b].min(d);
+                    }
+                }
+            }
+        }
+    }
+    for j in 0..n {
+        for i in 0..n {
+            let own = at(i, j);
+            for (s, d) in near[j * n + i].iter_mut().enumerate() {
+                if s != own {
+                    *d = -*d;
+                }
+            }
+        }
+    }
+    blurred(&near, n)
+}
+
+/// A short blur along each row of `n`, then along each column.
+fn blurred(field: &[[f32; 3]], n: usize) -> Vec<[f32; 3]> {
+    const TAPS: [f32; 5] = [0.0625, 0.25, 0.375, 0.25, 0.0625];
+    let pass = |from: &[[f32; 3]], stride: usize| {
+        let mut out = from.to_vec();
+        out.par_chunk_map_mut(ComputeTaskPool::get(), n, |j, row| {
+            for (i, cell) in row.iter_mut().enumerate() {
+                let k = j * n + i;
+                if k < 2 * stride || k + 2 * stride >= n * n {
+                    continue;
+                }
+                let mut sum = [0.0; 3];
+                for (t, w) in TAPS.iter().enumerate() {
+                    let c = from[k + t * stride - 2 * stride];
+                    for (total, v) in sum.iter_mut().zip(c) {
+                        *total += v * w;
+                    }
+                }
+                *cell = sum;
+            }
+        });
+        out
+    };
+    pass(&pass(field, 1), n)
+}
+
+/// The mask of which surface covers each terrain sample: see `GroundSurfaces::mask`.
+fn ground_mask(t: &Terrain) -> Image {
+    let n = t.n;
+    let big = n >= crate::visuals::BIG_TERRAIN;
+    let edges = surface_edges(t);
+    let mut data = vec![255u8; n * n * 4];
+    data.par_chunk_map_mut(ComputeTaskPool::get(), n * 4, |j, row| {
+        for (i, texel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            let k = i * n + j;
+            let class = t.ground.get(k).copied().unwrap_or(ground::PAVEMENT);
+            let (x, z) = (t.coord(i), t.coord(j));
+            let cover = if surface(class) != 2 {
+                0.0
+            } else if big {
+                crate::grass::paint_big(x, z, class, t.h[k], t.size * 0.5).1
+            } else {
+                crate::grass::paint_city(x, z, class).1
+            };
+            // The open land wears through to bald earth in patches.
+            let bald = if class == ground::OPEN { smooth(0.6, 0.74, fbm(x / 17.0, z / 17.0, 3, 57)) * (1.0 - smooth(0.3, 0.5, cover)) } else { 0.0 };
+            let e = edges[j * n + i];
+            let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+            *texel = [byte(0.5 + e[0] / (2.0 * REACH)), byte(0.5 + e[1] / (2.0 * REACH)), byte(0.5 + e[2] / (2.0 * REACH)), byte(land_cover(class, cover) - 0.4 * bald)];
+        }
+    });
     Image::new(Extent3d { width: n as u32, height: n as u32, depth_or_array_layers: 1 }, TextureDimension::D2, data, TextureFormat::Rgba8Unorm, bevy::asset::RenderAssetUsages::RENDER_WORLD)
 }
 
 /// World XZ to the mask's UV: texel i's centre on terrain sample i.
 fn mask_place(t: &Terrain) -> Vec4 {
     let n = t.n as f32;
-    Vec4::new(t.size * 0.5, 1.0 / (t.step() * n), 0.5 / n, 0.0)
+    Vec4::new(t.size * 0.5, 1.0 / (t.step() * n), 0.5 / n, if t.n >= crate::visuals::BIG_TERRAIN { 1.0 } else { 0.0 })
 }
 
 /// Moves the terrain's tiles to and from the ground material. It follows `sync`, so it changes
@@ -402,11 +543,9 @@ fn sync_ground(
                 if state.ground.is_none() {
                     let (Some(t), Some(base)) = (state.textures.as_ref(), standard.get(&plain.0)) else { continue };
                     let mut base = base.clone();
-                    // A big map's paint stays (crate::visuals::ground: it has this sampler's
+                    // A big map's colour, as a tint (crate::visuals::ground: it has this sampler's
                     // settings). Otherwise the image's only use is the sampler: see `GroundSurfaces`.
-                    if base.base_color_texture.is_none() {
-                        base.base_color_texture = Some(t.white.clone());
-                    }
+                    base.base_color_texture = Some(if layout.terrain.n >= crate::visuals::BIG_TERRAIN { images.add(crate::visuals::tint_image(&layout)) } else { t.white.clone() });
                     let extension = GroundSurfaces {
                         place: mask_place(&layout.terrain),
                         mask: images.add(ground_mask(&layout.terrain)),
@@ -416,9 +555,12 @@ fn sync_ground(
                         pavers_color: t.pavers.base.clone(),
                         pavers_normal: t.pavers.normal.clone(),
                         pavers_orm: t.pavers.orm.clone(),
-                        soil_color: t.soil.base.clone(),
-                        soil_normal: t.soil.normal.clone(),
-                        soil_orm: t.soil.orm.clone(),
+                        dry_color: t.dry.base.clone(),
+                        dry_normal: t.dry.normal.clone(),
+                        dry_orm: t.dry.orm.clone(),
+                        turf_color: t.turf.base.clone(),
+                        turf_normal: t.turf.normal.clone(),
+                        turf_orm: t.turf.orm.clone(),
                     };
                     let ground = grounds.add(ExtendedMaterial { base, extension });
                     state.ground = Some((plain.0.clone(), ground));

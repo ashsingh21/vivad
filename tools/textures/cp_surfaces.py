@@ -4,7 +4,7 @@ concrete_floor, asphalt_02; assets/textures/ultra/sources.json has the credit) a
 layers. Nothing is downloaded. Writes PNGs to build/ultra_src, which `just textures-pack` turns
 into assets/textures/ultra/*.ktx2 (tools/textures/ultra_pack.txt).
 
-python3 tools/textures/cp_surfaces.py [plaster marble asphalt pavers soil facade shop water]
+python3 tools/textures/cp_surfaces.py [plaster marble asphalt pavers facade shop water]
 
 Conventions, each forced by how crate::buildings and crate::surfaces map these:
 - World-mapped blocks have v = world height / TILE, so their image rows grow UPWARD on a wall: row
@@ -326,19 +326,6 @@ def pavers():
     save("pavers_orm", np.stack([occ, rough, np.zeros_like(rough)], -1))
 
 
-def soil():
-    """Park earth and trodden paths: the concrete floor scan reads as dry clay. 6 m a tile, its
-    colour drained, since the ground paint already says green or brown."""
-    n = 1024
-    diff = to_linear(read("concrete_floor_diff_1k.png", 512))
-    nor = read("concrete_floor_nor_gl_1k.png", 512)
-    arm = read("concrete_floor_arm_1k.jpg", 512)
-    diff, nor, arm = scatter([(diff, False), (nor, True), (arm, False)], 512, n, n, 81)
-    save("soil_basecolor", to_srgb(as_ratio(diff, grey=1.0)))
-    save("soil_normal", nor)
-    save("soil_orm", np.stack([arm[..., 0], np.clip(arm[..., 1] + 0.08, 0, 1), np.zeros((n, n), np.float32)], -1))
-
-
 class Painter:
     """A facade being laid up in layers: where a mask is set, a layer replaces what's under it.
     Heights are metres from the wall's face; depth is what parallax sees (inward only), so things
@@ -552,7 +539,7 @@ def water():
 
 
 def main():
-    jobs = {"plaster": plaster, "marble": marble, "asphalt": asphalt, "pavers": pavers, "soil": soil, "facade": facade, "shop": shop, "water": water}
+    jobs = {"plaster": plaster, "marble": marble, "asphalt": asphalt, "pavers": pavers, "facade": facade, "shop": shop, "water": water}
     for name in sys.argv[1:] or jobs:
         jobs[name]()
 

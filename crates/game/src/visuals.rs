@@ -49,7 +49,7 @@ pub(crate) fn parse_hour(s: &str) -> Option<f32> {
 
 mod ground;
 
-pub(crate) use ground::BIG_TERRAIN;
+pub(crate) use ground::{BIG_TERRAIN, tint_image};
 
 pub struct VisualsPlugin;
 
