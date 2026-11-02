@@ -1,7 +1,7 @@
-//! The Ultra level's sky and finish: Bevy's physical atmosphere with a sky-generated environment
-//! light, the sun on the clock and an exposure set by the sun's height. Every other level keeps the
-//! dome of crate::sky, the fixed sun and fixed exposure, and F4 moves cleanly between the two
-//! (`apply`, from crate::quality).
+//! The Ultra level's sky and finish on the small maps: Bevy's physical atmosphere with a sky-generated
+//! environment light, the sun on the clock and an exposure set by the sun's height. Every other
+//! level, and the NCR on all of them, keeps the dome of crate::sky, the fixed sun and fixed exposure,
+//! and F4 moves cleanly between the two (`apply`, from crate::quality).
 //!
 //! Switches, for comparisons:
 //!   VIVAD_NO_ATMO=1      Ultra on the painted sky and fixed sun, with distance fog.
@@ -139,7 +139,9 @@ fn sync(
     let Ok((camera, mut exposure, hemisphere)) = cam.single_mut() else { return };
     let ncr = layout.style == shared::map::MapStyle::Ncr;
 
-    let want_atmosphere = ultra && std::env::var("VIVAD_NO_ATMO").is_err();
+    // Not on the NCR, whose hazy day is the dome's: there Ultra is High with more of everything,
+    // and the same sky.
+    let want_atmosphere = ultra && !ncr && std::env::var("VIVAD_NO_ATMO").is_err();
     if want_atmosphere && !state.atmosphere {
         if let Ok((e, tf, light)) = sun.single() {
             state.saved = Some(Painted {
@@ -414,7 +416,7 @@ mod tests {
 
     fn cycle(ncr: bool) {
         // VIVAD_NO_ATMO / VIVAD_AUTOEXP / VIVAD_EV: run the suite with them set to test the switches.
-        let atmosphere = std::env::var("VIVAD_NO_ATMO").is_err();
+        let atmosphere = !ncr && std::env::var("VIVAD_NO_ATMO").is_err();
         let metered = std::env::var("VIVAD_AUTOEXP").is_ok() && std::env::var("VIVAD_EV").is_err();
         let mut app = app(ncr);
         let cam = camera(&mut app);

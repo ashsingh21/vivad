@@ -1,6 +1,6 @@
 //! Quality levels: how much of the frame goes to resolution, shadows, ambient occlusion,
 //! anti-aliasing and grass. Picked from the GPU at start (a discrete GPU or Apple Silicon gets
-//! Ultra, or on a big map Apple Silicon gets High, another integrated one Medium, anything else Low;
+//! Ultra, or on a big map Apple Silicon gets Medium, another integrated one Medium, anything else Low;
 //! in the browser, which won't say, by the frame rate measured on High), forced with
 //! VIVAD_QUALITY=low|medium|high|ultra (in the browser ?quality=, without ultra), and cycled in play
 //! with F4. Ultra is the desktop level.
@@ -534,7 +534,7 @@ fn apply(
 fn haze_by_height(q: Res<Quality>, layout: Res<shared::map::MapLayout>, mut cam: Query<(&GlobalTransform, &mut Projection, Option<&mut DistanceFog>), With<MainCamera>>, painted: Query<&ChildOf, With<crate::sky::PaintedSky>>, mut transforms: Query<&mut Transform>) {
     /// Metres up that the haze starts to thin, and is as thin as it gets.
     const THINS: (f32, f32) = (60.0, 140.0);
-    if !is_big(&layout) || q.is_ultra() {
+    if !is_big(&layout) {
         return;
     }
     let Ok((at, mut projection, fog)) = cam.single_mut() else { return };
