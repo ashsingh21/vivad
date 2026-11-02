@@ -338,9 +338,8 @@ itself: keep the ODbL notice with it, and publish the files. Ask a lawyer before
 
 ## Vehicles
 
-The five drivable vehicles (`crates/shared/src/sim/vehicle.rs`). Models come from `research/vehicles/models` on the
-branch `claude/research-vehicles-1a3b7e`, through `tools/blender/props/vehicles.py`; every one is CC-BY, so its line
-below must also go on the game's credits screen.
+The drivable vehicles (`crates/shared/src/sim/vehicle.rs`). Models come from `research/vehicles/models` through
+`tools/blender/props/vehicles.py`; every one is CC-BY, so its line below must also go on the game's credits screen.
 
 | Item | Source | Licence | Use |
 |---|---|---|---|

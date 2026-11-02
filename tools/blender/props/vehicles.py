@@ -4,6 +4,8 @@ Each model is turned to face +Y (the game's -Z), stood on the ground, scaled to 
 cleared of number plates and lettering, reduced if heavy, and written to
 assets/models/vehicles/<name>.glb with one mesh `body` and a mesh for each wheel that could be found
 (`wheel_f`, `wheel_fl`, `wheel_fr`, `wheel_r`, `wheel_rl`, `wheel_rr`), origin on its axle, so the game can spin them.
+The `gaadi_` models also go through what their rows ask for: parts stripped, a right-hand drive, reduction
+part by part, one baked texture set, weathering.
 
 blender -b --factory-startup -P tools/blender/props/vehicles.py -- [--render <dir>] [names...]
 
@@ -66,6 +68,142 @@ def image_named(part):
     raise KeyError(part)
 
 
+def clone(a, box, dx, dy, soft=8, oval=False):
+    """Cover a box (x0, y0, x1, y1, from the top left of the texture) with the pixels (dx, dy) from it,
+    so what is painted over keeps its grain, fading in over `soft` pixels inside the box's edge."""
+    x0, y0, x1, y1 = box
+    h = a.shape[0]
+    ys, xs = np.mgrid[y0:y1, x0:x1]
+    if oval:
+        k = np.clip((1 - np.hypot((xs + 0.5 - (x0 + x1) / 2) * 2 / (x1 - x0), (ys + 0.5 - (y0 + y1) / 2) * 2 / (y1 - y0))) * (x1 - x0) / 2 / soft, 0, 1)
+    else:
+        k = np.clip(np.minimum.reduce((xs - x0, x1 - 1 - xs, ys - y0, y1 - 1 - ys)) / soft, 0, 1)
+    k = k[::-1, :, None]
+    to = a[h - y1 : h - y0, x0:x1, :3]
+    to[:] = to * (1 - k) + a[h - y1 - dy : h - y0 - dy, x0 + dx : x1 + dx, :3] * k
+
+
+def even(a, mask, colour, reach=40, keep=0.2):
+    """Paint of one colour on a model textured piece by piece. Each pixel of `mask` moves by how far the
+    area round it stands from `colour`, so scratches and grime stay and the panels come to match."""
+    def blur(x):
+        c = np.cumsum(np.cumsum(x, 0), 1)
+        c = np.pad(c, ((1, 0), (1, 0), (0, 0)))
+        h, w = x.shape[:2]
+        y0, y1 = np.clip(np.arange(h) - reach, 0, h), np.clip(np.arange(h) + reach + 1, 0, h)
+        x0, x1 = np.clip(np.arange(w) - reach, 0, w), np.clip(np.arange(w) + reach + 1, 0, w)
+        return c[y1][:, x1] - c[y0][:, x1] - c[y1][:, x0] + c[y0][:, x0]
+
+    m = mask[..., None].astype(np.float64)
+    near = blur(a[..., :3].astype(np.float64) * m) / np.maximum(blur(m), 1)
+    gain = (np.array(colour) / np.maximum(near, 0.01)) ** (1 - keep)
+    a[mask, :3] = np.clip(a[..., :3] * gain, 0, 1)[mask]
+
+
+def texels(img, o, keep):
+    """The pixels of `img` under the faces of `o` whose points all pass `keep` (an array of xyz in, an
+    array of bools out): a part of the model found by where it is, not by where its texture happens to be."""
+    w, h = img.size
+    co = np.empty(len(o.data.vertices) * 3)
+    o.data.vertices.foreach_get("co", co)
+    ok = keep(co.reshape(-1, 3))
+    uv = np.empty(len(o.data.loops) * 2)
+    o.data.uv_layers.active.data.foreach_get("uv", uv)
+    uv = uv.reshape(-1, 2) * (w, h)
+    mask = np.zeros((h, w), dtype=bool)
+    for p in o.data.polygons:
+        if not ok[list(p.vertices)].all():
+            continue
+        pts = uv[list(p.loop_indices)]
+        for i in range(1, len(pts) - 1):
+            a, b, c = pts[0], pts[i], pts[i + 1]
+            x0, y0 = np.floor(np.minimum(np.minimum(a, b), c)).astype(int) - 1
+            x1, y1 = np.ceil(np.maximum(np.maximum(a, b), c)).astype(int) + 2
+            x0, y0, x1, y1 = max(x0, 0), max(y0, 0), min(x1, w), min(y1, h)
+            if x0 >= x1 or y0 >= y1:
+                continue
+            xs, ys = np.meshgrid(np.arange(x0, x1) + 0.5, np.arange(y0, y1) + 0.5)
+            cross = lambda p, q: (q[0] - p[0]) * (ys - p[1]) - (q[1] - p[1]) * (xs - p[0])
+            d = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+            if abs(d) < 1e-9:
+                continue
+            s = np.sign(d)
+            # A pixel's width outside the edge counts too, or filtering shows the old colour.
+            m = 1.5 * np.array([np.hypot(*(q - p)) for p, q in ((a, b), (b, c), (c, a))])
+            mask[y0:y1, x0:x1] |= (s * cross(a, b) >= -m[0]) & (s * cross(b, c) >= -m[1]) & (s * cross(c, a) >= -m[2])
+    return mask
+
+
+def in_box(*box):
+    lo, hi = np.array(box[:3]), np.array(box[3:])
+    return lambda co: ((co >= lo) & (co <= hi)).all(1)
+
+
+def spots(img, o):
+    """Where each pixel of `img` lies on the model: an array of xyz, NaN off it."""
+    w, h = img.size
+    co = np.empty(len(o.data.vertices) * 3)
+    o.data.vertices.foreach_get("co", co)
+    co = co.reshape(-1, 3)
+    uv = np.empty(len(o.data.loops) * 2)
+    o.data.uv_layers.active.data.foreach_get("uv", uv)
+    uv = uv.reshape(-1, 2) * (w, h)
+    at = np.full((h, w, 3), np.nan)
+    for p in o.data.polygons:
+        pts, xyz = uv[list(p.loop_indices)], co[list(p.vertices)]
+        for i in range(1, len(pts) - 1):
+            t = pts[[0, i, i + 1]]
+            d = (t[1, 0] - t[0, 0]) * (t[2, 1] - t[0, 1]) - (t[1, 1] - t[0, 1]) * (t[2, 0] - t[0, 0])
+            if abs(d) < 1e-9:
+                continue
+            x0, y0 = np.floor(t.min(0)).astype(int) - 1
+            x1, y1 = np.ceil(t.max(0)).astype(int) + 2
+            x0, y0, x1, y1 = max(x0, 0), max(y0, 0), min(x1, w), min(y1, h)
+            if x0 >= x1 or y0 >= y1:
+                continue
+            xs, ys = np.meshgrid(np.arange(x0, x1) + 0.5, np.arange(y0, y1) + 0.5)
+            b1 = ((xs - t[0, 0]) * (t[2, 1] - t[0, 1]) - (ys - t[0, 1]) * (t[2, 0] - t[0, 0])) / d
+            b2 = ((t[1, 0] - t[0, 0]) * (ys - t[0, 1]) - (t[1, 1] - t[0, 1]) * (xs - t[0, 0])) / d
+            b0 = 1 - b1 - b2
+            m = (b0 > -0.02) & (b1 > -0.02) & (b2 > -0.02)
+            at[y0:y1, x0:x1][m] = (b0[..., None] * xyz[0] + b1[..., None] * xyz[i] + b2[..., None] * xyz[i + 1])[m]
+    return at
+
+
+def noise(h, w, cell, rng):
+    """Smooth noise, 0 to 1, in blobs `cell` pixels across."""
+    g = rng.random((h // cell + 2, w // cell + 2))
+    ys, xs = np.arange(h) / cell, np.arange(w) / cell
+    y0, x0 = ys.astype(int), xs.astype(int)
+    fy, fx = (ys - y0)[:, None], (xs - x0)
+    fy, fx = fy * fy * (3 - 2 * fy), fx * fx * (3 - 2 * fx)
+    return (g[y0][:, x0] * (1 - fx) + g[y0][:, x0 + 1] * fx) * (1 - fy) + (g[y0 + 1][:, x0] * (1 - fx) + g[y0 + 1][:, x0 + 1] * fx) * fy
+
+
+def grime(h, w, seed=7):
+    rng = np.random.default_rng(seed)
+    return 0.6 * noise(h, w, 90, rng) + 0.3 * noise(h, w, 24, rng) + 0.1 * noise(h, w, 6, rng)
+
+
+def flat(name, colour, rough, metal=0.0):
+    """A plain material."""
+    m = bpy.data.materials.new(name)
+    m.use_nodes = True
+    b = m.node_tree.nodes["Principled BSDF"]
+    b.inputs["Base Color"].default_value = (*colour, 1.0)
+    b.inputs["Roughness"].default_value = rough
+    b.inputs["Metallic"].default_value = metal
+    return m
+
+
+def road_dust(a, at, mask, colour=(0.47, 0.42, 0.35), high=0.7, amount=0.8):
+    """Years of Delhi's roads: dust thick at the sills, thinning up the body, in blotches."""
+    n = grime(*a.shape[:2])
+    low = np.nan_to_num(np.clip((high - at[..., 2]) / (high - 0.15), 0, 1))
+    k = (low * amount * (0.3 + 1.1 * n) + 0.1 * n)[..., None]
+    a[..., :3] = np.where(mask[..., None], a[..., :3] * (1 - k) + np.array(colour) * k, a[..., :3])
+
+
 def paint_auto():
     """Delhi's colours: a green body under a yellow hood, as the street kit's parked autos."""
     img = image_named("Body_01")
@@ -124,15 +262,6 @@ def paint_car():
 
 def paint_scooter():
     """One grey material on the model: a maroon shell, black rubber, dull metal, by part."""
-    def flat(name, colour, rough, metal=0.0):
-        m = bpy.data.materials.new(name)
-        m.use_nodes = True
-        b = m.node_tree.nodes["Principled BSDF"]
-        b.inputs["Base Color"].default_value = (*colour, 1.0)
-        b.inputs["Roughness"].default_value = rough
-        b.inputs["Metallic"].default_value = metal
-        return m
-
     shell = flat("shell", (0.23, 0.015, 0.03), 0.35)
     rubber = flat("rubber", (0.015, 0.015, 0.017), 0.85)
     metal = flat("metal", (0.45, 0.46, 0.48), 0.4, 0.8)
@@ -166,6 +295,7 @@ CFG = {
     "car": dict(src="small_car/stylized_suzuki_alto_works__467f2e/model.glb", turn=180, length=3.4, body=7000, paint=paint_car),
 }
 WHEEL_TRIS = 500
+BOXES = {}
 
 
 def meshes():
@@ -280,6 +410,33 @@ def find_wheels(reach=0.08):
     return wheels, picks
 
 
+def named_wheels(pattern):
+    """Wheels the model already has as meshes of their own, found by name: both sides of an axle may
+    be in one mesh, and a tyre and its rim in two."""
+    found = []
+    for o in meshes():
+        if re.search(pattern, o.name):
+            co = np.empty(len(o.data.vertices) * 3)
+            o.data.vertices.foreach_get("co", co)
+            co = co.reshape(-1, 3)
+            for i, side in enumerate((co[:, 0] < 0, co[:, 0] >= 0)):
+                if side.any():
+                    # As it was before it was reduced, if it was.
+                    found.append((o.name, side, *BOXES.get((o.name, i), (co[side].min(0), co[side].max(0)))))
+    groups = []
+    for name, mask, lo, hi in found:
+        for g in groups:
+            if abs((lo[1] + hi[1]) - (g[0][1] + g[1][1])) < 0.2 and lo[0] * g[0][0] > 0:
+                g[0], g[1] = np.minimum(lo, g[0]), np.maximum(hi, g[1])
+                g[2][name] = g[2][name] | mask if name in g[2] else mask
+                break
+        else:
+            groups.append([lo.copy(), hi.copy(), {name: mask}])
+    wheels = [(np.array(((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, lo[2] + (hi[1] - lo[1]) / 2)), (hi[1] - lo[1]) / 2, (hi[0] - lo[0]) / 2) for lo, hi, _ in groups]
+    print(f"[wheels] {[(np.round(c, 2).tolist(), round(float(r), 2), round(float(w), 2)) for c, r, w in wheels]}")
+    return wheels, {i: g[2] for i, g in enumerate(groups)}
+
+
 def level(cfg):
     """A bike parked on its stand stands level on both tyres."""
     wheels, _ = find_wheels(0.3)
@@ -313,6 +470,347 @@ def cut(o, keep):
     bm.free()
 
 
+def strip(boxes):
+    """Delete every face lying wholly inside one of these boxes (x0, y0, z0, x1, y1, z1, in the model's
+    own coordinates): parts of one mesh that no name or gap sets apart."""
+    for o in meshes():
+        co = np.empty(len(o.data.vertices) * 3)
+        o.data.vertices.foreach_get("co", co)
+        co = co.reshape(-1, 3)
+        bm = bmesh.new()
+        bm.from_mesh(o.data)
+        bm.verts.ensure_lookup_table()
+        gone = []
+        for b in boxes:
+            lo, hi = np.array(b[:3]), np.array(b[3:])
+            ok = ((co >= lo) & (co <= hi)).all(1)
+            gone += [f for f in bm.faces if all(ok[v.index] for v in f.verts)]
+        print(f"[strip] {o.name}: {len(set(gone))} of {len(bm.faces)} faces")
+        bmesh.ops.delete(bm, geom=list(set(gone)), context="FACES")
+        bm.to_mesh(o.data)
+        bm.free()
+
+
+def mirror():
+    """Across the model's middle: a left-hand drive becomes a right-hand one, as on every road here."""
+    for o in meshes():
+        me = o.data
+        n = np.empty(len(me.loops) * 3)
+        me.corner_normals.foreach_get("vector", n)
+        n = n.reshape(-1, 3) * (-1, 1, 1)
+        kept = [{v: n[i] for i, v in zip(p.loop_indices, p.vertices)} for p in me.polygons]
+        me.transform(Matrix.Scale(-1, 4, (1, 0, 0)))
+        me.flip_normals()
+        me.update()
+        out = np.zeros_like(n)
+        for p, k in zip(me.polygons, kept):
+            for i, v in zip(p.loop_indices, p.vertices):
+                out[i] = k[v]
+        me.normals_split_custom_set(out.tolist())
+
+
+def baked_wheels(wheels):
+    """The wheels worth a place on the sheet: one, or one per axle if the axles' wheels differ."""
+    front = next(w for w in wheels if w[0].startswith("wheel_f"))
+    rear = next(w for w in wheels if w[0].startswith("wheel_r"))
+    return [front, rear] if abs(front[3] - rear[3]) > 0.03 else [front]
+
+
+def share_wheels(wheels, baked):
+    """A baked wheel for all on its axle, turned end for end for the far side, so its face stays outward."""
+    for name, w, c, r in wheels:
+        first = next((b for b in baked if b[0][:7] == name[:7]), baked[0])
+        if w is not first[1]:
+            me = first[1].data.copy()
+            if (c[0] > 0) != (first[2][0] > 0):
+                me.transform(Matrix.Rotation(math.pi, 4, "Z"))
+            w.data = me
+        w.data.name = name
+        w.rotation_euler = (0, 0, 0)
+
+
+def spare(box, at, wheels):
+    """The spare on the tail: its own flat-sided one out, a copy of a road wheel in, its face to the rear."""
+    strip((box,))
+    w = next(w[1] for w in wheels if w[2][0] > 0)
+    o = w.copy()
+    o.data = w.data.copy()
+    o.name = "spare"
+    bpy.context.scene.collection.objects.link(o)
+    o.data.transform(Matrix.Translation(at) @ Matrix.Rotation(math.radians(-90), 4, "Z"))
+    o.matrix_world = Matrix.Identity(4)
+
+
+def glass(tint=(0.012, 0.018, 0.018), alpha=0.32, rough=0.08):
+    if "pane" in bpy.data.materials:
+        return bpy.data.materials["pane"]
+    m = bpy.data.materials.new("pane")
+    m.use_nodes = True
+    b = m.node_tree.nodes["Principled BSDF"]
+    b.inputs["Base Color"].default_value = (*tint, 1.0)
+    b.inputs["Alpha"].default_value = alpha
+    b.inputs["Roughness"].default_value = rough
+    m.surface_render_method = "BLENDED"
+    return m
+
+
+def panes(quads):
+    """Glass in a frame that came without it: in the model's own coordinates, as it stands in the end."""
+    verts = [v for q in quads for v in q]
+    me = bpy.data.meshes.new("panes")
+    me.from_pydata(verts, [], [tuple(range(i, i + 4)) for i in range(0, len(verts), 4)])
+    me.materials.append(glass())
+    me.uv_layers.new(name="UVMap")
+    o = bpy.data.objects.new("panes", me)
+    bpy.context.scene.collection.objects.link(o)
+
+
+def fill_hole(o, near):
+    """Glass across the open rim in `o` that passes nearest `near`: the model's own pane does not fit."""
+    bm = bmesh.new()
+    bm.from_mesh(o.data)
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0006)
+    rim = {e for e in bm.edges if len(e.link_faces) == 1}
+    loops = []
+    while rim:
+        first = rim.pop()
+        chain = [first.verts[0], first.verts[1]]
+        while True:
+            e = next((x for x in chain[-1].link_edges if x in rim), None)
+            if e is None:
+                break
+            rim.discard(e)
+            chain.append(e.other_vert(chain[-1]))
+        loops.append([v.co.copy() for v in chain[:-1]])
+    bm.free()
+    at = Vector(near)
+    best = min((c for c in loops if len(c) > 8), key=lambda c: (sum(c, Vector()) / len(c) - at).length)
+    me = bpy.data.meshes.new("pane")
+    me.from_pydata(best, [], [list(range(len(best)))])
+    me.materials.append(glass(alpha=0.42))
+    me.uv_layers.new(name="UVMap")
+    g = bpy.data.objects.new("glass_pane", me)
+    bpy.context.scene.collection.objects.link(g)
+    me.shade_smooth()
+
+
+def round_wheel(w, sides, least=0.05):
+    """A tyre of a dozen flat sides looks cut from card. Every edge running round the axle (+X, the wheel
+    centred on its origin), from `least` of the way out, is split until the ring has `sides` corners, and
+    the new points go out onto its circle, which is what a chord's points are not."""
+    bm = bmesh.new()
+    bm.from_mesh(w.data)
+    step = 2 * math.pi / sides
+    ring = []
+    least *= max(math.hypot(v.co.y, v.co.z) for v in bm.verts)
+    for e in bm.edges:
+        a, b = e.verts[0].co, e.verts[1].co
+        ra, rb = math.hypot(a.y, a.z), math.hypot(b.y, b.z)
+        if min(ra, rb) < least or abs(ra - rb) > 0.04 * ra or abs(a.x - b.x) > 0.25 * (a - b).length:
+            continue
+        gap = (math.atan2(b.z, b.y) - math.atan2(a.z, a.y) + math.pi) % (2 * math.pi) - math.pi
+        if abs(gap) > step * 1.3:
+            ring.append((e, a.copy(), b.copy(), gap))
+    if not ring:
+        bm.free()
+        return
+    cuts = max(1, round(abs(np.median([g for *_, g in ring])) / step) - 1)
+    A = np.array([r[1] for r in ring])
+    B = np.array([r[2] for r in ring])
+    done = bmesh.ops.subdivide_edges(bm, edges=[r[0] for r in ring], cuts=cuts, use_grid_fill=True)
+    for v in done["geom_split"]:
+        if not isinstance(v, bmesh.types.BMVert):
+            continue
+        p = np.array(v.co)
+        # Which chord it was cut from, and how far along.
+        t = np.clip(((p - A) * (B - A)).sum(1) / ((B - A) ** 2).sum(1), 0, 1)
+        d = np.linalg.norm(A + (B - A) * t[:, None] - p, axis=1)
+        i = int(d.argmin())
+        if d[i] > 1e-4:
+            continue
+        a, gap = ring[i][1], ring[i][3]
+        b = ring[i][2]
+        ra, rb = math.hypot(a.y, a.z), math.hypot(b.y, b.z)
+        r = ra + (rb - ra) * t[i]
+        th = math.atan2(a.z, a.y) + gap * t[i]
+        v.co.y, v.co.z = r * math.cos(th), r * math.sin(th)
+    bm.to_mesh(w.data)
+    bm.free()
+    print(f"[round] {w.name}: {len(ring)} ring edges, cut {cuts} times, {tris(w)} tris")
+
+
+def thin(parts):
+    """Reduce a heavy model part by part, (name pattern, triangles) in turn, so what shows keeps what it
+    needs. Points are welded first, or the cuts stop at every seam, and shading is worked out afresh.
+    Wheels with tyre and rim in one mesh, (name pattern, tread, disc), get a budget for each: left to
+    itself the reduction spends all on the lugs and the rim's edge goes square."""
+    for o in meshes():
+        entry = next((p for p in parts if re.search(p[0], o.name)), None)
+        if entry is None:
+            continue
+        co = np.empty(len(o.data.vertices) * 3)
+        o.data.vertices.foreach_get("co", co)
+        co = co.reshape(-1, 3)
+        for i, side in enumerate((co[:, 0] < 0, co[:, 0] >= 0)):
+            if side.any():
+                BOXES[o.name, i] = (co[side].min(0), co[side].max(0))
+        bm = bmesh.new()
+        bm.from_mesh(o.data)
+        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0006)
+        bm.to_mesh(o.data)
+        bm.free()
+        if len(entry) > 2:
+            thin_wheels(o, *entry[1:])
+        else:
+            decimate(o, entry[1])
+        shade(o)
+
+
+def thin_wheels(o, tread, disc):
+    def radii(x):
+        co = np.empty(len(x.data.vertices) * 3)
+        x.data.vertices.foreach_get("co", co)
+        co = co.reshape(-1, 3)
+        mid = (co.min(0) + co.max(0)) / 2
+        return np.hypot(co[:, 1] - mid[1], co[:, 2] - mid[2]), np.abs(co[:, 0])
+
+    def group(x, pick):
+        g = x.vertex_groups.new(name="keep")
+        g.add(np.nonzero(pick)[0].tolist(), 1.0, "REPLACE")
+        return g.name
+
+    def part(pick):
+        x = o.copy()
+        x.data = o.data.copy()
+        bpy.context.scene.collection.objects.link(x)
+        cut(x, pick)
+        return x
+
+    r, side = radii(o)
+    labels = islands(o.data)
+    parts = np.unique(labels)
+    tyres = np.isin(labels, [i for i in parts if r[labels == i].max() > 0.85 * r.max()])
+    behind = ~tyres & np.isin(labels, [i for i in parts if side[labels == i].mean() < side[tyres].mean()])
+    t, back = part(tyres), part(behind)
+    cut(o, ~tyres & ~behind)
+    # The side nobody sees gets little. The bead of the tyre is what shows as round or not.
+    decimate(back, disc // 3)
+    decimate(o, disc)
+    r, _ = radii(t)
+    bead = 0.77 * r.max()
+    lip = sum(1 for p in t.data.polygons if all(r[v] < bead for v in p.vertices))
+    decimate(t, tread + lip, group(t, r < bead))
+    t.vertex_groups.clear()
+    join([o, t, back], o.name)
+
+
+def shade(o, angle=38):
+    """Smooth, but for edges sharper than `angle`, whatever normals the source had."""
+    me = o.data
+    if "custom_normal" in me.attributes:
+        me.attributes.remove(me.attributes["custom_normal"])
+    me.shade_smooth()
+    me.set_sharp_from_angle(angle=math.radians(angle))
+
+
+def bake_pass(objs, img, kind, socket=None, samples=1):
+    """One pass into `img` on the `atlas` texture coordinates: `socket` of the materials as they stand,
+    or ambient occlusion."""
+    scene = bpy.context.scene
+    scene.cycles.samples = samples
+    done = []
+    for m in {m for o in objs for m in o.data.materials}:
+        nt = m.node_tree
+        n = nt.nodes.new("ShaderNodeTexImage")
+        n.image = img
+        nt.nodes.active = n
+        out = next(x for x in nt.nodes if x.type == "OUTPUT_MATERIAL")
+        was = out.inputs["Surface"].links[0].from_socket
+        em = None
+        if socket:
+            b = next(x for x in nt.nodes if x.type == "BSDF_PRINCIPLED")
+            em = nt.nodes.new("ShaderNodeEmission")
+            i = b.inputs[socket]
+            if i.is_linked:
+                nt.links.new(i.links[0].from_socket, em.inputs["Color"])
+            else:
+                v = i.default_value
+                em.inputs["Color"].default_value = tuple(v) if hasattr(v, "__len__") else (v, v, v, 1.0)
+            nt.links.new(em.outputs["Emission"], out.inputs["Surface"])
+        done.append((nt, n, em, out, was))
+    bpy.ops.object.select_all(action="DESELECT")
+    for o in objs:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = objs[0]
+    bpy.ops.object.bake(type=kind, uv_layer="atlas", use_clear=True, margin=6, margin_type="EXTEND", target="IMAGE_TEXTURES")
+    for nt, n, em, out, was in done:
+        nt.nodes.remove(n)
+        if em:
+            nt.nodes.remove(em)
+        nt.links.new(was, out.inputs["Surface"])
+
+
+def atlas(body, wheels, size, finish):
+    """The many materials of a model into one set of textures, drawn with one call: colour with its
+    shading in the creases, and metal and roughness. `wheels` go on the same sheet. `finish` gets the
+    colours and the images to weather."""
+    objs = [body, *wheels]
+    for o in objs:
+        o.data.uv_layers.new(name="atlas")
+        o.data.uv_layers.active = o.data.uv_layers["atlas"]
+    bpy.ops.object.select_all(action="DESELECT")
+    for o in objs:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = body
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.smart_project(angle_limit=math.radians(55), island_margin=0.004)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    scene = bpy.context.scene
+    scene.render.engine = "CYCLES"
+    scene.cycles.device = "CPU"
+    scene.render.threads_mode = "FIXED"
+    scene.render.threads = 6
+    scene.world = bpy.data.worlds.new("bake")
+    scene.world.light_settings.distance = 0.7
+    image = lambda n, res, linear: (lambda i: (setattr(i.colorspace_settings, "name", "Non-Color" if linear else "sRGB"), i)[1])(bpy.data.images.new(n, res, res))
+    base, ao, rough, metal = image("base", size, False), image("ao", size, True), image("rough", size // 2, True), image("metal", size // 2, True)
+    bake_pass(objs, base, "EMIT", "Base Color")
+    bake_pass(objs, rough, "EMIT", "Roughness")
+    bake_pass(objs, metal, "EMIT", "Metallic")
+    bake_pass(objs, ao, "AO", samples=48)
+    a = pixels(base)
+    a[..., :3] *= (0.35 + 0.65 * pixels(ao)[..., :1])
+    finish(a, base, rough, metal)
+    # Between the islands: their average, or the small mip levels fade the model to black far off.
+    empty = a[..., :3].max(2) == 0
+    a[empty, :3] = a[~empty, :3].mean(0)
+    put_pixels(base, a)
+    m = pixels(rough)
+    m[..., 2] = pixels(metal)[..., 0]
+    put_pixels(rough, m)
+    bpy.data.images.remove(ao)
+    bpy.data.images.remove(metal)
+    mat = bpy.data.materials.new("atlas")
+    mat.use_nodes = True
+    nt = mat.node_tree
+    b = nt.nodes["Principled BSDF"]
+    t = nt.nodes.new("ShaderNodeTexImage")
+    t.image = base
+    nt.links.new(t.outputs["Color"], b.inputs["Base Color"])
+    t = nt.nodes.new("ShaderNodeTexImage")
+    t.image = rough
+    sep = nt.nodes.new("ShaderNodeSeparateColor")
+    nt.links.new(t.outputs["Color"], sep.inputs["Color"])
+    nt.links.new(sep.outputs["Green"], b.inputs["Roughness"])
+    nt.links.new(sep.outputs["Blue"], b.inputs["Metallic"])
+    for o in objs:
+        o.data.materials.clear()
+        o.data.materials.append(mat)
+        for uv in [u for u in o.data.uv_layers if u.name != "atlas"]:
+            o.data.uv_layers.remove(uv)
+
+
 def join(objs, name):
     bpy.ops.object.select_all(action="DESELECT")
     for o in objs:
@@ -330,18 +828,22 @@ def tris(o):
     return sum(len(p.vertices) - 2 for p in o.data.polygons)
 
 
-def decimate(o, target):
+def decimate(o, target, keep=None):
+    """To `target` triangles, the points of the vertex group `keep` last of all."""
     n = tris(o)
     if n <= target:
         return
     bpy.context.view_layer.objects.active = o
     d = o.modifiers.new("d", "DECIMATE")
     d.ratio = target / n
+    if keep:
+        d.vertex_group = keep
+        d.invert_vertex_group = True
     bpy.ops.object.modifier_apply(modifier=d.name)
 
 
-def split_wheels():
-    wheels, picks = find_wheels()
+def split_wheels(cfg):
+    wheels, picks = named_wheels(cfg["wheels"]) if "wheels" in cfg else find_wheels()
     names = name_wheels(wheels)
     made = []
     for i, name in enumerate(names):
@@ -365,7 +867,7 @@ def split_wheels():
     out = []
     for name, parts, centre, r in made:
         w = join(parts, name)
-        decimate(w, WHEEL_TRIS)
+        decimate(w, cfg.get("wheel_tris", WHEEL_TRIS))
         w.data.transform(Matrix.Translation(tuple(-centre)))
         w.location = tuple(centre)
         # A front wheel parked turned: its mesh squared up, the turn kept on the node, which is what
@@ -380,8 +882,9 @@ def split_wheels():
     return out
 
 
-def tidy_materials(size):
-    """Base colour only, as PNG, no bigger than `size`."""
+def tidy_materials(size, maps=(), small=()):
+    """Base colour and any of these other `maps`, as PNG, no bigger than `size` (half that for the images
+    named in `small`)."""
     for m in bpy.data.materials:
         if not m.use_nodes:
             continue
@@ -390,10 +893,11 @@ def tidy_materials(size):
                 continue
             for sock in ("Normal", "Metallic", "Roughness", "Emission Color", "Emission Strength"):
                 i = node.inputs.get(sock)
-                if i is not None:
+                if i is not None and sock not in maps:
                     for l in list(i.links):
                         m.node_tree.links.remove(l)
-            node.inputs["Roughness"].default_value = max(0.4, node.inputs["Roughness"].default_value)
+            if m.name != "pane":
+                node.inputs["Roughness"].default_value = max(0.4, node.inputs["Roughness"].default_value)
     used = set()
     for m in bpy.data.materials:
         if m.use_nodes:
@@ -405,7 +909,7 @@ def tidy_materials(size):
             bpy.data.images.remove(img)
     # The game reads PNG only: every image is written out fresh, whatever it came in as.
     for img in list(bpy.data.images):
-        k = min(1.0, size / max(img.size))
+        k = min(1.0, (size // 2 if img.name.rsplit(".", 1)[0] in small else size) / max(img.size))
         w, h = int(img.size[0] * k), int(img.size[1] * k)
         if k < 1.0:
             img.scale(w, h)
@@ -429,8 +933,14 @@ def build(name):
         for o in meshes():
             if re.search(cfg["drop"], o.name):
                 bpy.data.objects.remove(o)
+    if "strip" in cfg:
+        strip(cfg["strip"])
+    if cfg.get("mirror"):
+        mirror()
     face_forward(cfg["turn"])
     stand_up(cfg["length"])
+    if "narrow" in cfg:
+        move_all(Matrix.Diagonal((cfg["narrow"], 1, 1, 1)))
     if cfg.get("level"):
         level(cfg)
     for o in meshes():
@@ -438,13 +948,39 @@ def build(name):
         print(f"[part] {name} {o.name[:34]:34s} tris {tris(o):6d} size {[round(x, 2) for x in o.dimensions]} mats {[m.name for m in o.data.materials][:3]}")
     if "paint" in cfg:
         cfg["paint"]()
-    wheels = split_wheels()
+    if "parts" in cfg:
+        thin(cfg["parts"])
+    wheels = split_wheels(cfg)
     wnames = {w[0] for w in wheels}
-    body = join([o for o in meshes() if o.name not in wnames and len(o.data.polygons)], "body")
+    if "sides" in cfg:
+        for _, w, c, _ in wheels:
+            round_wheel(w, cfg["sides"], cfg.get("sides_from", 0.05))
+            # Its flats stood on the ground; now its corners would go through it.
+            r = max(math.hypot(v.co.y, v.co.z) for v in w.data.vertices)
+            if r > c[2]:
+                w.data.transform(Matrix.Diagonal((1, c[2] / r, c[2] / r, 1)))
+    if "spare" in cfg:
+        spare(*cfg["spare"], wheels)
+    if "panes" in cfg:
+        panes(cfg["panes"])
+    panes_of = [o for o in meshes() if o.name.startswith("glass_")]
+    body = join([o for o in meshes() if o.name not in wnames and o not in panes_of and len(o.data.polygons)], "body")
     decimate(body, cfg["body"])
     for o in [o for o in meshes() if not len(o.data.polygons)]:
         bpy.data.objects.remove(o)
-    tidy_materials(1024)
+    if "atlas" in cfg:
+        baked = baked_wheels(wheels)
+        atlas(body, [b[1] for b in baked], 1024, cfg["atlas"])
+        share_wheels(wheels, baked)
+    if panes_of:
+        body = join([body, *panes_of], "body")
+    tidy_materials(1024, cfg.get("maps", ()), cfg.get("small", ()))
+    # Names from the source go: they can hold a maker's.
+    if name.startswith("gaadi_"):
+        for i, m in enumerate(o for o in bpy.data.materials if o.users and o.name != "pane"):
+            m.name = f"body_{i}"
+            if "rough" in cfg:
+                m.node_tree.nodes["Principled BSDF"].inputs["Roughness"].default_value = cfg["rough"]
     # One set of texture coordinates is all the game reads.
     for o in meshes():
         for uv in list(o.data.uv_layers)[1:]:
@@ -453,7 +989,8 @@ def build(name):
     path = os.path.join(OUT, f"{name}.glb")
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.export_scene.gltf(filepath=path, export_format="GLB", export_yup=True, export_apply=False, export_image_format="AUTO",
-                              export_animations=False, export_skins=False, export_cameras=False, export_lights=False, use_selection=False)
+                              export_animations=False, export_skins=False, export_cameras=False, export_lights=False, use_selection=False,
+                              export_tangents="Normal" in cfg.get("maps", ()))
     p = world_points()
     print(f"[done] {name}: body {tris(body)} tris, wheels {[(w[0], tris(w[1]), round(w[3], 3), [round(float(x), 2) for x in w[2]]) for w in wheels]}, "
           f"size {np.round(p.max(0) - p.min(0), 2).tolist()}, {os.path.getsize(path) / 1e6:.1f} MB")
