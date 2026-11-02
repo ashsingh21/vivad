@@ -842,7 +842,9 @@ fn walk(
             "run" => pages.cycle * (run_beat / pace.max(1.0)).clamp(0.8, 1.3),
             _ => pages.cycle,
         };
-        w.phase = (w.phase + dt / cycle).fract();
+        if !super::ab::FROZEN.load(std::sync::atomic::Ordering::Relaxed) {
+            w.phase = (w.phase + dt / cycle).fract();
+        }
         let frame = ((w.phase * pages.frames.len() as f32) as usize).min(pages.frames.len() - 1);
         if frame != w.frame {
             w.frame = frame;

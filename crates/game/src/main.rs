@@ -90,6 +90,11 @@ fn main() {
             ..default()
         });
     app.add_plugins((net::TransportPlugin, game::lobby::LobbyPlugin, game::front::FrontPlugin));
+    // A window without focus, as a measuring run's always is, is held to 60 updates a second, which
+    // hides what a frame really costs: uncapped means uncapped.
+    if std::env::var("VIVAD_NO_VSYNC").is_ok() {
+        app.insert_resource(bevy::winit::WinitSettings::continuous());
+    }
     // GPU time per render pass, for the perf overlay (F3) and VIVAD_PERF_ALL=1's log. Only when
     // asked for (VIVAD_GPU_TIMERS=1): on Metal the timers run out of counter sample buffers after
     // a minute or two, and wgpu reports that as a lost device, which quits the game. The browser

@@ -15,6 +15,7 @@ use shared::map::MapLayout;
 use shared::map::terrain::ground;
 use shared::sim::nav::StreetFloor;
 
+mod ab;
 pub mod flipbook;
 mod goods;
 mod people;
@@ -46,6 +47,9 @@ impl Plugin for LifePlugin {
             app.add_plugins(goods::GoodsPlugin);
         }
         app.add_plugins(stage::StagePlugin).add_systems(Startup, index_market).add_systems(Update, index_market.run_if(shared::sim::map_reloaded));
+        if std::env::var("VIVAD_LIFE_AB").is_ok() {
+            app.add_systems(Update, ab::step);
+        }
     }
 }
 
