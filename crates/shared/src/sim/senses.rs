@@ -28,7 +28,7 @@ use super::bots::{ANSWER_RANGE, BotBrain};
 use super::combat::Projectile;
 use super::movement::WALK_SPEED;
 use super::stance::Stance;
-use super::{EYE_OFFSET, Eliminated, HALF_HEIGHT, Kinematic, MoveMode, PlayerIntent, Warrior, btn, sight_mask};
+use super::{EYE_OFFSET, Eliminated, HALF_HEIGHT, Kinematic, MoveMode, PlayerIntent, Warrior, btn, sight_mask, solid_mask};
 use crate::map::MapLayout;
 
 /// The whole cone of sight.
@@ -37,6 +37,8 @@ pub const FOV_DEG: f32 = 120.0;
 pub const NEAR: f32 = 4.0;
 /// A crouched warrior is noticed at this share of a bot's range, and of `NEAR`.
 pub const CROUCH_SIGHT: f32 = 0.6;
+/// Leaves and washing hide nobody from this close.
+pub const SOFT_NEAR: f32 = 5.0;
 /// Seconds to notice somebody at the end of a bot's range, and right by it.
 const NOTICE_FAR: f32 = 0.9;
 const NOTICE_NEAR: f32 = 0.12;
@@ -214,7 +216,7 @@ pub fn clear_line(spatial: &SpatialQuery, filter: &SpatialQueryFilter, eye: Vec3
 
 /// Whether an eye at `from` has a clear line to the head or chest of a warrior centred at `center`.
 pub fn in_sight(spatial: &SpatialQuery, from: Vec3, center: Vec3, drop: f32) -> bool {
-    let filter = SpatialQueryFilter::from_mask(sight_mask());
+    let filter = SpatialQueryFilter::from_mask(if from.distance(center) < SOFT_NEAR { solid_mask() } else { sight_mask() });
     body_points(center, drop).iter().any(|p| clear_line(spatial, &filter, from, *p))
 }
 

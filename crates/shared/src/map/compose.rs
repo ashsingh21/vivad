@@ -1466,6 +1466,7 @@ pub fn generate(seed: u64) -> MapLayout {
     let short = FLOOR_SPOTS.saturating_sub(map.floor_loot.len());
     map.floor_loot.extend(spare.into_iter().take(short));
     map.holy = sites;
+    super::thickets::plant(&mut map);
     clear_the_ground(&mut map);
     let MapLayout { terrain, blocks, .. } = &mut map;
     terrain.settle_under(blocks);

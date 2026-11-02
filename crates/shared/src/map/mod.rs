@@ -13,6 +13,7 @@ pub mod ncr;
 mod ncr_art;
 pub mod place;
 pub mod terrain;
+pub mod thickets;
 
 /// The maps: the NCR, the game's one final map, and the four small Delhi maps merged into it,
 /// which stay on their own for VIVAD_MAP and the checks.
@@ -255,6 +256,8 @@ pub struct MapLayout {
     pub terrain: terrain::Terrain,
     /// Where the roof slabs are, for `place_at`.
     pub overhead: place::Overhead,
+    /// Leaves: they hide a body and stop nothing.
+    pub soft: Vec<thickets::SoftCover>,
 }
 
 /// How a map is dressed and walked.

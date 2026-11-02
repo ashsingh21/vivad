@@ -567,6 +567,16 @@ fn spawn_map(mut commands: Commands, layout: Res<MapLayout>) {
             CollisionLayers::new(Layer::Soft, LayerMask::ALL),
         ));
     }
+    // Leaves are for the same eye; with no layers to meet, they cost the physics nothing.
+    for s in &layout.soft {
+        commands.spawn((
+            OfMap,
+            Transform::from_translation(s.pos).with_rotation(Quat::from_rotation_y(s.yaw)),
+            RigidBody::Static,
+            Collider::cuboid(s.size.x, s.size.y, s.size.z),
+            CollisionLayers::new(Layer::Soft, LayerMask::NONE),
+        ));
+    }
     birds::spawn_flocks(&mut commands, &layout);
     for (i, prop) in layout.props.iter().enumerate() {
         let mut e = commands.spawn((

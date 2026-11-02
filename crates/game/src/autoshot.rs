@@ -41,6 +41,7 @@
 //!   freeze the one bot (VIVAD_BOTS=1) in front as a target and shoot or cut at it.
 //!   VIVAD_ARMOURY_SPOT=x,z stand there instead (the middle of Connaught Place's park is 30,40).
 //!   VIVAD_ARMOURY_OPEN=1 stand out in the open, for long looks through a scope.
+//!   VIVAD_ARMOURY_RULES=1 only the scope glint, the Toradar's smoke and the chappal.
 //!   VIVAD_ARMOURY_LONGSHOT=<fps>  only one pose, a rifle shot through the scope at a live bot
 //!   150 m off, then watch it for a few seconds: frames for tools/clip.py.
 
@@ -371,6 +372,21 @@ impl Plugin for AutoshotPlugin {
             if frames.is_some() {
                 poses = vec![snipe("thri_not_thri", 150.0, 4.5)];
             }
+            // VIVAD_ARMOURY_RULES=1: a far rifleman's scope catching the light, the Toradar's smoke
+            // as it hangs, and the chappal in the hand and in the air.
+            if std::env::var("VIVAD_ARMOURY_RULES").is_ok() {
+                poses = vec![
+                    snipe("thri_not_thri", 150.0, 0.0),
+                    range("thaana_slr", View::Player, 80.0, 0.8),
+                    range("toradar", View::Back, 40.0, 0.5),
+                    range("toradar", View::Back, 40.0, 3.0),
+                    range("toradar", View::Back, 40.0, 6.0),
+                    range("chappal", View::Front, 12.0, 0.0),
+                    p("chappal", Use::Carry, View::Front, 0.0),
+                    range("chappal", View::Range, 12.0, 0.2),
+                    range("chappal", View::Range, 12.0, 0.35),
+                ];
+            }
             app.insert_resource(Armoury { dir, poses, index: 0, t: -3.0, shot: false, pressed: false, spot: None, frames, frame: 0, next: 0.0 })
                 .add_systems(PreUpdate, armoury_actor.after(crate::input::LocalInput))
                 .add_systems(PostUpdate, armoury_camera.after(crate::camera::CameraSystems).before(TransformSystems::Propagate));
@@ -525,6 +541,21 @@ fn ncr_views(layout: Res<MapLayout>, mut tour: ResMut<Tour>) {
         ("07_yamuna_bank".to_string(), ground_at(Vec2::new(30.0, -300.0), 1.8), ground_at(Vec2::new(330.0, -350.0), 1.0)),
         ("07_ring_road".to_string(), ground_at(Vec2::new(-1830.0, -700.0), 1.8), ground_at(Vec2::new(-1600.0, -470.0), 3.0)),
     ]);
+    // Leaves: a thicket on the Ridge from its edge, a clump on the open land and a park's hedge.
+    let soft = |low: f32, high: f32, turn: f32, back: f32, up: f32| {
+        let s = layout.soft.iter().filter(|s| (low..high).contains(&s.size.y)).nth(9)?;
+        let dir = Vec2::from_angle(turn);
+        Some((ground_at(s.pos.xz() - dir * back, up), ground_at(s.pos.xz(), 0.8)))
+    };
+    for (name, view) in [("07_leaves_thicket", soft(2.0, 3.0, 0.7, 34.0, 1.8)), ("07_leaves_clump", soft(1.45, 1.55, 2.2, 11.0, 1.8)), ("07_leaves_ridge_above", soft(2.0, 3.0, 2.4, 70.0, 16.0))] {
+        if let Some((eye, look)) = view {
+            shots.push((name.to_string(), eye, look));
+        }
+    }
+    if let Some(s) = layout.soft.iter().find(|s| s.size.x == 12.0) {
+        let across = Quat::from_rotation_y(s.yaw) * Vec3::Z;
+        shots.push(("07_leaves_hedge".to_string(), ground_at(s.pos.xz() + across.xz() * 9.0 + Vec2::splat(4.0), 1.8), ground_at(s.pos.xz(), 0.8)));
+    }
     // A street in every district.
     for d in &compose::PLACES {
         if let Some((eye, look)) = street_view(&layout, d.at) {
@@ -878,6 +909,14 @@ fn armoury_actor(
         bhp.hp = 100.0;
         bhp.shield = if pose.item == "dunali" { 50.0 } else { 0.0 };
         *bint = PlayerIntent::default();
+        // A rifleman looking back down his scope.
+        if std::env::var("VIVAD_ARMOURY_RULES").is_ok() && pose.target.is_some_and(|d| d >= 80.0) {
+            binv.slots[0] = Some(ItemStack { id: "thri_not_thri".into(), rarity: Rarity::Rare, count: 5 });
+            binv.selected = 1;
+            let d = spot - btf.translation;
+            bint.yaw = (-d.x).atan2(-d.z);
+            bint.held = btn::AIM;
+        }
         // The player's far shot is answered at once, for the sound of a rifle heard from far off.
         if pose.state == Use::Snipe && (STRIKE_AT..STRIKE_AT + 0.25).contains(&t) {
             binv.slots[0] = Some(ItemStack { id: "thri_not_thri".into(), rarity: Rarity::Rare, count: 5 });

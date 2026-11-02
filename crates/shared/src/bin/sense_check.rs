@@ -314,6 +314,62 @@ fn cover(stage: &mut Stage, check: &mut Check) {
     }
 }
 
+/// Leaves on the NCR: a bush hides a crouch from 15 m and not from 4 m, a thicket hides anyone.
+fn leaves(stage: &mut Stage, check: &mut Check) {
+    let rows = stage
+        .app
+        .world_mut()
+        .run_system_once(|layout: Res<MapLayout>, spatial: SpatialQuery| {
+            let (mut far, mut hid_low, mut hid_tall, mut close, mut seen_close) = (0, 0, 0, 0, 0);
+            for s in layout.soft.iter().step_by(7).filter(|s| s.size.y < 2.0) {
+                let c = s.pos.xz();
+                let (feet, body) = (layout.terrain.height(c.x, c.y), Vec3::new(c.x, layout.terrain.height(c.x, c.y) + HALF_HEIGHT, c.y));
+                let solid = SpatialQueryFilter::from_mask(shared::sim::solid_mask());
+                for b in 0..8 {
+                    let d = Vec2::from_angle(b as f32 * TAU / 8.0);
+                    let eye_at = |r: f32| {
+                        let p = c + d * r;
+                        Vec3::new(p.x, layout.terrain.height(p.x, p.y).max(feet) + HALF_HEIGHT + shared::sim::EYE_OFFSET, p.y)
+                    };
+                    // Only bearings with nothing solid in the way: those prove the leaves.
+                    if shared::sim::senses::clear_line(&spatial, &solid, eye_at(15.0), body) {
+                        far += 1;
+                        hid_low += !in_sight(&spatial, eye_at(15.0), body, CROUCH_DROP) as u32;
+                        hid_tall += !in_sight(&spatial, eye_at(15.0), body, 0.0) as u32;
+                    }
+                    if shared::sim::senses::clear_line(&spatial, &solid, eye_at(4.0), body) {
+                        close += 1;
+                        seen_close += in_sight(&spatial, eye_at(4.0), body, CROUCH_DROP) as u32;
+                    }
+                }
+            }
+            let (mut thick, mut thick_hid) = (0, 0);
+            for s in layout.soft.iter().filter(|s| s.size.y > 2.0).step_by(5) {
+                let c = s.pos.xz();
+                let body = Vec3::new(c.x, layout.terrain.height(c.x, c.y) + HALF_HEIGHT, c.y);
+                let p = c + Vec2::X * 26.0;
+                let eye = Vec3::new(p.x, layout.terrain.height(p.x, p.y) + HALF_HEIGHT + shared::sim::EYE_OFFSET, p.y);
+                let solid = SpatialQueryFilter::from_mask(shared::sim::solid_mask());
+                if shared::sim::senses::clear_line(&spatial, &solid, eye, body) {
+                    thick += 1;
+                    thick_hid += !in_sight(&spatial, eye, body, 0.0) as u32;
+                }
+            }
+            (layout.soft.len(), far, hid_low, hid_tall, close, seen_close, thick, thick_hid)
+        })
+        .unwrap();
+    let (covers, far, hid_low, hid_tall, close, seen_close, thick, thick_hid) = rows;
+    if covers == 0 {
+        return;
+    }
+    let pct = |n: u32, of: u32| 100.0 * n as f32 / (of as f32).max(1.0);
+    println!("leaves: {covers} covers; bush or hedge from 15 m ({far} bearings): crouch hidden {:.0}%, standing {:.0}%; from 4 m ({close}): crouch seen {:.0}%; thicket from 26 m ({thick}): standing hidden {:.0}%",
+        pct(hid_low, far), pct(hid_tall, far), pct(seen_close, close), pct(thick_hid, thick));
+    check.that(pct(hid_low, far) >= 90.0, "a bush hides a crouched warrior from 15 m");
+    check.that(pct(seen_close, close) >= 90.0, "a bot at 4 m sees into a bush");
+    check.that(pct(thick_hid, thick) >= 90.0, "a thicket hides a warrior standing in it");
+}
+
 fn senses_of_a_bot(stage: &mut Stage, check: &mut Check) {
     println!("sight");
     let spot = open_spot(stage, 26.0);
@@ -704,6 +760,7 @@ fn main() {
     crouching(&mut stage, &mut check);
     shutter(&mut stage, &mut check);
     cover(&mut stage, &mut check);
+    leaves(&mut stage, &mut check);
     flocks(&mut stage, &mut check);
     stage.intent(stage.player).held = 0;
     stage.intent(stage.player).move_axis = Vec2::ZERO;
