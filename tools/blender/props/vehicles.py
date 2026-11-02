@@ -242,6 +242,25 @@ def paint_auto():
                     p.material_index = len(o.data.materials) - 1
 
 
+def paint_tractor():
+    """Nine materials, nine colour maps and nine normal maps, for one tractor. Only how each part takes
+    the light is set here: `atlas` puts the colours on one sheet."""
+    for name, rough, metal in (("hullM", 0.5, 0), ("bodyM", 0.5, 0), ("roofM", 0.5, 0), ("wheelFlapM", 0.5, 0), ("sitBoxM", 0.6, 0), ("pipesM", 0.5, 0.5), ("wheelSitM", 0.7, 0), ("frontTireM", 0.85, 0), ("backTireM", 0.85, 0)):
+        b = bpy.data.materials[name].node_tree.nodes["Principled BSDF"]
+        b.inputs["Roughness"].default_value = rough
+        b.inputs["Metallic"].default_value = metal
+
+
+def weather_tractor(a, base, rough, metal):
+    """Rubber is black, whatever the painter made it."""
+    for w in (o for o in meshes() if o.name.startswith("wheel_") and "atlas" in o.data.uv_layers):
+        at = spots(base, w)
+        on = ~np.isnan(at[..., 0])
+        r = np.nan_to_num(np.hypot(at[..., 1], at[..., 2]))
+        tyre = on & (r > 0.72 * r[on].max())
+        a[tyre, :3] = a[tyre, :3].mean(1, keepdims=True) * 0.42
+
+
 def paint_car():
     """A maker's badge on the nose and a brand's label on each sill: painted over."""
     img = image_named("Image_11")
@@ -459,6 +478,10 @@ CFG = {
                                    (r"^Object_88$", 170), (r"^Object_94$", 90), (r"^Object_(96|98)$", 150), (r"^Object_17$", 400), (r"^Object_80$", 100), (r"^Object_(100|102)$", 100), (r"Object_(21|23)$", 60),
                                    (r"^Object_(115|120|125|130)$", 250), (r"^Object_(117|122|127|132)$", 230))),
     "commuter": dict(src="commuter_bike/pulsar_135_ls_2__accbf2/model.glb", turn=0, length=2.02, body=12000, drop=r"^placa", level=True),
+    # Its wheels are the size of a big tractor's, so length and wheelbase go by those; it was too wide as well.
+    "gaadi_tractor": dict(src="tractor/tractor__278fc1/model.glb", turn=90, length=3.25, narrow=0.82, body=9000, paint=paint_tractor, atlas=weather_tractor, maps=("Metallic", "Roughness"), small=("rough",),
+                          wheels=r"^(frontTire|backTire)", wheel_tris=2400,
+                          parts=((r"^tubeStuff", 1500), (r"^backTire", 1500, 900), (r"^frontTire", 500, 500), (r"^wheel_wheelSit", 420), (r"^midBit", 900), (r"^hull", 900), (r"^pipe", 300), (r"^seat", 200), (r"^tireFlap", 400))),
     "bullet": dict(src="heavy_bike/classic_motorcycle__f246ff/model.glb", turn=None, length=2.14, body=14000, paint=paint_bullet, level=True),
     "car": dict(src="small_car/stylized_suzuki_alto_works__467f2e/model.glb", turn=180, length=3.4, body=7000, paint=paint_car),
     # Modelled a tenth too wide for its length.
