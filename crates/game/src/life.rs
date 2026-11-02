@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
 use shared::map::MapLayout;
+use shared::map::interiors::Door;
 use shared::map::terrain::ground;
 use shared::sim::nav::StreetFloor;
 
@@ -87,6 +88,10 @@ const PLACES: [(&str, f32); 26] = [
 const QUIET: f32 = 0.06;
 /// Stalls in a square at which it is as full as its place gets.
 const FULL_SQUARE: f32 = 2.0;
+/// How far out from a door the way is kept clear, the door's own width and this much each side.
+const WALK_LINE: f32 = 9.0;
+const SHOP_FRONT: f32 = 2.4;
+const LANE_SIDE: f32 = 0.5;
 
 /// What a kind of stall is, for who stands at it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -128,6 +133,9 @@ pub struct Market {
     buildings: HashMap<(i32, i32), Vec<u32>>,
     /// The metre squares a row stall stands on: no collider, but nobody here walks through one.
     solid: HashSet<(i32, i32)>,
+    /// The metre squares in front of a building's doors, kept clear: what stands here would look
+    /// like it bars the way in.
+    lanes: HashSet<(i32, i32)>,
     /// Banners over the road, kerb to kerb.
     pub(crate) banners: Vec<(Vec3, Vec3)>,
     /// Whether this map has the street grid all of this leans on: the NCR's.
@@ -233,6 +241,9 @@ impl Market {
                 market.busy[j * side + i] = place * (0.6 + 0.4 * (round / FULL_SQUARE).min(1.0)) * street;
             }
         }
+        for door in layout.rooms.iter().flat_map(|r| &r.doors) {
+            market.keep_clear(door);
+        }
         if market.ready {
             let spots = layout.floor_loot.iter().copied().chain(layout.chests.iter().map(|c| c.pos));
             market.loot = spots.map(|p| ((p.x / 3.0).floor() as i32, (p.z / 3.0).floor() as i32)).collect();
@@ -241,6 +252,29 @@ impl Market {
             market.loot = HashSet::new();
         }
         market
+    }
+
+    /// The way out of a door: a walker's line to the road from a real door, and from a shop's open
+    /// bay as far as a customer stands.
+    fn keep_clear(&mut self, door: &Door) {
+        let out_to = if door.leaves { WALK_LINE } else { SHOP_FRONT };
+        let half = door.width * 0.5 + LANE_SIDE;
+        let across = door.out.perp();
+        let (mut s, foot) = (0.0, door.pos.xz());
+        while s <= out_to {
+            let mut t = -half;
+            while t <= half {
+                let p = foot + door.out * s + across * t;
+                self.lanes.insert((p.x.floor() as i32, p.y.floor() as i32));
+                t += 0.5;
+            }
+            s += 0.5;
+        }
+    }
+
+    /// Whether `p` is on the way out of a door.
+    pub(crate) fn on_lane(&self, p: Vec2) -> bool {
+        self.lanes.contains(&(p.x.floor() as i32, p.y.floor() as i32))
     }
 
     /// Whether loot lies round `p`: a stall over it would hide it, and no one could tell.
@@ -275,7 +309,8 @@ impl Market {
         let t = &layout.terrain;
         [0.0, reach, -reach].iter().all(|k| {
             let q = p + along * *k;
-            floor.walkable(q) && !matches!(t.ground_at(q.x, q.y), Some(ground::ROAD | ground::WATER | ground::OPEN | ground::SAND)) && !self.built(layout, q + along.perp() * 1.5) && !self.built(layout, q - along.perp() * 1.5)
+            let deep = along.perp() * 0.7;
+            floor.walkable(q) && !matches!(t.ground_at(q.x, q.y), Some(ground::ROAD | ground::WATER | ground::OPEN | ground::SAND)) && !self.built(layout, q + along.perp() * 1.5) && !self.built(layout, q - along.perp() * 1.5) && !self.on_lane(q) && !self.on_lane(q + deep) && !self.on_lane(q - deep)
         }) && !layout.is_holy(p) && !self.over_loot(p)
     }
 
@@ -371,7 +406,7 @@ impl Market {
             }
             // Parked at the road's edge, on the road: bunches of scooters, handcarts.
             let verge = edge + normal * 1.3;
-            if road_at(t, verge) && !close(&taken, verge, 5.0) && floor.walkable(verge) && !layout.is_holy(verge) && goods::hash(a, b, 33) < 0.16 + busy * 0.26 {
+            if road_at(t, verge) && !close(&taken, verge, 5.0) && floor.walkable(verge) && !self.on_lane(verge) && !layout.is_holy(verge) && goods::hash(a, b, 33) < 0.16 + busy * 0.26 {
                 mark(&mut taken, verge);
                 if goods::hash(a, b, 34) < 0.3 {
                     self.add_solid(StallKind::Cart, Vec3::new(verge.x, y(verge), verge.y), yaw + goods::hash(a, b, 35) * 0.3 + std::f32::consts::FRAC_PI_2, Vec2::new(0.65, 1.1));
@@ -414,7 +449,7 @@ impl Market {
                 }
                 // Nothing under it or quite against it.
                 let room = [Vec2::ZERO, Vec2::new(1.4, 0.0), Vec2::new(-1.4, 0.0), Vec2::new(0.0, 1.4), Vec2::new(0.0, -1.4)];
-                if !room.iter().all(|d| floor.walkable(p + *d) && !self.stall_at(p + *d)) || layout.is_holy(p) || self.over_loot(p) {
+                if !room.iter().all(|d| floor.walkable(p + *d) && !self.stall_at(p + *d) && !self.on_lane(p + *d)) || layout.is_holy(p) || self.over_loot(p) {
                     continue;
                 }
                 // Facing the nearest road, within a few steps of it.
@@ -576,6 +611,12 @@ mod tests {
         let rows: Vec<&Stall> = market.stalls.iter().filter(|s| s.kind == StallKind::Row).collect();
         assert!(rows.len() > 5000, "{}", rows.len());
         assert!(rows.iter().all(|s| !on_road(s.pos.xz())));
+        // Every door has its way out.
+        for door in layout.rooms.iter().flat_map(|r| &r.doors) {
+            let foot = door.pos.xz() + door.out * 1.2;
+            assert!(market.on_lane(foot), "no lane at the door at {foot}");
+            assert!(!market.stalls.iter().filter(|s| s.kind != StallKind::Thela && s.kind != StallKind::Crates && s.kind != StallKind::Chai && s.kind != StallKind::Chairs).any(|s| s.pos.xz().distance(foot) < 1.0), "a stall stands in the door at {foot}");
+        }
         // Loot stays in plain sight.
         for spot in layout.floor_loot.iter() {
             assert!(!rows.iter().any(|s| s.pos.xz().distance(spot.xz()) < 1.5), "a stall stands over the loot at {spot}");

@@ -389,12 +389,14 @@ fn dress(layout: &MapLayout, market: &Market, key: (i32, i32), out: &mut Vec<(&'
                 let seed = (e as u32) * 97 + s as u32;
                 let at3 = |off: f32| Vec3::new(at.x + out2.x * off, y, at.y + out2.y * off);
                 // The shop's stock out at its door, floor to lintel.
-                if hash(i, seed, 2) < (busy * 2.4).min(0.96) {
+                if !open && hash(i, seed, 2) < (busy * 2.4).min(0.96) {
                     let (front, floor): (&str, &[&str]) = if theme < 0.34 {
                         ("shop_cloth", &["bolts", "rack_short", "rack_cloth"])
                     } else if theme < 0.66 {
                         ("shop_grocery", &["sacks_spice", "sacks_grain", "sacks_stack", "stand_veg", "stand_fruit", "greens", "crate_cauli"])
                     } else if theme < 0.84 {
+                // Awnings over a way in, but nothing in it: a room's doors and open bays stay clear.
+                let open = layout.rooms_of(i as usize).is_some_and(|r| r.doors.iter().any(|d| d.pos.xz().distance(at) < d.width * 0.5 + BAY * 0.5 && d.out.dot(out2) > 0.7));
                         ("shop_bartan", &["pots", "buckets", "cartons"])
                     } else {
                         ("shop_general", &["cartons", "buckets", "sacks_stack", "stand_fruit"])
