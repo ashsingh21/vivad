@@ -374,6 +374,27 @@ MIXAMO_BONES.update({f"{f}_0{k}_{s}": f"mixamorig:{S}Hand{F}{k}" for s, S in (("
                      for f, F in (("index", "Index"), ("middle", "Middle"), ("ring", "Ring"), ("pinky", "Pinky"), ("thumb", "Thumb"))
                      for k in (1, 2, 3)})
 MIXAMO = os.path.join(HERE, "mixamo")
+# MoCap Online's Rifle Basic pack (tools/blender/characters/mocaponline, not in the repository: its
+# licence): the Motus Man rig, Mixamo's bone names without the prefix. Its rifle clips, untouched,
+# over the Mixamo pack's.
+MOTUS = os.path.join(HERE, "mocaponline", "FBX_Rifle_Basic_27A2", "Animation", "In-Place")
+MOTUS_BONES = {k: v.removeprefix("mixamorig:") for k, v in MIXAMO_BONES.items()}
+MOTUS_CLIPS = [
+    # The idles from where they settle (each file opens on a step in from another pose), there and
+    # back so they loop.
+    ("rifle_idle", "W2_Stand_Relaxed_Idle_IPC", 0.0, {"window": (25, 99), "pingpong": True}),
+    ("rifle_aim", "W2_Stand_Aim_Idle_v2_IPC", 0.0, {"window": (7, 121), "pingpong": True}),
+    ("rifle_crouch_idle", "W2_Crouch_Idle_IPC", 0.0, {"window": (25, 58), "pingpong": True}),
+    *[(f"rifle_walk_{d}", f"W2_Walk_{d.upper()}_Loop_IPC", 1.8, {}) for d in "fblr"],
+    *[(f"rifle_crouch_{d}", f"W2_CrouchWalk_{d.upper()}_Loop_IPC", 1.4, {}) for d in "fblr"],
+    # Running: its run ahead and to the sides, its jog backward (it has no run back); the run
+    # again, quicker, for the sprint.
+    ("rifle_run_f", "W2_Run_F_Loop_IPC", 5.6, {}),
+    ("rifle_run_b", "W2_Jog_B_Loop_IPC", 5.6, {}),
+    ("rifle_run_l", "W2_Run_L_Loop_IPC", 5.6, {}),
+    ("rifle_run_r", "W2_Run_R_Loop_IPC", 5.6, {}),
+    ("rifle_sprint_f", "W2_Run_F_Loop_IPC", 8.6, {}),
+]
 # (our clip, the file in mixamo/, the speed it's played at, mocap options). Missing files are skipped.
 _R, _P = "rifle/", "pistol/"
 _DIRS = (("f", "forward"), ("b", "backward"), ("l", "left"), ("r", "right"))
@@ -417,10 +438,10 @@ MIXAMO_CLIPS = [
 ]
 
 
-def load_mixamo(name):
-    """Import one Mixamo download (mixamo/<name>.fbx): its armature, objects, actions and frame rate,
-    or None if it isn't there."""
-    path = os.path.join(MIXAMO, f"{name}.fbx")
+def load_mixamo(name, base=None):
+    """Import one Mixamo download (mixamo/<name>.fbx; or under `base`): its armature, objects,
+    actions and frame rate, or None if it isn't there."""
+    path = os.path.join(base or MIXAMO, f"{name}.fbx")
     if not os.path.exists(path):
         return None
     objs, acts = set(bpy.data.objects), set(bpy.data.actions)
@@ -681,7 +702,7 @@ def crouch_idle(rig):
 
 
 def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_TPose", relax=False, keep=None, window=None,
-             pingpong=False, air=False):
+             pingpong=False, air=False, joints=False):
     """Retarget a clip bone by bone: every joint's rotation copied from the source, as a turn from
     its rest in world space, onto ours (each source bone first aligned to our rest's direction, so
     the rigs' different rest poses don't matter: a T-pose's arms onto our A). Twists, shoulders,
@@ -693,7 +714,8 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
     instead of the source's (a rifle clip's legs, empty-handed). `keep` softens the torso's turns
     (how much of each bone's world turn from rest is kept: TORSO_KEEP for the library's stylised
     hunch). `window`: only these source frames (first, last), `pingpong` played there and back to
-    loop seamlessly. `air`: airborne, the hips held at rest height (the body is where the game puts
+    loop seamlessly. `joints`: line bones up joint to joint (below), for a source whose bone tails
+    point anywhere. `air`: airborne, the hips held at rest height (the body is where the game puts
     it; the legs tuck up under the hips rather than the whole body rising)."""
     bmap = bones or {}
     sb = lambda n: src.pose.bones.get(bmap.get(n, n)) or next((b for b in src.pose.bones if b.name.lower() == n), None)
@@ -713,12 +735,27 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
             pb.matrix_basis = Matrix.Identity(4)
     bpy.context.view_layer.update()
     s_rot = {n: (W @ sb(n).matrix).to_quaternion() for n in ours}
-    s_dir = {n: ((W @ sb(n).tail) - (W @ sb(n).head)).normalized() for n in ours}
+    # Each bone's line, joint to joint: to the head of our child that carries on from its tip (the
+    # hand to the middle knuckle), or for an end bone (a fingertip, the head, the toes) from its
+    # parent's head. Not tail - head: an importer may point a bone's tail anywhere (an FBX's along
+    # its own axis), and both rigs must be measured the same way.
+    bones = rig.obj.data.bones
+    nxt = {}
+    for n in ours if joints else ():
+        kids = [c.name for c in bones[n].children if c.name in ours]
+        if kids:
+            nxt[n] = (n, min(kids, key=lambda c: (bones[c].head_local - bones[n].tail_local).length))
+        elif bones[n].parent and bones[n].parent.name in ours:
+            nxt[n] = (bones[n].parent.name, n)
+    s_head = lambda n: W @ sb(n).head
+    s_dir = {n: ((s_head(nxt[n][1]) - s_head(nxt[n][0])) if n in nxt else (W @ sb(n).tail) - s_head(n)).normalized() for n in ours}
     s_pelvis = W @ sb("pelvis").head
     s_leg = ((W @ sb("calf_l").head) - (W @ sb("thigh_l").head)).length + ((W @ sb("foot_l").head) - (W @ sb("calf_l").head)).length
     rig.rest()
     t_rot = {n: (M @ rig.obj.data.bones[n].matrix_local).to_quaternion() for n in ours}
-    t_dir = {n: (M.to_3x3() @ (rig.obj.data.bones[n].tail_local - rig.obj.data.bones[n].head_local)).normalized() for n in ours}
+    t_head = lambda n: M @ bones[n].head_local
+    t_dir = {n: ((t_head(nxt[n][1]) - t_head(nxt[n][0])) if n in nxt else M.to_3x3() @ (bones[n].tail_local - bones[n].head_local)).normalized()
+             for n in ours}
     # Per bone: rest turn out of the source frame, aligned onto ours.
     corr = {n: s_rot[n].inverted() @ s_dir[n].rotation_difference(t_dir[n]).inverted() @ t_rot[n] for n in ours}
     r = rig.leg / s_leg
@@ -756,7 +793,10 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
             for i in range(frames):
                 j = (i + 1) % frames
                 if down[i] and down[j] and j:
-                    v.append((S[j][3][s] - S[i][3][s]).dot(back) * src_fps)
+                    d = S[j][3][s] - S[i][3][s]
+                    # In place (no travel to say which way it walks): the planted foot's speed
+                    # whichever way it slides (a backpedal's, a strafe's).
+                    v.append((d.dot(back) if travel.length else Vector((d.x, d.y)).length) * src_fps)
         v.sort()
         natural = v[len(v) // 2] * r if v else speed
         out = max(8, round(frames * natural / speed * FPS / src_fps))
@@ -1292,6 +1332,19 @@ def main():
                 cycles[f"rifle_{m}_{d}"] = carry(rig, f"rifle_{m}_{d}", f"{m}_{d}", "rifle_carry", turn=RIFLE_TURN, upright=RIFLE_LEAN, calm=RIFLE_CALM)
         cycles["rifle_sprint_f"] = carry(rig, "rifle_sprint_f", "sprint_f", "rifle_carry", turn=RIFLE_TURN, upright=RIFLE_LEAN, calm=RIFLE_CALM)
         bpy.data.actions.remove(bpy.data.actions["rifle_carry"])
+    for name, file, speed, opts in MOTUS_CLIPS:
+        got = load_mixamo(file, MOTUS)
+        if not got:
+            continue
+        msrc, mobjs, macts, mfps = got
+        bpy.context.view_layer.objects.active = arm
+        bpy.ops.object.mode_set(mode="POSE")
+        n = transfer(rig, msrc, macts, name, None, speed, bones=MOTUS_BONES, src_fps=mfps, ref=None, joints=True,
+                     window=opts.get("window"), pingpong=opts.get("pingpong", False))
+        if speed:
+            cycles[name] = n
+        print(f"[anims] {name} from MoCap Online's {file} ({mfps:.0f} fps)")
+        drop_mocap(mobjs, macts, arm)
     if not os.path.exists(os.path.join(MIXAMO, "Running Slide.fbx")):
         src, objs, acts = load_mocap("ual2")
         bpy.context.view_layer.objects.active = arm

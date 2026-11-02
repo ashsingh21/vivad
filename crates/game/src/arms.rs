@@ -219,7 +219,7 @@ fn orient_bows(
         // layer tilts its own way): the butt in the shoulder's pocket, the barrel along the aim,
         // the right hand brought to the grip. Either way the left hand (below) takes the fore-end.
         let mut long_f = None;
-        if gun && long && w > 1e-3 {
+        if SHOULDER_IN_GAME && gun && long && w > 1e-3 {
             let chain = parents.get(hand).map(|p| p.parent()).ok().and_then(|l| parents.get(l).ok().map(|u| (u.parent(), l)));
             if let (Some(sh), Some((upper, lower))) = (body.shoulder_r.and_then(|s| tf.get(s).ok()).map(|(_, g)| g.translation()), chain) {
                 let right = ahead.cross(Vec3::Y);
@@ -331,6 +331,9 @@ fn gun_check(body: &Body, socket: &GlobalTransform, ahead: Vec3, palm: Vec3, han
     )
 }
 
+/// Shoulder a long gun here when aiming (for aim clips whose arms don't sit on their hips: the
+/// Mixamo pack's); off with MoCap Online's rifle pack, whose aim holds the gun as captured.
+const SHOULDER_IN_GAME: bool = false;
 /// Where a shouldered butt sits from the right shoulder joint (m): ahead, in toward the chest, up.
 const SHOULDER_POCKET: (f32, f32, f32) = (0.07, 0.04, -0.02);
 
