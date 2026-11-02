@@ -453,7 +453,7 @@ mod tests {
             }
             let gltf = world.resource::<Assets<Gltf>>().get(&anims).unwrap();
             let clips = world.resource::<Assets<AnimationClip>>();
-            assert_eq!(gltf.named_animations.len(), 21);
+            assert_eq!(gltf.named_animations.len(), 26);
             for (name, h) in &gltf.named_animations {
                 let missing = clips.get(h).unwrap().curves().keys().filter(|id| !ids.contains(id)).count();
                 assert_eq!(missing, 0, "{variant} {name}: {missing} animated bones not found");

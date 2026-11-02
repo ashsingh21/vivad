@@ -13,6 +13,8 @@ use super::{BotSkill,
 };
 use super::movement::{FALL_DAMAGE, GLIDE_FALL, GLIDE_HORIZ, GRAVITY, OPEN_GLIDE_HEIGHT, SAFE_LANDING, SPRINT_SPEED, WALK_SPEED, dive_reach};
 use super::nav::{NavGrid, NoPath, StreetFloor, on_bridge};
+use super::senses::{self, Senses};
+use super::stance::Stance;
 use crate::items::{AstraEffect, ItemDb, ItemKind};
 use crate::map::MapLayout;
 
@@ -147,6 +149,8 @@ pub struct BotBrain {
     pub flee: f32,
     /// We have arrived at the goal and taken our rest for it: no second helping.
     pub arrived: bool,
+    /// What we have seen, heard and remember (`senses`).
+    pub senses: Senses,
 }
 
 impl BotBrain {
@@ -195,6 +199,7 @@ impl BotBrain {
             landed: None,
             flee: 0.0,
             arrived: false,
+            senses: Senses::staggered(rng),
         }
     }
 }
@@ -203,7 +208,7 @@ pub struct BotPlugin;
 
 impl Plugin for BotPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(FixedUpdate, (drive_bots, mind_the_drop).chain().in_set(SimSet::Brains));
+        app.add_systems(FixedUpdate, (senses::shot_noise, super::birds::startle, senses::sense, drive_bots, senses::look_about, mind_the_drop).chain().in_set(SimSet::Brains));
     }
 }
 
@@ -493,6 +498,7 @@ pub(crate) fn drive_bots(
         Without<Eliminated>,
     >,
     others: Query<(Entity, &Transform, &Kinematic), (With<Warrior>, Without<Eliminated>)>,
+    stances: Query<&Stance>,
     chests: Query<(&Transform, &Chest)>,
     pickups: Query<(&Transform, &Pickup)>,
     m: Res<Match>,
@@ -658,9 +664,7 @@ pub(crate) fn drive_bots(
                 if (d > engage_range && !(grudge && d < 70.0)) || best.is_some_and(|b| b.1 < d) {
                     continue;
                 }
-                let to = ot.translation + Vec3::Y * 0.4 - eye;
-                let Ok((dir, len)) = Dir3::new_and_length(to) else { continue };
-                if spatial.cast_ray(eye, dir, len, true, &los_filter).is_none() {
+                if brain.senses.sees(oe) {
                     best = Some((oe, d));
                 }
             }
@@ -669,6 +673,7 @@ pub(crate) fn drive_bots(
                 brain.seen_for = 0.0;
             }
             brain.target = new_target;
+            senses::consider_search(&mut brain, has_ranged, looting, pos, &snap);
 
             // Goals when not fighting: zone first, then chests, then pickups, then wander.
             // On the NCR a bot sprints and the ring takes minutes to close, so it stays out until
@@ -718,6 +723,7 @@ pub(crate) fn drive_bots(
                 }
             };
             let skip = brain.give_up.clone();
+            let search_goal = brain.senses.search.map(|s| s.spot).filter(|g| !skip.iter().any(|b| b.distance(*g) < 0.5));
             // While looting, a chest someone else stands by or is making for is theirs: the
             // early game is spent apart, not in a cricket-bat brawl over the first peti.
             let theirs = |p: Vec3| {
@@ -772,6 +778,7 @@ pub(crate) fn drive_bots(
                 .min_by(|a, b| a.0.translation.distance(pos).total_cmp(&b.0.translation.distance(pos)))
                 .map(|(t, _)| t.translation);
             let pickup_goal = if_reachable(pickup_goal);
+            let search_goal = if_reachable(search_goal);
             let previous = brain.goal;
             // Running from a fight: keep running, unless the ring says otherwise.
             let flee_goal = (brain.flee > 0.0 && zone_goal.is_none()).then_some(brain.goal).flatten();
@@ -790,7 +797,7 @@ pub(crate) fn drive_bots(
             let near_find = pickup_goal.filter(|p| p.distance(pos) < find_sight);
             let aside = near_find.filter(|p| scavenging || grabs(*p)).or(chest_goal.filter(|p| grabs(*p)));
             brain.urgent = zone_goal.is_some() && aside.is_none();
-            brain.goal = aside.or(zone_goal).or(flee_goal).or(near_find).or(chest_goal).or(pickup_goal).or_else(|| {
+            brain.goal = aside.or(zone_goal).or(flee_goal).or(search_goal).or(near_find).or(chest_goal).or(pickup_goal).or_else(|| {
                 if brain.goal.is_none_or(|g| g.distance(pos) < 4.0) {
                     let c = zone.target_center;
                     let r = zone.target_radius.max(8.0) * 0.7;
@@ -853,15 +860,21 @@ pub(crate) fn drive_bots(
             let away = (pos - ttf.translation).xz().normalize_or(Vec2::X);
             let spot = pos.xz() + Vec2::from_angle(rng.random_range(-0.6..0.6)).rotate(away) * 45.0;
             let spot = snap(spot).unwrap_or(spot);
+            // Out of its sight if there is such a place near; a long way off if not.
+            let threat = senses::eye(ttf.translation, 0.0);
+            let hidden = mapped.then(|| senses::hiding_spot(&spatial, &walkable, &layout, threat, pos.xz(), 24.0, 0.0)).flatten();
+            let spot = hidden.unwrap_or(spot);
             if zone.target_center.distance(spot) < zone.target_radius * 0.9 && zone.center.distance(spot) < zone.radius * 0.9 {
                 brain.goal = Some(Vec3::new(spot.x, 0.0, spot.y));
                 brain.goal_time = 0.0;
                 brain.target = None;
                 brain.flee = rng.random_range(6.0..10.0);
+                brain.senses.tally.flights += 1;
+                brain.senses.tally.hid += hidden.is_some() as u32;
             }
         }
         let target = target.filter(|_| brain.flee <= 0.0);
-        if let Some((_, ttf, tkin)) = target {
+        if let Some((foe, ttf, tkin)) = target {
             // A new target: from wherever we were looking, and nothing known of it yet.
             if brain.seen_for == 0.0 {
                 brain.memory.clear();
@@ -883,7 +896,7 @@ pub(crate) fn drive_bots(
                 _ => 0.0,
             };
             // Lead the target and compensate drop.
-            let mut aim_at = seen_at + Vec3::Y * 0.35;
+            let mut aim_at = seen_at + Vec3::Y * (0.35 - stances.get(foe).map_or(0.0, Stance::drop));
             if speed > 0.0 {
                 let t = dist / speed;
                 aim_at += seen_moving * t + Vec3::Y * 0.5 * 5.0 * t * t;

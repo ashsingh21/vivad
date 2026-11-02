@@ -197,6 +197,23 @@ Agni fire and Vayu gusts; a conch (shankha) when the Pralaya starts to close, a 
 a low gong on elimination; loops for wind, freefall, the zone wall, the river, a tanpura drone
 aboard the vimana and the day's ambience (wind, koel, sparrows, crows).
 
+## Hiding and bot senses
+
+Read by hand and rewritten for this game; none of their code is a dependency.
+
+- [shards-engine](https://github.com/larelgit/shards-engine), Copyright (c) 2026 larelgit, MIT OR
+  Apache-2.0. The crouch rules (`shards_motion/src/controller/stance.rs`: feet stay, standing up
+  waits for room) in `crates/shared/src/sim/stance.rs`; sight, hearing, memory
+  (`shards_npc/src/perception.rs`) and the hiding search (`shards_npc/src/hide.rs`) in
+  `crates/shared/src/sim/senses.rs`.
+- [saddle-ai-fov](https://github.com/julien-blanchon/saddle-ai-fov), Copyright (c) 2025 Julien
+  Blanchon, MIT-0. The detection meter (`update_stimulus_entry`) in `senses.rs`.
+- [bevy_ahoy](https://github.com/janhohenheim/bevy_ahoy), MIT or Apache-2.0. The stand-up check
+  (`handle_crouching`), as a sweep up from the crouched head in `stance.rs`.
+- [Universal Animation Library](https://quaternius.com/packs/universalanimationlibrary.html) by
+  Quaternius, CC0. The crouch's proportions, measured from its `Crouch_Idle_Loop`, in
+  `tools/blender/characters/anims.py`. Our clips are authored on our own rigs; none of its data ships.
+
 ## Delhi map (Panga)
 
 Connaught Place and the head of Janpath, New Delhi, from OpenStreetMap: building outlines and

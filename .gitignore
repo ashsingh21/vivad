@@ -3,6 +3,8 @@
 *.blend1
 .env
 # Intermediate review passes stay local; the final pass and the Bevy check are committed.
+/previews/hiding-senses/search_frames/
+/previews/hiding-senses/*.png
 /previews/*/pass1/
 /previews/front-door/frames/
 /previews/front-door/*.webp

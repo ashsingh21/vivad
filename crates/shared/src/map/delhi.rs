@@ -267,6 +267,10 @@ fn generate_from(json: &str, id: Option<super::MapId>, seed: u64, cut: Option<&C
         .collect();
     super::kit::streets(&mut b, &mut rng, &roads, &houses, HALF);
     super::kit::roofs(&mut b, &mut rng);
+    // Their own stream: the pieces above stay where they were.
+    let mut cover = SmallRng::seed_from_u64(seed ^ 0x6B69_6F73_6B73);
+    super::kit::kiosks(&mut b, &mut cover, &roads, &houses, HALF);
+    super::kit::tanks(&mut b, &mut cover);
     if let Some(cut) = cut {
         super::kit::thin(b.map, cut.clip, cut.kit, &mut rng);
     }

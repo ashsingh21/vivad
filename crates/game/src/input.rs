@@ -6,7 +6,7 @@ use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions};
 use shared::sim::flow::{Match, MatchState};
-use shared::sim::{Eliminated, LocalPlayer, PlayerIntent, btn};
+use shared::sim::{Eliminated, Kinematic, LocalPlayer, MoveMode, PlayerIntent, btn};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Act {
@@ -16,6 +16,7 @@ pub enum Act {
     Reload,
     Interact,
     Sprint,
+    Crouch,
     NextSlot,
     PrevSlot,
     /// The big button on a menu (crate::front).
@@ -53,6 +54,7 @@ impl Default for Bindings {
                 (Act::Reload, vec![Key(KeyCode::KeyR), Pad(GamepadButton::North)]),
                 (Act::Interact, vec![Key(KeyCode::KeyE), Key(KeyCode::KeyF), Pad(GamepadButton::West)]),
                 (Act::Sprint, vec![Key(KeyCode::ShiftLeft), Pad(GamepadButton::LeftThumb)]),
+                (Act::Crouch, vec![Key(KeyCode::KeyC), Pad(GamepadButton::East)]),
                 (Act::NextSlot, vec![Pad(GamepadButton::RightTrigger)]),
                 (Act::PrevSlot, vec![Pad(GamepadButton::LeftTrigger)]),
                 (Act::Restart, vec![Key(KeyCode::Enter), Pad(GamepadButton::Start)]),
@@ -161,9 +163,10 @@ fn write_intent(
     cursor: Single<&CursorOptions>,
     line_wheel: Res<crate::wheel::WheelOpen>,
     time: Res<Time>,
-    mut q: Query<&mut PlayerIntent, With<LocalPlayer>>,
+    mut q: Query<(&mut PlayerIntent, &Kinematic), With<LocalPlayer>>,
+    mut crouching: Local<bool>,
 ) {
-    let Ok(mut intent) = q.single_mut() else { return };
+    let Ok((mut intent, kin)) = q.single_mut() else { return };
     let grabbed = cursor.grab_mode != CursorGrabMode::None;
     let dt = time.delta_secs();
 
@@ -215,6 +218,16 @@ fn write_intent(
         if state.just_pressed(act) && (act != Act::Fire || grabbed) {
             intent.pressed |= bit;
         }
+    }
+    // Crouch stays on until pressed again; jumping or breaking into a sprint stands up.
+    if state.just_pressed(Act::Crouch) {
+        *crouching = !*crouching;
+    }
+    if state.just_pressed(Act::Jump) || state.just_pressed(Act::Sprint) || kin.mode != MoveMode::Ground {
+        *crouching = false;
+    }
+    if *crouching {
+        held |= btn::CROUCH;
     }
     intent.released |= before & !held;
     intent.held = held;

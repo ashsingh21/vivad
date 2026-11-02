@@ -4,6 +4,7 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 
 use super::flow::Rules;
+use super::stance::{CROUCH_SPEED, size_bodies, update_stance};
 use super::{CAPSULE_LENGTH, CAPSULE_RADIUS, DamageCause, DamageMsg, Eliminated, HALF_HEIGHT, Kinematic, MoveMode, PlayerIntent, SimSet, btn, solid_mask};
 use crate::map::MapLayout;
 use crate::map::terrain::ground;
@@ -54,7 +55,7 @@ pub struct MovementPlugin;
 
 impl Plugin for MovementPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(FixedUpdate, move_warriors.in_set(SimSet::Movement));
+        app.add_systems(FixedUpdate, (update_stance, size_bodies, move_warriors).chain().in_set(SimSet::Movement));
     }
 }
 
@@ -135,7 +136,10 @@ fn move_warriors(
                         kin.mode = MoveMode::Gliding;
                     }
                 }
-                let speed = if intent.held(btn::AIM) {
+                let crouched = intent.held(btn::CROUCH);
+                let speed = if crouched {
+                    CROUCH_SPEED
+                } else if intent.held(btn::AIM) {
                     AIM_SPEED
                 } else if intent.held(btn::SPRINT) && intent.move_axis.y > 0.3 {
                     SPRINT_SPEED
@@ -150,7 +154,7 @@ fn move_warriors(
                     // Follow the ground plane so slopes and stair ramps don't sap speed.
                     let n = kin.ground_normal;
                     vy = if n.y > 0.0 { -(h.x * n.x + h.z * n.z) / n.y } else { 0.0 };
-                    if intent.pressed(btn::JUMP) {
+                    if intent.pressed(btn::JUMP) && !crouched {
                         vy = JUMP_SPEED;
                         kin.grounded = false;
                     }

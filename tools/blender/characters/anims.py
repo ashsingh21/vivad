@@ -6,7 +6,8 @@ Opens build/char_<variant>_final.blend (written by human.py, so the rig is exact
 <variant>.glb) and keys these actions, exported to assets/models/characters/<variant>_anims.glb:
 
   locomotion  (loops, one cycle = two steps, all start at the left foot's contact)
-    idle, walk_{f,b,l,r} (AIM_SPEED 3.6 m/s), run_{f,b,l,r} (WALK_SPEED 5.6), sprint_f (7.4)
+    idle, walk_{f,b,l,r} (AIM_SPEED 3.6 m/s), run_{f,b,l,r} (WALK_SPEED 5.6), sprint_f (7.4),
+    crouch_idle, crouch_{f,b,l,r} (CROUCH_SPEED 2.6; proportions from Quaternius' Crouch_Idle_Loop)
   air         jump, fall, freefall, glide (loops / holds)
   upper body  melee_guard, melee_swing(_b), bow_draw, rifle_aim, consume (the game masks these to the torso)
   death       one-shot, holds its last frame
@@ -29,7 +30,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 FPS = 30
 
-WALK, RUN, SPRINT = 3.6, 5.6, 7.4
+WALK, RUN, SPRINT, CROUCH = 3.6, 5.6, 7.4, 2.6
 
 # Character faces -Y in Blender; its left is +X.
 FWD = Vector((0, -1, 0))
@@ -278,6 +279,42 @@ def locomotion(rig, name, speed, direction, cadence, duty, lift, crouch, bob, le
         rig.key(f + 1)
     rig.duty[name] = round(duty, 2)
     return frames
+
+
+# The crouch's depth: hips at 53% of their standing height, the back bent forward by 0.95 rad, the
+# head near level (as in Quaternius' Universal Animation Library, CC0; docs/references.md).
+CROUCH_HIPS = 0.47
+CROUCH_LEAN = 0.95
+
+
+def crouch_drop(rig):
+    rig.rest()
+    return min(rig.head("thigh_l").z, rig.head("thigh_r").z) * CROUCH_HIPS
+
+
+def crouch_idle(rig):
+    frames = 60
+    drop = crouch_drop(rig)
+    new_action(rig, "crouch_idle")
+    for f in range(frames + 1):
+        t = f / frames
+        b = math.sin(2 * math.pi * t)
+        rig.rest()
+        # Sat back on the heels, a little breath in the back.
+        rig.move("pelvis", (0.01 * b, 0.10, -drop + 0.012 * b))
+        rig.rotate("spine_01", LEFT, CROUCH_LEAN * 0.4)
+        rig.rotate("spine_02", LEFT, CROUCH_LEAN * 0.6 + 0.012 * b)
+        # One foot ahead and flat, the other behind on its toes.
+        rig.leg_ik("l", (rig.hip_x["l"] * 1.25, -0.20, rig.ankle_z["l"]), FWD + UP * 0.1)
+        rig.leg_ik("r", (rig.hip_x["r"] * 1.25, 0.28, rig.ankle_z["r"] + 0.08), FWD + UP * 0.1)
+        rig.foot_pitch("l", 0.0, yaw=0.15)
+        rig.foot_pitch("r", -0.55, yaw=-0.1)
+        for s in "lr":
+            arm_swing(rig, s, 0.25 + 0.015 * b, 0.9, out=0.2)
+            relax_fingers(rig, s, 0.45)
+        rig.rotate("neck_01", LEFT, -CROUCH_LEAN * 0.55)
+        rig.rotate("head", LEFT, -CROUCH_LEAN * 0.3)
+        rig.key(f + 1)
 
 
 def idle(rig):
@@ -604,7 +641,13 @@ def main():
             cycles[f"{name}_{suf}"] = locomotion(rig, f"{name}_{suf}", speed, dvec, lean=lean, **p)
     cycles["sprint_f"] = locomotion(rig, "sprint_f", SPRINT, FWD, cadence=3.25, duty=0.29, lift=0.32, crouch=0.11,
                                     bob=0.04, lean=0.3, arm=0.85, elbow=1.6)
+    drop = crouch_drop(rig)
+    for suf, dvec in (("f", FWD), ("b", -FWD), ("l", LEFT), ("r", -LEFT)):
+        lean = CROUCH_LEAN * (1.0 if suf == "f" else 0.85 if suf == "b" else 0.92)
+        cycles[f"crouch_{suf}"] = locomotion(rig, f"crouch_{suf}", CROUCH, dvec, cadence=3.2, duty=0.55, lift=0.10, crouch=drop - 0.02,
+                                             bob=0.02, lean=lean, arm=0.22, elbow=1.0)
     idle(rig)
+    crouch_idle(rig)
     hold_pose(rig, "jump", 12, jump_pose)
     hold_pose(rig, "fall", 30, fall_pose)
     hold_pose(rig, "freefall", 40, freefall_pose)

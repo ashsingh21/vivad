@@ -6,6 +6,7 @@ use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use shared::sim::flow::Match;
+use shared::sim::stance::Stance;
 use shared::sim::{CAMERA_DISTANCE, CAMERA_SHOULDER, EYE_OFFSET, Kinematic, LocalPlayer, MoveMode, PlayerIntent, btn, solid_mask};
 
 use crate::visuals::{WarriorVisual, TimeOfDay};
@@ -16,6 +17,8 @@ pub struct CameraSystems;
 #[derive(Component)]
 pub struct MainCamera {
     distance: f32,
+    /// How far a crouch has brought the view down, eased.
+    drop: f32,
 }
 
 pub struct CameraPlugin;
@@ -32,7 +35,7 @@ pub fn spawn_camera(mut commands: Commands, mut images: ResMut<Assets<Image>>, l
     let ncr = layout.style == shared::map::MapStyle::Ncr;
     // Ambient occlusion and anti-aliasing are the quality level's (crate::quality).
     let mut cam = commands.spawn((
-        MainCamera { distance: CAMERA_DISTANCE },
+        MainCamera { distance: CAMERA_DISTANCE, drop: 0.0 },
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection { fov: 70f32.to_radians(), near: 0.05, ..default() }),
         look(ncr, false),
@@ -144,7 +147,7 @@ fn grading(ncr: bool, ultra: bool) -> bevy::render::view::ColorGrading {
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn follow(
-    local: Query<(Entity, &PlayerIntent, &Kinematic), With<LocalPlayer>>,
+    local: Query<(Entity, &PlayerIntent, &Kinematic, Option<&Stance>), With<LocalPlayer>>,
     visuals: Query<(&WarriorVisual, &Transform), Without<MainCamera>>,
     mut cam: Query<(&mut Transform, &mut Projection, &mut MainCamera)>,
     m: Res<Match>,
@@ -154,19 +157,21 @@ fn follow(
     ride: Res<crate::visuals::DropRide>,
 ) {
     let Ok((mut ct, mut proj, mut mc)) = cam.single_mut() else { return };
-    let Ok((me, intent, kin)) = local.single() else { return };
+    let Ok((me, intent, kin, stance)) = local.single() else { return };
     let Some(body) = visuals.iter().find(|(v, _)| v.sim == me).map(|(_, t)| t.translation) else { return };
     let rot = intent.aim_rotation();
     let aiming = intent.held(btn::AIM) && kin.mode == MoveMode::Ground;
     let dt = time.delta_secs();
+    mc.drop += (stance.map_or(0.0, Stance::drop) - mc.drop) * (1.0 - (-dt * 12.0).exp());
+    let eye = body + Vec3::Y * (EYE_OFFSET - mc.drop);
 
     let (pivot, want_dist, shoulder, fov): (Vec3, f32, f32, f32) = match kin.mode {
         // The auto's fans stand 14 m over its floor: framed from farther back and higher.
         MoveMode::Vimana if *ride == crate::visuals::DropRide::Jugaad => (m.vimana_pos() + Vec3::Y * 8.0, 40.0, 0.0, 70.0),
         MoveMode::Vimana => (m.vimana_pos() + Vec3::Y * 4.0, 26.0, 0.0, 70.0),
         MoveMode::Freefall | MoveMode::Gliding => (body + Vec3::Y * EYE_OFFSET, 7.5, 0.0, 78.0),
-        MoveMode::Ground if aiming => (body + Vec3::Y * EYE_OFFSET, 1.9, CAMERA_SHOULDER * 0.85, 48.0),
-        MoveMode::Ground => (body + Vec3::Y * EYE_OFFSET, CAMERA_DISTANCE, CAMERA_SHOULDER, 70.0),
+        MoveMode::Ground if aiming => (eye, 1.9, CAMERA_SHOULDER * 0.85, 48.0),
+        MoveMode::Ground => (eye, CAMERA_DISTANCE, CAMERA_SHOULDER, 70.0),
     };
     // Smooth zoom in/out.
     mc.distance += (want_dist - mc.distance) * (1.0 - (-dt * 12.0).exp());

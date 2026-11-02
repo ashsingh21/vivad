@@ -320,10 +320,10 @@ mod layout_tests {
     /// means a map changed: update the numbers only if that was the intent.
     #[test]
     fn maps_are_unchanged() {
-        assert_eq!(fingerprint(MapId::Cp), (6811, 60, 147, 102, 379, 728, 11, 10784036215856373148));
-        assert_eq!(fingerprint(MapId::Chandni), (14376, 879, 98, 124, 69, 2371, 11, 10426603982683760837));
-        assert_eq!(fingerprint(MapId::HauzKhas), (6431, 134, 81, 81, 350, 479, 2, 3684859097812863807));
-        assert_eq!(fingerprint(MapId::IndiaGate), (630, 6, 70, 60, 585, 774, 5, 1864056156504546495));
+        assert_eq!(fingerprint(MapId::Cp), (7035, 60, 147, 102, 379, 844, 11, 14063370636023318963));
+        assert_eq!(fingerprint(MapId::Chandni), (15869, 879, 98, 123, 69, 3588, 11, 9117080130056917365));
+        assert_eq!(fingerprint(MapId::HauzKhas), (6681, 134, 81, 81, 350, 681, 2, 12842640503487594958));
+        assert_eq!(fingerprint(MapId::IndiaGate), (790, 6, 70, 60, 585, 806, 5, 5598471239716277651));
     }
 
     #[test]

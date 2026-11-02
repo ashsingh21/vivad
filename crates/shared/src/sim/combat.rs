@@ -10,6 +10,7 @@ use super::{
 };
 use crate::items::{AstraEffect, ItemDb, ItemKind, ItemStack};
 use crate::sim::net::{NetId, NetMsg, Outbox, Remote, Shot, drop_loot};
+use crate::sim::stance::Stance;
 use crate::sim::talk::FellMsg;
 
 pub struct CombatPlugin;
@@ -136,8 +137,10 @@ fn use_items(
         let Some(stack) = inv.current().cloned() else { continue };
         let def = db.get(&stack.id);
         let scale = stack.rarity.damage_scale();
-        let (eye_origin, aim) = aim_ray(tf.translation, intent);
-        let muzzle = tf.translation + Vec3::Y * 0.5 + intent.body_rotation() * Vec3::new(0.3, 0.0, -0.4);
+        // A crouch brings the eye and the hands down with it.
+        let body = tf.translation - Vec3::Y * intent.drop();
+        let (eye_origin, aim) = aim_ray(body, intent);
+        let muzzle = body + Vec3::Y * 0.5 + intent.body_rotation() * Vec3::new(0.3, 0.0, -0.4);
 
         match &def.kind {
             ItemKind::Melee { damage: dmg, interval, reach, hit_delay } => {
@@ -147,7 +150,7 @@ fn use_items(
                         act.swing_hit_in = None;
                         // Swept sphere along the swing direction (flattened aim).
                         let dir = Dir3::new(Vec3::new(aim.x, aim.y.clamp(-0.5, 0.5), aim.z)).unwrap_or(Dir3::NEG_Z);
-                        let start = tf.translation + Vec3::Y * 0.35;
+                        let start = body + Vec3::Y * 0.35;
                         let filter = SpatialQueryFilter::from_mask(hit_mask()).with_excluded_entities([entity]);
                         if let Some(hit) = spatial.cast_shape(
                             &Collider::sphere(0.45),
@@ -337,6 +340,7 @@ fn step_projectiles(
     warriors: Query<&Transform, (With<Warrior>, Without<Projectile>)>,
     mut kin: Query<(Entity, &Transform, &mut Kinematic), (With<Warrior>, Without<Eliminated>, Without<Projectile>, Without<Remote>)>,
     remote: Query<(), With<Remote>>,
+    stances: Query<&Stance>,
     spatial: SpatialQuery,
     time: Res<Time>,
     mut damage: MessageWriter<DamageMsg>,
@@ -370,7 +374,7 @@ fn step_projectiles(
             }
             let headshot = warriors
                 .get(hit.entity)
-                .map(|t| point.y > t.translation.y + HEADSHOT_HEIGHT)
+                .map(|t| point.y > t.translation.y + HEADSHOT_HEIGHT - stances.get(hit.entity).map_or(0.0, Stance::drop))
                 .unwrap_or(false);
             if !echo {
                 damage.write(DamageMsg {

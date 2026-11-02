@@ -9,6 +9,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use shared::map::MapLayout;
+use shared::sim::birds::Flock;
 use shared::sim::{OfMap, map_reloaded, solid_mask};
 
 use crate::visuals::WarriorVisual;
@@ -18,7 +19,7 @@ pub struct AmbientPlugin;
 impl Plugin for AmbientPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, (setup, spawn_sky.after(setup)))
-            .add_systems(Update, (spawn_sky.run_if(map_reloaded), add_blobs, place_blobs, fly_kites, fly_pigeons));
+            .add_systems(Update, (spawn_sky.run_if(map_reloaded), add_blobs, place_blobs, fly_kites, fly_pigeons, seat_birds, flush_birds));
     }
 }
 
@@ -26,6 +27,8 @@ impl Plugin for AmbientPlugin {
 struct AmbientAssets {
     blob_mesh: Handle<Mesh>,
     blob_mat: Handle<StandardMaterial>,
+    bird: Handle<Mesh>,
+    grey: Handle<StandardMaterial>,
 }
 
 /// The patch under a warrior.
@@ -39,6 +42,15 @@ struct Kite {
     anchor: Vec3,
     phase: f32,
     speed: f32,
+}
+
+/// A bird of a sim flock (shared::sim::birds): sitting at `seat`, or off along `out` while it is away.
+#[derive(Component)]
+struct Percher {
+    flock: Entity,
+    seat: Vec3,
+    out: Vec3,
+    phase: f32,
 }
 
 #[derive(Component)]
@@ -62,6 +74,8 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
         }
     }
     let tex = images.add(Image::new(Extent3d { width: n, height: n, depth_or_array_layers: 1 }, TextureDimension::D2, data, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::default()));
+    let bird = meshes.add(bird_mesh());
+    let grey = materials.add(StandardMaterial { base_color: Color::srgb(0.32, 0.33, 0.36), double_sided: true, cull_mode: None, perceptual_roughness: 0.9, ..default() });
     commands.insert_resource(AmbientAssets {
         blob_mesh: meshes.add(Plane3d::default().mesh().size(1.0, 1.0)),
         blob_mat: materials.add(StandardMaterial {
@@ -72,6 +86,8 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
             depth_bias: 50.0,
             ..default()
         }),
+        bird,
+        grey,
     });
 }
 
@@ -141,7 +157,7 @@ const MOST_SKIES: usize = 12;
 
 const KITE_COLOURS: [(f32, f32, f32); 6] = [(0.95, 0.20, 0.25), (0.98, 0.75, 0.10), (0.20, 0.55, 0.95), (0.25, 0.75, 0.30), (0.95, 0.45, 0.10), (0.85, 0.25, 0.75)];
 
-fn spawn_sky(mut commands: Commands, layout: Res<MapLayout>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+fn spawn_sky(mut commands: Commands, layout: Res<MapLayout>, assets: Res<AmbientAssets>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
     // Over a city only.
     if layout.footprints.is_empty() {
         return;
@@ -150,7 +166,7 @@ fn spawn_sky(mut commands: Commands, layout: Res<MapLayout>, mut meshes: ResMut<
     // As many over each part of a big map as over a small one, or nobody would ever see one.
     let spread = ((half / KITE_MAP_HALF).powi(2).round() as usize).clamp(1, MOST_SKIES);
     let kite = meshes.add(kite_mesh());
-    let bird = meshes.add(bird_mesh());
+    let bird = assets.bird.clone();
     let mut s = 0x1234_5678u32 ^ layout.name.len() as u32;
     let mut rnd = move || {
         s ^= s << 13;
@@ -176,7 +192,7 @@ fn spawn_sky(mut commands: Commands, layout: Res<MapLayout>, mut meshes: ResMut<
             OfMap,
         ));
     }
-    let grey = materials.add(StandardMaterial { base_color: Color::srgb(0.32, 0.33, 0.36), double_sided: true, cull_mode: None, perceptual_roughness: 0.9, ..default() });
+    let grey = assets.grey.clone();
     for _ in 0..3 * spread {
         let mut centre = Vec3::new((rnd() * 2.0 - 1.0) * half * 0.7, 22.0 + rnd() * 12.0, (rnd() * 2.0 - 1.0) * half * 0.7);
         if spread > 1 {
@@ -204,6 +220,50 @@ fn fly_kites(time: Res<Time>, mut q: Query<(&Kite, &mut Transform)>) {
         let a = t * k.speed + k.phase;
         tf.translation = k.anchor + Vec3::new(a.sin() * 6.0, (a * 2.0).sin() * 2.5, (a * 0.7).cos() * 3.0);
         tf.rotation = Quat::from_rotation_y(0.6 + (a * 0.5).sin() * 0.3) * Quat::from_rotation_z((a * 1.3).cos() * 0.5 + (t * 9.0 + k.phase).sin() * 0.05);
+    }
+}
+
+/// A few birds on each new flock's perch.
+fn seat_birds(mut commands: Commands, flocks: Query<(Entity, &Flock), Added<Flock>>, assets: Option<Res<AmbientAssets>>) {
+    let Some(assets) = assets else { return };
+    for (e, flock) in &flocks {
+        for k in 0..5 {
+            let a = k as f32 * 2.4 + flock.at.x;
+            let seat = flock.at + Vec3::new(a.cos() * 0.2 * k as f32, 0.04, a.sin() * 0.2 * k as f32);
+            commands.spawn((
+                Percher { flock: e, seat, out: Vec3::new(a.cos(), 0.0, a.sin()), phase: a },
+                Mesh3d(assets.bird.clone()),
+                MeshMaterial3d(assets.grey.clone()),
+                Transform::from_translation(seat).with_rotation(Quat::from_rotation_y(a)).with_scale(Vec3::new(0.45, 0.25, 0.45)),
+                bevy::light::NotShadowCaster,
+                OfMap,
+            ));
+        }
+    }
+}
+
+/// Sitting they keep their wings in; put up, they clatter up and away, and drop back as the flock's
+/// time away runs out.
+fn flush_birds(time: Res<Time>, flocks: Query<&Flock>, mut birds: Query<(&Percher, &mut Transform)>) {
+    let t = time.elapsed_secs();
+    for (bird, mut tf) in &mut birds {
+        let Ok(flock) = flocks.get(bird.flock) else { continue };
+        if flock.away <= 0.0 {
+            // Only once, as they land: every sitting bird changed each frame is all of them propagated.
+            if tf.translation != bird.seat {
+                tf.translation = bird.seat;
+                tf.scale = Vec3::new(0.45, 0.25, 0.45);
+            }
+            continue;
+        }
+        // Out for the first 40% of the time away, gone, back for the last 15%.
+        let gone = shared::sim::birds::AWAY - flock.away;
+        let out = (gone / 6.0).min(1.0).min(flock.away / 3.5);
+        let ease = out * (2.0 - out);
+        tf.translation = bird.seat + (bird.out * 34.0 + Vec3::Y * (18.0 + bird.phase.sin() * 5.0)) * ease;
+        let flap = (t * 19.0 + bird.phase * 3.0).sin();
+        tf.scale = Vec3::new(1.0, 1.0 + flap * 1.6, 1.0);
+        tf.rotation = Transform::IDENTITY.looking_to(bird.out, Vec3::Y).rotation;
     }
 }
 

@@ -20,6 +20,7 @@ use bevy::gltf::Gltf;
 use bevy::prelude::*;
 use shared::items::{ItemDb, ItemKind};
 use shared::sim::movement::{AIM_SPEED, SPRINT_SPEED, WALK_SPEED};
+use shared::sim::stance::{CROUCH_SPEED, Stance};
 use shared::sim::{Action, Eliminated, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, PosHistory, Warrior, btn};
 
 use crate::visuals::WarriorVisual;
@@ -33,7 +34,9 @@ impl Plugin for WarriorAnimationPlugin {
 }
 
 /// Clips the torso can't share with the legs: played legs-only under a weapon action.
-const LOCOMOTION: [&str; 10] = ["idle", "walk_f", "walk_b", "walk_l", "walk_r", "run_f", "run_b", "run_l", "run_r", "sprint_f"];
+const LOCOMOTION: [&str; 15] = [
+    "idle", "walk_f", "walk_b", "walk_l", "walk_r", "run_f", "run_b", "run_l", "run_r", "sprint_f", "crouch_idle", "crouch_f", "crouch_b", "crouch_l", "crouch_r",
+];
 const FULL_BODY: [&str; 5] = ["jump", "fall", "freefall", "glide", "death"];
 const UPPER_BODY: [&str; 6] = ["melee_guard", "melee_swing", "melee_swing_b", "bow_draw", "rifle_aim", "consume"];
 /// Bones driven by the legs layer; everything else is upper body.
@@ -228,6 +231,19 @@ fn locomotion_weights(forward: f32, right: f32) -> Vec<(&'static str, f32)> {
     out
 }
 
+/// The same, crouched: four directions at one speed.
+fn crouch_weights(forward: f32, right: f32) -> Vec<(&'static str, f32)> {
+    let speed = forward.hypot(right);
+    if speed < 0.15 {
+        return vec![("crouch_idle", 1.0)];
+    }
+    let (f, r, a) = (forward / speed, right / speed, (speed / CROUCH_SPEED).min(1.0));
+    let dirs = [("crouch_f", f.max(0.0)), ("crouch_b", (-f).max(0.0)), ("crouch_l", (-r).max(0.0)), ("crouch_r", r.max(0.0))];
+    let mut out = vec![("crouch_idle", 1.0 - a)];
+    out.extend(dirs.into_iter().map(|(n, d)| (n, d * d * a)).filter(|(_, w)| *w > 1e-3));
+    out
+}
+
 /// How far a held bow is drawn (0 = string at rest, 1 = full draw), or None when it's carried
 /// rather than raised. Raised while aiming, charging, or for a moment after a shot; a fast bow
 /// redraws over its shot interval, a charged one draws as the charge builds.
@@ -251,6 +267,7 @@ fn clip_speed(name: &str) -> f32 {
         n if n.starts_with("walk") => AIM_SPEED,
         n if n.starts_with("run") => WALK_SPEED,
         "sprint_f" => SPRINT_SPEED,
+        "crouch_f" | "crouch_b" | "crouch_l" | "crouch_r" => CROUCH_SPEED,
         _ => 0.0,
     }
 }
@@ -263,6 +280,7 @@ fn drive(
     db: Res<ItemDb>,
     mut vis: Query<(&WarriorVisual, &Transform, &mut WarriorAnim)>,
     sims: Query<(&Kinematic, &PosHistory, &Inventory, &Action, &PlayerIntent, Option<&Eliminated>), With<Warrior>>,
+    stances: Query<&Stance>,
     mut players: Query<&mut AnimationPlayer>,
     mut died: Local<HashMap<Entity, f32>>,
     mut steps: MessageWriter<Footstep>,
@@ -300,7 +318,8 @@ fn drive(
                     want.push((n, false, 1.0, if n == "jump" { dur(n) * 0.5 } else { clock % dur(n) }));
                 }
                 _ => {
-                    let loco = locomotion_weights(forward, right);
+                    let crouched = stances.get(wv.sim).is_ok_and(|s| s.crouched);
+                    let loco = if crouched { crouch_weights(forward, right) } else { locomotion_weights(forward, right) };
                     // Advance the shared cycle at the real ground speed.
                     let speed = forward.hypot(right);
                     let (mut rate, mut wsum) = (0.0, 0.0);
@@ -357,7 +376,7 @@ fn drive(
                     let phase = anim.phase;
                     // Clips that would barely show are left out (each costs a pass over the bones).
                     for (n, w) in loco.into_iter().filter(|(_, w)| *w >= 0.05) {
-                        let t = if n == "idle" { clock % dur(n) } else { phase * dur(n) };
+                        let t = if n.ends_with("idle") { clock % dur(n) } else { phase * dur(n) };
                         want.push((n, action.is_some(), w, t));
                     }
                     if let Some((n, t)) = action {

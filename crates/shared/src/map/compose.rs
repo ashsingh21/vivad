@@ -1896,6 +1896,8 @@ mod tests {
         let hidden = |b: &&crate::map::Block| b.mat == Mat::Wood && !b.visible && b.collide && (b.rot * Vec3::Y).y > 0.99;
         let orphans: Vec<_> = m.blocks.iter().filter(hidden).filter(|b| !drawn.contains(&[b.pos.x.to_bits(), b.pos.z.to_bits()])).collect();
         assert!(orphans.is_empty(), "{} {:?}", orphans.len(), orphans.first());
+        // A gumti's walls stand off to the side of it, and are steel: the whole kit, each way round.
+        assert_eq!(kit::out_of_step(m), (0, 0));
     }
 
     #[test]

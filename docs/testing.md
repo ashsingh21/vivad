@@ -42,6 +42,16 @@ pixels only when the numbers point somewhere.
    screen, `VIVAD_LOOP_OFFSCREEN=1` has the UI camera draw to an image, so menus and HUD still come
    out in the pictures; clicks then press the button directly. Test recipes skip Home on their own
    (`front::skip_home`); `VIVAD_SKIP_HOME=1` does it by hand.
+   `just sense` proves crouching, cover, the birds and the bots' senses on Connaught Place with
+   the whole sim running, and prints from how many bearings each piece of the street kit hides a
+   warrior, crouched and standing; add a line to its cover list for every new piece. `just sense
+   ncr` does the same on the NCR, where the bots go by the street floor and not the small maps'
+   grid. `just ncr-sim` ends with a `senses:` line, what the senses made the bots do in a whole
+   match (searches, hiding places, flocks put up), and `just ncr-map-check` counts the gumti,
+   tanks and flocks and any hidden collider out of step with the kit. `just stage`
+   films the same in the real game (`previews/hiding-senses`, the window can stay hidden), and
+   `VIVAD_SENSES=1` in any match draws what each bot knows: its cone, a green or red line to each
+   warrior's head and chest, where it remembers somebody, where it is going to look.
 2. **Models: text only.** `just mesh assets/models/props/x.gltf` prints triangles per LOD, size
    and height range, open edges, loose pieces and materials: enough to catch a broken export,
    a missing LOD, a model floating or sunk, or a mesh that lost its closure.

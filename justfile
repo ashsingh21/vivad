@@ -151,6 +151,17 @@ loop map="ncr" fall="15":
 sim matches="3" bots="63":
     cargo run --release -p shared --bin sim_check -- {{matches}} {{bots}}
 
+# Crouching, cover and the bots' senses, proved headless: on Connaught Place, or just sense ncr.
+sense map="cp":
+    VIVAD_MAP={{map}} cargo run --release -p shared --bin sense_check
+
+# The hiding previews from the real game: the crouch pose, the player behind a stall from the bot's
+# eye, the half shutter, the birds, and a clip of a bot losing the player and searching
+# (previews/hiding-senses). The window can stay hidden. VIVAD_SENSES=1 in any match draws the overlay.
+stage:
+    VIVAD_MUTE=1 VIVAD_BOTS=1 VIVAD_MAP=cp VIVAD_ROTATE=0 VIVAD_STAGE=previews/hiding-senses cargo run --release -q -p game --bin game
+    python3 tools/clip.py previews/hiding-senses/search_frames 8 previews/hiding-senses/bot_search.webp
+
 # Peers agree without a host: the same match seed builds the same match in separate processes.
 peers seed="1234":
     cargo run --release -p shared --bin peer_check -- {{seed}}

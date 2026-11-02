@@ -8,9 +8,10 @@ use super::bots::BotBrain;
 use super::net::{Inbox, LastUpdate, NetId, NetMsg, NetPose, Outbox, Owner, Peers, Remote};
 use super::combat::{Burst, FireZone, Projectile};
 use super::loot::{Chest, Pickup, spawn_loot};
+use super::stance::{Stance, standing_capsule};
 use super::zone::Zone;
 use super::{
-    match_rng, stream, Action, CAPSULE_LENGTH, CAPSULE_RADIUS, Eliminated, FeedMsg, Health, Inventory, Kinematic, Layer, LocalPlayer,
+    match_rng, stream, Action, Eliminated, FeedMsg, Health, Inventory, Kinematic, Layer, LocalPlayer,
     MoveMode, PlayerIntent, PosHistory, RestartMatch, SimSet, Warrior, btn,
 };
 use crate::items::ItemDb;
@@ -351,7 +352,8 @@ pub fn start_match(world: &mut World) {
             PosHistory::default(),
             Transform::from_translation(Vec3::new(0.0, rules.vimana_height, 0.0)),
             RigidBody::Kinematic,
-            Collider::capsule(CAPSULE_RADIUS, CAPSULE_LENGTH),
+            standing_capsule(),
+            Stance::default(),
             // Found by spatial queries (shots, sweeps, movement), but never paired for contacts:
             // movement is our own collide-and-slide, and nothing reads contacts.
             CollisionLayers::new(Layer::Character, LayerMask::NONE),

@@ -3,7 +3,8 @@
 //! the roster, that each warrior is run by exactly one peer, that every peer sees every warrior
 //! where its owner has it, and, once the match is fought out (local players on autopilot), on who
 //! fell, the kill counts and the winner. Partway through, the last peer leaves: the others must
-//! take its bots over and fight on to the same end.
+//! take its bots over and fight on to the same end. Last, a warrior crouches and stands on its
+//! owner's peer, and the other peer's copy must do the same: as low to a shot as the warrior is.
 //!
 //! cargo run --release -p shared --bin net_check -- [peers] [bots] [max seconds] [leave at seconds, 0 = never]
 
@@ -11,14 +12,18 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use avian3d::prelude::*;
+use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
+use shared::map::MapLayout;
 use shared::sim::bots::BotBrain;
 use shared::sim::flow::{Match, MatchState};
 use shared::sim::loot::{Chest, Pickup};
+use shared::sim::nav::StreetFloor;
 use shared::sim::net::{Departures, Inbox, NetId, Outbox, Owner, PeerId, Peers, Remote};
+use shared::sim::stance::Stance;
 use shared::sim::talk::SayMsg;
-use shared::sim::{Eliminated, Inventory, Kinematic, MatchConfig, MoveMode, PlayerIntent, SimPlugin, Warrior, btn};
+use shared::sim::{Eliminated, HALF_HEIGHT, Inventory, Kinematic, MatchConfig, MoveMode, PlayerIntent, SimPlugin, Warrior, btn, hit_mask};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -261,6 +266,8 @@ fn main() {
         })
         .count();
     check(left == 0 && holders.iter().filter(|h| **h).count() == 1, format!("a contested {} ends up with one player ({holders:?})", item.stack.id));
+    let (standing, down, flies_over, up) = crouch_across(&ids[..2], &items);
+    check(standing && down && flies_over && up, format!("a crouch crosses to the other peer: a chest-high shot hits the standing copy {standing}, the copy goes down {down}, the shot then flies over {flies_over}, back up {up}"));
     println!("\n{failed} failed");
     std::process::exit(failed as i32);
 }
@@ -271,6 +278,75 @@ struct HeardShouts(u32);
 
 fn count_shouts(mut said: MessageReader<SayMsg>, remote: Query<(), With<Remote>>, mut heard: ResMut<HeardShouts>) {
     heard.0 += said.read().filter(|s| remote.contains(s.who)).count() as u32;
+}
+
+/// One warrior crouches and stands on its owner's peer, seen from another: whether a chest-high shot
+/// hits the standing copy, whether the copy goes down, whether the shot then flies over it, and
+/// whether it comes back up and is hit again.
+fn crouch_across(ids: &[PeerId], items: &str) -> (bool, bool, bool, bool) {
+    let mut apps: Vec<App> = ids.iter().map(|&id| peer(id, ids, 0, false, items)).collect();
+    let mut sent = 0;
+    fn ticks(apps: &mut [App], ids: &[PeerId], sent: &mut usize, n: u32) {
+        for _ in 0..n {
+            for app in apps.iter_mut() {
+                app.update();
+            }
+            deliver(apps, ids, sent);
+        }
+    }
+    ticks(&mut apps, ids, &mut sent, 20);
+    let (mine, id) = {
+        let w = apps[0].world_mut();
+        w.query_filtered::<(Entity, &NetId), (With<Warrior>, Without<Remote>)>().iter(w).next().map(|(e, i)| (e, *i)).expect("a warrior of ours")
+    };
+    let copy = {
+        let w = apps[1].world_mut();
+        w.query_filtered::<(Entity, &NetId), With<Remote>>().iter(w).find(|(_, i)| **i == id).map(|(e, _)| e).expect("its copy")
+    };
+    let at = {
+        let world = apps[0].world();
+        let (layout, floor) = (world.resource::<MapLayout>(), world.resource::<StreetFloor>());
+        // Loot can lie among things on the NCR: a street spot, clear for the shot across it.
+        let clear = |p: &&Vec3| !floor.ready() || (-2..=2).all(|k| floor.walkable(p.xz() + Vec2::X * k as f32));
+        let p = layout.floor_loot.iter().find(clear).expect("a clear spot");
+        Vec3::new(p.x, layout.terrain.height(p.x, p.z) + HALF_HEIGHT + 0.03, p.z)
+    };
+    // The owner's peer: on the street, buttons as given.
+    let hold = |apps: &mut [App], held: u16| {
+        let w = apps[0].world_mut();
+        w.get_mut::<Transform>(mine).unwrap().translation = at;
+        let mut kin = w.get_mut::<Kinematic>(mine).unwrap();
+        kin.mode = MoveMode::Ground;
+        kin.velocity = Vec3::ZERO;
+        kin.fall_from = None;
+        w.get_mut::<PlayerIntent>(mine).unwrap().held = held;
+    };
+    // The other peer: a shot across the copy at a standing warrior's chest.
+    let hit = |apps: &mut [App]| {
+        let chest = apps[1].world().get::<Transform>(copy).unwrap().translation + Vec3::Y * 0.5;
+        apps[1]
+            .world_mut()
+            .run_system_once(move |spatial: SpatialQuery| {
+                let filter = SpatialQueryFilter::from_mask(hit_mask());
+                spatial.cast_ray(chest + Vec3::X * 1.5, Dir3::NEG_X, 3.0, true, &filter).is_some_and(|h| h.entity == copy)
+            })
+            .unwrap()
+    };
+    let crouched = |apps: &[App]| apps[1].world().get::<Stance>(copy).unwrap().crouched;
+    let mut step = |apps: &mut [App], held: u16| {
+        for _ in 0..30 {
+            hold(apps, held);
+            ticks(apps, ids, &mut sent, 1);
+        }
+    };
+    step(&mut apps, 0);
+    let standing = hit(&mut apps) && !crouched(&apps);
+    step(&mut apps, btn::CROUCH);
+    let down = crouched(&apps);
+    let flies_over = !hit(&mut apps);
+    step(&mut apps, 0);
+    let up = !crouched(&apps) && hit(&mut apps);
+    (standing, down, flies_over, up)
 }
 
 fn peer(id: PeerId, ids: &[PeerId], bots: u32, autopilot: bool, items: &str) -> App {

@@ -25,6 +25,10 @@ fn main() {
     let kalash = map.chests.iter().filter(one_match).filter(|c| c.kind == shared::map::ChestKind::Kalash).count();
     println!("kalash {kalash}, kit on roofs and decks {}", map.kit.iter().filter(|k| k.pos.y - t.height(k.pos.x, k.pos.z) > 1.5).count());
     println!("kit floating on nothing: {}", compose::floating(&map).len());
+    let pieces = |name: &str| map.kit.iter().filter(|k| k.name == name).count();
+    println!("hiding: {} gumti, {} tanks, {} washing lines, {} poles, {} flocks", pieces("gumti"), pieces("tanki"), pieces("clothesline"), pieces("pole"), shared::sim::birds::perches(&map).len());
+    let (walls, short) = shared::map::kit::out_of_step(&map);
+    println!("hidden colliders out of step with the kit: {walls} invisible walls, {short} pieces short of a collider");
     let mut squares = std::collections::HashMap::new();
     for k in &map.kit {
         *squares.entry(((k.pos.x / 100.0).floor() as i32, (k.pos.z / 100.0).floor() as i32)).or_insert(0) += 1;

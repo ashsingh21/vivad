@@ -11,7 +11,8 @@
 //! To look closer: STUCK=1 names each bot going nowhere, INV=<seconds> lists what every bot holds
 //! and wants at that time, TRACE=1 and TRACK=<name> follow bots through the early game. Each match
 //! also reports two things a warrior's position alone can't show: "dither", bots flipping between
-//! two goals (they keep moving, so they never count as stuck), and how much the ring burnt.
+//! two goals (they keep moving, so they never count as stuck), and how much the ring burnt. The
+//! `senses:` line says what the bots' senses made them do.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
@@ -24,7 +25,9 @@ use shared::items::{ItemDb, ItemKind};
 use shared::sim::flow::{Match, MatchState};
 use shared::sim::loot::{Chest, Pickup};
 use shared::sim::zone::Zone;
+use shared::sim::birds::{FLOCK_NOISE, Flock};
 use shared::sim::bots::BotBrain;
+use shared::sim::senses::{NoiseMsg, Tally};
 use shared::sim::talk::FellMsg;
 use shared::sim::{DamageCause, DamageMsg, HitMsg, Inventory, Eliminated, FeedMsg, Kinematic, MatchConfig, MoveMode, RestartMatch, SimPlugin, Warrior};
 
@@ -34,6 +37,23 @@ struct Hits(u32);
 
 fn count_hits(mut hits: MessageReader<HitMsg>, mut n: ResMut<Hits>) {
     n.0 += hits.read().count() as u32;
+}
+
+/// Sounds in the world this match, for the bots to hear: shots, and flocks going up.
+#[derive(Resource, Default)]
+struct Noises {
+    shots: u32,
+    flocks: u32,
+}
+
+fn count_noises(mut noises: MessageReader<NoiseMsg>, mut n: ResMut<Noises>) {
+    for noise in noises.read() {
+        if noise.radius == FLOCK_NOISE {
+            n.flocks += 1;
+        } else {
+            n.shots += 1;
+        }
+    }
 }
 
 /// Pickups taken this match. Headless, a pickup entity only goes when a warrior takes it (by hand
@@ -131,7 +151,7 @@ fn main() {
         .add_plugins(PhysicsPlugins::default())
         .add_plugins(SimPlugin { items_ron: items })
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)));
-    app.init_resource::<Hits>().init_resource::<Taken>().init_resource::<Burnt>().add_systems(FixedUpdate, (count_hits, count_burns)).add_systems(Update, count_taken);
+    app.init_resource::<Hits>().init_resource::<Taken>().init_resource::<Burnt>().init_resource::<Noises>().add_systems(FixedUpdate, (count_hits, count_burns, count_noises)).add_systems(Update, count_taken);
     // Driving the app by hand: plugins must be finalised as `App::run` would.
     app.finish();
     app.cleanup();
@@ -205,6 +225,7 @@ fn main() {
         app.world_mut().resource_mut::<Hits>().0 = 0;
         app.world_mut().resource_mut::<Taken>().0 = 0;
         app.world_mut().resource_mut::<Burnt>().0.clear();
+        *app.world_mut().resource_mut::<Noises>() = Noises::default();
         loop {
             let frame = Instant::now();
             app.update();
@@ -500,6 +521,24 @@ fn main() {
                 println!(
                     "dither {:.0} bot-seconds ({} bots, worst {:.0} s)",
                     flip_secs.iter().fold(0.0, |a, b| a + b), flip_secs.len(), flip_secs.iter().copied().fold(0.0f32, f32::max)
+                );
+                // What the bots' senses made them do, summed over every brain, fallen ones too.
+                let tally = world.query::<&BotBrain>().iter(world).fold(Tally::default(), |a, b| {
+                    let t = b.senses.tally;
+                    Tally {
+                        noticed: a.noticed + t.noticed,
+                        searches: a.searches + t.searches,
+                        arrived: a.arrived + t.arrived,
+                        found: a.found + t.found,
+                        flights: a.flights + t.flights,
+                        hid: a.hid + t.hid,
+                    }
+                });
+                let flocks = world.query::<&Flock>().iter(world).count();
+                let noises = world.resource::<Noises>();
+                println!(
+                    "senses: {} sightings; {} searches, {} reached, {} found someone; {} flights, {} to a hiding place; {} shots heard of, {} flocks of {flocks} put up",
+                    tally.noticed, tally.searches, tally.arrived, tally.found, tally.flights, tally.hid, noises.shots, noises.flocks
                 );
                 let burnt = world.resource::<Burnt>();
                 println!(

@@ -1,10 +1,11 @@
 //! The street kit on the city maps: parked autos and scooters, thelas, chai stalls, poles, drums,
-//! crates and chairs along the roads; stair rooms, coolers, dishes, solar panels and washing lines on
-//! the roofs. Placed from the map seed (every peer the same); drawn by the client from one model
-//! file, merged per chunk (tools/blender/props/street_kit.py, crate::street in the game). The bigger
-//! pieces stand behind invisible colliders, so a parked auto is cover.
+//! crates and chairs along the roads; stair rooms, coolers, dishes, solar panels, washing lines and
+//! water tanks on the roofs. Placed from the map seed (every peer the same); drawn by the client from
+//! one model file, merged per chunk (tools/blender/props/street_kit.py, crate::street in the game).
+//! The bigger pieces stand behind invisible colliders, so a parked auto is cover from a bullet and
+//! from a bot's eye alike; washing hides a body and stops nothing (`soft`).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use bevy::prelude::*;
 use rand::RngExt;
@@ -12,7 +13,7 @@ use crate::SmallRng;
 
 use super::build::Builder;
 use super::terrain::ground;
-use super::{MapLayout, Mat, Shape};
+use super::{Block, MapLayout, Mat, Shape};
 
 /// A placed piece: the kit model's name (its meshes are `<name>_LOD<n>`), where it stands and which
 /// way it faces (a yaw about +Y; the model faces -Z).
@@ -36,15 +37,37 @@ fn collider(name: &str) -> Option<Shape> {
         "mumty" => Shape::Box(Vec3::new(3.0, 2.75, 2.4)),
         "pole" => Shape::Cylinder { radius: 0.14, height: 9.0 },
         "drum" => Shape::Cylinder { radius: 0.3, height: 0.95 },
+        "tanki" => Shape::Cylinder { radius: 0.56, height: 1.5 },
         _ => return None,
     })
+}
+
+/// The gumti's colliders: three walls, a roof and the half-drawn shutter, whose bottom edge at 1.15 m
+/// lets a crouch in and no one standing.
+const GUMTI: [(Vec3, Vec3); 5] = [
+    (Vec3::new(-1.46, 1.25, 0.0), Vec3::new(0.08, 2.5, 2.6)),
+    (Vec3::new(1.46, 1.25, 0.0), Vec3::new(0.08, 2.5, 2.6)),
+    (Vec3::new(0.0, 1.25, 1.26), Vec3::new(3.0, 2.5, 0.08)),
+    (Vec3::new(0.0, 2.54, -0.04), Vec3::new(3.24, 0.08, 2.92)),
+    (Vec3::new(0.0, 1.825, -1.245), Vec3::new(2.84, 1.35, 0.05)),
+];
+
+/// A hollow piece's colliders in its own frame: (centre, size).
+fn parts(name: &str) -> &'static [(Vec3, Vec3)] {
+    if name == "gumti" { &GUMTI } else { &[] }
+}
+
+/// What a piece hides without stopping anything: (size, height of its centre above the piece's foot).
+/// Washing hangs from 1.9 m down to about 0.6 m.
+pub fn soft(name: &str) -> Option<(Vec3, f32)> {
+    (name == "clothesline").then_some((Vec3::new(3.6, 1.3, 0.04), 1.25))
 }
 
 /// Footprint radius kept clear round a piece when placing.
 fn reach(name: &str) -> f32 {
     match name {
         "auto" | "thela" | "chai" => 1.6,
-        "mumty" => 2.1,
+        "mumty" | "gumti" => 2.1,
         "clothesline" => 2.2,
         "scooter" | "crates" | "solar" => 1.0,
         _ => 0.6,
@@ -62,9 +85,58 @@ fn body(name: &str, pos: Vec3) -> Option<(Vec3, Shape)> {
     Some((pos + Vec3::Y * h * 0.5, shape))
 }
 
+/// Where each of a piece's colliders stands.
+fn colliders(k: &KitPiece) -> impl Iterator<Item = Vec3> {
+    let rot = Quat::from_rotation_y(k.yaw);
+    let pos = k.pos;
+    body(k.name, pos).map(|(at, _)| at).into_iter().chain(parts(k.name).iter().map(move |(centre, _)| pos + rot * *centre))
+}
+
+/// A collider `place` puts down: hidden, upright, wood or steel.
+fn hidden(b: &Block) -> bool {
+    !b.visible && b.collide && matches!(b.mat, Mat::Wood | Mat::Steel) && (b.rot * Vec3::Y).y > 0.99
+}
+
+/// Collider spots to match against, by the metre. Matching is by distance and not by exact bits:
+/// `compose` moves a piece and its colliders apart, so a hollow piece's walls, turned then moved
+/// where the piece is moved then turned, come out a hair off.
+#[derive(Default)]
+struct Spots(HashMap<(i32, i32), Vec<Vec3>>);
+
+impl Spots {
+    fn cell(p: Vec3) -> (i32, i32) {
+        (p.x.floor() as i32, p.z.floor() as i32)
+    }
+
+    fn add(&mut self, p: Vec3) {
+        self.0.entry(Self::cell(p)).or_default().push(p);
+    }
+
+    /// Whether one stands within a centimetre of `p`.
+    fn has(&self, p: Vec3) -> bool {
+        let (x, z) = Self::cell(p);
+        (-1..=1).any(|i| (-1..=1).any(|j| self.0.get(&(x + i, z + j)).is_some_and(|near| near.iter().any(|q| q.distance(p) < 0.01))))
+    }
+}
+
+/// What doesn't add up between the kit and its colliders: hidden colliders no piece accounts for
+/// (walls nobody can see), and pieces short of a collider (a wall that stops nothing).
+pub fn out_of_step(map: &MapLayout) -> (usize, usize) {
+    let (mut wanted, mut standing) = (Spots::default(), Spots::default());
+    map.kit.iter().flat_map(colliders).for_each(|p| wanted.add(p));
+    map.blocks.iter().filter(|b| hidden(b)).for_each(|b| standing.add(b.pos));
+    let walls = map.blocks.iter().filter(|b| hidden(b) && !wanted.has(b.pos)).count();
+    let short = map.kit.iter().filter(|k| colliders(k).any(|p| !standing.has(p))).count();
+    (walls, short)
+}
+
 pub(super) fn place(b: &mut Builder, name: &'static str, pos: Vec3, yaw: f32) {
     if let Some((at, shape)) = body(name, pos) {
         b.push(at, Quat::from_rotation_y(yaw), shape, Mat::Wood, true, false);
+    }
+    let rot = Quat::from_rotation_y(yaw);
+    for (centre, size) in parts(name) {
+        b.push(pos + rot * *centre, rot, Shape::Box(*size), Mat::Steel, true, false);
     }
     b.map.kit.push(KitPiece { name, pos, yaw });
 }
@@ -86,9 +158,11 @@ fn spaced(pts: &[Vec2], gap: f32) -> Vec<usize> {
 
 /// Cuts a district's kit to about `quota` pieces inside `clip`, spread evenly. Every piece kept
 /// holds the rest a set distance off, so a crowded lane loses most and a lone stall stays. A piece
-/// that goes takes its collider with it.
+/// that goes takes its collider with it. One astride the edge goes too, or the district's clip would
+/// take a wall from under it.
 pub fn thin(map: &mut MapLayout, clip: f32, quota: usize, rng: &mut SmallRng) {
-    let mut order: Vec<usize> = (0..map.kit.len()).filter(|k| map.kit[*k].pos.xz().abs().max_element() <= clip).collect();
+    let inside = |p: Vec2| p.abs().max_element() <= clip;
+    let mut order: Vec<usize> = (0..map.kit.len()).filter(|k| inside(map.kit[*k].pos.xz()) && colliders(&map.kit[*k]).all(|p| inside(p.xz()))).collect();
     super::compose::shuffle(&mut order, rng);
     let pts: Vec<Vec2> = order.iter().map(|k| map.kit[*k].pos.xz()).collect();
     // The widest spacing that still leaves enough.
@@ -108,16 +182,16 @@ pub fn thin(map: &mut MapLayout, clip: f32, quota: usize, rng: &mut SmallRng) {
     keep(map, &stays);
 }
 
-/// Keeps the pieces marked, in step with `map.kit`: a piece that goes takes its collider with it.
+/// Keeps the pieces marked, in step with `map.kit`: a piece that goes takes its colliders with it.
 pub fn keep(map: &mut MapLayout, stays: &[bool]) {
-    let bits = |p: Vec3| p.to_array().map(f32::to_bits);
-    let gone: HashSet<[u32; 3]> = map.kit.iter().zip(stays).filter(|(_, stay)| !**stay).filter_map(|(k, _)| body(k.name, k.pos)).map(|(at, _)| bits(at)).collect();
+    let mut gone = Spots::default();
+    map.kit.iter().zip(stays).filter(|(_, stay)| !**stay).flat_map(|(k, _)| colliders(k)).for_each(|p| gone.add(p));
     let mut k = 0;
     map.kit.retain(|_| {
         k += 1;
         stays[k - 1]
     });
-    map.blocks.retain(|b| b.visible || b.mat != Mat::Wood || !gone.contains(&bits(b.pos)));
+    map.blocks.retain(|b| !hidden(b) || !gone.has(b.pos));
 }
 
 /// The yaw that faces the model (-Z forward) along `dir` (x, z).
@@ -220,6 +294,57 @@ pub fn streets(b: &mut Builder, rng: &mut SmallRng, roads: &[(Vec<Vec2>, f32, bo
     }
 }
 
+/// A gumti every so often along the roads, on the edge of the lane with its shutter to the street.
+pub fn kiosks(b: &mut Builder, rng: &mut SmallRng, roads: &[(Vec<Vec2>, f32, bool)], houses: &[Vec<Vec2>], half: f32) {
+    for (pts, width, _) in roads {
+        // By the length of the road, its stretches being short.
+        let (mut walked, mut next) = (0.0, rng.random_range(10.0..50.0));
+        for seg in pts.windows(2) {
+            let (a, c) = (seg[0], seg[1]);
+            let len = a.distance(c);
+            let d = (c - a) / len.max(1e-3);
+            let n = Vec2::new(-d.y, d.x);
+            while next < walked + len {
+                let t = next - walked;
+                let side = if rng.random_range(0.0..1.0) < 0.5 { -1.0 } else { 1.0 };
+                let spot = [side, -side].map(|s| (s, a + d * t + n * s * (width * 0.5 + 0.8).max(3.0)));
+                if let Some((s, p)) = spot.into_iter().find(|(_, p)| street_free(b.map, houses, *p, reach("gumti"), half)) {
+                    place(b, "gumti", Vec3::new(p.x, b.map.terrain.height(p.x, p.y), p.y), facing(-n * s));
+                    next += rng.random_range(50.0..90.0);
+                } else {
+                    next += 12.0;
+                }
+            }
+            walked += len;
+        }
+    }
+}
+
+/// A row of two or three tanks along the long edge of most roofs of any size.
+pub fn tanks(b: &mut Builder, rng: &mut SmallRng) {
+    let roofs: Vec<(Vec<Vec2>, f32)> = b.map.footprints.iter().filter(|f| f.mat != Mat::Water && f.top - f.base > 3.0).map(|f| (f.pts.clone(), f.top)).collect();
+    for (pts, top) in roofs {
+        if (0..pts.len()).map(|i| pts[i].perp_dot(pts[(i + 1) % pts.len()])).sum::<f32>().abs() * 0.5 < 60.0 || rng.random_range(0.0..1.0) > 0.75 {
+            continue;
+        }
+        let c = pts.iter().sum::<Vec2>() / pts.len() as f32;
+        let (ea, eb) = (0..pts.len()).map(|i| (pts[i], pts[(i + 1) % pts.len()])).max_by(|x, y| x.0.distance(x.1).total_cmp(&y.0.distance(y.1))).expect("outline");
+        let along = (eb - ea).normalize_or(Vec2::X);
+        let inward = Vec2::new(-along.y, along.x) * (c - ea).dot(Vec2::new(-along.y, along.x)).signum();
+        let foot = ea.lerp(eb, rng.random_range(0.3..0.7)) + inward * 1.6;
+        let count = rng.random_range(2..=3);
+        for k in 0..count {
+            let p = foot + along * 1.4 * (k as f32 - (count - 1) as f32 * 0.5);
+            let clear = super::footprint::contains(&pts, p)
+                && to_outline(&pts, p) > 0.8
+                && !b.map.kit.iter().any(|q| q.pos.xz().distance(p) < reach(q.name) + 0.7 && (q.pos.y - top).abs() < 1.0);
+            if clear {
+                place(b, "tanki", Vec3::new(p.x, top, p.y), rng.random_range(0.0..std::f32::consts::TAU));
+            }
+        }
+    }
+}
+
 /// Roofs: a stair room on most bigger ones, and one to three things from roof life.
 pub fn roofs(b: &mut Builder, rng: &mut SmallRng) {
     const ROOF: [&str; 8] = ["cooler", "dish", "solar", "clothesline", "pot", "chairs", "drum", "crates"];
@@ -261,5 +386,44 @@ pub fn roofs(b: &mut Builder, rng: &mut SmallRng) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Moved as `compose::add` moves a district, a piece and its colliders apart, then dropped as
+    /// `clear_the_ground` drops one: all five of a gumti's walls go with it, and nobody else's.
+    #[test]
+    fn a_dropped_gumti_leaves_no_walls() {
+        let mut map = MapLayout::default();
+        let mut b = Builder::new(&mut map);
+        place(&mut b, "gumti", Vec3::new(103.37, 1.2, -41.9), 0.73);
+        place(&mut b, "gumti", Vec3::new(140.03, 1.2, -41.9), 2.1);
+        place(&mut b, "auto", Vec3::new(120.0, 1.2, 60.0), 0.3);
+        let at = Vec3::new(-1873.21, 0.0, 1291.63);
+        map.blocks.iter_mut().for_each(|b| b.pos += at);
+        map.kit.iter_mut().for_each(|k| k.pos += at);
+        assert_eq!(out_of_step(&map), (0, 0));
+        keep(&mut map, &[false, true, false]);
+        assert_eq!(map.kit.len(), 1);
+        assert_eq!(map.blocks.len(), 5);
+        assert_eq!(out_of_step(&map), (0, 0));
+    }
+
+    /// The check has teeth: a wall left behind, and a wall gone missing, both show.
+    #[test]
+    fn walls_out_of_step_show() {
+        let mut map = MapLayout::default();
+        let mut b = Builder::new(&mut map);
+        place(&mut b, "gumti", Vec3::new(10.0, 0.0, 10.0), 0.4);
+        map.kit.clear();
+        assert_eq!(out_of_step(&map).0, 5, "every wall of a piece that isn't there");
+        map.blocks.clear();
+        let mut b = Builder::new(&mut map);
+        place(&mut b, "gumti", Vec3::new(10.0, 0.0, 10.0), 0.4);
+        map.blocks.pop();
+        assert_eq!(out_of_step(&map), (0, 1));
     }
 }

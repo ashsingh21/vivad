@@ -18,6 +18,7 @@ pub mod quality;
 pub mod rim;
 pub mod say;
 pub mod sky;
+pub mod stage;
 pub mod street;
 pub mod skyline;
 pub mod lobby;

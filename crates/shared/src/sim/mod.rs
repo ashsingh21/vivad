@@ -2,6 +2,7 @@
 //! rendering. A future server runs exactly this plugin; clients only add presentation.
 
 pub mod aim;
+pub mod birds;
 pub mod bots;
 pub mod combat;
 pub mod flow;
@@ -9,6 +10,8 @@ pub mod loot;
 pub mod movement;
 pub mod nav;
 pub mod net;
+pub mod senses;
+pub mod stance;
 pub mod talk;
 pub mod zone;
 
@@ -40,11 +43,18 @@ pub enum Layer {
     Character,
     Door,
     Pickup,
+    /// Hides a body but stops nothing: washing on a line.
+    Soft,
 }
 
-/// The world for line-of-sight and movement: static geometry plus doors.
+/// The world for movement and shots' line of sight: static geometry plus doors.
 pub fn solid_mask() -> LayerMask {
     LayerMask::from([Layer::World, Layer::Door])
+}
+
+/// What a bot's eye can't see through (`senses`).
+pub fn sight_mask() -> LayerMask {
+    LayerMask::from([Layer::World, Layer::Door, Layer::Soft])
 }
 
 /// What projectiles and melee can hit.
@@ -84,6 +94,10 @@ pub struct PlayerIntent {
 impl PlayerIntent {
     pub fn held(&self, b: u16) -> bool {
         self.held & b != 0
+    }
+    /// How far a crouch has dropped the eye and the hands (`stance`).
+    pub fn drop(&self) -> f32 {
+        if self.held(btn::CROUCH) { stance::CROUCH_DROP } else { 0.0 }
     }
     pub fn pressed(&self, b: u16) -> bool {
         self.pressed & b != 0
@@ -440,6 +454,7 @@ impl Plugin for SimPlugin {
             .add_message::<DamageMsg>()
             .add_message::<FeedMsg>()
             .add_message::<HitMsg>()
+            .add_message::<senses::NoiseMsg>()
             .add_message::<RestartMatch>()
             .add_message::<flow::VoteMap>()
             .init_resource::<flow::MapVotes>()
@@ -545,6 +560,18 @@ fn spawn_map(mut commands: Commands, layout: Res<MapLayout>) {
             CollisionLayers::new(Layer::Door, LayerMask::ALL),
         ));
     }
+    // Cover that hides a body and stops nothing, for a bot's eye alone.
+    for piece in &layout.kit {
+        let Some((size, y)) = crate::map::kit::soft(piece.name) else { continue };
+        commands.spawn((
+            OfMap,
+            Transform::from_translation(piece.pos + Vec3::Y * y).with_rotation(Quat::from_rotation_y(piece.yaw)),
+            RigidBody::Static,
+            Collider::cuboid(size.x, size.y, size.z),
+            CollisionLayers::new(Layer::Soft, LayerMask::ALL),
+        ));
+    }
+    birds::spawn_flocks(&mut commands, &layout);
     for (i, prop) in layout.props.iter().enumerate() {
         let mut e = commands.spawn((
             PropIndex(i),
