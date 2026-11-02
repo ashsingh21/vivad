@@ -1,0 +1,85 @@
+/target
+/build
+*.blend1
+.env
+# Intermediate review passes stay local; the final pass and the Bevy check are committed.
+/previews/hiding-senses/search_frames/
+/previews/hiding-senses/*.png
+/previews/*/pass1/
+/previews/front-door/frames/
+/previews/front-door/*.webp
+/previews/*/pass2/
+/previews/*/pass3*/
+__pycache__/
+assets_src/downloads/
+assets_src/makehuman/
+previews/characters/probe/
+previews/characters/*_b[0-9]/
+previews/characters/*_f1/
+previews/trees/p1/
+previews/trees/p2/
+previews/temple/t1/
+previews/hills/
+previews/buildings/b1/
+previews/buildings/b2/
+previews/buildings/orn/
+previews/hampi/h1/
+previews/kit2/
+previews/kit3/
+previews/flicker/
+# Review renders and in-game captures for the armoury; rebuilt on demand (just preview / armoury).
+previews/*/p1/
+previews/anims_p/
+previews/armoury/
+previews/armoury_sheet.png
+previews/grass/
+previews/faces/
+previews/faces_*.png
+previews/armoury_f/
+previews/grass_exposure.png
+previews/sword_fix.png
+previews/brightness_fix.png
+previews/stepwell_zfight.png
+previews/arrow_reticle.png
+previews/grass_v2.png
+previews/seeds_7_21.png
+previews/stepwell_deep.png
+previews/sw_before/
+previews/sw_after/
+previews/sw_fix/
+previews/perf/
+previews/stepwell_fixes.png
+previews/stepwell_figures.png
+previews/fort0/
+previews/fort1/
+previews/fort_qila.png
+previews/sheet.png
+previews/kashi_ghats.png
+previews/hampi.png
+previews/bazaar.png
+previews/fixes_sheet.png
+previews/caves/
+previews/east/
+previews/caves_sheet.png
+previews/east_sheet.png
+
+# Generated NCR capture runs (curated preview lives in docs/ncr).
+/previews/ncr/
+/previews/ncr-sheet.png
+/previews/ncr-before/
+/previews/ncr-realism/
+/previews/ncr-realism-sheet.png
+/tools/texpack/target
+.DS_Store
+tools/texpack/target/
+# Raw full-size game shots and clip frames behind the character sheets.
+previews/characters/game_*/
+previews/characters/clip_*/frame_*
+
+# Research downloads live on the claude/research-* branches and worktrees, never on main.
+/research/
+# Raw frames and shots behind the movement sheets.
+previews/ashu/*/
+# Mixamo downloads (Adobe terms: not to be redistributed); the converted clips are in the anims glb.
+tools/blender/characters/mixamo/
+tools/blender/characters/mocaponline/
