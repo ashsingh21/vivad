@@ -69,9 +69,9 @@ const UPPER: u32 = 1;
 const SWING_TIME: f32 = 0.4;
 const FADE_RATE: f32 = 12.0;
 /// The slide clip's drop into it and its get-up (tools/blender/characters/anims.py SLIDE_IN,
-/// SLIDE_OUT: 8 frames at 30 fps each); the held slide between them loops.
-const SLIDE_IN: f32 = 8.0 / 30.0;
-const SLIDE_OUT: f32 = 8.0 / 30.0;
+/// SLIDE_OUT: 10 and 12 frames at 30 fps); the held slide between them loops.
+const SLIDE_IN: f32 = 10.0 / 30.0;
+const SLIDE_OUT: f32 = 12.0 / 30.0;
 
 /// Where in the slide clip (lasting `dur`) to be: dropping in, then the hold looped while the slide
 /// lasts; once it ends, the get-up.

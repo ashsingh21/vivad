@@ -1213,7 +1213,7 @@ def death_pose(rig, t):
 
 # The slide clip's parts, in frames: dropping into it from a running stride, the slide held (a loop:
 # the game repeats it while sliding), getting up into a crouch (crates/game/src/animation.rs).
-SLIDE_IN, SLIDE_HOLD, SLIDE_OUT = 8, 30, 8
+SLIDE_IN, SLIDE_HOLD, SLIDE_OUT = 10, 30, 12
 
 # Its poses as settings: hip height (fraction of standing), the hips tipped forward (+) or back and
 # rolled, the spine bringing the chest back up (0..1), each ankle (sideways from its own hip, ahead
@@ -1222,7 +1222,7 @@ SLIDE_IN, SLIDE_HOLD, SLIDE_OUT = 8, 30, 8
 SLIDE_KEYS = {
     # Mid-stride, the left foot reaching down ahead, the right trailing.
     "run": dict(seat=0.92, tilt=0.12, roll=0.0, spine=0.0, lead=(0.02, 0.3, 0.1), lead_pole=(0, -1, 0.1),
-                fold=(0.0, -0.25, 0.32), fold_pole=(0, -1, 0.0), lead_foot=(0.0, 0.0), fold_foot=(-0.4, 0.0),
+                fold=(0.0, -0.18, 0.24), fold_pole=(-0.4, -1, 0.0), lead_foot=(0.0, 0.0), fold_foot=(-0.4, -0.3),
                 arm_l=(0.5, 1.2, 0.15), arm_r=(-0.4, 1.0, 0.15)),
     # Sat on the right hip: the left leg out ahead, knee soft, heel down, toes up; the right folded
     # under it, knee out to the side, foot under the left knee; the back up; the arms out for balance.
@@ -1231,7 +1231,7 @@ SLIDE_KEYS = {
                  arm_l=(1.15, 0.45, 0.6), arm_r=(-0.35, 0.3, 1.1)),
     # Up on the feet, crouched.
     "crouch": dict(seat=0.62, tilt=0.3, roll=0.0, spine=0.0, lead=(0.03, 0.14, 0.1), lead_pole=(0, -1, 0.2),
-                   fold=(-0.03, -0.1, 0.1), fold_pole=(0, -1, 0.2), lead_foot=(0.0, 0.0), fold_foot=(0.0, 0.0),
+                   fold=(-0.03, -0.1, 0.1), fold_pole=(0, -1, 0.2), lead_foot=(0.0, 0.0), fold_foot=(0.0, -0.35),
                    arm_l=(0.3, 0.6, 0.2), arm_r=(0.3, 0.6, 0.2)),
 }
 
@@ -1248,10 +1248,16 @@ def slide_pose(rig, t):
         u = 1.0
     else:
         a, z, u = SLIDE_KEYS["seat"], SLIDE_KEYS["crouch"], (f - SLIDE_IN - SLIDE_HOLD) / SLIDE_OUT
-    # The legs lead the hips: out (or under) first, the body following.
-    k, kl = smooth(u), smooth(min(1.0, u * 1.5))
+    # Dropping in, the legs lead the hips: out first, the body following. Getting up, together.
+    k = smooth(u)
+    kl = smooth(min(1.0, u * 1.25)) if f < SLIDE_IN else k
+    # The feet turning out of the tuck at an even rate (eased, they'd whip round mid-way).
+    kf = min(1.0, u * 1.25) if f < SLIDE_IN else u
     mix = lambda key, w: lerp(a[key], z[key], w)
     vec = lambda key, w: Vector(a[key]).lerp(Vector(z[key]), w)
+    # The knees' pull goes over the top between its ends (straight across, it can pass through the
+    # leg's own line and the knee flips round).
+    pole = lambda key, w: vec(key, w) + UP * 1.5 * math.sin(math.pi * w)
     held = max(0.0, min(1.0, (f - SLIDE_IN) / SLIDE_HOLD)) if SLIDE_IN <= f <= SLIDE_IN + SLIDE_HOLD else 0.0
     b, j = math.sin(2 * math.pi * held), math.sin(4 * math.pi * held)
     look = rig.world_rot("head")
@@ -1271,11 +1277,11 @@ def slide_pose(rig, t):
     # The folded foot's sideways place: under the left knee (None), from the right hip.
     fx = lambda key: (hl.x - 0.02 - hr.x) if key[0] is None else key[0]
     lx, ly, lz = vec("lead", kl)
-    rig.leg_ik("l", (hl.x + lx, hl.y - lead * ly, ground + lz), vec("lead_pole", kl))
-    rig.foot_pitch("l", lerp(a["lead_foot"][0], z["lead_foot"][0], kl), yaw=lerp(a["lead_foot"][1], z["lead_foot"][1], kl))
+    rig.leg_ik("l", (hl.x + lx, hl.y - lead * ly, ground + lz), pole("lead_pole", kl))
+    rig.foot_pitch("l", lerp(a["lead_foot"][0], z["lead_foot"][0], kf), yaw=lerp(a["lead_foot"][1], z["lead_foot"][1], kf))
     ry, rz = lerp(a["fold"][1], z["fold"][1], kl), lerp(a["fold"][2], z["fold"][2], kl)
-    rig.leg_ik("r", (hr.x + lerp(fx(a["fold"]), fx(z["fold"]), kl), hr.y - lead * ry, ground + rz), vec("fold_pole", kl))
-    rig.foot_pitch("r", lerp(a["fold_foot"][0], z["fold_foot"][0], kl), yaw=lerp(a["fold_foot"][1], z["fold_foot"][1], kl))
+    rig.leg_ik("r", (hr.x + lerp(fx(a["fold"]), fx(z["fold"]), kl), hr.y - lead * ry, ground + rz), pole("fold_pole", kl))
+    rig.foot_pitch("r", lerp(a["fold_foot"][0], z["fold_foot"][0], kf), yaw=lerp(a["fold_foot"][1], z["fold_foot"][1], kf))
     for s in "lr":
         sw, el, out = vec(f"arm_{s}", k)
         arm_swing(rig, s, sw + (0.04 if s == "l" else -0.04) * b, el, out=out)

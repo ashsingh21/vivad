@@ -31,7 +31,7 @@ CLIPS = ["rifle_slide_move", "rifle_idle", "rifle_walk_f", "rifle_run_f", "rifle
 FPS = 30
 # crates/game/src/animation.rs FADE_RATE; crates/shared/src/sim/movement.rs.
 FADE_RATE = 12.0
-SLIDE_IN = SLIDE_OUT = 8  # frames: anims.py
+SLIDE_IN, SLIDE_OUT = 10, 12  # frames: anims.py
 SPRINT, SLIDE_SPEED, SLIDE_FRICTION, SLIDE_END, CROUCH = 8.6, 10.5, 6.5, 3.6, 1.4
 # (sprint, slide, crouch walk) clips.
 SEQUENCES = {"slide_move": ("sprint_f", "slide", "crouch_f"),
