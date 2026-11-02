@@ -42,9 +42,9 @@ const FULL_BODY: [&str; 5] = ["jump", "fall", "freefall", "glide", "death"];
 /// Locomotion the file may or may not have (Mixamo's, tools/blender/characters/anims.py, built where
 /// its downloads are): the crouch's other directions, and whole-body sets for holding a long gun
 /// or a pistol. Picked where present (`AnimSet::has`), else the plain ones.
-const OPTIONAL_LOCOMOTION: [&str; 45] = [
+const OPTIONAL_LOCOMOTION: [&str; 46] = [
     // A long gun aimed as you move: whole-body clips from the rifle pack.
-    "rifleaim_idle", "rifleaim_crouch_idle",
+    "rifleaim_idle", "rifleaim_crouch_idle", "rifle_slide",
     "rifleaim_walk_f", "rifleaim_walk_b", "rifleaim_walk_l", "rifleaim_walk_r",
     "rifleaim_run_f", "rifleaim_run_b", "rifleaim_run_l", "rifleaim_run_r",
     "rifleaim_crouch_f", "rifleaim_crouch_b", "rifleaim_crouch_l", "rifleaim_crouch_r",
@@ -427,6 +427,8 @@ fn drive(
                         _ => None,
                     };
                     let aim_moves = gun == Some(true) && intent.held(btn::AIM) && !kin.sliding && set.has("rifleaim_run_f");
+                    // Sliding with a long gun: its own whole-body slide, the gun already up.
+                    let gun_slide = gun == Some(true) && kin.sliding && set.has("rifle_slide");
                     let (prefix, gaits) = match gun {
                         Some(true) if aim_moves => ("rifleaim_", RIFLE_AIM_GAITS),
                         Some(true) => ("rifle_", RIFLE_GAITS),
@@ -503,7 +505,7 @@ fn drive(
                             let gun = crate::visuals::shot_kind(id) == crate::visuals::Shot::Bullet;
                             // Sliding, the gun comes up ready to shoot, as when aiming.
                             let sliding = loco.iter().any(|(n, _)| *n == "slide");
-                            bow_draw(k, act, loaded, intent.held(btn::AIM) || (sliding && gun)).filter(|_| !aim_moves).map(|d| {
+                            bow_draw(k, act, loaded, intent.held(btn::AIM) || (sliding && gun)).filter(|_| !aim_moves && !gun_slide).map(|d| {
                                 if crate::visuals::long_gun(id) {
                                     ("rifle_aim", 0.0)
                                 } else if gun && set.has("pistol_aim") {
@@ -530,7 +532,7 @@ fn drive(
         }
 
         // The torso follows the aim fully with a bow up, partly otherwise.
-        let raised = want.iter().any(|w| w.0 == "bow_draw" || w.0 == "rifle_aim" || w.0 == "pistol_aim" || w.0.starts_with("rifleaim_"));
+        let raised = want.iter().any(|w| w.0 == "bow_draw" || w.0 == "rifle_aim" || w.0 == "pistol_aim" || w.0.starts_with("rifleaim_") || w.0 == "rifle_slide");
         let share = if elim.is_some() { 0.0 } else if raised { 1.0 } else { 0.45 };
         anim.aim_share += (share - anim.aim_share) * (dt * 8.0).min(1.0);
 
@@ -592,7 +594,7 @@ fn drive(
             if ["bow_draw", "rifle_aim", "pistol_aim"].iter().any(|c| set.nodes.get(c).is_some_and(|n| n.1 == Some(node))) {
                 anim.bow_weight = anim.bow_weight.max(w);
             }
-            if set.nodes.iter().any(|(k, n)| k.starts_with("rifleaim_") && (n.0 == node || n.1 == Some(node))) {
+            if set.nodes.iter().any(|(k, n)| (k.starts_with("rifleaim_") || *k == "rifle_slide") && (n.0 == node || n.1 == Some(node))) {
                 aim_set += w;
                 anim.bow_weight = anim.bow_weight.max(aim_set.min(1.0));
             }

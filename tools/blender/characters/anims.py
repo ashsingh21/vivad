@@ -938,15 +938,97 @@ def carry(rig, name, base, hold, drop=0.0, turn=0.0, upright=None, calm=0.0):
     return f1 - f0
 
 
+# The library clips' posture, set (stand_up): (clip, forward lean at most (degrees, hips to neck),
+# elbows tucked in (degrees), chest turned to face ahead). They came hunched (the idle 16 degrees,
+# head 19 cm ahead of the hips; the run 32, the sprint 42, the crouch walk 45) with the elbows
+# winging out 20 cm, and the slide sideways (chest 45 degrees round); the rifle pack's run leans 15.
+POSTURE = [
+    ("idle", 4, 8, False), ("walk_f", 6, 10, False),
+    *[(f"run_{d}", 12, 18, False) for d in "flr"], ("run_b", 12, 6, False), ("sprint_f", 16, 18, False),
+    ("crouch_idle", 22, 0, False), *[(f"crouch_{d}", 24, 0, False) for d in "fblr"],
+    ("slide", 10, 0, True),
+]
+
+
+def stand_up(rig, name, lean, tuck, face):
+    """Straighten `name`'s torso to lean at most `lean` degrees on average (the same correction every
+    frame, so its bounce and sway stay; spread over the three spine bones, the head kept looking
+    where it did), tuck the elbows `tuck` degrees in toward the body, and with `face` turn the
+    chest square to the front, frame by frame (the legs as they were)."""
+    sc = bpy.context.scene
+    act = bpy.data.actions[name]
+    rig.obj.animation_data.action = act
+    f0, f1 = map(int, act.frame_range)
+    poses, leans = [], []
+    for f in range(f0, f1 + 1):
+        sc.frame_set(f)
+        poses.append({pb.name: pb.matrix_basis.copy() for pb in rig.pb})
+        v = rig.head("neck_01") - rig.head("pelvis")
+        leans.append(math.degrees(math.atan2(-v.y, v.z)))
+    fix = math.radians(max(0.0, sum(leans) / len(leans) - lean))
+
+    def apply(pose):
+        for pb in rig.pb:
+            pb.matrix_basis = pose[pb.name]
+        bpy.context.view_layer.update()
+
+    def lean_now():
+        v = rig.head("neck_01") - rig.head("pelvis")
+        return math.atan2(-v.y, v.z)
+
+    # The spine's turn straightens the hips-to-neck line only so far (the hips tip too): scaled to
+    # reach the mark, tried on the first frame.
+    if fix:
+        apply(poses[0])
+        was = lean_now()
+        for n in ("spine_01", "spine_02", "spine_03"):
+            rig.rotate(n, LEFT, -fix / 3)
+        fix *= min(3.0, fix / max(was - lean_now(), 1e-3))
+    # Which way about the forward axis brings each elbow in (tried on the first frame).
+    sign = {}
+    for side, sx in (("l", 1), ("r", -1)):
+        apply(poses[0])
+        out0 = sx * rig.head(f"lowerarm_{side}").x
+        rig.rotate(f"upperarm_{side}", FWD, 0.1)
+        sign[side] = 1 if sx * rig.head(f"lowerarm_{side}").x < out0 else -1
+    new_action(rig, name)
+    after = []
+    for i, pose in enumerate(poses):
+        apply(pose)
+        look = rig.world_rot("head")
+        for n in ("spine_01", "spine_02", "spine_03"):
+            rig.rotate(n, LEFT, -fix / 3)
+        if face:
+            # The whole body round so the leg out in front points the way it slides, then the
+            # chest square to the front over it.
+            hip = rig.head("pelvis")
+            leg = max((rig.head(f"foot_{s}") - hip for s in "lr"), key=lambda d: d.xy.length)
+            rig.rotate("pelvis", UP, math.atan2(leg.x, -leg.y))
+            c = rig.head("upperarm_l") - rig.head("upperarm_r")
+            turn = math.atan2(c.y, c.x)
+            for n in ("spine_01", "spine_02", "spine_03"):
+                rig.rotate(n, UP, -turn / 3)
+            look = rig.world_rot("head")
+        else:
+            rig.set_world_rot("head", look)
+        for side in "lr":
+            rig.rotate(f"upperarm_{side}", FWD, sign[side] * math.radians(tuck))
+        v = rig.head("neck_01") - rig.head("pelvis")
+        after.append(math.degrees(math.atan2(-v.y, v.z)))
+        rig.key(i + 1)
+    print(f"[anims] {name}: lean {sum(leans) / len(leans):.0f} -> {sum(after) / len(after):.0f} deg"
+          + (f", elbows in {tuck} deg" if tuck else "") + (", chest to the front" if face else ""))
+
+
 # (clip, the clip whose arms it takes): see arms_from.
 HIGH_READY = [*[(f"rifle_run_{d}", f"rifleaim_run_{d}") for d in "fblr"], ("rifle_sprint_f", "rifleaim_run_f")]
 ARM_CHAIN = ("clavicle", "upperarm", "lowerarm", "hand", "thumb", "index", "middle", "ring", "pinky", "weapon")
 
 
-def arms_from(rig, base, hold):
+def arms_from(rig, base, hold, name=None):
     """`base` with `hold`'s arms (each arm bone's turn from its parent, from the collarbones out),
     frame for frame through each one's cycle: the legs, hips and torso its own, the arms riding the
-    chest as `hold` holds them."""
+    chest as `hold` holds them. Written over `base`, or as `name`."""
     sc = bpy.context.scene
     arm_bones = [pb.name for pb in rig.pb if pb.name.split("_")[0] in ARM_CHAIN]
 
@@ -961,7 +1043,7 @@ def arms_from(rig, base, hold):
         return out
 
     body, arms = poses(base), poses(hold, arm_bones)
-    new_action(rig, base)
+    new_action(rig, name or base)
     # Both loops: the last frame is the first again.
     n, m = len(body) - 1, len(arms) - 1
     for i, pose in enumerate(body):
@@ -969,7 +1051,7 @@ def arms_from(rig, base, hold):
         for pb in rig.pb:
             pb.matrix_basis = a.get(pb.name, pose[pb.name])
         rig.key(i + 1)
-    print(f"[anims] {base}: arms from {hold}")
+    print(f"[anims] {name or base}: {base} with the arms from {hold}")
 
 
 def idle(rig):
@@ -1409,6 +1491,16 @@ def main():
         # Sitting up in the slide, head level, as you can shoot from it (the clip lies far back).
         mocap(rig, src, acts, "slide", "Slide_Loop", 0.0, keep={"pelvis": 0.45, "spine_01": 0.3, "spine_02": 0.25, "spine_03": 0.25, "neck_01": 0.15, "head": 0.0})
         drop_mocap(objs, acts, arm)
+    for name, lean, tuck, face in POSTURE:
+        if name in bpy.data.actions:
+            if face:
+                # Turned square first, then straightened.
+                stand_up(rig, name, 90, 0, True)
+            stand_up(rig, name, lean, tuck, False)
+    # Sliding with a long gun: sat up in the slide, the gun up in both hands as when aiming
+    # (the game plays it whole, no aim laid over).
+    if "slide" in bpy.data.actions and "rifleaim_idle" in bpy.data.actions:
+        arms_from(rig, "slide", "rifleaim_idle", "rifle_slide")
     hold_pose(rig, "freefall", 40, freefall_pose)
     hold_pose(rig, "glide", 40, glide_pose)
     hold_pose(rig, "death", 30, death_pose)
