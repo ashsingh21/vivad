@@ -34,7 +34,7 @@ const SWITCH: f32 = 35.0;
 const FAR: f32 = 140.0;
 /// How much of a street kit colour the sun has taken, and what dust leaves of what remains: the model
 /// is painted as bought, and nothing on a Delhi street stays that way.
-const FADED: f32 = 0.38;
+const FADED: f32 = 0.5;
 const DUSTY: f32 = 0.80;
 
 #[derive(Resource)]

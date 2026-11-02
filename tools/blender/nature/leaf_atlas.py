@@ -11,9 +11,11 @@ shows its outline.
 The photos are bright scans. Real foliage reflects about a tenth of the light, and Delhi's is dusty
 olive rather than lawn green, so each set is brought to a measured mean colour first.
 
-Needs numpy, scipy and Pillow, not Blender. The raw sets are unpacked in build/look_src/<set>:
+Needs numpy, scipy and Pillow, not Blender. The raw sets stay out of git, each unpacked into its own
+build/look_src/<set>, from https://ambientcg.com/get?file=<set>_2K-PNG.zip. Then, in this order:
 
     python3 tools/blender/nature/leaf_atlas.py [build/textures/trees/leaf_atlas.png]
+    just nature
 """
 
 import math
