@@ -35,6 +35,16 @@ Not installed: ffmpeg, ImageMagick, wasm-bindgen, any KTX2 encoder. The M4 now r
 
 ---
 
+## Overnight result (2 Nov 2026, morning)
+
+Landed on `main` after the seven parts, in order: light, sky, ground and grass; Delhi wall colours, photo leaves, wires and weathered street kit; about 548 enterable NCR buildings with six floor plans, stairs, roofs, furniture and loot; street life (packed markets, shopkeepers and shoppers who scatter, dogs, cows); weapons by place and the rest of the research list; Ashu's movement and gun handling at `4670d1b` with eight looks on his skeleton; nine vehicles with 72 parked a match, river and ground rules, bots that drive offline; a polish pass; fresh-eyes fixes.
+
+Last full gate, on `ddd5e25`: 0 warnings, 193 tests, `cp` 3 of 3, NCR 2 of 2 with 61 weapon kills a match, `room_check` 0 failures, `ncr-walk` 23 of 23, `vehicle_check` 109 of 109, `just sense`, `just check-characters`, `just net`, `just peers`, `just p2p`. Two client fixes followed, with 192 tests green.
+
+Real 64-warrior NCR match on a quiet Mac, uncapped, 170 s, autopilot: Medium 105 to 160 fps with 4.8 GB peak memory, High 50 to 70 fps with 5.3 GB. Medium stays the default on this Mac; F4 changes level. The memory budget of 4.4 GB is missed and was not raised on purpose: decide it with a real play test.
+
+Open, biggest first: nobody has played it by hand or heard it; F4 freezes the picture for seconds on a level change; market stalls are not solid; vehicles pass through street people; rifle crouch-walk is very slow at 0.93 m/s; a person must judge the sound mix and `lines.ron`. The real merge with Ashu's line is still owed: his city and Connaught Place work stays out, and `origin/main` moved on past `4670d1b`. Before release: credits on Home for OpenStreetMap and the CC-BY models, the ODbL offer, the dhal from its original source, and pack-derived meshes in private repos only.
+
 ## Merge of the seven parts (2 Nov 2026)
 
 Owner decisions, night of 1 to 2 Nov 2026. These override anything older here, and the "polished stylised" line in `docs/rendering-guidelines.md`:
