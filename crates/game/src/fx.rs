@@ -589,7 +589,7 @@ struct Glint(Entity);
 /// How near facing the viewer a scope must be to catch the light, 1 being dead on.
 const GLINT_FROM: f32 = 0.55;
 /// Its soft blot's width as a share of its distance, faintest and full.
-const GLINT_SIZE: (f32, f32) = (0.003, 0.012);
+const GLINT_SIZE: (f32, f32) = (0.002, 0.008);
 /// The sun's hours: at night a lens has nothing to catch.
 const SUN_UP: (f32, f32) = (6.0, 19.0);
 
