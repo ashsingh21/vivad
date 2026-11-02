@@ -427,6 +427,14 @@ impl MeshBuf {
 pub(crate) const BAY: f32 = 3.2;
 /// How far signs, cables and roof tanks are drawn (scaled by quality like the chunks' LODs).
 const CLUTTER_FAR: f32 = 130.0;
+/// How wide a road the cables slung from a building's wall may cross, in metres.
+const CABLE_REACH: i32 = 34;
+/// How far along the road the next pole may stand and still take the lines, and how high they run.
+const POLE_SPAN: f32 = 64.0;
+const POLE_TOP: f32 = 8.55;
+/// How far from a pole a wall may be and still take a drop from it, and how high the lines reach it.
+const DROP_REACH: i32 = 16;
+const DROP_FROM: f32 = 7.4;
 /// Festival colours after a few summers of sun and dust, kept for small things so they still stand
 /// out from the walls: signboards, awnings, bunting. Marigold, rani pink, peacock blue, parrot green,
 /// sindoor red, haldi yellow, jamun purple, white.
@@ -452,9 +460,9 @@ pub(crate) const WALLS: [[f32; 3]; 9] = [
     [0.71, 0.67, 0.59],
     [0.74, 0.67, 0.55],
     [0.54, 0.53, 0.50],
-    [0.72, 0.58, 0.50],
-    [0.74, 0.64, 0.46],
-    [0.60, 0.67, 0.63],
+    [0.70, 0.60, 0.54],
+    [0.72, 0.64, 0.50],
+    [0.60, 0.65, 0.62],
 ];
 /// Boards in the signs atlas (4 x 8), and a board's width (its height is a quarter and a bit).
 const SIGN_BOARDS: usize = 32;
@@ -747,6 +755,9 @@ fn build_footprints(
     let roof_at = |p: Vec2| to_cell(p).map_or(0.0, |k| solid[k]);
     let occupied = |p: Vec2| roof_at(p) > 0.0;
     let mut clutter: HashMap<(i32, i32), MeshBuf> = HashMap::new();
+    // Overhead cables, apart from the clutter as they cast no shadow: at under 4 cm they are thinner
+    // than a shadow map's texel, and their shadows would flicker over the road.
+    let mut lines: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     let mut trims: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     let mut signs: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     let mut walls: HashMap<(i32, i32, Mat, bool), MeshBuf> = HashMap::new();
@@ -955,19 +966,21 @@ fn build_footprints(
                         }
                     }
                 }
-                // Cables slung across the lane to the building opposite.
-                if len > 4.0 && r(20 + i as u32) < 0.35 {
+                // Cables slung across the lane or road to the building opposite, and now and then a
+                // string of paper flags.
+                if len > 4.0 && r(20 + i as u32) < 0.5 {
                     let from = Vec3::new(mid.x, split + 1.2 + 1.5 * r(40 + i as u32), mid.y) + out * 0.1;
-                    let reach = (2..18).find(|&d| occupied(mid + out2 * d as f32)).map(|d| d as f32 - 0.6);
+                    let reach = (2..CABLE_REACH).find(|&d| occupied(mid + out2 * d as f32)).map(|d| d as f32 - 0.6);
                     if let Some(d) = reach.filter(|d| *d > 3.0) {
                         let to = from + out * d + Vec3::Y * (r(60 + i as u32) - 0.5);
-                        if r(90 + i as u32) < 0.4 {
+                        if r(90 + i as u32) < 0.12 {
                             bunting(k, from, to, 0.25 + 0.05 * d, seed ^ i as u32);
                         } else {
-                            for w in 0..2 + (r(80 + i as u32) * 2.0) as usize {
-                                let sag = 0.4 + 0.25 * w as f32 + 0.1 * d;
+                            let l = lines.entry((cx, cz)).or_default();
+                            for w in 0..2 + (r(80 + i as u32) * 3.0) as usize {
+                                let sag = 0.3 + 0.12 * w as f32 + 0.04 * d;
                                 let shift = dir * (w as f32 * 0.12);
-                                wire(k, from + shift, to + shift, sag);
+                                wire(l, from + shift, to + shift, sag);
                             }
                         }
                     }
@@ -1000,6 +1013,32 @@ fn build_footprints(
                 roof.col.push(roof_col);
             }
             roof.idx.extend_from_slice(&[base, base + 1, base + 2]);
+        }
+    }
+    // The road's electric lines: three from each pole to the next along the road, and a drop from it
+    // to the nearest wall on either hand.
+    let poles: Vec<(Vec3, Vec3)> = layout.kit.iter().filter(|k| k.name == "pole").map(|k| (k.pos, Quat::from_rotation_y(k.yaw) * Vec3::X)).collect();
+    for (pole, along) in &poles {
+        let (pole, along) = (*pole, *along);
+        let l = lines.entry(((pole.x / CHUNK).floor() as i32, (pole.z / CHUNK).floor() as i32)).or_default();
+        let side = along.cross(Vec3::Y);
+        let next = poles.iter().map(|(q, _)| *q).filter(|q| (*q - pole).normalize_or_zero().dot(along) > 0.8).map(|q| (q.distance(pole), q)).filter(|(d, _)| *d < POLE_SPAN).min_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((d, q)) = next.filter(|(_, q)| [0.25, 0.5, 0.75].iter().all(|t| roof_at(pole.lerp(*q, *t).xz()) < POLE_TOP)) {
+            for k in -1..=1 {
+                let (a, b) = (pole + Vec3::Y * POLE_TOP + side * (k as f32 * 0.28), q + Vec3::Y * POLE_TOP + side * (k as f32 * 0.28));
+                wire(l, a, b, 0.5 + 0.02 * d);
+            }
+        }
+        for s in [-1.0, 1.0] {
+            let out = side * s;
+            let reach = (2..DROP_REACH).find(|&d| occupied((pole + out * d as f32).xz())).map(|d| d as f32 - 0.6);
+            if let Some(d) = reach {
+                let (a, b) = (pole + Vec3::Y * DROP_FROM, pole + out * d + Vec3::Y * (DROP_FROM - 2.0).min(roof_at((pole + out * (d + 1.0)).xz()) - 0.6));
+                for k in 0..2 {
+                    let shift = along * (k as f32 * 0.14);
+                    wire(l, a + shift, b + shift, 0.2 + 0.03 * d);
+                }
+            }
         }
     }
     let mut facade_mats: HashMap<(Mat, bool), Handle<StandardMaterial>> = HashMap::new();
@@ -1038,6 +1077,14 @@ fn build_footprints(
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(plain.clone()), Transform::from_translation(centre), range.0.clone(), range, crate::batch::probe::Tagged("clutter"), OfMap));
     }
     // Printed flex, grey with dust: it shouldn't read as a lit screen.
+    for (_, buf) in lines {
+        if buf.idx.is_empty() {
+            continue;
+        }
+        let range = crate::characters::LodRange(near.clone(), 0);
+        let (mesh, centre) = buf.into_plain_mesh();
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(plain.clone()), Transform::from_translation(centre), range.0.clone(), range, bevy::light::NotShadowCaster, crate::batch::probe::Tagged("lines"), OfMap));
+    }
     let lettered = materials.add(StandardMaterial { base_color: Color::srgb(0.80, 0.79, 0.76), base_color_texture: Some(signs_tex), perceptual_roughness: 0.75, ..default() });
     for (_, buf) in signs {
         let range = crate::characters::LodRange(near.clone(), 0);
