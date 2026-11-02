@@ -259,6 +259,7 @@ impl Plugin for AutoshotPlugin {
                 p("katta", Use::Aim, View::Back, 0.0),
                 p("dunali", Use::Carry, View::Side, 0.0),
                 p("dunali", Use::Run, View::Side, 0.0),
+                p("dunali", Use::Run, View::Back, 0.0),
                 p("dunali", Use::RunBack, View::Back, 0.0),
                 p("dunali", Use::RunBack, View::Side, 0.0),
                 p("dunali", Use::Crouch, View::Side, 0.0),

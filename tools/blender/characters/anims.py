@@ -810,17 +810,22 @@ RIFLE_PACK = False
 RIFLE_TURN = 0.7
 # ...and the torso straightened to this forward lean (radians; the jog leans well past it).
 RIFLE_LEAN = math.radians(6)
+# ...and the spine's swing on the move eased this far (the jog's shoulder twist would swing the
+# fore-end out of the left hand's reach).
+RIFLE_CALM = 0.7
 ARM_BONES = ("clavicle", "upperarm", "lowerarm", "hand", "thumb", "index", "middle", "ring", "pinky")
 
 
-def carry(rig, name, base, hold, drop=0.0, turn=0.0, upright=None):
+def carry(rig, name, base, hold, drop=0.0, turn=0.0, upright=None, calm=0.0):
     """A gun carried on the move: `base`'s legs, hips and torso (the plain walk or run, its natural
     bounce and twist) with `hold`'s arms kept as they sit on the chest (each arm bone's turn from
     its parent copied, so the gun rides the torso as it swings). `drop` (radians) lowers both arms
     from the shoulders about the chest's side-to-side line, hands together: a pistol's aim grip
     carried at low ready. `turn` (radians) brings the left shoulder forward, the head kept to the
     front: a long gun's fore-end within the left hand's reach. `upright` (radians): the torso's
-    forward lean (hips to neck) eased to this, frame by frame, the run's bounce and twist kept."""
+    forward lean (hips to neck) eased to this, frame by frame, the run's bounce and twist kept.
+    `calm` (0-1): the spine's swing eased this far toward its average over the cycle (the chest
+    steadier under a gun held in both hands)."""
     held = [b.name for b in rig.pb if b.name.split("_")[0] in ARM_BONES]
     sc = bpy.context.scene
     rig.obj.animation_data.action = bpy.data.actions[hold]
@@ -833,6 +838,15 @@ def carry(rig, name, base, hold, drop=0.0, turn=0.0, upright=None):
     for f in range(f0, f1 + 1):
         sc.frame_set(f)
         poses.append({pb.name: pb.matrix_basis.copy() for pb in rig.pb})
+    if calm:
+        for n in ("spine_01", "spine_02", "spine_03"):
+            qs = [p[n].to_quaternion() for p in poses]
+            avg = Quaternion((0, 0, 0, 0))
+            for q in qs:
+                avg = avg + (q if q.dot(qs[0]) >= 0 else -q)
+            avg.normalize()
+            for p, q in zip(poses, qs):
+                p[n] = q.slerp(avg, calm).to_matrix().to_4x4()
     new_action(rig, name)
     leans, leans_after = [], []
     for i, pose in enumerate(poses):
@@ -1270,13 +1284,13 @@ def main():
                 cycles[f"pistol_{m}_{d}"] = carry(rig, f"pistol_{m}_{d}", f"{m}_{d}", "pistol_idle", drop=PISTOL_DROP)
     if not RIFLE_PACK:
         hold_pose(rig, "rifle_carry", 1, rifle_carry_pose)
-        carry(rig, "rifle_idle", "idle", "rifle_carry", turn=RIFLE_TURN, upright=RIFLE_LEAN)
-        carry(rig, "rifle_crouch_idle", "crouch_idle", "rifle_carry", turn=RIFLE_TURN, upright=RIFLE_LEAN)
+        carry(rig, "rifle_idle", "idle", "rifle_carry", turn=RIFLE_TURN, upright=RIFLE_LEAN, calm=RIFLE_CALM)
+        carry(rig, "rifle_crouch_idle", "crouch_idle", "rifle_carry", turn=RIFLE_TURN, upright=RIFLE_LEAN, calm=RIFLE_CALM)
         for d in "fblr":
-            cycles[f"rifle_crouch_{d}"] = carry(rig, f"rifle_crouch_{d}", f"crouch_{d}", "rifle_carry", turn=RIFLE_TURN, upright=RIFLE_LEAN)
+            cycles[f"rifle_crouch_{d}"] = carry(rig, f"rifle_crouch_{d}", f"crouch_{d}", "rifle_carry", turn=RIFLE_TURN, upright=RIFLE_LEAN, calm=RIFLE_CALM)
             for m in ("walk", "run"):
-                cycles[f"rifle_{m}_{d}"] = carry(rig, f"rifle_{m}_{d}", f"{m}_{d}", "rifle_carry", turn=RIFLE_TURN, upright=RIFLE_LEAN)
-        cycles["rifle_sprint_f"] = carry(rig, "rifle_sprint_f", "sprint_f", "rifle_carry", turn=RIFLE_TURN, upright=RIFLE_LEAN)
+                cycles[f"rifle_{m}_{d}"] = carry(rig, f"rifle_{m}_{d}", f"{m}_{d}", "rifle_carry", turn=RIFLE_TURN, upright=RIFLE_LEAN, calm=RIFLE_CALM)
+        cycles["rifle_sprint_f"] = carry(rig, "rifle_sprint_f", "sprint_f", "rifle_carry", turn=RIFLE_TURN, upright=RIFLE_LEAN, calm=RIFLE_CALM)
         bpy.data.actions.remove(bpy.data.actions["rifle_carry"])
     if not os.path.exists(os.path.join(MIXAMO, "Running Slide.fbx")):
         src, objs, acts = load_mocap("ual2")
