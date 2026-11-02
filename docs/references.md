@@ -105,6 +105,10 @@ upper limb toward the thumb, edge or bow's back along the hand); see `crates/gam
 | "Male classic jeans", punkduck, MakeHuman community pack pants02 | [asset packs](https://static.makehumancommunity.org/assets/assetpacks.html) | CC-BY 4.0: credit needed | Man's jeans, recoloured, top cut away under the polo |
 | "Running shoes 01", punkduck, MakeHuman community pack shoes02 | [asset packs](https://static.makehumancommunity.org/assets/assetpacks.html) | CC-BY 3.0: credit needed | Man's shoes, recoloured |
 | Polo shirt, Namuhekam, pack shirts01; flapper dress, AEthelraed_Unraed, pack dress01; harem pants and cloth shoes, MRT (toigo), packs pants01 and shoes01; brows 02 and 05, Mindfront, pack eyebrows01 | [asset packs](https://static.makehumancommunity.org/assets/assetpacks.html) | CC0 | Polo; the dress cut into the woman's kurta; salwar; flat shoes; brow strands baked into the head |
+| Furniture Pack 1.0 by Kenney: `table`, `stoolBarSquare`, `kitchenBar`, `desk`, `cabinetTelevisionDoors`, `televisionModern` | [OpenGameArt](https://opengameart.org/content/furniture-kit), from [kenney.nl](https://kenney.nl) | CC0 | Room kit: base meshes of the table, stool, counter, desk and TV unit, stretched to real sizes (`tools/blender/props/room_kit.py`) |
+| Ultimate House Interior Pack, June 2020, by Quaternius: `Couch_Medium2` | [OpenGameArt](https://opengameart.org/node/126986), from [quaternius.com](https://quaternius.com) | CC0 | Room kit: the sofa, thinned to under 300 triangles and baked from the full mesh |
+| Scans: rosewood_veneer1, stained_pine, teak_veneer, plywood, green_metal_rust, hessian_380, velour_velvet | [Poly Haven](https://polyhaven.com) | CC0 | Room kit: wood, painted steel, jute and velvet in the atlas |
+| Scans: Metal009, PaintedMetal004, Plastic006, Plastic008, Plastic010 | [ambientCG](https://ambientcg.com) | CC0 | Room kit: bare steel, the cylinder's red paint and plastics in the atlas |
 
 All other textures are generated: weapons and characters are baked from procedural Blender
 materials (`tools/blender/lib/`, `tools/blender/characters/finish.py`); leaf and bark textures are
