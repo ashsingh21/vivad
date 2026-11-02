@@ -194,6 +194,19 @@ fn crouching(stage: &mut Stage, check: &mut Check) {
     stage.tick(60);
     let went = stage.pos(player).xz().distance(from.xz());
     check.that((went - CROUCH_SPEED).abs() < 0.4, &format!("crouched he goes {went:.1} m in a second"));
+    // With a long gun, a little slower, and as quiet as any crouch.
+    let carry = |stage: &mut Stage, rifle: bool| {
+        let mut inv = stage.app.world_mut().get_mut::<Inventory>(player).unwrap();
+        inv.slots[0] = rifle.then(|| ItemStack { id: "saintalis".into(), rarity: Rarity::Rare, count: 30 });
+        inv.selected = rifle as usize;
+    };
+    carry(stage, true);
+    let from = stage.pos(player);
+    stage.tick(60);
+    let went = stage.pos(player).xz().distance(from.xz());
+    let heard = senses::noise_of(stage.app.world().get::<Kinematic>(player).unwrap(), true);
+    check.that((1.6..=1.9).contains(&went) && heard == senses::CROUCH_NOISE, &format!("with a rifle he goes {went:.2} m in a second, heard from {heard:.0} m"));
+    carry(stage, false);
     stage.intent(player).move_axis = Vec2::ZERO;
     // A slab over his head: he stays down until it is gone.
     let at = stage.pos(player);

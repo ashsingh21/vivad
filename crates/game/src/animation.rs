@@ -20,7 +20,8 @@ use bevy::gltf::Gltf;
 use bevy::prelude::*;
 use shared::items::{ItemDb, ItemKind};
 use shared::sim::movement::{
-    Gait, RIFLE_AIM_CROUCH, RIFLE_AIM_RUN, RIFLE_AIM_WALK, RIFLE_CROUCH, RIFLE_RUN, RIFLE_SPRINT, RIFLE_WALK, SPRINT_SPEED, STROLL_SPEED, WALK_SPEED,
+    CROUCH_CLIPS, Gait, RIFLE_AIM_CROUCH, RIFLE_AIM_CROUCH_CLIPS, RIFLE_AIM_RUN, RIFLE_AIM_WALK, RIFLE_CROUCH, RIFLE_CROUCH_CLIPS, RIFLE_RUN, RIFLE_SPRINT, RIFLE_WALK,
+    SPRINT_SPEED, STROLL_SPEED, WALK_SPEED,
 };
 use shared::sim::stance::CROUCH_SPEED;
 use shared::sim::{Action, Eliminated, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, PosHistory, Warrior, btn};
@@ -300,6 +301,8 @@ struct Gaits {
     /// Forward only; none when aiming.
     sprint: Option<f32>,
     crouch: Gait,
+    /// The ground speed the crouch clips keep their feet down at: the clips play at `crouch` over it.
+    crouch_clips: Gait,
 }
 
 const PLAIN_GAITS: Gaits = Gaits {
@@ -307,9 +310,11 @@ const PLAIN_GAITS: Gaits = Gaits {
     run: Gait([WALK_SPEED; 4]),
     sprint: Some(SPRINT_SPEED),
     crouch: Gait([CROUCH_SPEED; 4]),
+    crouch_clips: CROUCH_CLIPS,
 };
-const RIFLE_GAITS: Gaits = Gaits { walk: RIFLE_WALK, run: RIFLE_RUN, sprint: Some(RIFLE_SPRINT), crouch: RIFLE_CROUCH };
-const RIFLE_AIM_GAITS: Gaits = Gaits { walk: RIFLE_AIM_WALK, run: RIFLE_AIM_RUN, sprint: None, crouch: RIFLE_AIM_CROUCH };
+const RIFLE_GAITS: Gaits = Gaits { walk: RIFLE_WALK, run: RIFLE_RUN, sprint: Some(RIFLE_SPRINT), crouch: RIFLE_CROUCH, crouch_clips: RIFLE_CROUCH_CLIPS };
+const RIFLE_AIM_GAITS: Gaits =
+    Gaits { walk: RIFLE_AIM_WALK, run: RIFLE_AIM_RUN, sprint: None, crouch: RIFLE_AIM_CROUCH, crouch_clips: RIFLE_AIM_CROUCH_CLIPS };
 
 /// Body-relative locomotion weights from velocity: two nearest directions by angle, then the
 /// two nearest speed tiers (each tier's speed in this direction).
@@ -383,7 +388,7 @@ fn clip_speed(name: &str) -> f32 {
     let gait = |g: Gaits, n: &str| match n {
         n if n.starts_with("walk_") => g.walk.0[dir(n)],
         n if n.starts_with("run_") => g.run.0[dir(n)],
-        n if n.starts_with("crouch_") && n != "crouch_idle" => g.crouch.0[dir(n)],
+        n if n.starts_with("crouch_") && n != "crouch_idle" => g.crouch_clips.0[dir(n)],
         "sprint_f" => g.sprint.unwrap_or(0.0),
         _ => 0.0,
     };
@@ -398,7 +403,7 @@ fn clip_speed(name: &str) -> f32 {
         n if n.starts_with("walk") => STROLL_SPEED,
         n if n.starts_with("run") => WALK_SPEED,
         "sprint_f" => SPRINT_SPEED,
-        n if n.starts_with("crouch_") && n != "crouch_idle" => CROUCH_SPEED,
+        n if n.starts_with("crouch_") && n != "crouch_idle" => CROUCH_CLIPS.0[dir(n)],
         _ => 0.0,
     }
 }
@@ -734,5 +739,27 @@ mod tests {
             assert!(speed > 0.0, "{name}");
             assert!((speed / blended_stride(&[(name, 1.0)], |_| dur) - 1.0 / dur).abs() < 1e-3, "{name}");
         }
+    }
+
+    #[test]
+    fn a_crouch_quickens_its_clips_and_keeps_their_stride() {
+        // The stride is the clip's own, whatever the body's speed, so the cycle quickens to cover
+        // the ground and the feet stay down: every direction, each set.
+        for (name, gaits, way) in [
+            ("rifle_crouch_f", RIFLE_GAITS, 0),
+            ("rifle_crouch_b", RIFLE_GAITS, 1),
+            ("rifle_crouch_l", RIFLE_GAITS, 2),
+            ("rifleaim_crouch_r", RIFLE_AIM_GAITS, 3),
+            ("crouch_f", PLAIN_GAITS, 0),
+            ("crouch_r", PLAIN_GAITS, 3),
+        ] {
+            let dur = 1.2;
+            let stride = blended_stride(&[(name, 1.0)], |_| dur);
+            let quicker = gaits.crouch.0[way] / gaits.crouch_clips.0[way];
+            assert!((stride - gaits.crouch_clips.0[way] * dur).abs() < 1e-3, "{name}");
+            assert!((gaits.crouch.0[way] / stride - quicker / dur).abs() < 1e-3, "{name}");
+            assert!(quicker > 1.0 && quicker < 1.9, "{name} plays {quicker} times over");
+        }
+        assert!((1.6..=1.9).contains(&RIFLE_CROUCH.0[0]) && (1.6..=1.9).contains(&CROUCH_SPEED));
     }
 }
