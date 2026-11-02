@@ -36,6 +36,14 @@ const STALL_GAP: f32 = 60.0;
 const MOST_STALLS: usize = 380;
 /// Above the ground, and past this, the street's small sounds stop.
 const TOO_HIGH: f32 = 30.0;
+/// How far off water is heard, and what indoors leaves of the street (the rest goes to the city's
+/// dull far-off bed, which is what a street sounds like through a wall).
+const WATER_REACH: f32 = 80.0;
+const THROUGH_WALLS: f32 = 0.25;
+/// A roof this close over the head and this many of four sides walled in, this close: indoors.
+const ROOM_HIGH: f32 = 7.0;
+const ROOM_WIDE: f32 = 9.0;
+const ROOM_WALLS: usize = 2;
 /// A fight's crowd yells at most this often, seconds.
 const YELL_GAP: f32 = 12.0;
 /// How near the listener a fight must be for the crowd to matter, metres.
@@ -48,6 +56,12 @@ pub struct Ambience {
     pub market: f32,
     pub far: f32,
     pub park: f32,
+    /// Wind over the open land, the Ridge and the roofs.
+    pub wind: f32,
+    /// Water close by, on a map whose rivers are in its ground.
+    pub river: f32,
+    /// Walls and a roof round the listener: the street comes through them, dull.
+    pub indoors: bool,
 }
 
 /// Where a street sound comes from.
@@ -152,6 +166,24 @@ fn street_here(layout: &MapLayout, p: Vec3) -> f32 {
     }
 }
 
+/// How much of a river's sound carries to `p`, 0 to 1. The NCR's rivers are in its ground.
+fn water_near(layout: &MapLayout, p: Vec2) -> f32 {
+    let wet = |r: f32| (0..8).any(|k| {
+        let q = p + Vec2::from_angle(k as f32 / 8.0 * std::f32::consts::TAU) * r;
+        layout.terrain.ground_at(q.x, q.y) == Some(ground::WATER)
+    });
+    [0.0, 8.0, 20.0, 40.0, 60.0].into_iter().find(|r| wet(*r)).map_or(0.0, |r| 1.0 - r / WATER_REACH)
+}
+
+/// How much wind there is at `p`: out on the open, and more the higher up.
+fn wind_at(here: f32, up: f32, airborne: bool) -> f32 {
+    if airborne {
+        return 0.0;
+    }
+    let open = 1.0 - here;
+    (open * 0.7).max(((up - 3.0) / 12.0).clamp(0.0, 1.0)).max(0.15 * (1.0 - here))
+}
+
 fn nearest(spots: &[Vec3], p: Vec3) -> Option<Vec3> {
     spots.iter().copied().min_by(|a, b| a.distance_squared(p).total_cmp(&b.distance_squared(p)))
 }
@@ -184,14 +216,21 @@ fn listen(
     let here = street_here(&layout, p);
     let park = if here < 1.0 { 1.0 } else { 0.0 };
     let filter = SpatialQueryFilter::from_mask(solid_mask()).with_excluded_entities([e]);
-    let covered = kin.mode == MoveMode::Ground && spatial.cast_ray(p, Dir3::Y, 12.0, true, &filter).is_some();
+    let ground_level = kin.mode == MoveMode::Ground;
+    let covered = ground_level && spatial.cast_ray(p, Dir3::Y, 12.0, true, &filter).is_some();
+    let roofed = covered && spatial.cast_ray(p, Dir3::Y, ROOM_HIGH, true, &filter).is_some();
+    let indoors = roofed && [Dir3::X, Dir3::NEG_X, Dir3::Z, Dir3::NEG_Z].into_iter().filter(|d| spatial.cast_ray(p, *d, ROOM_WIDE, true, &filter).is_some()).count() >= ROOM_WALLS;
+    let dull = if indoors { THROUGH_WALLS } else { 1.0 };
     let stall = nearest(&stalls.any, p).map_or(0.0, |s| (1.0 - s.distance(p) / STALL_REACH).clamp(0.0, 1.0));
     let (traffic, crowd) = (by_hour(&TRAFFIC, hour), by_hour(&CROWD, hour));
     *amb = Ambience {
-        traffic: traffic * (1.0 - high) * here * if covered { 0.7 } else { 1.0 },
-        market: crowd * (1.0 - high) * (1.0 - park) * (0.3 + 0.7 * stall.max(if covered { 0.5 } else { 0.0 })),
-        far: (0.35f32).max(high).max(park).max(1.0 - traffic) * 0.8,
-        park: park * (1.0 - high),
+        traffic: traffic * (1.0 - high) * here * if covered { 0.7 } else { 1.0 } * dull,
+        market: crowd * (1.0 - high) * (1.0 - park) * (0.3 + 0.7 * stall.max(if covered { 0.5 } else { 0.0 })) * dull,
+        far: (0.35f32).max(high).max(park).max(1.0 - traffic).max(if indoors { 0.8 } else { 0.0 }) * 0.8,
+        park: park * (1.0 - high) * dull,
+        wind: wind_at(here, up, !ground_level) * if roofed { 0.0 } else { 1.0 },
+        river: water_near(&layout, p.xz()) * dull,
+        indoors,
     };
 }
 
@@ -203,6 +242,7 @@ fn street(
     layout: Res<MapLayout>,
     tod: Res<TimeOfDay>,
     stalls: Res<Stalls>,
+    amb: Res<Ambience>,
     mut next: Local<Vec<f32>>,
 ) {
     let now = time.elapsed_secs();
@@ -237,7 +277,9 @@ fn street(
         };
         if let Some(at) = at {
             let name = v.names[rng.random_range(0..v.names.len())];
-            play.street(name, at + Vec3::Y, v.volume, rng.random_range(0.95..1.05));
+            // Through a wall a street sound is quieter and a little lower.
+            let (volume, pitch) = if amb.indoors { (v.volume * 0.45, 0.92) } else { (v.volume, 1.0) };
+            play.street(name, at + Vec3::Y, volume, pitch * rng.random_range(0.95..1.05));
         }
     }
 }
@@ -291,6 +333,22 @@ mod tests {
         let many: Vec<Vec3> = spaced((0..MOST_STALLS * 3).map(|k| Vec3::new(k as f32 * STALL_GAP, 0.0, 0.0)));
         assert!(many.len() <= MOST_STALLS);
         assert!(many.last().is_some_and(|p| p.x > STALL_GAP * MOST_STALLS as f32 * 2.0), "the far end of the map keeps its stalls");
+    }
+
+    #[test]
+    fn wind_blows_out_in_the_open_and_up_high() {
+        assert_eq!(wind_at(1.0, 0.0, false), 0.0, "none on a street");
+        assert!(wind_at(0.0, 0.0, false) > 0.5, "the open land");
+        assert!(wind_at(1.0, 12.0, false) > 0.5, "a roof");
+        assert_eq!(wind_at(0.0, 0.0, true), 0.0, "the drop has its own");
+    }
+
+    /// The NCR's rivers: heard from the bank and not from Connaught Place.
+    #[test]
+    fn water_is_heard_near_the_river() {
+        let map = shared::map::generate(shared::map::MapId::Ncr, 7);
+        assert!(water_near(&map, Vec2::new(190.0, -330.0)) > 0.9, "in the Yamuna");
+        assert_eq!(water_near(&map, Vec2::new(-740.0, -700.0)), 0.0);
     }
 
     #[test]
