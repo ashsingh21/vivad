@@ -11,7 +11,7 @@
 use std::collections::{HashMap, HashSet};
 
 use avian3d::prelude::*;
-use bevy::audio::{SpatialScale, Volume};
+use bevy::audio::{GlobalVolume, SpatialScale, Volume};
 use bevy::prelude::*;
 use shared::items::{ItemDb, ItemKind};
 use shared::map::{ChestKind, MapLayout, Mat};
@@ -596,6 +596,7 @@ fn beds(
     zone: Res<Zone>,
     layout: Res<MapLayout>,
     street: Res<crate::street_sound::Ambience>,
+    global: Res<GlobalVolume>,
     mut sinks: Query<(&Bed, &mut AudioSink)>,
 ) {
     // At the menu nobody stands anywhere: only the city far off, or the last match's street would
@@ -613,7 +614,7 @@ fn beds(
             (Bed::Freefall, Some((_, kin))) => if kin.mode == MoveMode::Freefall { 0.5 + 0.5 * (kin.velocity.length() / 40.0).min(1.0) } else { 0.0 },
             (Bed::Glide, Some((_, kin))) => if kin.mode == MoveMode::Gliding { 0.8 } else { 0.0 },
             (Bed::Zone, Some((tf, _))) => (1.0 - (tf.translation.xz().distance(zone.center) - zone.radius).abs() / 40.0).clamp(0.0, 1.0),
-        } * BED;
+        } * BED * global.volume.to_linear();
         let cur = sink.volume().to_linear();
         let k = (time.delta_secs() * 2.5).min(1.0);
         let v = cur + (target - cur) * k;

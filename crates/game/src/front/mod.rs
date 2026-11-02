@@ -10,6 +10,7 @@ mod demo;
 mod home;
 mod pause;
 mod result;
+pub mod settings;
 pub mod theme;
 
 use bevy::prelude::*;
@@ -84,7 +85,7 @@ impl Plugin for FrontPlugin {
         app.insert_state(first)
             .init_resource::<theme::Fonts>()
             .init_resource::<theme::ClickSound>()
-            .add_plugins((home::plugin, pause::plugin, result::plugin, demo::plugin))
+            .add_plugins((home::plugin, pause::plugin, result::plugin, settings::plugin, demo::plugin))
             .add_observer(on_button)
             .add_systems(PreUpdate, free_mouse.after(LocalInput).run_if(not(in_state(Screen::Match))))
             .add_systems(Update, (follow_the_match, shortcuts, show_hud, theme::paint_buttons));
