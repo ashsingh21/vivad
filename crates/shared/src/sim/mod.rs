@@ -593,14 +593,15 @@ fn spawn_map(mut commands: Commands, layout: Res<MapLayout>) {
             CollisionLayers::new(Layer::World, LayerMask::ALL),
         ));
     }
-    // The market's tables, a collider to each patch of street: they are thousands.
+    // The market's tables, a collider to each patch of street: they are thousands. Everyone meets
+    // them by query. Paired for contacts, each warrior in a patch's box would pay for every tick.
     for tables in layout.stalls.patches() {
         commands.spawn((
             OfMap,
             Transform::default(),
             RigidBody::Static,
             Collider::compound(tables.iter().map(|b| (b.pos, b.rot, collider_for(b))).collect::<Vec<_>>()),
-            CollisionLayers::new(Layer::World, LayerMask::ALL),
+            CollisionLayers::new(Layer::World, LayerMask::NONE),
         ));
     }
     for (index, door) in layout.doors.iter().enumerate() {
