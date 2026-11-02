@@ -37,7 +37,15 @@ impl Plugin for LifePlugin {
         if std::env::var("VIVAD_NO_LIFE").is_ok() {
             return;
         }
-        app.add_plugins((people::PeoplePlugin, goods::GoodsPlugin, stage::StagePlugin)).add_systems(Startup, index_market).add_systems(Update, index_market.run_if(shared::sim::map_reloaded));
+        // VIVAD_LIFE_ONLY=people or goods, to price one layer alone.
+        let only = std::env::var("VIVAD_LIFE_ONLY").unwrap_or_default();
+        if only != "goods" {
+            app.add_plugins(people::PeoplePlugin);
+        }
+        if only != "people" {
+            app.add_plugins(goods::GoodsPlugin);
+        }
+        app.add_plugins(stage::StagePlugin).add_systems(Startup, index_market).add_systems(Update, index_market.run_if(shared::sim::map_reloaded));
     }
 }
 
@@ -120,6 +128,8 @@ pub struct Market {
     pub(crate) banners: Vec<(Vec3, Vec3)>,
     /// Whether this map has the street grid all of this leans on: the NCR's.
     pub(crate) ready: bool,
+    /// Where loot lies, by 3 m squares, only while laying out: nothing may stand over it.
+    loot: HashSet<(i32, i32)>,
 }
 
 impl Market {
@@ -220,10 +230,19 @@ impl Market {
             }
         }
         if market.ready {
+            let spots = layout.floor_loot.iter().copied().chain(layout.chests.iter().map(|c| c.pos));
+            market.loot = spots.map(|p| ((p.x / 3.0).floor() as i32, (p.z / 3.0).floor() as i32)).collect();
             market.lay_rows(layout, floor);
             market.lay_spreads(layout, floor);
+            market.loot = HashSet::new();
         }
         market
+    }
+
+    /// Whether loot lies round `p`: a stall over it would hide it, and no one could tell.
+    fn over_loot(&self, p: Vec2) -> bool {
+        let (i, j) = ((p.x / 3.0).floor() as i32, (p.y / 3.0).floor() as i32);
+        (-1..=1).any(|a| (-1..=1).any(|b| self.loot.contains(&(i + a, j + b))))
     }
 
     /// Adds a stall with its footprint: half width, half depth about its middle.
@@ -253,7 +272,7 @@ impl Market {
         [0.0, reach, -reach].iter().all(|k| {
             let q = p + along * *k;
             floor.walkable(q) && !matches!(t.ground_at(q.x, q.y), Some(ground::ROAD | ground::WATER | ground::OPEN | ground::SAND)) && !self.built(layout, q + along.perp() * 1.5) && !self.built(layout, q - along.perp() * 1.5)
-        }) && !layout.is_holy(p)
+        }) && !layout.is_holy(p) && !self.over_loot(p)
     }
 
     /// Stall rows along both kerbs of the roads of a busy place: a wall of goods and tarps either
@@ -391,7 +410,7 @@ impl Market {
                 }
                 // Nothing under it or quite against it.
                 let room = [Vec2::ZERO, Vec2::new(1.4, 0.0), Vec2::new(-1.4, 0.0), Vec2::new(0.0, 1.4), Vec2::new(0.0, -1.4)];
-                if !room.iter().all(|d| floor.walkable(p + *d) && !self.stall_at(p + *d)) || layout.is_holy(p) {
+                if !room.iter().all(|d| floor.walkable(p + *d) && !self.stall_at(p + *d)) || layout.is_holy(p) || self.over_loot(p) {
                     continue;
                 }
                 // Facing the nearest road, within a few steps of it.
@@ -553,12 +572,16 @@ mod tests {
         let rows: Vec<&Stall> = market.stalls.iter().filter(|s| s.kind == StallKind::Row).collect();
         assert!(rows.len() > 5000, "{}", rows.len());
         assert!(rows.iter().all(|s| !on_road(s.pos.xz())));
+        // Loot stays in plain sight.
+        for spot in layout.floor_loot.iter() {
+            assert!(!rows.iter().any(|s| s.pos.xz().distance(spot.xz()) < 1.5), "a stall stands over the loot at {spot}");
+        }
         let solid = rows.iter().filter(|s| market.stall_at(s.pos.xz())).count();
         assert_eq!(solid, rows.len(), "people walk round every stall");
         for name in ["Chandni Chowk", "Karol Bagh", "Lajpat Nagar", "Connaught Place"] {
             let p = layout.pois.iter().find(|p| p.name == name).expect("place");
             let inside = rows.iter().filter(|s| (s.pos.xz() - p.center.xz()).abs().max_element() < p.radius).count();
-            assert!(inside >= 50, "{name} has {inside} row stalls");
+            assert!(inside >= 30, "{name} has {inside} row stalls");
         }
         let around = |name: &str| {
             let p = layout.pois.iter().find(|p| p.name == name).unwrap_or_else(|| panic!("{name}"));

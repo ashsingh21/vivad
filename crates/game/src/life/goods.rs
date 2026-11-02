@@ -47,10 +47,12 @@ const FADE_FROM: f32 = 104.0;
 const FADE_TO: f32 = 120.0;
 /// Where the full goods hand over to their stand-ins, from a patch's middle, and how far off the
 /// full ones are ready and gone. A corner of a patch is 45 m from its middle.
-const DETAIL_FROM: f32 = 66.0;
-const DETAIL_TO: f32 = 78.0;
-const DETAIL_REACH: f32 = 86.0;
-const DETAIL_LET_GO: f32 = 104.0;
+const DETAIL_FROM: f32 = 54.0;
+const DETAIL_TO: f32 = 66.0;
+const DETAIL_REACH: f32 = 74.0;
+const DETAIL_LET_GO: f32 = 92.0;
+/// Past this, a patch's overhead stops casting: the sun's far cascade is coarse there anyway.
+const SHADE_TO: f32 = 88.0;
 /// Above the ground, the camera is too far up for goods to show.
 const TOO_HIGH: f32 = 90.0;
 /// The middle of the atlas's white tile (tools/blender/life/goods_atlas.py).
@@ -121,6 +123,8 @@ struct Patch {
     near: Option<Entity>,
     /// The meshes asked for since this patch came into reach, so an empty one isn't asked for again.
     tried: Vec<Level>,
+    /// Whether its overhead casts a shadow.
+    casting: bool,
 }
 
 impl Patch {
@@ -632,6 +636,7 @@ fn stream(
         goods.job = None;
         if let (Some((mesh, bounds)), Some(material), Some(patch)) = (done, goods.material.clone(), goods.live.get_mut(&key)) {
             *patch.mesh(level) = Some(patch_entity(&mut commands, meshes.add(mesh), material, key, level, bounds));
+            patch.casting = patch.casting || level == Level::Over;
         }
     }
     *every -= time.delta_secs();
@@ -658,6 +663,15 @@ fn stream(
         if !keep {
             for e in [patch.far.take(), patch.over.take()].into_iter().flatten() {
                 commands.entity(e).despawn();
+            }
+        } else if (d < SHADE_TO) != patch.casting
+            && let Some(e) = patch.over
+        {
+            patch.casting = d < SHADE_TO;
+            if patch.casting {
+                commands.entity(e).remove::<bevy::light::NotShadowCaster>();
+            } else {
+                commands.entity(e).insert(bevy::light::NotShadowCaster);
             }
         }
         keep

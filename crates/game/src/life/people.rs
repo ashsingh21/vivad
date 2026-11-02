@@ -32,13 +32,14 @@ impl Plugin for PeoplePlugin {
         app.init_resource::<Books>()
             .init_resource::<Alarms>()
             .init_resource::<Scares>()
+            .add_systems(Startup, make_patches)
             .add_systems(Update, (finish_baking, shadows_near, (hear, listen_ring, populate, walk).chain()));
     }
 }
 
 /// The most people near the player, and how far off they stop being drawn.
 const PEOPLE: usize = 16;
-const ANIMALS: usize = 11;
+const ANIMALS: usize = 9;
 /// How big the animals are: a street dog about 52 cm at the shoulder, a cow about 1.3 m.
 const DOG_SCALE: f32 = 0.27;
 const COW_SCALE: f32 = 0.32;
@@ -55,7 +56,7 @@ const SEEN_FROM: f32 = 40.0;
 /// When the bakes start.
 const BAKE_AFTER: f32 = 9.0;
 /// How far off someone still casts a shadow: a blob of a figure past this won't be missed.
-const SHADOW_TO: f32 = 20.0;
+const SHADOW_TO: f32 = 12.0;
 /// The most people moved round to the front of the view each look.
 const MOVED_UP: usize = 2;
 /// How close the player gets before someone starts to move off.
@@ -74,7 +75,7 @@ const RING_WARNING: f32 = 30.0;
 const PEOPLE_SHOTS: [Shot; 5] = [
     Shot { key: "idle", names: &["idle"], take: Take::Cycle(6), sit: false },
     Shot { key: "walk", names: &["walk_slow", "stroll", "walk", "walk_f"], take: Take::Cycle(12), sit: false },
-    Shot { key: "run", names: &["run_f"], take: Take::Cycle(8), sit: false },
+    Shot { key: "run", names: &["run_f", "jog_f", "run", "sprint_f"], take: Take::Cycle(8), sit: false },
     Shot { key: "sip", names: &["consume", "idle"], take: Take::Cycle(6), sit: true },
     Shot { key: "sit", names: &["idle"], take: Take::Still(0.0), sit: true },
 ];
@@ -137,14 +138,41 @@ impl Books {
         match role {
             Role::Dog => self.dog.as_ref(),
             Role::Cow => self.cow.as_ref(),
-            _ if woman => self.women.as_ref(),
-            _ => self.men.as_ref(),
+            // Either will do if the other didn't bake.
+            _ if woman => self.women.as_ref().or(self.men.as_ref()),
+            _ => self.men.as_ref().or(self.women.as_ref()),
         }
     }
 
     fn ready(&self) -> bool {
-        self.men.is_some() && self.women.is_some()
+        (self.men.is_some() && self.women.is_some()) || (self.next >= specs().len() && self.job.is_none() && (self.men.is_some() || self.women.is_some()))
     }
+}
+
+/// The soft dark patch that keeps a walker on the ground past where it casts a shadow: one mesh
+/// and one material, so a whole street of them is a draw or two.
+#[derive(Resource)]
+struct Patches {
+    mesh: Handle<Mesh>,
+    material: Handle<StandardMaterial>,
+}
+
+fn make_patches(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut images: ResMut<Assets<Image>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    let n = 32u32;
+    let mut data = Vec::with_capacity((n * n * 4) as usize);
+    for y in 0..n {
+        for x in 0..n {
+            let d = (Vec2::new(x as f32 + 0.5, y as f32 + 0.5) / n as f32 * 2.0 - Vec2::ONE).length();
+            data.extend_from_slice(&[0, 0, 0, ((1.0 - d).clamp(0.0, 1.0).powf(1.3) * 255.0) as u8]);
+        }
+    }
+    let texture = images.add(Image::new(Extent3d { width: n, height: n, depth_or_array_layers: 1 }, TextureDimension::D2, data, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::default()));
+    commands.insert_resource(Patches {
+        mesh: meshes.add(Plane3d::default().mesh().size(1.0, 1.0)),
+        material: materials.add(StandardMaterial { base_color: Color::srgba(1.0, 1.0, 1.0, 0.5), base_color_texture: Some(texture), alpha_mode: AlphaMode::Blend, unlit: true, depth_bias: 50.0, ..default() }),
+    });
 }
 
 /// What to bake, in order.
@@ -398,10 +426,13 @@ fn populate(
     floor: Res<StreetFloor>,
     zone: Res<Zone>,
     scares: Res<Scares>,
+    patches: Option<Res<Patches>>,
     camera: Query<&GlobalTransform, With<MainCamera>>,
     walkers: Query<(Entity, &Walker)>,
 ) {
     let _spent = super::spent::Timed::start(&super::spent::PEOPLE);
+    let Some(patches) = patches else { return };
+    let patches = &*patches;
     *every -= time.delta_secs();
     if *every > 0.0 {
         return;
@@ -428,7 +459,7 @@ fn populate(
             commands.entity(e).despawn();
             continue;
         }
-        have += 1;
+        have += !w.role.animal() as usize;
         stalls_taken.extend(w.stall);
     }
     // How many this street has room for: the average of where the player is and round about him.
@@ -451,8 +482,7 @@ fn populate(
     };
     let inside = |p: Vec2| zone.radius - p.distance(zone.center) > RING_WARNING + 10.0;
     let free = |p: Vec2| hidden(p) && inside(p) && !scares.scared(p, now) && walkable(&layout, &floor, &market, p);
-    populate_animals(&mut commands, &books, &layout, &floor, busy, at, &walkers, &mut dice, now, &free);
-    let have = have - walkers.iter().filter(|(_, w)| w.role.animal()).count();
+    populate_animals(&mut commands, &books, patches, &layout, busy, at, &walkers, &mut dice, now, &free);
     let mut room = want.saturating_sub(have);
     // Sixteen people are a crowd only if they are where the player is looking: shoppers behind
     // him go, and turn up ahead.
@@ -489,7 +519,7 @@ fn populate(
             if !free(spot) {
                 continue;
             }
-            spawn_walker(&mut commands, &books, &mut dice, role, Some(id), true, spot, yaw, layout.terrain.height(spot.x, spot.y), now);
+            spawn_walker(&mut commands, &books, patches, &mut dice, role, Some(id), true, spot, yaw, layout.terrain.height(spot.x, spot.y), now);
             room -= 1;
             kept += 1;
             any = true;
@@ -511,7 +541,7 @@ fn populate(
         for _ in 0..1 + (dice.next() * 2.0) as usize {
             let (spot, yaw) = in_front(&stall, &mut dice);
             if room > strollers && free(spot) {
-                spawn_walker(&mut commands, &books, &mut dice, Role::Shopper, None, true, spot, yaw, layout.terrain.height(spot.x, spot.y), now);
+                spawn_walker(&mut commands, &books, patches, &mut dice, Role::Shopper, None, true, spot, yaw, layout.terrain.height(spot.x, spot.y), now);
                 room -= 1;
             }
         }
@@ -531,7 +561,7 @@ fn populate(
         for k in 0..group.min(room) {
             let spot = p + Vec2::from_angle(k as f32 * 2.1 + leader_yaw) * if k == 0 { 0.0 } else { 0.9 };
             if free(spot) {
-                spawn_walker(&mut commands, &books, &mut dice, Role::Shopper, None, false, spot, leader_yaw, layout.terrain.height(spot.x, spot.y), now);
+                spawn_walker(&mut commands, &books, patches, &mut dice, Role::Shopper, None, false, spot, leader_yaw, layout.terrain.height(spot.x, spot.y), now);
                 room -= 1;
             }
         }
@@ -541,11 +571,10 @@ fn populate(
 
 /// Dogs and cows on the road near the player: as many as the street has road for.
 #[allow(clippy::too_many_arguments)]
-fn populate_animals(commands: &mut Commands, books: &Books, layout: &MapLayout, floor: &StreetFloor, busy: f32, at: Vec2, walkers: &Query<(Entity, &Walker)>, dice: &mut Dice, now: f32, free: &impl Fn(Vec2) -> bool) {
+fn populate_animals(commands: &mut Commands, books: &Books, patches: &Patches, layout: &MapLayout, busy: f32, at: Vec2, walkers: &Query<(Entity, &Walker)>, dice: &mut Dice, now: f32, free: &impl Fn(Vec2) -> bool) {
     if books.dog.is_none() || books.cow.is_none() {
         return;
     }
-    let _ = floor;
     let have = walkers.iter().filter(|(_, w)| w.role.animal()).count();
     let cows = walkers.iter().filter(|(_, w)| w.role == Role::Cow).count();
     let want = ((3.0 + busy * 10.0).round() as usize).min(ANIMALS);
@@ -560,7 +589,7 @@ fn populate_animals(commands: &mut Commands, books: &Books, layout: &MapLayout, 
         }
         let role = if cows < 2 + (want > 6) as usize && dice.next() < 0.35 { Role::Cow } else { Role::Dog };
         let yaw = dice.range(0.0, TAU);
-        spawn_walker(commands, books, dice, role, None, true, p, yaw, layout.terrain.height(p.x, p.y), now);
+        spawn_walker(commands, books, patches, dice, role, None, true, p, yaw, layout.terrain.height(p.x, p.y), now);
         left -= 1;
     }
 }
@@ -598,7 +627,7 @@ fn stall_people(s: &Stall, dice: &mut Dice) -> Vec<(Role, Vec2, f32)> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn spawn_walker(commands: &mut Commands, books: &Books, dice: &mut Dice, role: Role, stall: Option<u32>, at_stall: bool, spot: Vec2, yaw: f32, y: f32, now: f32) {
+fn spawn_walker(commands: &mut Commands, books: &Books, patches: &Patches, dice: &mut Dice, role: Role, stall: Option<u32>, at_stall: bool, spot: Vec2, yaw: f32, y: f32, now: f32) {
     let woman = role == Role::Shopper && dice.next() < 0.5;
     let Some(book) = books.of(role, woman) else { return };
     let look = (dice.next() * book.looks.len() as f32) as usize % book.looks.len();
@@ -612,6 +641,13 @@ fn spawn_walker(commands: &mut Commands, books: &Books, dice: &mut Dice, role: R
     // Those not at a stall are on their way somewhere.
     let until = now + if role == Role::Shopper && !at_stall { dice.range(0.0, 0.5) } else { dice.range(2.0, 9.0) };
     let phase = dice.next();
+    let size = match role {
+        Role::Cow => Vec3::new(1.5, 1.0, 3.1),
+        Role::Dog => Vec3::new(0.7, 1.0, 1.4),
+        _ => Vec3::splat(1.3),
+    };
+    let range = VisibilityRange { start_margin: 0.0..0.0, end_margin: DRAWN..DRAWN + FADE, use_aabb: false };
+    let patch = (Mesh3d(patches.mesh.clone()), MeshMaterial3d(patches.material.clone()), Transform::from_xyz(0.0, 0.03, 0.0).with_scale(size), range.clone(), NotShadowCaster, bevy::light::NotShadowReceiver);
     commands.spawn((
         Walker {
             role,
@@ -634,9 +670,10 @@ fn spawn_walker(commands: &mut Commands, books: &Books, dice: &mut Dice, role: R
         Transform::from_xyz(spot.x, y, spot.y).with_rotation(Quat::from_rotation_y(yaw)),
         Aabb::from(book.bounds),
         NoAutoAabb,
-        VisibilityRange { start_margin: 0.0..0.0, end_margin: DRAWN..DRAWN + FADE, use_aabb: false },
+        range,
         Tagged("life"),
         OfMap,
+        children![patch],
     ));
 }
 

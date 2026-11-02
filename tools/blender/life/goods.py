@@ -636,14 +636,14 @@ def roof(name, colour):
     p = Piece(name)
     w = ROW_W + 0.5
     for x in (-ROW_W / 2 + 0.05, ROW_W / 2 - 0.05):
-        p.rod((x, -0.72, 0.0), (x, -0.72, 2.8), 0.022, BAMBOO, 4)
-        p.rod((x, 0.92, 0.0), (x, 0.92, 2.42), 0.02, BAMBOO, 4)
+        p.rod((x, -0.72, 0.0), (x, -0.72, 2.8), 0.024, BAMBOO, 3)
+        p.rod((x, 0.92, 0.0), (x, 0.92, 2.42), 0.022, BAMBOO, 3)
     grid = []
-    for i in range(5):
-        u = i / 4
+    for i in range(3):
+        u = i / 2
         row = []
-        for j in range(7):
-            v = j / 6
+        for j in range(5):
+            v = j / 4
             sag = 0.09 * math.sin(u * math.pi) * (0.5 + 0.5 * math.sin(v * math.pi * 2)) + 0.012 * math.sin(v * 23 + u * 5)
             row.append(Vector(((v - 0.5) * w, -0.85 + 1.95 * u, 2.82 - 0.44 * u - sag)))
         grid.append(row)
@@ -651,9 +651,9 @@ def roof(name, colour):
     edge = []
     for i in range(2):
         row = []
-        for j in range(13):
-            v = j / 12
-            drop = 0.26 + 0.06 * math.sin(j * math.pi) if i else 0.0
+        for j in range(9):
+            v = j / 8
+            drop = 0.2 + 0.1 * (j % 2) if i else 0.0
             row.append(Vector(((v - 0.5) * w, 1.1, 2.38 - drop)))
         edge.append(row)
     p.sheet(edge, colour, "tarp", lambda c: 0.7 + 0.3 * abs(math.sin(c.x * 6.0)))
