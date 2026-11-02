@@ -11,7 +11,7 @@ use super::zone::Zone;
 use super::{Action, BotSkill, 
     EYE_OFFSET, Eliminated, HALF_HEIGHT, Health, HitMsg, Inventory, Kinematic, MoveMode, PlayerIntent, SimSet, Warrior, btn, solid_mask,
 };
-use super::movement::{FALL_DAMAGE, GLIDE_FALL, GLIDE_HORIZ, GRAVITY, OPEN_GLIDE_HEIGHT, SAFE_LANDING, SPRINT_SPEED, WALK_SPEED, dive_reach};
+use super::movement::{FALL_DAMAGE, GLIDE_FALL, GLIDE_HORIZ, GRAVITY, OPEN_GLIDE_HEIGHT, RIFLE_SPRINT, SAFE_LANDING, SPRINT_SPEED, WALK_SPEED, dive_reach, long_gun};
 use super::nav::{NavGrid, NoPath, StreetFloor, on_bridge};
 use super::senses::{self, Senses};
 use super::stance::Stance;
@@ -689,7 +689,9 @@ pub(crate) fn drive_bots(
             // being longer than the straight line, either way.
             let (left, shrinking) = zone.countdown();
             let open_land = floor.ready();
-            let (pace, ahead, detour, reach) = if open_land { (SPRINT_SPEED, zone.closes_in(), OPEN_DETOUR, zone.target_radius - OPEN_MARGIN) } else { (WALK_SPEED, left, STREET_DETOUR, zone.target_radius * 0.8) };
+            // A long gun in hand sprints slower, so the bot has to set off sooner.
+            let sprint = if inv.current().is_some_and(|s| long_gun(&s.id)) { RIFLE_SPRINT } else { SPRINT_SPEED };
+            let (pace, ahead, detour, reach) = if open_land { (sprint, zone.closes_in(), OPEN_DETOUR, zone.target_radius - OPEN_MARGIN) } else { (WALK_SPEED, left, STREET_DETOUR, zone.target_radius * 0.8) };
             let run_in = |from: f32| (from - reach).max(0.0) * detour / pace;
             let centre = zone.target_center.distance(pos.xz());
             let spare = ahead - run_in(centre);
@@ -919,10 +921,11 @@ pub(crate) fn drive_bots(
             }
             // Shots follow the over-the-shoulder aim ray (like a player's crosshair), not the eye
             // line, so solve the angles from that ray's origin (two fixed-point steps suffice).
-            // A swing goes where the body faces.
+            // A swing goes where the body faces. Up close (a swing's range) the ray's origin is off
+            // to the side of the target and the angle from it swings wildly: aim from the eye there.
             let (mut yaw, mut pitch) = yaw_pitch_to(eye, aim_at);
-            let shoots = !matches!(held, Some(ItemKind::Melee { .. }));
-            for _ in 0..if shoots { 2 } else { 0 } {
+            let melee = matches!(held, Some(ItemKind::Melee { .. }));
+            for _ in 0..if !melee && dist > 4.0 { 2 } else { 0 } {
                 let probe = PlayerIntent { yaw, pitch, ..default() };
                 let (origin, _) = super::aim_ray(pos, &probe);
                 (yaw, pitch) = yaw_pitch_to(origin, aim_at);
@@ -965,8 +968,9 @@ pub(crate) fn drive_bots(
                 brain.strafe_timer = if brain.calm { rng.random_range(1.5..3.5) } else { rng.random_range(0.6..1.6) };
                 brain.strafe = -brain.strafe;
             }
-            let forward = if matches!(held, Some(ItemKind::Melee { .. })) {
-                1.0
+            let forward = if melee {
+                // Close in, then stand and swing: running on past the target is what circled it.
+                if dist > 1.8 { 1.0 } else { 0.0 }
             } else if dist > 35.0 {
                 0.7
             } else if dist < 10.0 {
@@ -975,6 +979,8 @@ pub(crate) fn drive_bots(
                 0.0
             };
             let (side, ahead) = if brain.calm { (0.3, forward * 0.6) } else { (0.8, forward) };
+            // No sidestepping in a melee once within a few steps (it orbited the target).
+            let side = if melee && dist < 4.0 { 0.0 } else { side };
             intent.move_axis = Vec2::new(brain.strafe * side, ahead);
             if !brain.calm && rng.random_bool(0.01) {
                 intent.pressed |= btn::JUMP;

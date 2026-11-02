@@ -22,7 +22,7 @@ use shared::sim::flow::{Match, MatchState};
 use shared::sim::loot::{Chest, INTERACT_RANGE, Pickup};
 use shared::sim::net::NetId;
 use shared::sim::zone::Zone;
-use shared::sim::{Action, Eliminated, FeedMsg, Health, HitMsg, INVENTORY_SLOTS, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, Warrior, btn};
+use shared::sim::{Action, Eliminated, FeedMsg, Health, HitMsg, INVENTORY_SLOTS, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, Warrior};
 
 use crate::fonts::UiFonts;
 use crate::front::Screen;
@@ -48,7 +48,7 @@ impl Plugin for HudPlugin {
             .add_systems(Update, (vitals, hotbar, prompts, feed, reticle, crosshair_at_scope, hit_marker, top_right, minimap, map_names, place_banner, perf))
             // The first frame and each map swap; not each match, which only borrows the layout.
             .add_systems(Update, refresh_map.run_if(resource_changed::<shared::sim::MapSwaps>))
-            .add_systems(PostUpdate, (damage_numbers, hurt_markers).after(crate::camera::CameraSystems));
+            .add_systems(PostUpdate, (damage_numbers, hurt_markers, step_markers).after(crate::camera::CameraSystems));
     }
 }
 
@@ -120,6 +120,16 @@ struct DamageNumber {
     amount: f32,
     size: f32,
     age: f32,
+}
+
+/// A footstep marker round the crosshair for a nearby warrior who isn't crouching.
+#[derive(Component)]
+struct StepMarker {
+    from: Entity,
+    last: Vec3,
+    age: f32,
+    /// How loud (1 close and fast, toward 0 at the edge of earshot).
+    loud: f32,
 }
 
 /// A red bar round the crosshair pointing at whoever just hit the local player.
@@ -502,22 +512,34 @@ const BASE_GAP: f32 = 5.0;
 const HIT_TICK_AT: f32 = 9.0;
 const HIT_TICK_LEN: f32 = 8.0;
 
-/// The reticle's arms sit as far out as the held bow's spread reaches on screen (wider for the
-/// seven-arrow bow, tighter when aiming down the sights), and kick out briefly after each shot.
+/// The reticle's arms sit as far out as the held bow's spread reaches on screen at the camera's
+/// field of view: wider for the seven-arrow bow, tighter aiming down the sights or crouched, opening
+/// on the move, in the air and as shots bloom (shared::sim::combat::spread_scale), easing between.
+#[allow(clippy::type_complexity)]
 fn reticle(
-    q: Query<(&Inventory, &Action, &PlayerIntent), With<LocalPlayer>>,
+    q: Query<(&Inventory, &Action, &PlayerIntent, &Kinematic), With<LocalPlayer>>,
     db: Res<ItemDb>,
     windows: Query<&Window>,
+    cam: Query<&Projection, With<crate::camera::MainCamera>>,
+    time: Res<Time>,
+    mut eased: Local<f32>,
     mut bars: Query<(&ReticleBar, &mut Node)>,
 ) {
-    let Ok((inv, act, intent)) = q.single() else { return };
+    let Ok((inv, act, intent, kin)) = q.single() else { return };
     let h = windows.iter().next().map(|w| w.height()).unwrap_or(900.0);
-    let mut gap = BASE_GAP;
-    if let Some(ItemKind::Bow { spread_deg, hip_spread, .. }) = inv.current().map(|s| &db.get(&s.id).kind) {
-        let spread = (spread_deg + hip_spread + act.bloom).to_radians() * if intent.held(btn::AIM) { 0.6 } else { 1.0 };
-        // Camera vertical field of view 70 degrees (camera.rs).
-        gap += spread.tan() / 35f32.to_radians().tan() * h / 2.0;
+    let half_fov = match cam.single() {
+        Ok(Projection::Perspective(p)) => p.fov * 0.5,
+        _ => 35f32.to_radians(),
+    };
+    let mut spread_px = 0.0;
+    if let Some(kind @ ItemKind::Bow { spread_deg, hip_spread, .. }) = inv.current().map(|s| &db.get(&s.id).kind) {
+        let spread = shared::sim::combat::shot_spread(*spread_deg, *hip_spread, act.bloom, kind.scope().unwrap_or(1.0), intent, kin);
+        spread_px = spread.tan() / half_fov.tan() * h / 2.0;
     }
+    // Opens fast, closes a little slower.
+    let rate = if spread_px > *eased { 25.0 } else { 10.0 };
+    *eased += (spread_px - *eased) * (1.0 - (-time.delta_secs() * rate).exp());
+    let mut gap = BASE_GAP + *eased;
     gap += 6.0 * (1.0 - act.since_attack / 0.15).clamp(0.0, 1.0);
     for (bar, mut n) in &mut bars {
         let d = bar.0;
@@ -1330,6 +1352,85 @@ fn hurt_markers(
 }
 
 
+/// How clearly a step `d` metres off carries (1 close, toward 0.25 at the edge of earshot), if at all.
+fn footfall(speed: f32, crouched: bool, d: f32) -> Option<f32> {
+    let range = shared::sim::senses::step_noise(speed, crouched);
+    (d <= range).then(|| (1.0 - d / range).clamp(0.25, 1.0))
+}
+
+/// Footsteps heard: a pair of footprints round the crosshair toward each warrior stepping within
+/// earshot, the same earshot the bots have (senses::step_noise): 8 m crouched, 15 m on foot, 30 m
+/// flat out. Brighter the closer and louder; each fades out a second after its last step, following
+/// its warrior as the view turns.
+#[allow(clippy::type_complexity)]
+fn step_markers(
+    mut commands: Commands,
+    mut steps: MessageReader<crate::animation::Footstep>,
+    local: Query<(Entity, &Transform), With<LocalPlayer>>,
+    sims: Query<&Transform, (With<Warrior>, Without<LocalPlayer>)>,
+    cam: Query<&GlobalTransform, With<crate::camera::MainCamera>>,
+    window: Query<&Window>,
+    mut markers: Query<(Entity, &mut StepMarker, &mut Node, &mut UiTransform, &Children)>,
+    mut feet: Query<&mut BackgroundColor>,
+    time: Res<Time>,
+) {
+    const RADIUS: f32 = 135.0;
+    let Ok((me, my_tf)) = local.single() else { return };
+    for s in steps.read() {
+        if s.who == me {
+            continue;
+        }
+        let Some(loud) = footfall(s.speed, s.crouched, s.pos.distance(my_tf.translation)) else { continue };
+        if let Some((_, mut m, ..)) = markers.iter_mut().find(|(_, m, ..)| m.from == s.who) {
+            m.age = 0.0;
+            m.last = s.pos;
+            m.loud = loud;
+            continue;
+        }
+        let foot = |dx: f32, dy: f32| {
+            (
+                Node { position_type: PositionType::Absolute, left: px(dx), top: px(dy), width: px(7.0), height: px(13.0), border_radius: BorderRadius::MAX, ..default() },
+                BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.0)),
+            )
+        };
+        commands
+            .spawn((
+                StepMarker { from: s.who, last: s.pos, age: 0.0, loud },
+                Node { position_type: PositionType::Absolute, width: px(20.0), height: px(22.0), ..default() },
+                UiTransform::default(),
+            ))
+            .with_children(|p| {
+                p.spawn(foot(1.0, 6.0));
+                p.spawn(foot(12.0, 0.0));
+            });
+    }
+    let (Ok(cam_g), Ok(win)) = (cam.single(), window.single()) else { return };
+    let (fwd, right) = (cam_g.forward().as_vec3().with_y(0.0).normalize_or(Vec3::NEG_Z), cam_g.right().as_vec3().with_y(0.0).normalize_or(Vec3::X));
+    let centre = Vec2::new(win.width(), win.height()) * 0.5;
+    let dt = time.delta_secs();
+    for (e, mut m, mut node, mut ui, children) in &mut markers {
+        m.age += dt;
+        if m.age > 1.0 {
+            commands.entity(e).despawn();
+            continue;
+        }
+        if let Ok(t) = sims.get(m.from) {
+            m.last = t.translation;
+        }
+        let d = m.last - my_tf.translation;
+        let a = d.dot(right).atan2(d.dot(fwd));
+        node.left = px(centre.x + RADIUS * a.sin() - 10.0);
+        node.top = px(centre.y - RADIUS * a.cos() - 11.0);
+        ui.rotation = Rot2::radians(a);
+        let alpha = (0.35 + 0.6 * m.loud) * (1.0 - ((m.age - 0.4) / 0.6).clamp(0.0, 1.0));
+        for c in children.iter() {
+            if let Ok(mut bg) = feet.get_mut(c) {
+                bg.0.set_alpha(alpha);
+            }
+        }
+    }
+}
+
 /// Set a text only if it changed: writing the same string still marks it changed, and a changed
 /// text re-measures and re-lays out the UI (on the browser's one thread, every frame).
 fn set_text(t: &mut Mut<Text>, s: String) {
@@ -1340,6 +1441,20 @@ fn set_text(t: &mut Mut<Text>, s: String) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn footprints_show_as_far_as_the_bots_hear() {
+        use shared::sim::movement::{RIFLE_RUN, RIFLE_SPRINT, SPRINT_SPEED, WALK_SPEED};
+        use shared::sim::stance::CROUCH_SPEED;
+        for run in [WALK_SPEED, RIFLE_RUN.0[0]] {
+            assert!(super::footfall(run, false, 14.9).is_some() && super::footfall(run, false, 15.1).is_none());
+        }
+        assert!(super::footfall(CROUCH_SPEED, true, 7.9).is_some() && super::footfall(CROUCH_SPEED, true, 8.1).is_none());
+        for sprint in [SPRINT_SPEED, RIFLE_SPRINT] {
+            assert!(super::footfall(sprint, false, 29.9).is_some() && super::footfall(sprint, false, 30.1).is_none());
+        }
+        assert!(super::footfall(0.2, false, 0.5).is_none(), "standing still makes no footprints");
+    }
+
     use super::*;
 
     const HALF: f32 = 2000.0;

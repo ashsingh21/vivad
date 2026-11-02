@@ -7,7 +7,6 @@ use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use shared::items::{ItemDb, ItemKind};
 use shared::sim::flow::Match;
-use shared::sim::stance::Stance;
 use shared::sim::{ADS_DISTANCE, CAMERA_DISTANCE, CAMERA_SHOULDER, EYE_OFFSET, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, btn, camera_spot};
 
 use crate::visuals::{WarriorVisual, TimeOfDay};
@@ -18,8 +17,8 @@ pub struct CameraSystems;
 #[derive(Component)]
 pub struct MainCamera {
     distance: f32,
-    /// How far a crouch has brought the view down, eased.
-    drop: f32,
+    /// The eye's height over the body, eased as the player crouches and stands.
+    eye: f32,
 }
 
 pub struct CameraPlugin;
@@ -37,7 +36,7 @@ pub fn spawn_camera(mut commands: Commands, mut images: ResMut<Assets<Image>>, l
     let ncr = layout.style == shared::map::MapStyle::Ncr;
     // Ambient occlusion and anti-aliasing are the quality level's (crate::quality).
     let mut cam = commands.spawn((
-        MainCamera { distance: CAMERA_DISTANCE, drop: 0.0 },
+        MainCamera { distance: CAMERA_DISTANCE, eye: EYE_OFFSET },
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection { fov: 70f32.to_radians(), near: 0.05, ..default() }),
         look(ncr, false),
@@ -149,7 +148,7 @@ fn grading(ncr: bool, ultra: bool) -> bevy::render::view::ColorGrading {
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn follow(
-    local: Query<(Entity, &PlayerIntent, &Kinematic, &Inventory, Option<&Stance>), With<LocalPlayer>>,
+    local: Query<(Entity, &PlayerIntent, &Kinematic, &Inventory), With<LocalPlayer>>,
     visuals: Query<(&WarriorVisual, &Transform), Without<MainCamera>>,
     mut cam: Query<(&mut Transform, &mut Projection, &mut MainCamera)>,
     db: Res<ItemDb>,
@@ -161,15 +160,15 @@ fn follow(
     scope: Res<crate::scope::Scope>,
 ) {
     let Ok((mut ct, mut proj, mut mc)) = cam.single_mut() else { return };
-    let Ok((me, intent, kin, inv, stance)) = local.single() else { return };
+    let Ok((me, intent, kin, inv)) = local.single() else { return };
     let Some(body) = visuals.iter().find(|(v, _)| v.sim == me).map(|(_, t)| t.translation) else { return };
     let rot = intent.aim_rotation();
     // A raised guard keeps the wide view: a fight needs it.
     let guard = inv.current().is_some_and(|s| matches!(db.get(&s.id).kind, ItemKind::Melee { .. }));
     let aiming = intent.held(btn::AIM) && kin.mode == MoveMode::Ground && !guard;
     let dt = time.delta_secs();
-    mc.drop += (stance.map_or(0.0, Stance::drop) - mc.drop) * (1.0 - (-dt * 12.0).exp());
-    let eye = body + Vec3::Y * (EYE_OFFSET - mc.drop);
+    mc.eye += (shared::sim::eye_offset(intent) - mc.eye) * (1.0 - (-dt * 10.0).exp());
+    let eye = body + Vec3::Y * mc.eye;
 
     let (pivot, want_dist, shoulder, fov): (Vec3, f32, f32, f32) = match kin.mode {
         // The auto's fans stand 14 m over its floor: framed from farther back and higher.

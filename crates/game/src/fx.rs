@@ -513,7 +513,7 @@ fn punch_camera(
                 "tamancha" => (0.016, 0.004),
                 "vajra9" => (0.011, 0.012),
                 "trishul_carbine" => (0.022, 0.008),
-                "saintalis" => (0.018, 0.012),
+                "saintalis" | "bandook" => (0.018, 0.012),
                 "thaana_slr" => (0.03, 0.012),
                 "thri_not_thri" => (0.05, 0.02),
                 "toradar" => (0.07, 0.03),

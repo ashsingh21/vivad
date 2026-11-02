@@ -52,20 +52,46 @@ def smoothstep(e0, e1, x):
     return t * t * (3 - 2 * t)
 
 
-def stubble(proxy, f):
-    """`beard` attribute, 0..1: upper lip, cheeks below the cheekbones, jaw and chin, fading out
-    toward the ears and down the throat, clear of the lips."""
+def stubble(proxy, f, amount):
+    """`beard` attribute, 0..`amount`: upper lip, cheeks below the cheekbones, jaw and chin, fading
+    out toward the ears and down the throat, clear of the lips."""
     attr = proxy.data.attributes.new("beard", "FLOAT", "POINT")
     vals = []
     for p in f.co:
         dz = p.z - f.nose.z
         back = p.y - f.eye_l.y          # 0 at the eyes' plane, positive toward the ears
-        w = smoothstep(0.0, -0.022, dz) * smoothstep(-0.15, -0.115, dz)
+        w = smoothstep(0.012, -0.034, dz) * smoothstep(-0.15, -0.115, dz)
         w *= smoothstep(0.085, 0.05, back) * smoothstep(0.085, 0.06, abs(p.x))
         vals.append(w)
     lip = np.empty(len(vals), dtype=np.float32)
     proxy.data.attributes["lip"].data.foreach_get("value", lip)
-    attr.data.foreach_set("value", (blur(proxy.data, np.array(vals), 3) * (1.0 - lip)).astype(np.float32))
+    attr.data.foreach_set("value", (blur(proxy.data, np.array(vals), 3) * (1.0 - lip) * amount).astype(np.float32))
+
+
+def moustache(proxy, f, amount):
+    """`moustache` attribute, 0..`amount`: a band along the top of the upper lip, fullest under the
+    nose, thinning to the corners of the mouth and just past them, a little down. Painted, not a
+    mesh: the mesh ones on the packs are a Viking's and Dali's."""
+    me = proxy.data
+    lip = np.empty(len(me.vertices), dtype=np.float32)
+    me.attributes["lip"].data.foreach_get("value", lip)
+    co = np.array([p[:] for p in f.co])
+    x, y, z = np.abs(co[:, 0]), co[:, 1], co[:, 2]
+    near = (lip > 0.5) & (y < f.eye_l.y) & (z < f.nose.z)
+    wide = float(x[near].max())
+    # The top of the upper lip at each distance from the middle.
+    bins = np.arange(0.0, wide + 0.006, 0.006)
+    top = np.array([z[near & (np.abs(x - b) < 0.006)].max(initial=f.nose.z - 0.05) for b in bins])
+    rise = z - np.interp(x, bins, top)
+    u = x / wide
+    thick = 0.0135 * (1.0 - 0.6 * u * u)
+    low = -0.007 * np.clip((u - 0.7) / 0.35, 0.0, 1.0)
+    edge = lambda a, b, v: (lambda t: t * t * (3 - 2 * t))(np.clip((v - a) / (b - a), 0.0, 1.0))
+    mask = edge(low - 0.001, low + 0.002, rise) * (1.0 - edge(thick - 0.002, thick + 0.003, rise)) * (1.0 - edge(0.98, 1.16, u))
+    mask *= (y < f.eye_l.y) & (z < f.nose.z)
+    mask = blur(me, mask, 1) * (1.0 - lip) * amount
+    attr = me.attributes.new("moustache", "FLOAT", "POINT")
+    attr.data.foreach_set("value", mask.astype(np.float32))
 
 
 def basemesh_masks(body, co, names):
@@ -226,7 +252,7 @@ def trim_hair(hair, below_z):
     return len(gone)
 
 
-def decorate(variant, proxy, parts, body, ctx=None):
+def decorate(cfg, proxy, parts, body, ctx=None):
     """Face marks for the skin shader (stored on the proxy) and, for the male, the stubble mask.
     `body` is the fitted basemesh. Returns extra (object, role) outfit items: none today."""
     f = Face(proxy, parts["eyes"])
@@ -234,10 +260,12 @@ def decorate(variant, proxy, parts, body, ctx=None):
     regions(proxy, body, f)
     scalp(proxy, parts["hair"], ctx)
     inv = proxy.matrix_world.inverted()
-    if variant == "female":
+    if cfg["sex"] == "female":
         # Kajal rings round each eye: both centres then the radius, in the proxy's object space.
         proxy["eyes"] = [*(inv @ f.eye_l), *(inv @ f.eye_r), f.eye_rad]
     else:
-        stubble(proxy, f)
+        stubble(proxy, f, cfg.get("beard", 1.0))
+        if cfg.get("moustache"):
+            moustache(proxy, f, cfg["moustache"])
     print(f"[face] nose {f.nose.z - f.eye_z:+.3f} below the eyes; eye radius {f.eye_rad:.4f}")
     return []

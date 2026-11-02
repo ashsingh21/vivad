@@ -6,7 +6,7 @@ python3 tools/osm/delhi.py [area ...]         convert them to assets/data/maps/d
 Areas (AREAS below): cp (Connaught Place and the head of Janpath), chandni (Chandni Chowk), hauzkhas
 (Hauz Khas village and lake), indiagate (India Gate and Kartavya Path).
 
-Each map is a 500 m square round its centre (CP's: the middle of Central Park, shifted south so it
+Each map is an 800 m square round its centre (CP's: the middle of Central Park, shifted south so it
 holds the inner circle and the head of Janpath). Game axes: x east, z south (north is -z), metres.
 Buildings are footprints (outer ring, simplified, counter-clockwise seen from above) with a height
 from building:levels or height, else a guess by type; roads are centrelines with a width by class
@@ -25,9 +25,9 @@ import subprocess
 import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-# Kept out to here (the playable square is +-250; buildings beyond it make the skyline).
-KEEP = 300.0
-HALF = 250.0
+# Kept out to here (the playable square is +-400; buildings beyond it make the skyline).
+KEEP = 450.0
+HALF = 400.0
 
 # Where each map is (its centre, or a park whose middle anchors it, shifted south), and where to
 # fill gaps in the mapped buildings: "all" the land, only built-up "landuse", or nowhere.
@@ -61,8 +61,8 @@ LANDMARKS = {"India Gate": "india_gate"}
 def fetch(area):
     cfg = AREAS[area]
     lat, lon = cfg.get("center", (28.6328, 77.2197))
-    dlat = 330.0 / 111320.0
-    dlon = 330.0 / (111320.0 * math.cos(math.radians(lat)))
+    dlat = (KEEP + 30.0) / 111320.0
+    dlon = (KEEP + 30.0) / (111320.0 * math.cos(math.radians(lat)))
     bb = f"{lat - dlat:.6f},{lon - dlon:.6f},{lat + dlat:.6f},{lon + dlon:.6f}"
     q = (f'[out:json][timeout:90];(way["building"]({bb});way["highway"]({bb});way["leisure"]({bb});way["landuse"]({bb});'
          f'way["natural"]({bb});node["natural"="tree"]({bb});node["name"]({bb});way["amenity"]({bb});way["historic"]({bb});'

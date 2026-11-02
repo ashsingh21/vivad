@@ -117,7 +117,6 @@ lofted too, and taped on as a joke. Their rings are `tools/textures/scope.py`.
 | Ultra surface scans (plaster, asphalt, concrete and others, listed in `assets/textures/ultra/sources.json`) | [Poly Haven](https://polyhaven.com) | CC0 | Ultra materials on the city maps (`assets/textures/ultra/`) |
 | MPFB (MakeHuman plugin for Blender) | [extensions.blender.org/add-ons/mpfb](https://extensions.blender.org/add-ons/mpfb/) | GPL (tool only); generated humans are CC0 | Character base bodies, rig (`game_engine`) |
 | LGDuel's bot aim (`crates/bot/src/lib.rs`), adapted in `crates/shared/src/sim/aim.rs` | [github.com/s0pk/lgduel](https://github.com/s0pk/lgduel) | MIT, notice kept in the file | How bots turn and see: a limited turn speed and a late sight of targets |
-| MakeHuman system assets (`makehuman_system_assets_cc0.zip`, sha256 `b542127a…0107`) | [makehumancommunity.org](https://static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html) | CC0 | Body proxies, skin detail (re-toned), eyes, brows, lashes, hair (short04, braid01) |
 | "Male classic jeans", punkduck, MakeHuman community pack pants02 | [asset packs](https://static.makehumancommunity.org/assets/assetpacks.html) | CC-BY 4.0: credit needed | Man's jeans, recoloured, top cut away under the polo |
 | "Running shoes 01", punkduck, MakeHuman community pack shoes02 | [asset packs](https://static.makehumancommunity.org/assets/assetpacks.html) | CC-BY 3.0: credit needed | Man's shoes, recoloured |
 | Polo shirt, Namuhekam, pack shirts01; flapper dress, AEthelraed_Unraed, pack dress01; harem pants and cloth shoes, MRT (toigo), packs pants01 and shoes01; brows 02 and 05, Mindfront, pack eyebrows01 | [asset packs](https://static.makehumancommunity.org/assets/assetpacks.html) | CC0 | Polo; the dress cut into the woman's kurta; salwar; flat shoes; brow strands baked into the head |
@@ -126,6 +125,13 @@ lofted too, and taped on as a joke. Their rings are `tools/textures/scope.py`.
 | Khand Bold and SemiBold, 2014 Indian Type Foundry | [Google Fonts](https://fonts.google.com/specimen/Khand) | SIL OFL 1.1 (`assets/fonts/OFL-Khand.txt`) | Numbers |
 | Button click (`assets/audio/ui_click.ogg`) | [bevy_new_2d](https://github.com/TheBevyFlock/bevy_new_2d), by Jaszunio15 | CC0 | Front door buttons |
 | Screen, menu and button patterns in `crates/game/src/front/` | [bevy_new_2d](https://github.com/TheBevyFlock/bevy_new_2d) (CC0, MIT or Apache 2.0), [bevy_game_template](https://github.com/NiklasEi/bevy_game_template) (CC0) | CC0 | Followed by hand, adapted to Bevy 0.20 |
+| MakeHuman system assets (`makehuman_system_assets_cc0.zip`, sha256 `b542127a…0107`) | [makehumancommunity.org](https://static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html) | CC0 | Body proxies, skin detail (re-toned), eyes, brows, lashes, hair (short04, braid01, long01, short02); clothes: male_casualsuit03 (striped shirt, jeans), female_casualsuit01 (tee, jeans; its logo painted out by tools/textures/mh_clothes.py), shoes05, shoes06 |
+| Universal Animation Library (Standard), by Quaternius (`tools/blender/characters/mocap/UAL_Standard.fbx`) | [quaternius.com](https://quaternius.com/packs/universalanimationlibrary.html), mirrored on [OpenGameArt](https://opengameart.org/content/universal-animation-library) | CC0 | Retargeted by tools/blender/characters/anims.py: the forward run (Jog_Fwd_Loop), the sprint (Sprint_Loop), the idle (Idle_Loop), the crouch (Crouch_Fwd_Loop, Crouch_Idle_Loop), the jump (Jump_Start, Jump_Loop) |
+| Universal Animation Library 2 (Standard), by Quaternius (`tools/blender/characters/mocap/UAL2_Standard.glb`) | [OpenGameArt](https://opengameart.org/content/universal-animation-library-2) | CC0 | The slide (Slide_Loop), retargeted the same way |
+| Mixamo (Adobe): Walking, Fast Run, Crouch Idle; Rifle 8-Way Locomotion Pack; Pistol Handgun Locomotion Pack | [mixamo.com](https://www.mixamo.com) | Free to use in games; the downloads may not be redistributed, so they're kept out of the repository (`tools/blender/characters/mixamo/`, gitignored) and only the clips baked from them ship | Retargeted by tools/blender/characters/anims.py (MIXAMO_CLIPS): the walk, run, crouch idle, the crouch walk's legs in four directions, and the whole-body rifle and pistol sets |
+| MoCap Online: Rifle Basic (FBX_Rifle_Basic_27A2) | [mocaponline.com](https://mocaponline.com/products/rifle) | Bought by the project owner; licensed for one commercial project (see mocaponline.com/pages/legal); the pack may not be redistributed, so it's kept out of the repository (`tools/blender/characters/mocaponline/`, gitignored) and only the clips baked from it ship | Retargeted untouched by tools/blender/characters/anims.py (MOTUS_CLIPS): the rifle idle, aim, walks, runs, sprint, crouch idle and crouch walks. Its rifle and pistol models (the ones the clips were captured holding) are the bandook and the tamancha (tools/blender/weapons/pack_guns.py); the dunali is sized to the rifle |
+| "Mens shirt untucked", men's trouser, flip-flop sandals, Elvaerwyn, packs shirts02, pants02, shoes02; Oxford shoes and "Male trousers 1", Mindfront, packs shoes02, pants02; "Female tight jeans" and "Tennis shoes", punkduck, packs pants02, shoes02 | [asset packs](https://static.makehumancommunity.org/assets/assetpacks.html) | CC-BY (shirt, trouser, sandals: "CC_by" in their files; Mindfront: 4.0; punkduck: 3.0): credit needed | The eight looks' shirts, trousers, jeans and shoes, recoloured; the sandals cut down, the shirt's sleeves cut for the auto driver and the office woman |
+| Crude female T-shirt, Joel Palmius, pack shirts01; wool pants, MRT (toigo), pack pants01; blunt bob, MRT (toigo), pack hair01; brows 01, 03, 04 and 09, Mindfront, pack eyebrows01 | [asset packs](https://static.makehumancommunity.org/assets/assetpacks.html) | CC0 | The young woman's top, the pyjama and office trousers, the bob, the brows |
 
 All other textures are generated: weapons and characters are baked from procedural Blender
 materials (`tools/blender/lib/`, `tools/blender/characters/finish.py`); leaf and bark textures are
@@ -133,12 +139,23 @@ drawn procedurally (`tools/blender/nature/textures.py`).
 
 ## Characters
 
-Two everyday Delhi people, chosen from street photos and video (`research/characters/README.md`):
-no real person's face or body, warm brown South Asian skin, softer bodies than the rig's build.
-- Man: plain maroon polo, indigo jeans, running shoes, a black school bag (`outfits.backpack`,
-  our own, rigid on `spine_03`), short side-parted hair, stubble.
-- Woman: plain magenta kurta (MakeHuman's flapper dress cut at the knee, slit at the sides),
-  cream salwar (harem pants tucked in under the kurta), flat shoes, a long plait, kajal.
+Eight everyday Delhi people, chosen from street photos and video (`research/characters/README.md`):
+no real person's face or body, South Asian skin from wheatish to deep brown, everyday bodies. A
+look is one entry in `VARIANTS` in `human.py`, in the game's `look % 8` order; odd is a woman.
+- Young man: polo, jeans, running shoes, a school bag (`outfits.backpack`, our own, rigid on
+  `spine_03`), short side-parted hair, stubble.
+- Woman in a suit: kurta (MakeHuman's flapper dress cut at the knee, slit at the sides), cream
+  salwar (harem pants tucked in under the kurta), flat shoes, a long plait, kajal.
+- Office man: pale shirt, charcoal trousers, formal shoes, a laptop bag slung behind, a moustache.
+- Young woman: plain top, jeans, white sneakers, a ponytail, a sling bag.
+- Auto driver: thin, in a work shirt with the sleeves cut short, old trousers, rubber chappals,
+  a red gamchha on his shoulder, a moustache.
+- Aunty: plain suit on a fuller body, a low bun (the plait wound up, `outfits.low_bun`), a handbag.
+- Elder: white kurta pyjama, sandals, white hair and moustache, an old face.
+- Office woman: pale shirt with the sleeves turned back, dark trousers, a bob, a canvas tote.
+- All of them: one rig per sex, so every clip fits every look. Bags and the gamchha are our own.
+- `characters.rs` sets people apart inside a look: three skin tones, three colours of the top
+  (`finish.split_top`, one more material on the same textures), height within 4 %.
 - Clothes: MakeHuman community garments fitted by MPFB (`outfits.worn`); they need the packs from
   `research/characters/scripts/fetch_mh.sh <dest>`, with `research/characters/downloads/makehuman`
   as `<dest>`. `finish.fitted_material` recolours them.
@@ -147,8 +164,11 @@ no real person's face or body, warm brown South Asian skin, softer bodies than t
   `face.py` measures eyes and nose tip on the mesh, adds the male's stubble (a `beard` attribute
   the skin shader darkens), paints the scalp under the hair, and bakes strand brows into the skin.
   Check with `just faces` (exported GLB), `just face-lab` or `just lookbook`.
-- Rig: MPFB `game_engine` (53 bones). GLB faces +Z with origin at the feet; the game turns it to -Z.
-- Budget: LOD0 30k, LOD1 13.5k, LOD2 5.4k tris; one 2k opaque texture set + alpha hair cards.
+- Rig: MPFB `game_engine` plus `weapon_r` (54 bones), arms and shoulders shaped to the mannequin
+  the gun clips were captured on (`skeleton.py`). GLB faces +Z with origin at the feet; the game
+  turns it to -Z.
+- Budget: LOD0 up to 60k, LOD1 27k, LOD2 13k, LOD3 5.5k tris; colour and normal 1024, roughness
+  512, hair cards 1024: about 39 MB of GPU memory a look.
 
 ## Vegetation
 
@@ -196,7 +216,7 @@ file per distinct texture named by content hash, shared by every model that uses
 ## Warrior animation
 
 Authored procedurally in `tools/blender/characters/anims.py`, no mocap or third-party clips:
-idle; walk (3.6 m/s) and run (5.6 m/s) in four directions; forward sprint (7.4 m/s); jump, fall,
+idle; walk (3.6 m/s) and run (5.6 m/s) in four directions; forward sprint (8.6 m/s); jump, fall,
 skydiving freefall, glide; death; and torso-only sword guard and swing, bow aim, drinking. Legs
 use two-bone IK against foot paths that move at the clip's ground speed (the script prints the
 remaining foot slide per clip, under 1 cm). Clips are per rig because the male and female rest

@@ -6,8 +6,8 @@ use rand::RngExt;
 
 use super::melee::{BrokeMsg, Fights, Stroke, Swing, SwingPhase};
 use super::{
-    Action, DamageCause, DamageMsg, Door, EYE_OFFSET, Eliminated, HEADSHOT_HEIGHT, Health, HitMsg, Inventory,
-    Kinematic, MoveMode, PlayerIntent, SimSet, Warrior, aim_origin, aim_ray, btn, hit_mask,
+    Action, DamageCause, DamageMsg, Door, Eliminated, HEADSHOT_HEIGHT, Health, HitMsg, Inventory,
+    Kinematic, MoveMode, PlayerIntent, SimSet, Warrior, aim_origin, aim_ray, btn, eye_offset, hit_mask,
 };
 use crate::items::{AstraEffect, ItemDb, ItemKind, ItemStack};
 use crate::sim::net::{NetId, NetMsg, Outbox, Remote, Shot, drop_loot};
@@ -145,9 +145,10 @@ fn use_items(
         let Some(stack) = inv.current().cloned() else { continue };
         let def = db.get(&stack.id);
         let scale = stack.rarity.damage_scale();
-        // A crouch brings the eye and the hands down with it.
+        // A crouch brings the hands down with it (muzzle and melee). The eye is `eye_offset`'s,
+        // from the Transform: it comes down less.
         let body = tf.translation - Vec3::Y * intent.drop();
-        let (_, aim) = aim_ray(body, intent);
+        let (_, aim) = aim_ray(tf.translation, intent);
         let muzzle = body + Vec3::Y * 0.5 + intent.body_rotation() * Vec3::new(0.3, 0.0, -0.4);
 
         match &def.kind {
@@ -249,18 +250,17 @@ fn use_items(
                 // turn the shot round.
                 // Through a scope the eye is on the line of the shot, which leaves just ahead of it.
                 let filter = SpatialQueryFilter::from_mask(hit_mask()).with_excluded_entities([entity]);
-                let ads = intent.held(btn::AIM);
-                let scoped = ads && *scope > 1.0;
-                let at_eye = body + Vec3::Y * EYE_OFFSET;
+                let scoped = intent.held(btn::AIM) && *scope > 1.0;
+                let at_eye = tf.translation + Vec3::Y * eye_offset(intent);
                 let muzzle = if scoped { at_eye + aim * 0.2 } else { muzzle };
-                let eye = if scoped { at_eye } else { aim_origin(&spatial, body, intent, entity) };
+                let eye = if scoped { at_eye } else { aim_origin(&spatial, tf.translation, intent, entity) };
                 let eye = eye + aim * (muzzle - eye).dot(aim).max(0.0);
                 let target = spatial
                     .cast_ray(eye, Dir3::new(aim).unwrap_or(Dir3::NEG_Z), 600.0, true, &filter)
                     .map(|h| eye + aim * h.distance)
                     .unwrap_or(eye + aim * 600.0);
                 let base = (target - muzzle).normalize_or(aim);
-                let spread = if scoped { (spread_deg + act.bloom).to_radians() } else { (spread_deg + hip_spread + act.bloom).to_radians() * if ads { 0.6 } else { 1.0 } };
+                let spread = shot_spread(*spread_deg, *hip_spread, act.bloom, *scope, intent, kin);
                 act.bloom = (act.bloom + bloom).min(*bloom_max);
                 for _ in 0..*pellets {
                     let yaw_off = rng.random_range(-1.0f32..1.0) * spread;
@@ -349,6 +349,36 @@ fn use_items(
             ItemKind::Arrows { .. } => {}
         }
     }
+}
+
+/// Aiming down the sights tightens a shot by this much.
+const ADS_SPREAD: f32 = 0.45;
+
+/// Stance and motion, as a multiple of a shot's spread: tighter crouched, wider on the move, sliding
+/// or in the air.
+fn motion_spread(kin: &Kinematic) -> f32 {
+    if !kin.grounded {
+        return 1.8;
+    }
+    if kin.sliding {
+        return 1.4;
+    }
+    let speed = kin.velocity.with_y(0.0).length();
+    (if kin.crouched { 0.7 } else { 1.0 }) * (1.0 + 0.45 * (speed / super::movement::WALK_SPEED).min(1.5))
+}
+
+/// A shot's spread in radians: the gun's own, its hip spread and its bloom (degrees, `items.ron`),
+/// then aim, stance and motion. The crosshair opens and closes with this (crate::hud in the game).
+/// Through a scope (`scope` above 1) there is no hip spread, and the gun's numbers already are its
+/// aimed ones, so only stance and motion count.
+pub fn shot_spread(spread_deg: f32, hip_spread: f32, bloom: f32, scope: f32, intent: &PlayerIntent, kin: &Kinematic) -> f32 {
+    let ads = intent.held(btn::AIM);
+    let deg = if ads && scope > 1.0 {
+        spread_deg + bloom
+    } else {
+        (spread_deg + hip_spread + bloom) * if ads { ADS_SPREAD } else { 1.0 }
+    };
+    deg.to_radians() * motion_spread(kin)
 }
 
 #[allow(clippy::too_many_arguments)]

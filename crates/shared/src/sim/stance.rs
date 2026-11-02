@@ -20,7 +20,8 @@ use super::{CAPSULE_LENGTH, CAPSULE_RADIUS, Eliminated, Kinematic, MoveMode, Pla
 
 /// How much shorter a crouched warrior is: 1.76 m standing, 1.10 m down.
 pub const CROUCH_DROP: f32 = 0.66;
-pub const CROUCH_SPEED: f32 = 2.6;
+/// The pace the crouch clips were captured at, so they play at it.
+pub const CROUCH_SPEED: f32 = 1.4;
 
 #[derive(Component, Clone, Copy, Debug, Default, Reflect)]
 pub struct Stance {
@@ -57,10 +58,10 @@ fn room_to_stand(spatial: &SpatialQuery, center: Vec3, me: Entity) -> bool {
 /// Before anyone moves this tick: warriors go down as asked and up when there is room.
 #[allow(clippy::type_complexity)]
 pub(crate) fn update_stance(
-    mut q: Query<(Entity, &Transform, &mut PlayerIntent, &mut Stance, &Kinematic, Has<Remote>), (With<Warrior>, Without<Eliminated>)>,
+    mut q: Query<(Entity, &Transform, &mut PlayerIntent, &mut Stance, &mut Kinematic, Has<Remote>), (With<Warrior>, Without<Eliminated>)>,
     spatial: SpatialQuery,
 ) {
-    for (entity, tf, mut intent, mut stance, kin, remote) in &mut q {
+    for (entity, tf, mut intent, mut stance, mut kin, remote) in &mut q {
         let mut down = intent.held(btn::CROUCH) && kin.mode == MoveMode::Ground;
         // A copy of another peer's warrior is as its owner says.
         if stance.crouched && !down && !remote && kin.mode == MoveMode::Ground && !room_to_stand(&spatial, tf.translation, entity) {
@@ -73,6 +74,7 @@ pub(crate) fn update_stance(
         }
         if down != stance.crouched {
             stance.crouched = down;
+            kin.crouched = down;
         }
     }
 }

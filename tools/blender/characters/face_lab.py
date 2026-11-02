@@ -4,7 +4,7 @@ front, three-quarter and close-eye shots in about a minute per variant.
 
 blender -b -P tools/blender/characters/face_lab.py -- <out_dir> male|female [option...] [samples]
 
-  look=<k>       the look's person (k % 2: 0 male, 1 female) instead of the variant
+  look=<k>       the look's person (k % 8, the game's order) instead of the variant
   hair=<style>   an MPFB hair style, e.g. ponytail01
   age=<0..1>     the MakeHuman age macro (0.5 is 25 years), which also ages the skin's creases
   eyes=<colour>  an MPFB eye material, e.g. brownlight
@@ -63,7 +63,7 @@ def main():
     out, variant = args[0], args[1]
     opts = args[2:]
     if option(opts, "look") is not None:
-        variant = ("male", "female")[int(option(opts, "look")) % 2]
+        variant = list(human.VARIANTS)[int(option(opts, "look")) % 8]
     cfg = dict(human.VARIANTS[variant])
     for a in opts:
         if a == "off":
@@ -74,16 +74,16 @@ def main():
         cfg["hair"] = f"hair/{option(opts, 'hair')}/{option(opts, 'hair')}.mhclo"
     if option(opts, "skin"):
         cfg["skin"] = f"skins/{option(opts, 'skin')}/{option(opts, 'skin')}.mhmat"
-    age = float(option(opts, "age") or cfg["macro"]["age"])
-    cfg["macro"] = {**cfg["macro"], "age": age}
+    age = float(option(opts, "age") or cfg.get("flesh", {}).get("age", cfg["macro"]["age"]))
+    cfg["flesh"] = {**cfg.get("flesh", {}), "age": age}
     samples = next((int(a) for a in opts if a.isdigit()), 32)
     tag = "_".join(a.replace("=", "_") for a in opts if not a.isdigit() and not a.startswith("-")) or "on"
     human.clear_scene()
     body, rig, parts = human.build_body(cfg)
     proxy = parts["proxy"]
     ctx = garments.BodyContext(proxy, rig, human.bone_weight_map(proxy))
-    for o, _ in face.decorate(variant, proxy, parts, body, ctx):
-        o.data.materials.append(finish.hair_mesh_material(o.name))
+    ctx.brow_top = max((parts["eyebrows"].matrix_world @ v.co).z for v in parts["eyebrows"].data.vertices)
+    face.decorate(cfg, proxy, parts, body, ctx)
     body.hide_render = True
     skin_img = finish.find_image(proxy)
     eye_img = finish.find_image(parts["eyes"])
@@ -99,16 +99,16 @@ def main():
     head, skin = finish.split_skin(proxy, rig)
     if option(opts, "subdiv") != "0":
         head_build.subdivide(head, skin)
-    head.data.materials.append(finish.head_material(variant, skin_img, marks, age))
-    skin.data.materials.append(finish.body_material(variant, skin_img, marks))
+    head.data.materials.append(finish.head_material(variant, cfg, skin_img, marks))
+    skin.data.materials.append(finish.body_material(variant, cfg, skin_img, marks))
     eyes.data.materials.clear()
     eyes.data.materials.append(finish.eye_material("eyes", eye_img, head_build.mid_height(eyes)))
-    for key, tint, strength in finish.CARDS:
+    for key, tint, strength, cut in finish.cards(cfg):
         o = parts.get(key)
         if o is not None:
             img = finish.find_image(o)
             o.data.materials.clear()
-            o.data.materials.append(finish.alpha_card_material(key, img, tint, strength))
+            o.data.materials.append(finish.alpha_card_material(key, img, tint, strength, cut))
 
     bone = rig.matrix_world @ rig.pose.bones["head"].head
     centre = bone + Vector((0, -0.06, 0.1))

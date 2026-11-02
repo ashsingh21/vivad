@@ -75,3 +75,8 @@ tools/texpack/target/
 # Raw full-size game shots and clip frames behind the character sheets.
 previews/characters/game_*/
 previews/characters/clip_*/frame_*
+# Raw clip frames behind the movement sheets.
+previews/ashu/*/frame_*
+# Mixamo downloads (Adobe terms: not to be redistributed); the converted clips are in the anims glb.
+tools/blender/characters/mixamo/
+tools/blender/characters/mocaponline/

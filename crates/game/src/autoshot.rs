@@ -43,6 +43,12 @@
 //!   VIVAD_ARMOURY_OPEN=1 stand out in the open, for long looks through a scope.
 //!   VIVAD_ARMOURY_LONGSHOT=<fps>  only one pose, a rifle shot through the scope at a live bot
 //!   150 m off, then watch it for a few seconds: frames for tools/clip.py.
+//! VIVAD_FOOT=<x>,<z>[,<yaw degrees>]  the player starts the match on foot there, 9 m out in front
+//!                        of a gumti's shutter with `gumti`, or down the longest road near a spot
+//!                        with `street,<x>,<z>`, and logs what it does as `[foot]` lines:
+//!                        a scripted run with VIVAD_KEYS and VIVAD_GIVE (crate::input), filmed by
+//!                        VIVAD_CLIP from the game's own camera. VIVAD_TURN=<t>:<degrees>,... turns
+//!                        the view at those match times, as a hand on the mouse would, in 0.3 s.
 
 use bevy::camera::{ImageRenderTarget, RenderTarget};
 use bevy::prelude::*;
@@ -126,6 +132,12 @@ enum Use {
     Snipe,
     /// Held to the shoulder as just after a shot, not looking through any scope.
     Shoulder,
+    /// Carried at a run, on the spot (a treadmill: the run is pinned back each tick).
+    Run,
+    /// Running back toward the camera.
+    RunBack,
+    /// Crouch-walking forward.
+    Crouch,
 }
 
 #[derive(Clone, Copy)]
@@ -139,6 +151,8 @@ enum View {
     Player,
     /// A close head shot, to judge faces in the game's own light.
     Face,
+    /// Close on the left hand, from the left (does it hold the fore-end?).
+    Hand,
 }
 
 #[derive(Resource)]
@@ -168,6 +182,9 @@ impl Armoury {
             Use::Strike => "strike",
             Use::Snipe => "snipe",
             Use::Shoulder => "shoulder",
+            Use::Run => "run",
+            Use::RunBack => "runback",
+            Use::Crouch => "crouch",
         };
         let view = match p.view {
             View::Front => "front",
@@ -176,6 +193,7 @@ impl Armoury {
             View::Range => "range",
             View::Player => "player",
             View::Face => "face",
+            View::Hand => "hand",
         };
         let up = if p.pitch > 0.1 { "_up" } else if p.pitch < -0.1 { "_down" } else { "" };
         let at = if p.target.is_some() { format!("_{:.0}ms", p.after * 1000.0) } else { String::new() };
@@ -319,6 +337,10 @@ impl Plugin for AutoshotPlugin {
                 p("katta", Use::Aim, View::Side, 0.0),
                 p("katta", Use::Aim, View::Back, 0.0),
                 p("dunali", Use::Carry, View::Side, 0.0),
+                p("dunali", Use::Run, View::Side, 0.0),
+                p("dunali", Use::RunBack, View::Back, 0.0),
+                p("dunali", Use::RunBack, View::Side, 0.0),
+                p("dunali", Use::Crouch, View::Side, 0.0),
                 p("dunali", Use::Aim, View::Side, 0.0),
                 p("gulel", Use::Hold, View::Side, 0.0),
                 p("gulel", Use::Hold, View::Front, -0.4),
@@ -363,6 +385,18 @@ impl Plugin for AutoshotPlugin {
                 range("brahmastra", View::Range, 25.0, 1.4),
                 range("brahmastra", View::Range, 25.0, 1.8),
             ];
+            // Every long gun's hold: the left hand on the fore-end, and from behind, no stock
+            // through the shoulder.
+            for gun in ["dunali", "bandook", "vajra9", "trishul_carbine", "saintalis", "thaana_slr", "thri_not_thri", "toradar"] {
+                poses.extend([
+                    p(gun, Use::Carry, View::Hand, 0.0),
+                    p(gun, Use::Run, View::Hand, 0.0),
+                    p(gun, Use::Aim, View::Hand, 0.0),
+                    p(gun, Use::Carry, View::Back, 0.0),
+                    p(gun, Use::Run, View::Back, 0.0),
+                    p(gun, Use::Aim, View::Back, 0.0),
+                ]);
+            }
             if let Ok(only) = std::env::var("VIVAD_ARMOURY_ONLY").map(|s| s.trim().to_owned()).and_then(|s| if s.is_empty() { Err(std::env::VarError::NotPresent) } else { Ok(s) }) {
                 let keys: Vec<String> = only.split(',').map(str::to_owned).collect();
                 poses.retain(|q| keys.iter().any(|k| q.item.contains(k.as_str())));
@@ -383,6 +417,9 @@ impl Plugin for AutoshotPlugin {
             let view = std::env::var("VIVAD_CLIP_VIEW").is_ok();
             app.insert_resource(Clip { dir: parts[0].to_owned(), from, to, step: 1.0 / fps.max(1.0), next: from, frame: 0, view })
                 .add_systems(Update, clip_frames);
+        }
+        if std::env::var("VIVAD_FOOT").is_ok() {
+            app.add_systems(PreUpdate, foot_run.after(crate::input::LocalInput));
         }
         if let Ok(spec) = std::env::var("VIVAD_KO") {
             let at = spec.split(',').next().and_then(|t| t.trim().parse().ok()).unwrap_or(60.0);
@@ -803,6 +840,72 @@ fn clip_frames(
     clip.next += clip.step;
 }
 
+/// Puts the player on foot once, then logs the run in numbers (VIVAD_FOOT).
+#[allow(clippy::type_complexity)]
+fn foot_run(
+    layout: Res<MapLayout>,
+    m: Res<Match>,
+    mut q: Query<(&mut Transform, &mut Kinematic, &mut PlayerIntent, &Inventory), With<LocalPlayer>>,
+    mut placed: Local<bool>,
+    mut next: Local<f32>,
+    mut turned: Local<Vec<f32>>,
+) {
+    let Ok((mut tf, mut kin, mut intent, inv)) = q.single_mut() else { return };
+    // By how far through each turn the match is, so a slow frame can't skip one.
+    let turns: Vec<(f32, f32)> = std::env::var("VIVAD_TURN")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|turn| {
+            let (at, degrees) = turn.split_once(':')?;
+            Some((at.trim().parse().ok()?, degrees.trim().parse().ok()?))
+        })
+        .collect();
+    turned.resize(turns.len(), 0.0);
+    for ((at, degrees), done) in turns.into_iter().zip(turned.iter_mut()) {
+        let share = ((m.elapsed - at) / 0.3).clamp(0.0, 1.0);
+        intent.yaw += degrees.to_radians() * (share - *done);
+        *done = share;
+    }
+    if !*placed {
+        *placed = true;
+        let spec = std::env::var("VIVAD_FOOT").unwrap_or_default();
+        let num: Vec<f32> = spec.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+        let (at, yaw) = match (spec.as_str(), num.as_slice()) {
+            ("gumti", _) => {
+                let g = layout.kit.iter().find(|k| k.name == "gumti").expect("a map with gumtis");
+                let out = Quat::from_rotation_y(g.yaw) * Vec3::NEG_Z;
+                (g.pos.xz() + out.xz() * 9.0, (out.x).atan2(out.z))
+            }
+            (s, [x, z, ..]) if s.starts_with("street") => {
+                // At the near end of the longest straight road by there.
+                let (eye, look) = street_view(&layout, Vec2::new(*x, *z)).expect("a road near there");
+                let d = (look - eye).xz();
+                (eye.xz(), (-d.x).atan2(-d.y))
+            }
+            (_, [x, z, yaw, ..]) => (Vec2::new(*x, *z), yaw.to_radians()),
+            (_, [x, z, ..]) => (Vec2::new(*x, *z), 0.0),
+            _ => (Vec2::ZERO, 0.0),
+        };
+        tf.translation = Vec3::new(at.x, layout.terrain.height(at.x, at.y) + HALF_HEIGHT + 0.05, at.y);
+        kin.mode = MoveMode::Ground;
+        kin.velocity = Vec3::ZERO;
+        kin.fall_from = Some(tf.translation.y);
+        intent.yaw = yaw;
+        println!("[foot] on foot at {at} facing {:.0} degrees", yaw.to_degrees());
+    }
+    if m.elapsed >= *next {
+        *next = m.elapsed + 0.25;
+        let low = if kin.crouched { " low" } else { "" };
+        let slide = if kin.sliding { " sliding" } else { "" };
+        let air = if kin.grounded { "" } else { " air" };
+        let item = inv.current().map_or("nothing", |s| s.id.as_str());
+        println!(
+            "[foot] t {:.2} speed {:.2} vy {:.2} at ({:.1}, {:.2}, {:.1}) held {:#x} {item}{low}{slide}{air}",
+            m.elapsed, kin.velocity.with_y(0.0).length(), kin.velocity.y, tf.translation.x, tf.translation.y, tf.translation.z, intent.held
+        );
+    }
+}
+
 /// Holds the local player still on open ground with the pose's item, pitch and buttons. Runs in
 /// place of the keyboard and mouse (just after them) so the sim and the animation both see it.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -829,9 +932,11 @@ fn armoury_actor(
     });
     tf.translation = spot;
     kin.mode = MoveMode::Ground;
-    kin.velocity = Vec3::ZERO;
     health.hp = 40.0;
     let Some(pose) = arm.poses.get(arm.index).copied() else { return };
+    if !matches!(pose.state, Use::Run | Use::RunBack | Use::Crouch) {
+        kin.velocity = Vec3::ZERO;
+    }
     let t = arm.t;
     let def = db.get(pose.item);
     let stack = |count| Some(ItemStack { id: pose.item.into(), rarity: Rarity::Epic, count });
@@ -847,7 +952,7 @@ fn armoury_actor(
             inv.selected = 1;
         }
     }
-    if pose.state == Use::Carry {
+    if matches!(pose.state, Use::Carry | Use::Run | Use::RunBack | Use::Crouch) {
         act.since_attack = act.since_attack.max(5.0);
     }
     intent.yaw = 0.0;
@@ -912,10 +1017,15 @@ fn armoury_actor(
 
 /// The pose's buttons, the last thing the actor does each frame.
 fn return_aim(intent: &mut PlayerIntent, pose: Pose, t: f32, arm: &mut Armoury) {
-    intent.move_axis = Vec2::ZERO;
+    intent.move_axis = match pose.state {
+        Use::Run | Use::Crouch => Vec2::Y,
+        Use::RunBack => Vec2::NEG_Y,
+        _ => Vec2::ZERO,
+    };
     intent.select = None;
     intent.held = match pose.state {
-        Use::Carry | Use::Shoulder => 0,
+        Use::Carry | Use::Shoulder | Use::Run | Use::RunBack => 0,
+        Use::Crouch => btn::CROUCH,
         Use::Aim => btn::AIM,
         Use::Hold => btn::FIRE | btn::AIM,
         Use::Strike => if t >= STRIKE_AT { btn::FIRE } else { 0 },
@@ -939,6 +1049,7 @@ fn armoury_camera(
     mut cam: Query<&mut Transform, With<MainCamera>>,
     view3d: Res<crate::quality::View3d>,
     mut exit: MessageWriter<AppExit>,
+    mut check: ResMut<crate::arms::GunCheck>,
 ) {
     arm.t += time.delta_secs();
     let (Ok(me), Ok(mut ct)) = (player.single(), cam.single_mut()) else { return };
@@ -959,6 +1070,8 @@ fn armoury_camera(
         View::Range => Some((chest + Vec3::new(far * 0.55 + 2.0, 0.8, -far * 0.5), chest + Vec3::new(0.0, -0.2, -far * 0.5))),
         View::Player => None,
         View::Face => Some((chest + Vec3::new(0.22, 0.34, -0.62), chest + Vec3::new(0.0, 0.3, -0.05))),
+        // On the fore-end where the left hand should hold it, from the left and a little below.
+        View::Hand => check.1.map(|at| (at + Vec3::new(if std::env::var("VIVAD_HAND_RIGHT").is_ok() { 0.42 } else { -0.42 }, -0.08, 0.05), at)),
     };
     if let Some((eye, look)) = view {
         *ct = Transform::from_translation(eye).looking_at(look, Vec3::Y);
@@ -972,6 +1085,9 @@ fn armoury_camera(
     }
     if arm.t >= at && !arm.shot {
         let path = format!("{}/{}.png", arm.dir, arm.name(&pose));
+        if let Some(c) = check.0.take().filter(|_| crate::visuals::long_gun(pose.item)) {
+            info!("[guncheck] {}: {c}", arm.name(&pose));
+        }
         // As for a clip: VIVAD_CLIP_VIEW=1 works with the window hidden, without the HUD.
         if std::env::var("VIVAD_CLIP_VIEW").is_ok() {
             commands.spawn(Screenshot::image(view3d.image.clone())).observe(save_to_disk(path));

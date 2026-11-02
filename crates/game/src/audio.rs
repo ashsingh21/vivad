@@ -163,7 +163,7 @@ fn far_take(item: &str) -> Option<(&'static str, f32)> {
         "thri_not_thri" => Some(("gun_rifle_far", 1.0)),
         "thaana_slr" => Some(("gun_rifle_far", 1.12)),
         "toradar" => Some(("gun_rifle_far", 0.75)),
-        "saintalis" | "trishul_carbine" => Some(("gun_auto_far", 1.0)),
+        "saintalis" | "bandook" | "trishul_carbine" => Some(("gun_auto_far", 1.0)),
         _ => None,
     }
 }
@@ -461,7 +461,7 @@ fn combat_events(
                     "gulel" => ("gulel_release", 60.0, 1.0, 1.0),
                     "vajra9" => ("gun_tamancha", 180.0, 1.45, 0.75),
                     "trishul_carbine" => ("gun_saintalis", RIFLE_REACH, 1.15, 0.9),
-                    "saintalis" => ("gun_saintalis", RIFLE_REACH, 1.0, 1.0),
+                    "saintalis" | "bandook" => ("gun_saintalis", RIFLE_REACH, 1.0, 1.0),
                     "thaana_slr" => ("gun_thaana_slr", RIFLE_REACH, 1.0, 1.0),
                     "thri_not_thri" => ("gun_thri_not_thri", RIFLE_REACH, 1.0, 1.1),
                     // Black powder: the dunali's boom, deeper.

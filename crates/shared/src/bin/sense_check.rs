@@ -655,11 +655,12 @@ fn long_shots(stage: &mut Stage, check: &mut Check) {
         let world = stage.app.world_mut();
         world.query::<(&Transform, &Projectile)>().iter(world).filter(|(_, p)| p.owner == player).max_by(|a, b| a.1.ttl.total_cmp(&b.1.ttl)).map_or(0.0, |(t, p)| t.translation.y - p.velocity.y * (BULLET_LIFE - p.ttl))
     };
-    let dropped = |standing: f32, down: f32| (standing - down - CROUCH_DROP).abs() < 0.03;
+    // The hands drop with the capsule's top; the eye, which a scope fires from, a little less.
+    let dropped = |standing: f32, down: f32, by: f32| (standing - down - by).abs() < 0.03;
     let (eye, low_eye) = (shot_at(stage, 0, btn::AIM), shot_at(stage, btn::CROUCH, btn::AIM));
     let (hip, low_hip) = (shot_at(stage, 0, 0), shot_at(stage, btn::CROUCH, 0));
-    check.that(dropped(eye, low_eye), &format!("crouched, a scoped shot leaves {:.2} m lower", eye - low_eye));
-    check.that(dropped(hip, low_hip), &format!("crouched, a shot from the hip leaves {:.2} m lower", hip - low_hip));
+    check.that(dropped(eye, low_eye, shared::sim::CROUCH_EYE_DROP), &format!("crouched, a scoped shot leaves {:.2} m lower", eye - low_eye));
+    check.that(dropped(hip, low_hip, CROUCH_DROP), &format!("crouched, a shot from the hip leaves {:.2} m lower", hip - low_hip));
     stage.intent(player).held = 0;
 }
 

@@ -1,7 +1,7 @@
 //! Presentation of simulation entities: graybox map, warriors, loot, projectiles, effects, sky.
 
 use std::collections::HashMap;
-use std::f32::consts::FRAC_PI_2;
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use bevy::light::CascadeShadowConfigBuilder;
 use bevy::prelude::*;
@@ -88,8 +88,8 @@ impl Plugin for VisualsPlugin {
 }
 
 /// Baked models in assets/models/weapons, one per item (the arrow-quiver pickup shows the tarkash).
-pub const WEAPON_MODELS: [&str; 26] = [
-    "bat", "lathi", "tawa", "hockey_stick", "gada", "talwar", "dhal", "katta", "tamancha", "dunali", "gulel", "chakra", "brahmastra", "arrow", "tarkash", "agneyastra", "vayavyastra", "sanjeevani",
+pub const WEAPON_MODELS: [&str; 27] = [
+    "bat", "lathi", "tawa", "hockey_stick", "gada", "talwar", "dhal", "katta", "tamancha", "dunali", "bandook", "gulel", "chakra", "brahmastra", "arrow", "tarkash", "agneyastra", "vayavyastra", "sanjeevani",
     "soma", "amrita", "vajra9", "trishul_carbine", "saintalis", "thaana_slr", "thri_not_thri", "toradar",
 ];
 
@@ -115,8 +115,6 @@ pub struct Palette {
     rarity_beam: HashMap<Rarity, Handle<StandardMaterial>>,
     pool_mesh: Handle<Mesh>,
     beam_mesh: Handle<Mesh>,
-    wood: Handle<StandardMaterial>,
-    gold: Handle<StandardMaterial>,
     pub(crate) string: Handle<StandardMaterial>,
     fire: Handle<StandardMaterial>,
     wind: Handle<StandardMaterial>,
@@ -124,6 +122,9 @@ pub struct Palette {
     glint: Handle<StandardMaterial>,
     zone: Handle<StandardMaterial>,
     pub(crate) models: HashMap<&'static str, ModelHandles>,
+    /// The chests (tools/blender/props/chests.py), peti then kalash: body and lid (its origin on
+    /// the hinge). Their material is in `models`, as "chest_peti" and "chest_kalash".
+    chests: [(Handle<Mesh>, Handle<Mesh>); 2],
 }
 
 fn mat_color(m: Mat) -> (Color, f32, f32) {
@@ -370,8 +371,6 @@ fn setup_assets(
         rarity_beam,
         pool_mesh: meshes.add(Plane3d::default().mesh().size(1.3, 1.3)),
         beam_mesh: meshes.add(beam_mesh),
-        wood: materials.add(StandardMaterial { base_color: Color::srgb(0.40, 0.24, 0.12), perceptual_roughness: 0.7, ..default() }),
-        gold: materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.78, 0.34), metallic: 1.0, perceptual_roughness: 0.3, ..default() }),
         string: materials.add(StandardMaterial { base_color: Color::srgb(0.86, 0.82, 0.70), perceptual_roughness: 0.8, ..default() }),
         fire: materials.add(StandardMaterial {
             base_color: Color::srgba(1.0, 0.45, 0.1, 0.7),
@@ -402,8 +401,9 @@ fn setup_assets(
         }),
         models: WEAPON_MODELS
             .iter()
-            .map(|&id| {
-                let path = format!("models/weapons/{id}.glb");
+            .map(|&id| (id, format!("models/weapons/{id}.glb")))
+            .chain(["chest_peti", "chest_kalash"].map(|id| (id, format!("models/props/{id}.glb"))))
+            .map(|(id, path)| {
                 (id, ModelHandles {
                     mesh: assets.load(format!("{path}#Mesh0/Primitive0")),
                     mat: materials.add(StandardMaterial {
@@ -415,6 +415,10 @@ fn setup_assets(
                 })
             })
             .collect(),
+        chests: ["peti", "kalash"].map(|name| {
+            let path = format!("models/props/chest_{name}.glb");
+            (assets.load(format!("{path}#Mesh0/Primitive0")), assets.load(format!("{path}#Mesh1/Primitive0")))
+        }),
     });
 }
 
@@ -757,17 +761,53 @@ fn dress_warriors(mut commands: Commands, q: Query<(Entity, &Warrior, &Transform
     }
 }
 
+/// Where a warrior's drawn body faces, and how it turned last frame (for its lean).
+#[derive(Default)]
+struct Facing {
+    yaw: f32,
+    turn: f32,
+}
+
+/// The drawn body: between the last two sim ticks; facing, as a player would expect, the way it
+/// runs when it's just moving (so the legs run forward rather than crabbing sideways at speed),
+/// turning back to the aim when aiming, attacking or standing, and always with a gun in hand (it
+/// backpedals and strafes, the gun kept toward the crosshair); turning smoothly, never snapping,
+/// and leaning a little into turns. The sim's own facing (aim, hits) is untouched.
+#[allow(clippy::type_complexity)]
 fn interpolate_warriors(
     fixed: Res<Time<Fixed>>,
-    sims: Query<(&PosHistory, &Transform), Without<WarriorVisual>>,
-    mut vis: Query<(&WarriorVisual, &mut Transform)>,
+    time: Res<Time>,
+    sims: Query<(&PosHistory, &Transform, &shared::sim::PlayerIntent, &shared::sim::Action, &Kinematic, &Inventory), Without<WarriorVisual>>,
+    mut vis: Query<(Entity, &WarriorVisual, &mut Transform)>,
+    mut facing: Local<HashMap<Entity, Facing>>,
 ) {
     let a = fixed.overstep_fraction();
-    for (v, mut t) in &mut vis {
-        if let Ok((h, st)) = sims.get(v.sim) {
-            t.translation = h.prev.lerp(h.curr, a);
-            t.rotation = st.rotation;
-        }
+    let dt = time.delta_secs().max(1e-4);
+    facing.retain(|e, _| vis.contains(*e));
+    for (e, v, mut t) in &mut vis {
+        let Ok((h, st, intent, act, kin, inv)) = sims.get(v.sim) else { continue };
+        t.translation = h.prev.lerp(h.curr, a);
+        let aim_yaw = st.rotation.to_euler(EulerRot::YXZ).0;
+        let vel = (h.curr - h.prev) / fixed.timestep().as_secs_f32().max(1e-4);
+        let ground = Vec2::new(vel.x, vel.z);
+        let gun = inv.current().is_some_and(|s| shot_kind(&s.id) == Shot::Bullet);
+        let fighting = intent.held(shared::sim::btn::AIM) || act.since_attack < 1.2 || act.charge > 0.0 || gun;
+        let target = if kin.mode == MoveMode::Ground && ground.length() > 1.2 && !fighting {
+            // The model faces -Z: the yaw that points it along the motion.
+            (-ground.x).atan2(-ground.y)
+        } else {
+            aim_yaw
+        };
+        let f = facing.entry(e).or_insert(Facing { yaw: target, turn: 0.0 });
+        let diff = (target - f.yaw + PI).rem_euclid(TAU) - PI;
+        // Quick when fighting (the shot must look aimed), easy otherwise.
+        let rate = if fighting { 18.0 } else { 9.0 };
+        let step = diff * (1.0 - (-rate * dt).exp());
+        f.yaw += step;
+        f.turn = f.turn.lerp(step / dt, (dt * 10.0).min(1.0));
+        // Lean into the turn with speed, a few degrees at most.
+        let lean = (-f.turn * ground.length() * 0.012).clamp(-0.14, 0.14);
+        t.rotation = Quat::from_rotation_y(f.yaw) * Quat::from_rotation_z(lean);
     }
 }
 
@@ -852,6 +892,14 @@ pub fn spawn_weapon_model(commands: &mut Commands, parent: Entity, id: &str, _ra
 #[derive(Component)]
 struct ChestLid;
 
+/// Where each chest's lid hinges, in the chest's frame: the peti's back top edge, the kalash's mouth.
+fn lid_hinge(kind: ChestKind) -> Vec3 {
+    match kind {
+        ChestKind::Peti => Vec3::new(0.0, 0.5, -0.324),
+        ChestKind::Kalash => Vec3::new(0.0, 0.764, 0.0),
+    }
+}
+
 fn dress_chests(
     mut commands: Commands,
     added: Query<(Entity, &Chest), Added<Chest>>,
@@ -860,24 +908,15 @@ fn dress_chests(
     palette: Res<Palette>,
 ) {
     for (e, c) in &added {
-        commands.entity(e).insert(Visibility::default()).with_children(|p| match c.kind {
-            ChestKind::Peti => {
-                p.spawn((Mesh3d(palette.cube.clone()), MeshMaterial3d(palette.wood.clone()),
-                         Transform::from_xyz(0.0, 0.3, 0.0).with_scale(Vec3::new(1.1, 0.6, 0.65))));
-                for x in [-0.45, 0.45] {
-                    p.spawn((Mesh3d(palette.cube.clone()), MeshMaterial3d(palette.gold.clone()),
-                             Transform::from_xyz(x, 0.3, 0.0).with_scale(Vec3::new(0.06, 0.62, 0.67))));
-                }
-                p.spawn((ChestLid, Mesh3d(palette.cube.clone()), MeshMaterial3d(palette.gold.clone()),
-                         Transform::from_xyz(0.0, 0.64, 0.0).with_scale(Vec3::new(1.12, 0.1, 0.68))));
-            }
-            ChestKind::Kalash => {
-                p.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(palette.gold.clone()),
-                         Transform::from_xyz(0.0, 0.42, 0.0).with_scale(Vec3::new(0.42, 0.4, 0.42))));
-                p.spawn((Mesh3d(palette.cylinder.clone()), MeshMaterial3d(palette.gold.clone()),
-                         Transform::from_xyz(0.0, 0.85, 0.0).with_scale(Vec3::new(0.3, 0.2, 0.3))));
-                p.spawn((ChestLid, Mesh3d(palette.sphere.clone()), MeshMaterial3d(palette.rarity_glow[&Rarity::Divya].clone()),
-                         Transform::from_xyz(0.0, 1.05, 0.0).with_scale(Vec3::splat(0.16))));
+        let (body, lid) = palette.chests[(c.kind == ChestKind::Kalash) as usize].clone();
+        let mat = palette.models[if c.kind == ChestKind::Peti { "chest_peti" } else { "chest_kalash" }].mat.clone();
+        commands.entity(e).insert(Visibility::default()).with_children(|p| {
+            p.spawn((Mesh3d(body), MeshMaterial3d(mat.clone())));
+            p.spawn((ChestLid, Mesh3d(lid), MeshMaterial3d(mat), Transform::from_translation(lid_hinge(c.kind))));
+            // The kalash marked out from afar: a pool of divine light round its foot.
+            if c.kind == ChestKind::Kalash {
+                p.spawn((Mesh3d(palette.pool_mesh.clone()), MeshMaterial3d(palette.rarity_pool[&Rarity::Divya].clone()),
+                         Transform::from_xyz(0.0, 0.03, 0.0).with_scale(Vec3::splat(1.6)), bevy::light::NotShadowCaster));
             }
         });
     }
@@ -887,8 +926,13 @@ fn dress_chests(
         }
         for ch in children.iter() {
             if let Ok(mut t) = lids.get_mut(ch) {
-                t.rotation = Quat::from_rotation_x(-1.9);
-                t.translation += Vec3::new(0.0, 0.3, -0.35);
+                // The peti's lid swung back on its hinge; the kalash's coconut and leaves lifted off
+                // and tipped back.
+                let hinge = lid_hinge(c.kind);
+                (t.translation, t.rotation) = match c.kind {
+                    ChestKind::Peti => (hinge, Quat::from_rotation_x(-1.9)),
+                    ChestKind::Kalash => (hinge + Vec3::new(0.0, 0.12, -0.42), Quat::from_rotation_x(-1.2)),
+                };
             }
         }
     }
@@ -940,7 +984,7 @@ pub enum Shot {
 
 /// Guns held to the shoulder (the `rifle_aim` clip) rather than out in the hand.
 pub fn long_gun(item: &str) -> bool {
-    matches!(item, "dunali" | "vajra9" | "trishul_carbine" | "saintalis" | "thaana_slr" | "thri_not_thri" | "toradar")
+    shared::sim::movement::long_gun(item)
 }
 
 pub fn shot_kind(item: &str) -> Shot {
