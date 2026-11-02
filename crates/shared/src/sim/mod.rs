@@ -198,6 +198,10 @@ pub struct PosHistory {
 
 pub const INVENTORY_SLOTS: usize = 5;
 
+/// The gun every warrior starts holding (None: empty-handed, the melee weapon only). For now the
+/// bandook: its animations are the rifle pack's own, which the empty-handed ones don't yet match.
+pub const START_GUN: Option<&str> = Some("bandook");
+
 #[derive(Component, Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct Inventory {
     pub melee: ItemStack,
@@ -215,6 +219,17 @@ impl Inventory {
             selected: 0,
             arrows: 0,
         }
+    }
+    /// What every warrior drops in with: the melee weapon, and for now (START_GUN) a loaded rifle
+    /// in hand with spare rounds.
+    pub fn starting(melee: &str) -> Self {
+        let mut inv = Self::new(melee);
+        if let Some(id) = START_GUN {
+            inv.slots[0] = Some(ItemStack { id: id.into(), rarity: crate::items::Rarity::Common, count: 30 });
+            inv.selected = 1;
+            inv.arrows = 90;
+        }
+        inv
     }
     pub fn current(&self) -> Option<&ItemStack> {
         if self.selected == 0 { Some(&self.melee) } else { self.slots[self.selected - 1].as_ref() }

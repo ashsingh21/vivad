@@ -220,3 +220,8 @@ web serve="yes":
     ln -sfn ../../assets build/web/assets
     @ls -la build/web/game_bg.wasm
     {{ if serve == "yes" { "cd build/web && python3 -m http.server 8080" } else { "true" } }}
+
+# A video of clips playing (rig, body, the bandook on the weapon bone): just clip-video, or
+# just clip-video female rifle_run_f,rifle_slide
+clip-video variant="male" clips="":
+    {{blender}} -b -P tools/blender/characters/clip_video.py -- {{variant}} previews/clips_{{variant}}.mp4 {{clips}} 2>&1 | grep -E '^\[video\]|Error|Traceback' || true

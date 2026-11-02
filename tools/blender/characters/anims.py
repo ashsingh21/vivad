@@ -1425,8 +1425,9 @@ def main():
     rig = Rig(arm)
     rig.anchor = face_anchor(rig, bpy.data.objects[f"{variant}_LOD0"])
     for o in list(bpy.data.objects):
-        # Keep the LOD0 body for previews; everything else goes.
-        if o is not arm and not (preview and o.type == "MESH" and o.name.endswith("LOD0")):
+        # Keep the full-detail body and its hair (for previews and the saved file's videos);
+        # everything else goes.
+        if o is not arm and not (o.type == "MESH" and not o.name.endswith(("LOD1", "LOD2"))):
             bpy.data.objects.remove(o)
     cycles = {}
     for name, speed, d in (("walk", WALK, None), ("run", RUN, None)):
@@ -1578,6 +1579,8 @@ def main():
         export_anim_single_armature=True, export_reset_pose_bones=True,
     )
     print(f"[anims] exported {out}: {[a.name for a in bpy.data.actions]}")
+    # The rig, its body and every clip, for videos (tools/blender/characters/clip_video.py).
+    bpy.ops.wm.save_as_mainfile(filepath=os.path.join(ROOT, "build", f"anims_{variant}.blend"))
 
 
 if __name__ == "__main__":

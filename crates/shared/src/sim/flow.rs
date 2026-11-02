@@ -183,7 +183,7 @@ pub fn start_match(world: &mut World) {
             Owner(owner),
             Warrior { name, is_bot, look: i + look_shift, kills: 0 },
             Health::default(),
-            Inventory::new(&melee),
+            Inventory::starting(&melee),
             Action::default(),
             Kinematic { mode: MoveMode::Vimana, ..default() },
             PlayerIntent::default(),
