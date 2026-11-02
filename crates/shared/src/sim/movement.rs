@@ -88,7 +88,11 @@ pub const SLIDE_FRICTION: f32 = 6.5;
 pub const SLIDE_END: f32 = 3.6;
 pub const SLIDE_STEER: f32 = 1.4;
 pub const SLIDE_COOLDOWN: f32 = 0.5;
-pub const GROUND_ACCEL: f32 = 70.0;
+/// A body has weight (m/s each second): up to a run in a fifth of a second, a stop a little quicker,
+/// and past a run a sprint builds slowly. Turning stays quick at any speed (`on_foot`).
+pub const GROUND_ACCEL: f32 = 30.0;
+pub const GROUND_BRAKE: f32 = 40.0;
+pub const SPRINT_RAMP: f32 = 8.0;
 pub const AIR_ACCEL: f32 = 12.0;
 pub const FREEFALL_MAX: f32 = 42.0;
 pub const FREEFALL_HORIZ: f32 = 20.0;
@@ -144,6 +148,17 @@ pub fn wish_dir(intent: &PlayerIntent) -> Vec3 {
 fn approach(current: Vec3, target: Vec3, max_delta: f32) -> Vec3 {
     let d = target - current;
     if d.length() <= max_delta { target } else { current + d.normalize() * max_delta }
+}
+
+/// One tick of a warrior's feet, from `cur` toward `want`, `run` being its running pace.
+fn on_foot(cur: Vec3, want: Vec3, run: f32, dt: f32) -> Vec3 {
+    let (now, then) = (cur.length(), want.length());
+    if then > now && now >= run {
+        // Into a sprint: only the speed builds slowly, not the turn.
+        return approach(cur, want.normalize() * (now + SPRINT_RAMP * dt).min(then), GROUND_BRAKE * dt);
+    }
+    let rate = if then <= now || cur.dot(want) < 0.0 { GROUND_BRAKE } else { GROUND_ACCEL };
+    approach(cur, want, rate * dt)
 }
 
 fn ground_probe(spatial: &SpatialQuery, center: Vec3, entity: Entity, max: f32) -> Option<(f32, Vec3)> {
@@ -265,7 +280,7 @@ pub(super) fn move_warriors(
                     }
                     v
                 } else if kin.grounded {
-                    approach(cur, wish * speed, GROUND_ACCEL * dt)
+                    on_foot(cur, wish * speed, run_speed, dt)
                 } else if wish == Vec3::ZERO {
                     approach(cur, Vec3::ZERO, AIR_DRAG * dt)
                 } else {

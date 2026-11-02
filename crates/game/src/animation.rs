@@ -373,6 +373,16 @@ fn clip_speed(name: &str) -> f32 {
     }
 }
 
+/// The way a locomotion clip moves, as (right, forward).
+fn clip_way(name: &str) -> Vec2 {
+    match name.as_bytes().last() {
+        Some(b'f') => Vec2::Y,
+        Some(b'b') => Vec2::NEG_Y,
+        Some(b'l') => Vec2::NEG_X,
+        _ => Vec2::X,
+    }
+}
+
 #[allow(clippy::type_complexity)]
 fn drive(
     time: Res<Time>,
@@ -466,20 +476,16 @@ fn drive(
                         locomotion_weights(forward, right, gaits)
                     };
                     let loco: Vec<(&'static str, f32)> = loco.into_iter().map(|(n, w)| (set.pick(prefix, n), w)).collect();
-                    // Advance the shared cycle at the real ground speed.
+                    // Advance the shared cycle so the blended stride covers the real ground speed:
+                    // below a clip's speed the blend with idle shrinks the stride and the cadence
+                    // holds, and on a diagonal, where two clips at right angles blend to 0.71 of a
+                    // stride, the cadence makes it up. Either way the feet don't slide.
                     let speed = forward.hypot(right);
-                    let (mut rate, mut wsum) = (0.0, 0.0);
-                    for (n, w) in &loco {
-                        let v = clip_speed(n);
-                        if v > 0.0 {
-                            rate += w * (speed / v) / dur(n);
-                            wsum += w;
-                        }
-                    }
-                    if wsum > 0.0 {
+                    let stride = loco.iter().fold(Vec2::ZERO, |sum, (n, w)| sum + clip_way(n) * *w * clip_speed(n) * dur(n)).length();
+                    if stride > 1e-3 {
                         // Contacts are at the cycle's start (left foot) and middle (right).
                         let before = anim.phase;
-                        anim.phase = (anim.phase + dt * rate / wsum).fract();
+                        anim.phase = (anim.phase + dt * speed / stride).fract();
                         let crossed = anim.phase < before || (before < 0.5 && anim.phase >= 0.5);
                         if crossed && speed > 0.8 {
                             steps.write(Footstep { who: wv.sim, pos: tf.translation - Vec3::Y * shared::sim::HALF_HEIGHT, speed, crouched: low });
