@@ -65,9 +65,9 @@ impl Quality {
     /// The ambient occlusion setting (None: off).
     fn ssao(self) -> Option<ScreenSpaceAmbientOcclusion> {
         match self {
-            // Measured on an M4 on the NCR's Karol Bagh, Low samples at Ultra's radius: 3 to 12 ms a
-            // frame, most of it the normal prepass it brings, so not on Medium.
-            Quality::Medium if std::env::var("VIVAD_MEDIUM_AO").is_ok() => Some(ScreenSpaceAmbientOcclusion { radius: 0.6, quality_level: ScreenSpaceAmbientOcclusionQualityLevel::Low, ..default() }),
+            // Measured on an M4 on the NCR's busiest roads, Low samples at radius 0.6: 7 to 9 ms a
+            // frame, most of it the normal prepass it brings, for little a player would see in
+            // this light, so not on Medium.
             Quality::Low | Quality::Medium => None,
             Quality::High => Some(ScreenSpaceAmbientOcclusion { radius: 0.6, ..default() }),
             // Medium: Ultra's samples cost an M4 about 3 ms a frame for little that shows at this radius.
