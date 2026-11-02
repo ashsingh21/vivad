@@ -640,7 +640,7 @@ fn populate(
     // him go, and turn up ahead.
     let in_view = walkers.iter().filter(|(_, w)| !w.role.animal() && w.pos.distance(at) < CROWD && ahead(w.pos) > 0.55).count();
     if in_view < want * 3 / 4 {
-        let behind = walkers.iter().filter(|(_, w)| w.role == Role::Shopper && !matches!(w.doing, Doing::Flee { .. }) && ahead(w.pos) < -0.15 && w.pos.distance(at) > 10.0);
+        let behind = walkers.iter().filter(|(_, w)| w.role == Role::Shopper && !matches!(w.doing, Doing::Flee { .. }) && ahead(w.pos) < -0.15 && (10.0..=STRAYED).contains(&w.pos.distance(at)));
         for (e, _) in behind.take(MOVED_UP) {
             commands.entity(e).despawn();
             room += 1;
