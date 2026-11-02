@@ -222,3 +222,40 @@ fn follow_camera(cam: Query<&Transform, (With<MainCamera>, Without<SkyRig>)>, mu
     let (Ok(c), Ok(mut r)) = (cam.single(), rig.single_mut()) else { return };
     r.translation = c.translation;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The photograph's middle column has to face the game's sun, from whichever side it shines.
+    #[test]
+    fn the_photographs_sun_is_over_the_games() {
+        for to_sun in [Vec3::new(1.0, 0.85, 0.45), Vec3::new(1.0, 0.75, 0.45), Vec3::new(-0.3, 0.9, -0.8)] {
+            let to_sun = to_sun.normalize();
+            let (_, photo) = dome(to_sun);
+            let Some(VertexAttributeValues::Float32x3(pos)) = photo.attribute(Mesh::ATTRIBUTE_POSITION) else { panic!("no positions") };
+            let Some(VertexAttributeValues::Float32x2(uv)) = photo.attribute(Mesh::ATTRIBUTE_UV_0) else { panic!("no UVs") };
+            let flat = |v: Vec3| Vec2::new(v.x, v.z).normalize();
+            let sun = flat(to_sun);
+            let mut seen = 0;
+            for (p, [u, v]) in pos.iter().zip(uv) {
+                let p = Vec3::from(*p).normalize();
+                let fraction = (*u - 0.5).rem_euclid(1.0);
+                if p.y.abs() < 0.9 && fraction.min(1.0 - fraction) < 0.0053 {
+                    assert!(flat(p).dot(sun) > 0.99, "u {u} faces away from the sun");
+                    seen += 1;
+                }
+                // The rows run from the zenith at 0 to the horizon at 1, and on past it.
+                assert!((v - p.y.acos() / FRAC_PI_2).abs() < 1e-3, "v {v} at height {}", p.y);
+            }
+            assert!(seen > 0, "no vertex on the sun's column");
+        }
+    }
+
+    #[test]
+    fn the_painted_dome_keeps_its_colours() {
+        let (painted, photo) = dome(Vec3::Y);
+        assert!(painted.attribute(Mesh::ATTRIBUTE_COLOR).is_some());
+        assert!(photo.attribute(Mesh::ATTRIBUTE_COLOR).is_none(), "vertex colours would tint the photograph");
+    }
+}

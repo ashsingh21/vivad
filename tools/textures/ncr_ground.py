@@ -4,6 +4,8 @@ build/ultra_src, which `just textures-pack` turns into assets/textures/ultra/{dr
 
 python3 tools/textures/ncr_ground.py [dry turf]
 
+The scans are withered_grass and sparse_grass, 2k JPGs of diff, nor_gl and arm, from polyhaven.com.
+
 Conventions, as tools/textures/cp_surfaces.py has them, and what's new:
 - Colour is the ratio to its own mean, at 0.5 in linear light: the ground shader multiplies its own
   mean for the surface by twice this. Hue stays in the ratio, so a green blade stays green on any
@@ -25,8 +27,6 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SOURCE = os.path.join(ROOT, "build", "look_src")
 OUT = os.path.join(ROOT, "build", "ultra_src")
 sys.path.insert(0, os.path.dirname(__file__))
-# As the file's own script, with this one's folder first on the path by hand; nothing else is read
-# from it.
 from cp_surfaces import as_ratio, luminance, periodic_noise, save, to_linear, to_srgb  # noqa: E402
 
 N = 2048
