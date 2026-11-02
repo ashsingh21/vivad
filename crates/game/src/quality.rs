@@ -51,7 +51,9 @@ impl Quality {
     fn max_rows(self, big_map: bool) -> Option<u32> {
         match self {
             Quality::Low => Some(720),
-            Quality::Medium => Some(1080),
+            // 1080 rows left 7 ms a frame spare on the NCR. The rows governor's sixth off lands on
+            // 1080 when a street is slow: real match, M4, 8 to 16 ms a frame, 4.36 GB.
+            Quality::Medium => Some(1296),
             // A big map's every pixel has more behind it. Measured on an M4: 1800 rows take 21 ms
             // a frame there and 600 MB of render targets, and 1440 rows hold 60 fps in most views.
             Quality::High if big_map => Some(1440),
@@ -303,8 +305,8 @@ fn choose(mut commands: Commands, info: Option<Res<RenderAdapterInfo>>, layout: 
     } else {
         let Some(info) = info else { return };
         // Apple Silicon reports itself as integrated, but with the render height capped it
-        // carries the top level. Not on a big map: with 64 warriors an M4 at High falls to 34-49
-        // fps on the NCR's busiest streets, and Medium holds 60 on most of them.
+        // carries the top level. Not on a big map: with 64 warriors an M4 at High takes about 20 ms
+        // a frame and 4.7 GB on the NCR, where Medium takes 8 to 15 ms and 4.3 GB.
         match (format!("{:?}", info.device_type).as_str(), format!("{:?}", info.backend).as_str()) {
             ("DiscreteGpu", _) => Quality::Ultra,
             ("IntegratedGpu", "Metal") if is_big(&layout) => Quality::Medium,
