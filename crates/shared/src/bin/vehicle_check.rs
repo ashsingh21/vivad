@@ -581,6 +581,48 @@ fn main() {
                 app.world_mut().get_mut::<Health>(who).unwrap().hp = 100.0;
             }
         };
+        // A bot stood on the road gets off the line of what is coming at it, at the player's top speed.
+        let trials = 6;
+        let mut run_down = 0;
+        for k in 0..trials {
+            let (start, stood) = (at(60 + k * 12), at(62 + k * 12));
+            let ground = |app: &App, p: Vec2| Vec3::new(p.x, height(app, p), p.y);
+            let d = (stood - start).normalize();
+            let from_here = ground(&app, start);
+            let bike = spawn(&mut app, VehicleKind::Bullet, from_here, yaw_along(d));
+            put(&mut app, me, from_here + Vec3::new(d.y, 0.0, -d.x) * 1.2);
+            app.update();
+            press(&mut app, me);
+            app.world_mut().get_mut::<Vehicle>(bike).unwrap().speed = 19.0;
+            app.world_mut().get_mut::<PlayerIntent>(me).unwrap().move_axis = Vec2::Y;
+            let spot = ground(&app, stood);
+            put(&mut app, driver, spot);
+            let before = app.world().get::<Health>(driver).unwrap().shield;
+            let mut hit = false;
+            for _ in 0..110 {
+                {
+                    let mut b = app.world_mut().get_mut::<BotBrain>(driver).unwrap();
+                    b.goal = Some(spot);
+                    b.target = None;
+                    b.provoked = None;
+                    b.calm = false;
+                    b.think = 5.0;
+                }
+                app.update();
+                let h = app.world().get::<Health>(driver).unwrap();
+                hit |= h.hp < 100.0 || h.shield < before;
+                let h = app.world().get::<Kinematic>(driver).unwrap().velocity.length();
+                hit |= h > 11.0;
+                app.world_mut().get_mut::<Health>(me).unwrap().hp = 100.0;
+            }
+            run_down += hit as usize;
+            app.world_mut().get_mut::<PlayerIntent>(me).unwrap().move_axis = Vec2::ZERO;
+            press(&mut app, me);
+            app.world_mut().entity_mut(bike).despawn();
+            app.world_mut().get_mut::<Health>(driver).unwrap().hp = 100.0;
+            app.update();
+        }
+        check("bots sidestep a closing vehicle", run_down * 3 <= trials as usize, format!("{run_down} of {trials} run down, at 19 m/s on the Ring Road"));
         // Blocked: its wheels turn and it goes nowhere.
         let car = spawn(&mut app, VehicleKind::Car, foot, yaw_along(at(7) - from));
         put(&mut app, driver, beside);
@@ -625,8 +667,9 @@ fn main() {
         }
         let t = app.world().get::<Transform>(driver).unwrap().translation;
         let short = t.xz().distance(to);
-        let (rides, driving) = (app.world().resource::<Hitches>().rides, app.world().resource::<Hitches>().driving());
-        check("a bot drives a long way and gets out", rode && far > 300.0 && short < 60.0 && driving == 0, format!("{rides} rides, {far:.0} m from where it set out, top {top:.1} m/s, on foot {short:.0} m from its goal after {:.0} s", ticks as f32 / 60.0));
+        let rides = app.world().resource::<Hitches>().rides;
+        let on_foot = app.world().get::<Riding>(driver).is_none();
+        check("a bot drives a long way and gets out", rode && far > 300.0 && short < 60.0 && on_foot, format!("{rides} rides, {far:.0} m from where it set out, top {top:.1} m/s, on foot {short:.0} m from its goal after {:.0} s", ticks as f32 / 60.0));
         app.world_mut().entity_mut(car).despawn();
         app.update();
     }

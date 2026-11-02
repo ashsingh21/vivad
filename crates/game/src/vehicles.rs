@@ -33,6 +33,7 @@ impl Plugin for VehiclesPlugin {
             .add_systems(Startup, setup)
             .add_systems(PreUpdate, swing_camera.after(LocalInput))
             .add_systems(Update, (dress, clear_orphans, board_prompt, panel, engine, passing, crashes, smoke, fly_puffs, wrecks, fade_blasts))
+            .add_systems(Last, count_drawn.run_if(|| std::env::var("VIVAD_PERF_LOG").is_ok()))
             .add_systems(Update, horn.run_if(in_state(Screen::Match)))
             .add_systems(PostUpdate, (place, seat_riders).chain().before(CameraSystems))
             .add_systems(PostUpdate, pose_riders.after(bevy::app::AnimationSystems).before(TransformSystems::Propagate));
@@ -207,6 +208,22 @@ pub struct VehicleVisual {
     burnt: Option<f32>,
 }
 
+/// One of a vehicle's meshes, and whose it is.
+#[derive(Component)]
+struct VehiclePart(Entity);
+
+/// With VIVAD_PERF_LOG, how many of the match's vehicles are on screen, every 10 s.
+fn count_drawn(time: Res<Time>, mut next: Local<f32>, parts: Query<(&VehiclePart, &ViewVisibility)>, vehicles: Query<(), With<Vehicle>>) {
+    if time.elapsed_secs() < *next {
+        return;
+    }
+    *next = time.elapsed_secs() + 10.0;
+    let mut drawn: Vec<Entity> = parts.iter().filter(|(_, v)| v.get()).map(|(p, _)| p.0).collect();
+    drawn.sort();
+    drawn.dedup();
+    info!("vehicles drawn: {} of {}", drawn.len(), vehicles.iter().count());
+}
+
 #[derive(Component)]
 struct Wheel {
     rest: Quat,
@@ -230,7 +247,7 @@ fn dress(mut commands: Commands, q: Query<(Entity, &Vehicle, &Transform), Added<
                 let wheel = |e: Entity| names.get(e).is_ok_and(|n| n.starts_with("wheel_"));
                 for d in children.iter_descendants(ready.entity) {
                     if drawn.contains(d) {
-                        commands.entity(d).insert(VisibilityRange::abrupt(0.0, SEEN_TO));
+                        commands.entity(d).insert((VisibilityRange::abrupt(0.0, SEEN_TO), VehiclePart(e)));
                     }
                     let Ok(t) = tf.get(d) else { continue };
                     // The node, not the mesh parts under it, which share its name.
@@ -527,6 +544,9 @@ fn passing(
     }
     for n in &near {
         if !running.iter().any(|(_, sound, _)| sound.0 == n.1) {
+            if std::env::var("VIVAD_AUDIO_LOG").is_ok() {
+                info!("engine passing: {:?} heard at {:.0} m", n.2.kind, n.0);
+            }
             commands.spawn((PassingEngine(n.1), AudioPlayer(kit.engines[engine_of(n.2.kind).0].clone()), PlaybackSettings::LOOP.with_volume(Volume::Linear(0.0))));
         }
     }

@@ -358,8 +358,10 @@ struct Fleet {
     left: u32,
 }
 
-/// Seconds at a new place before the picture, for the near tier to arrive.
+/// Seconds at a new place before the picture, for the near tier to arrive; less for one coming down
+/// the road, which won't hold its line for long.
 const SETTLE: f32 = 3.0;
+const ROADSIDE: f32 = 1.5;
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn fleet(
@@ -423,7 +425,7 @@ fn fleet(
         let driven = vehicles.iter().find(|(_, _, v)| v.speed > 7.0 && v.driver.is_some_and(|d| bots.contains(d)));
         let Some((e, vt, v)) = driven else { return };
         let dir = vt.rotation * Vec3::NEG_Z;
-        let eye = vt.translation + dir * v.speed * SETTLE * 1.45 + Vec3::new(-dir.z, 0.0, dir.x) * 6.0 + Vec3::Y * 0.6;
+        let eye = vt.translation + dir * v.speed * ROADSIDE * 1.5 + Vec3::new(-dir.z, 0.0, dir.x) * 4.5 + Vec3::Y * 0.6;
         stand(&mut tf, &mut kin, eye.with_y(vt.translation.y - v.kind.spec().centre()) + dir * 6.0, 0.0);
         fleet.eye = Some((eye, vt.translation));
         fleet.watching = Some(e);
@@ -436,7 +438,8 @@ fn fleet(
             e.1 = look;
         }
     }
-    if fleet.t >= SETTLE && !fleet.shot {
+    let wait = if fleet.watching.is_some() { ROADSIDE } else { SETTLE };
+    if fleet.t >= wait && !fleet.shot {
         fleet.shot = true;
         let name = if fleet.step < kinds {
             format!("{:02}_{}", fleet.step + 1, VehicleKind::ALL[fleet.step].spec().name.to_lowercase().replace(' ', "_"))
@@ -448,7 +451,7 @@ fn fleet(
         let path = format!("{}/{name}.png", fleet.dir);
         commands.spawn(Screenshot::image(view.image.clone())).observe(save_to_disk(path));
     }
-    if fleet.t >= SETTLE + 0.4 {
+    if fleet.t >= wait + 0.4 {
         fleet.eye = None;
         fleet.watching = None;
         if fleet.step <= kerb {
