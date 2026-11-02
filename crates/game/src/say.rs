@@ -16,7 +16,8 @@ impl Plugin for SayPlugin {
         if std::env::var("VIVAD_CLEAN_CAPTURE").is_ok() {
             return;
         }
-        app.add_systems(Startup, build)
+        app.add_message::<Chime>()
+            .add_systems(Startup, build)
             .add_systems(Update, (callouts, alerts))
             .add_systems(PostUpdate, bubbles.after(crate::camera::CameraSystems));
     }
@@ -94,6 +95,10 @@ fn place_near(layout: &MapLayout, at: Vec2) -> &str {
     layout.pois.iter().min_by(|a, b| a.center.xz().distance(at).total_cmp(&b.center.xz().distance(at))).map_or(layout.name.as_str(), |p| p.name.as_str())
 }
 
+/// The two notes before a Metro-style announcement (crate::audio plays them).
+#[derive(Message)]
+pub struct Chime;
+
 #[derive(Default)]
 struct Watch {
     generation: u32,
@@ -116,6 +121,7 @@ fn alerts(
     lines: Res<Lines>,
     local: Query<(Entity, &Transform, Has<Eliminated>), With<LocalPlayer>>,
     mut fell: MessageReader<FellMsg>,
+    mut chime: MessageWriter<Chime>,
     time: Res<Time>,
     mut watch: Local<Watch>,
     mut bar: Query<&mut Visibility, With<AlertBar>>,
@@ -140,12 +146,17 @@ fn alerts(
             say = Some(if shrinking && last {
                 lines.text("alert.tiny").to_string()
             } else if shrinking && zone.phase + 2 >= rings {
+                chime.write(Chime);
                 lines.pick("alert.last", seed, step).to_string()
             } else {
+                if !shrinking {
+                    chime.write(Chime);
+                }
                 with(lines.pick(if shrinking { "alert.moving" } else { "alert.next" }, seed, step), &[("place", place)])
             });
         } else if !shrinking && left <= 10.0 && watch.warned < 2 {
             watch.warned = 2;
+            chime.write(Chime);
             say = Some(lines.text("alert.doors").to_string());
         } else if !shrinking && left <= 30.0 && watch.warned < 1 {
             watch.warned = 1;

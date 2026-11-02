@@ -556,6 +556,13 @@ def wind_open():
     return norm(loopable(y, 3.0), -6)
 
 
+def metro_chime():
+    """The Aandhi's announcements: two soft notes of our own, falling a minor third."""
+    def note(f):
+        return modes(1.6, [f, f * 2, f * 3, f * 4.02], [1.3, 0.9, 0.5, 0.3], [1.0, 0.32, 0.12, 0.05])
+    return fade(norm(at(2.1, (0.0, note(659.3)), (0.42, note(523.3)))), 0.002, 0.2)
+
+
 def vimana_loop():
     return tanpura_loop()
 
@@ -608,6 +615,7 @@ SOUNDS = {
     "amb_day": ambience_day,
     "amb_river": river_loop,
     "amb_wind": wind_open,
+    "metro_chime": metro_chime,
 }
 
 

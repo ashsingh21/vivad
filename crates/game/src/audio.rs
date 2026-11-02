@@ -38,7 +38,7 @@ impl Plugin for SoundPlugin {
         app.init_resource::<Played>()
             .add_plugins(crate::street_sound::StreetSoundPlugin)
             .add_systems(Startup, load)
-            .add_systems(Update, (listener, footsteps, warrior_events, combat_events, melee_events, world_events, beds, log_counts, late_sounds));
+            .add_systems(Update, (listener, footsteps, warrior_events, combat_events, melee_events, world_events, chimes, beds, log_counts, late_sounds));
         // Automated runs (autoplay, tours) shouldn't sound through the speakers.
         if std::env::var("VIVAD_MUTE").is_ok() {
             app.insert_resource(GlobalVolume::new(Volume::Linear(0.0)));
@@ -60,7 +60,7 @@ const FAR_FROM: f32 = 90.0;
 /// Metres a second: a far shot is heard late.
 const SOUND_SPEED: f32 = 343.0;
 
-const NAMES: [&str; 74] = [
+const NAMES: [&str; 75] = [
     "step_dirt_0", "step_dirt_1", "step_dirt_2", "step_dirt_3", "step_stone_0", "step_stone_1", "step_stone_2", "step_stone_3",
     "step_wood_0", "step_wood_1", "step_wood_2", "step_wood_3", "step_grass_0", "step_grass_1", "step_grass_2", "step_grass_3",
     "step_water_0", "step_water_1", "step_water_2", "step_water_3", "sword_whoosh_0", "sword_whoosh_1", "sword_whoosh_2",
@@ -69,7 +69,7 @@ const NAMES: [&str; 74] = [
     "bullet_impact_wood", "katta_click", "katta_backfire", "chakra_throw", "brahmastra_blast", "hit_flesh", "hit_shield", "hitmarker", "hitmarker_head", "hurt", "jump", "land", "glider_open",
     "glide_loop", "freefall_loop", "vimana_loop", "chest_open", "kalash_open", "pickup", "drink", "reload", "fire_ignite",
     "fire_loop", "wind_gust", "throw", "zone_warn", "zone_loop", "kill", "eliminated", "victory", "amb_day", "amb_river",
-    "gun_thri_not_thri", "gun_thaana_slr", "gun_saintalis", "gun_rifle_far", "gun_auto_far", "bullet_crack", "amb_wind",
+    "gun_thri_not_thri", "gun_thaana_slr", "gun_saintalis", "gun_rifle_far", "gun_auto_far", "bullet_crack", "amb_wind", "metro_chime",
 ];
 
 /// The fights' sounds, cut from recordings.
@@ -527,6 +527,13 @@ fn combat_events(
         if Some(k.killer) == me {
             play.ui("kill", UI);
         }
+    }
+}
+
+/// A Metro-style announcement's two notes.
+fn chimes(mut play: Player, mut chimes: MessageReader<crate::say::Chime>) {
+    if chimes.read().count() > 0 {
+        play.ui("metro_chime", UI * 1.3);
     }
 }
 
