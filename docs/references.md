@@ -98,7 +98,8 @@ upper limb toward the thumb, edge or bow's back along the hand); see `crates/gam
 | studio_small_08 HDRI (2k) | [Poly Haven](https://polyhaven.com/a/studio_small_08) | CC0 | Preview renders only |
 | studio_small_09 HDRI (2k) | [Poly Haven](https://polyhaven.com/a/studio_small_09) | CC0 | Preview renders (alternative) |
 
-| Ultra surface scans (plaster, asphalt, concrete and others, listed in `assets/textures/ultra/sources.json`) | [Poly Haven](https://polyhaven.com) | CC0 | Ultra materials on the city maps (`assets/textures/ultra/`) |
+| Surface scans (plaster, asphalt, concrete, withered_grass, sparse_grass, brick_wall_02, dirty_concrete, listed in `assets/textures/ultra/sources.json`) | [Poly Haven](https://polyhaven.com) | CC0 | Real surfaces on the city maps, Medium and up (`assets/textures/ultra/`) |
+| kloofendal_38d_partly_cloudy_puresky HDRI (8k) | [Poly Haven](https://polyhaven.com/a/kloofendal_38d_partly_cloudy_puresky) | CC0 | The sky on every level, with Delhi's haze baked in (`assets/textures/sky/`, `tools/textures/sky.py`) |
 | MPFB (MakeHuman plugin for Blender) | [extensions.blender.org/add-ons/mpfb](https://extensions.blender.org/add-ons/mpfb/) | GPL (tool only); generated humans are CC0 | Character base bodies, rig (`game_engine`) |
 | LGDuel's bot aim (`crates/bot/src/lib.rs`), adapted in `crates/shared/src/sim/aim.rs` | [github.com/s0pk/lgduel](https://github.com/s0pk/lgduel) | MIT, notice kept in the file | How bots turn and see: a limited turn speed and a late sight of targets |
 | MakeHuman system assets (`makehuman_system_assets_cc0.zip`, sha256 `b542127a…0107`) | [makehumancommunity.org](https://static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html) | CC0 | Body proxies, skin detail (re-toned), eyes, brows, lashes, hair (short04, braid01) |

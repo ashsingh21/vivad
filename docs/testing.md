@@ -43,7 +43,7 @@ pixels only when the numbers point somewhere.
 
 The HUD (minimap, status, hotbar) is masked out of every measurement.
 
-Render switches for comparisons: `VIVAD_EV=9.7` (camera exposure, default 10.8), `VIVAD_GRADE=1,1,1` (saturation, contrast, highlight gain; default 1.1,1.06,0.85),
+Render switches for comparisons: `VIVAD_EV=9.7` (camera exposure, default 12), `VIVAD_GRADE=1,1,1` (saturation, contrast, highlight gain; default 1.05,1,1), `VIVAD_TONEMAP=agx`, `VIVAD_PAINTED_SKY=1` (the dome without its photograph), `VIVAD_NO_SURFACES=1` (painted ground and walls),
 `VIVAD_NO_GRASS=1`, `VIVAD_AA=none|smaa`, `VIVAD_NO_SSAO=1`, `VIVAD_NO_SHADOWS=1`; with
 `VIVAD_PERF_LOG=1` the game logs FPS every 10 s; `VIVAD_NO_VSYNC=1` uncaps the frame rate so
 the numbers mean something (with vsync they stop at the display's 60).
@@ -51,7 +51,7 @@ the numbers mean something (with vsync they stop at the display's 60).
 **Frame rate per view.** `just perf` holds every tour view for 400 frames uncapped and prints
 its frame rate (`[tour-fps]`); compare runs before and after a change. `VIVAD_PERF_ALL=1` logs
 every diagnostic, including the GPU time of each render pass: the shadow pass is the largest.
-Knobs for comparisons: `VIVAD_GRASS=<0..1>` (share of blades; default 0.5),
+Knobs for comparisons: `VIVAD_GRASS=<0..1>` (share of blades; default the level's),
 `VIVAD_CASCADES=n` (default 3), `VIVAD_SHADOW_FAR=m` (default 200).
 
 **Weapons in the hand.** `just armoury` stands the player on open ground and captures every item
