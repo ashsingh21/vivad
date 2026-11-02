@@ -10,6 +10,7 @@ use super::{Eliminated, Inventory, PlayerIntent, SimSet, Warrior, btn, match_rng
 use crate::items::{ItemDb, ItemKind, ItemStack, Rarity};
 use crate::map::{ChestKind, ChestSpawn, MapLayout};
 use crate::map::compose::{CHEST_SETS, PLACES};
+use crate::map::place::Spot;
 
 pub const INTERACT_RANGE: f32 = 2.4;
 
@@ -113,14 +114,21 @@ fn roll_rarity(kind: Option<ChestKind>, rng: &mut impl rand::Rng) -> Rarity {
     Rarity::Common
 }
 
-/// Pick an item of the wanted category at (or below) the rolled rarity.
-fn roll_item(db: &ItemDb, rarity: Rarity, filter: impl Fn(&ItemKind) -> bool, rng: &mut impl rand::Rng) -> Option<ItemStack> {
+/// Pick an item of the wanted category at (or below) the rolled rarity. Weapons go by the spot they
+/// are found at, if given (`ItemDb::drops`); medicine and goli are the same everywhere.
+fn roll_item(db: &ItemDb, rarity: Rarity, filter: impl Fn(&ItemKind) -> bool, at: Option<Spot>, rng: &mut impl rand::Rng) -> Option<ItemStack> {
     for r in Rarity::ALL.iter().rev().filter(|r| **r <= rarity) {
         let pool: Vec<(&String, f32)> = db
             .items
             .iter()
             .filter(|(_, d)| filter(&d.kind))
-            .filter_map(|(id, d)| d.drops.iter().find(|(dr, _)| dr == r).map(|(_, w)| (id, *w)))
+            .filter_map(|(id, d)| {
+                let w = match at {
+                    Some(at) => db.drops.weight(at, id, d, *r),
+                    None => d.drops.iter().find(|(dr, _)| dr == r).map(|(_, w)| *w),
+                };
+                w.map(|w| (id, w))
+            })
             .collect();
         let total: f32 = pool.iter().map(|p| p.1).sum();
         if total <= 0.0 {
@@ -206,17 +214,18 @@ pub fn spawn_loot(commands: &mut Commands, layout: &MapLayout, db: &ItemDb, seed
         if !inside(*p) {
             continue;
         }
+        let here = Some(layout.place_at(*p));
         if !rng.random_bool(0.75) {
-            if street.random_bool(MELEE_ON_FLOOR) && let Some(st) = roll_item(db, roll_rarity(None, &mut street), is_melee, &mut street) {
+            if street.random_bool(MELEE_ON_FLOOR) && let Some(st) = roll_item(db, roll_rarity(None, &mut street), is_melee, here, &mut street) {
                 commands.spawn((Pickup { id: PickupId::floor(k), stack: st, delay: 0.0 }, Transform::from_translation(*p)));
             }
             continue;
         }
         let rarity = roll_rarity(None, &mut rng);
         let item = if rng.random_bool(0.55) {
-            roll_item(db, rarity, is_weapon, &mut rng)
+            roll_item(db, rarity, is_weapon, here, &mut rng)
         } else {
-            roll_item(db, rarity, |k| is_consumable(k) || matches!(k, ItemKind::Arrows { .. }), &mut rng)
+            roll_item(db, rarity, |k| is_consumable(k) || matches!(k, ItemKind::Arrows { .. }), None, &mut rng)
         };
         if let Some(st) = item {
             // Bows on the floor come with a quiver beside them.
@@ -229,20 +238,62 @@ pub fn spawn_loot(commands: &mut Commands, layout: &MapLayout, db: &ItemDb, seed
     }
 }
 
-/// What a chest holds: fixed by the match seed, whoever opens it.
-pub fn chest_contents(db: &ItemDb, seed: u64, index: usize, kind: ChestKind) -> Vec<ItemStack> {
+/// What a chest holds: fixed by the match seed and where it stands, whoever opens it.
+pub fn chest_contents(db: &ItemDb, layout: &MapLayout, seed: u64, index: usize, kind: ChestKind) -> Vec<ItemStack> {
+    let at = layout.chests.get(index).map(|c| layout.place_at(c.pos));
+    chest_at(db, at, seed, index, kind)
+}
+
+fn chest_at(db: &ItemDb, at: Option<Spot>, seed: u64, index: usize, kind: ChestKind) -> Vec<ItemStack> {
     let mut rng = match_rng(seed, stream::CHEST + index as u64);
     let mut out = vec![];
     let rarity = roll_rarity(Some(kind), &mut rng);
-    out.extend(roll_item(db, rarity, is_weapon, &mut rng));
-    out.extend(roll_item(db, roll_rarity(Some(kind), &mut rng), is_consumable, &mut rng));
+    out.extend(roll_item(db, rarity, is_weapon, at, &mut rng));
+    out.extend(roll_item(db, roll_rarity(Some(kind), &mut rng), is_consumable, None, &mut rng));
     out.push(make_stack(db, "arrows", Rarity::Common));
     if kind == ChestKind::Kalash {
-        out.extend(roll_item(db, Rarity::Legendary, is_consumable, &mut rng));
+        out.extend(roll_item(db, Rarity::Legendary, is_consumable, None, &mut rng));
     } else if rng.random_bool(MELEE_IN_PETI) {
-        out.extend(roll_item(db, roll_rarity(Some(kind), &mut rng), is_melee, &mut rng));
+        out.extend(roll_item(db, roll_rarity(Some(kind), &mut rng), is_melee, at, &mut rng));
     }
     out
+}
+
+/// What lies out at the start of a match, by place: for each spot, how many weapons of each kind
+/// (floor pickups and chests' first finds). `sim_check` and VIVAD_LOOT_LOG=1 in the game print it.
+pub fn census(layout: &MapLayout, db: &ItemDb, seed: u64, floor: impl Iterator<Item = (Vec3, String)>, chests: impl Iterator<Item = (usize, ChestKind)>) -> Vec<(Spot, Vec<(String, u32)>)> {
+    let mut by: std::collections::BTreeMap<Spot, std::collections::BTreeMap<String, u32>> = Default::default();
+    let is_arm = |id: &str| matches!(db.get(id).kind, ItemKind::Bow { .. } | ItemKind::Astra { .. } | ItemKind::Melee { .. });
+    for (p, id) in floor {
+        if is_arm(&id) {
+            *by.entry(layout.place_at(p)).or_default().entry(id).or_default() += 1;
+        }
+    }
+    for (index, kind) in chests {
+        let here = layout.place_at(layout.chests[index].pos);
+        for s in chest_contents(db, layout, seed, index, kind).iter().filter(|s| is_arm(&s.id)) {
+            *by.entry(here).or_default().entry(s.id.clone()).or_default() += 1;
+        }
+    }
+    by.into_iter()
+        .map(|(spot, items)| {
+            let mut items: Vec<(String, u32)> = items.into_iter().collect();
+            items.sort_by_key(|i| std::cmp::Reverse(i.1));
+            (spot, items)
+        })
+        .collect()
+}
+
+/// `census` as lines of text.
+pub fn census_lines(census: &[(Spot, Vec<(String, u32)>)]) -> Vec<String> {
+    census
+        .iter()
+        .map(|(spot, items)| {
+            let total: u32 = items.iter().map(|i| i.1).sum();
+            let top: Vec<String> = items.iter().take(5).map(|(id, n)| format!("{id} {n}")).collect();
+            format!("{:?}/{}: {total} ({})", spot.place, spot.era.map_or("-".to_string(), |e| format!("{e:?}")), top.join(", "))
+        })
+        .collect()
 }
 
 /// Try to add a stack to an inventory. Returns what could not be taken.
@@ -277,7 +328,7 @@ pub fn give(inv: &mut Inventory, db: &ItemDb, mut st: ItemStack) -> Option<ItemS
 /// Opens a chest: its contents spill out in front of it (the same on every peer).
 pub fn open_chest(commands: &mut Commands, spatial: &SpatialQuery, db: &ItemDb, layout: &MapLayout, seed: u64, ct: &Transform, c: &mut Chest, gone: &mut Gone) {
     c.opened = true;
-    for (i, st) in chest_contents(db, seed, c.index, c.kind).into_iter().enumerate() {
+    for (i, st) in chest_contents(db, layout, seed, c.index, c.kind).into_iter().enumerate() {
         let id = PickupId::chest(c.index, i);
         if gone.0.remove(&id) {
             continue;
@@ -416,6 +467,7 @@ fn tick_pickups(mut q: Query<&mut Pickup>, time: Res<Time>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::map::place::{Era, Place};
     use crate::map::{MapId, generate};
 
     /// Nothing a chest or a floor bow drops lands in a holy site's circle, on any map.
@@ -445,12 +497,97 @@ mod tests {
         let melee = |s: &ItemStack| matches!(db.get(&s.id).kind, ItemKind::Melee { .. });
         let mut extra = 0;
         for index in 0..500 {
-            let items = chest_contents(&db, 7, index, ChestKind::Peti);
+            let items = chest_at(&db, None, 7, index, ChestKind::Peti);
             assert!(!melee(&items[0]), "{items:?}");
             assert!(items.len() <= 4, "{items:?}");
             extra += items.iter().filter(|s| melee(s)).count();
         }
         assert!((100..300).contains(&extra), "{extra} street weapons in 500 petis");
+    }
+
+    fn db() -> ItemDb {
+        ItemDb::load_from_str(include_str!("../../../../assets/data/items.ron")).unwrap()
+    }
+
+    /// `n` rolls of a kind of find at a spot, most found first.
+    fn rolls(db: &ItemDb, at: Spot, filter: fn(&ItemKind) -> bool, n: u32) -> Vec<(String, u32)> {
+        let mut rng = match_rng(7, stream::FLOOR_LOOT);
+        let mut seen: std::collections::BTreeMap<String, u32> = Default::default();
+        for _ in 0..n {
+            let rarity = roll_rarity(None, &mut rng);
+            let st = roll_item(db, rarity, filter, Some(at), &mut rng).unwrap();
+            *seen.entry(st.id).or_default() += 1;
+        }
+        let mut seen: Vec<_> = seen.into_iter().collect();
+        seen.sort_by_key(|s| std::cmp::Reverse(s.1));
+        seen
+    }
+
+    /// Each place's main gun leads its finds, out of 1,000 floor rolls.
+    #[test]
+    fn the_main_gun_leads_each_place() {
+        let db = db();
+        for (place, main) in [(Place::Room, "dunali"), (Place::Lane, "vajra9"), (Place::Road, "saintalis"), (Place::Roof, "thaana_slr"), (Place::Open, "thri_not_thri")] {
+            let seen = rolls(&db, Spot { place, era: None }, is_weapon, 1000);
+            assert_eq!(seen[0].0, main, "{place:?}: {seen:?}");
+            assert!(seen[0].1 > seen[1].1 * 3 / 2, "{place:?} is led by a whisker: {seen:?}");
+        }
+    }
+
+    /// The old city raises the old twin and the new city the modern gun: a Chandni Chowk lane, a
+    /// Cyber City road and the Ridge hand out different guns.
+    #[test]
+    fn eras_raise_their_own_guns() {
+        let db = db();
+        let lead = |place, era| rolls(&db, Spot { place, era }, is_weapon, 1000)[0].0.clone();
+        assert_eq!(lead(Place::Lane, Some(Era::Old)), "dunali");
+        assert_eq!(lead(Place::Lane, Some(Era::New)), "vajra9");
+        assert_eq!(lead(Place::Road, Some(Era::Old)), "thaana_slr");
+        assert_eq!(lead(Place::Road, Some(Era::New)), "saintalis");
+        assert_eq!(lead(Place::Road, Some(Era::Raj)), "saintalis");
+        assert_eq!(lead(Place::Open, Some(Era::Raj)), "thri_not_thri");
+        let street = |place, era| rolls(&db, Spot { place, era }, is_melee, 1000)[0].0.clone();
+        assert_eq!(street(Place::Lane, Some(Era::Old)), "talwar");
+        assert_eq!(street(Place::Lane, Some(Era::New)), "hockey_stick");
+        assert_eq!(street(Place::Room, None), "tawa");
+    }
+
+    /// Nothing falls below a quarter of its weight, anywhere: a Talwar still turns up in Cyber City.
+    #[test]
+    fn nothing_is_ruled_out_anywhere() {
+        let db = db();
+        for place in Place::ALL {
+            for era in [None, Some(Era::Old), Some(Era::Raj), Some(Era::New)] {
+                let at = Spot { place, era };
+                for (id, d) in db.items.iter().filter(|(_, d)| !d.drops.is_empty() && (is_weapon(&d.kind) || is_melee(&d.kind))) {
+                    assert!(db.drops.odds(at, id) >= 0.25, "{id} at {at:?}");
+                    let rolled: f32 = Rarity::ALL.iter().filter_map(|r| db.drops.weight(at, id, d, *r)).sum();
+                    assert!(rolled > 0.0, "{id} at {at:?}");
+                }
+            }
+        }
+        let cyber = Spot { place: Place::Road, era: Some(Era::New) };
+        assert!(rolls(&db, cyber, is_melee, 4000).iter().any(|(id, n)| id == "talwar" && *n >= 4));
+    }
+
+    /// The rarest guns stay the rarest: a grey roll can't turn up a Toradar, wherever it is.
+    #[test]
+    fn divya_items_stay_divya() {
+        let db = db();
+        let at = Spot { place: Place::Open, era: Some(Era::Old) };
+        for tier in [Rarity::Common, Rarity::Rare, Rarity::Epic, Rarity::Legendary] {
+            assert!(db.drops.weight(at, "toradar", db.get("toradar"), tier).is_none());
+        }
+    }
+
+    /// Peers agree: a chest's contents come from the seed and the map alone.
+    #[test]
+    fn a_chest_holds_the_same_on_every_peer() {
+        let (db, map) = (db(), generate(MapId::Cp, 7));
+        for index in 0..map.chests.len() {
+            let c = &map.chests[index];
+            assert_eq!(chest_contents(&db, &map, 5, index, c.kind), chest_contents(&db, &generate(MapId::Cp, 7), 5, index, c.kind));
+        }
     }
 
     /// A match opens one set of chests in each district, the same on every peer, and the sets move

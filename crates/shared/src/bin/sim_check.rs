@@ -23,7 +23,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::time::TimeUpdateStrategy;
 use shared::items::{ItemDb, ItemKind};
 use shared::sim::flow::{Match, MatchState};
-use shared::sim::loot::{Chest, Pickup};
+use shared::sim::loot::{Chest, Pickup, census, census_lines};
 use shared::sim::zone::Zone;
 use shared::sim::birds::{FLOCK_NOISE, Flock};
 use shared::sim::bots::BotBrain;
@@ -219,6 +219,7 @@ fn main() {
         let mut stuck_secs = 0.0f32;
         let mut stuck_spots: HashMap<(i32, i32), f32> = HashMap::new();
         let mut opening_told = false;
+        let mut loot_told = false;
         // Bot-seconds spent on bridge decks, in water, and on high ground, and the bots that
         // ever stood on a deck.
         let (mut on_decks, mut in_water, mut on_hills) = (0.0f32, 0.0f32, 0.0f32);
@@ -233,6 +234,17 @@ fn main() {
             let frame = Instant::now();
             app.update();
             frame_ms.push(1000.0 * frame.elapsed().as_secs_f32());
+            if !loot_told && std::env::var("SIM_QUIET").is_err() {
+                loot_told = true;
+                let world = app.world_mut();
+                let floor: Vec<(Vec3, String)> = world.query::<(&Transform, &Pickup)>().iter(world).map(|(t, p)| (t.translation, p.stack.id.clone())).collect();
+                let chests: Vec<_> = world.query::<&Chest>().iter(world).map(|c| (c.index, c.kind)).collect();
+                let seed = world.resource::<Match>().seed;
+                let (layout, db) = (world.resource::<shared::map::MapLayout>(), world.resource::<ItemDb>());
+                for line in census_lines(&census(layout, db, seed, floor.into_iter(), chests.into_iter())) {
+                    println!("loot {line}");
+                }
+            }
             let world = app.world_mut();
             if !quiet && frame_ms.last().is_some_and(|ms| *ms > 16.0) {
                 println!("  slow frame: {:.1} ms at t={:.1}", frame_ms[frame_ms.len() - 1], world.resource::<Match>().elapsed);

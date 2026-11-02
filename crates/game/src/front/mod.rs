@@ -16,7 +16,10 @@ use bevy::prelude::*;
 use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::Activate;
 use bevy::window::{CursorGrabMode, CursorOptions};
+use shared::items::ItemDb;
+use shared::map::MapLayout;
 use shared::sim::flow::Match;
+use shared::sim::loot::{Chest, Pickup, census, census_lines};
 use shared::sim::{Hold, MatchConfig, RestartMatch};
 
 use crate::input::{Act, ActionState, LocalInput};
@@ -85,6 +88,9 @@ impl Plugin for FrontPlugin {
             .add_observer(on_button)
             .add_systems(PreUpdate, free_mouse.after(LocalInput).run_if(not(in_state(Screen::Match))))
             .add_systems(Update, (follow_the_match, shortcuts, show_hud, theme::paint_buttons));
+        if std::env::var("VIVAD_LOOT_LOG").is_ok() {
+            app.add_systems(Update, loot_log);
+        }
         for exited in [Screen::Home, Screen::Lobby, Screen::Pause, Screen::Result] {
             app.add_systems(OnTransition { exited, entered: Screen::Match }, capture_mouse.run_if(not(resource_exists::<demo::Demo>)));
         }
@@ -144,6 +150,25 @@ fn show_hud(screen: Res<State<Screen>>, mut roots: Query<&mut Node, (Without<Chi
         if n.display != display {
             n.display = display;
         }
+    }
+}
+
+/// VIVAD_LOOT_LOG=1: what lies out at the start of each match, by place.
+fn loot_log(world: &mut World, mut seen: Local<u32>) {
+    let m = world.resource::<Match>();
+    let (generation, seed) = (m.generation, m.seed);
+    if generation == *seen {
+        return;
+    }
+    let floor: Vec<(Vec3, String)> = world.query::<(&Transform, &Pickup)>().iter(world).map(|(t, p)| (t.translation, p.stack.id.clone())).collect();
+    let chests: Vec<_> = world.query::<&Chest>().iter(world).map(|c| (c.index, c.kind)).collect();
+    if floor.is_empty() {
+        return;
+    }
+    *seen = generation;
+    let (layout, db) = (world.resource::<MapLayout>(), world.resource::<ItemDb>());
+    for line in census_lines(&census(layout, db, seed, floor.into_iter(), chests.into_iter())) {
+        println!("loot {line}");
     }
 }
 

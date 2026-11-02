@@ -1,0 +1,48 @@
+// Weapons by place: what turns up where. An item's drop weight in items.ron is multiplied by its
+// place's number and then its era's (crate::map::place says what each spot is). Same on every peer,
+// as it comes from the map.
+//
+// Each place has a main gun, the one a player comes to expect there, with its old twin beside it:
+// the old city raises the old twin and the new city the modern gun. Nothing falls below `lowest`,
+// so a Talwar still turns up in Cyber City. That is the mix.
+(
+    // An item its place doesn't name.
+    rest: 0.5,
+    // No item's two numbers multiply to less than this.
+    lowest: 0.25,
+    // What a place favours turns up below its usual rarity (a Saintalis on a road in a grey roll), at
+    // this share of its lowest tier's weight. Without it, six floor rolls in ten could only ever be
+    // the three desi guns, everywhere. Divya items stay Divya.
+    step_down: 0.6,
+    places: {
+        // Dunali. Tamancha and Katta beside it, the Tawa in the kitchen.
+        Room: { "dunali": 5.0, "tamancha": 2.5, "katta": 2.0, "tawa": 3.0, "gada": 1.5, "talwar": 1.5 },
+        // Ladi-9. Dunali and Teen Tigada beside it, the Talwar on the wall of the shop.
+        Lane: { "vajra9": 6.0, "dunali": 1.4, "trishul_carbine": 2.5, "talwar": 2.5 },
+        // Saintalis. Thaana SLR beside it, and Anaar to close a road.
+        Road: { "saintalis": 7.0, "thaana_slr": 3.0, "agneyastra": 1.5, "lathi": 1.5 },
+        // Thaana SLR. The long rifle and the quiet shot beside it.
+        Roof: { "thaana_slr": 9.0, "thri_not_thri": 4.0, "gulel": 3.0 },
+        // Thri-Not-Thri. The Gulel beside it.
+        Open: { "thri_not_thri": 12.0, "gulel": 4.0, "thaana_slr": 1.2 },
+    },
+    eras: {
+        // Old twins up, modern guns down.
+        Old: {
+            "katta": 2.0, "dunali": 2.4, "tamancha": 1.6, "gulel": 2.0, "thaana_slr": 2.4, "thri_not_thri": 1.3,
+            "talwar": 3.0, "gada": 3.0, "dhal": 3.0, "lathi": 1.2,
+            "vajra9": 0.4, "trishul_carbine": 0.4, "saintalis": 0.4, "hockey_stick": 0.5,
+        },
+        // The Raj's guns up: the long rifle, the police SLR, the chowkidar's lathi.
+        Raj: {
+            "thri_not_thri": 2.2, "thaana_slr": 2.2, "lathi": 2.5, "dunali": 1.2,
+            "katta": 0.6, "tamancha": 0.7, "trishul_carbine": 0.7, "tawa": 0.6,
+        },
+        // Modern guns up, desi guns and old blades down.
+        New: {
+            "vajra9": 2.2, "saintalis": 2.2, "trishul_carbine": 2.4, "hockey_stick": 2.0, "agneyastra": 1.3, "vayavyastra": 1.3,
+            "katta": 0.35, "dunali": 0.55, "tamancha": 0.5, "gulel": 0.5, "thri_not_thri": 0.7,
+            "talwar": 0.5, "gada": 0.5, "dhal": 0.5,
+        },
+    },
+)

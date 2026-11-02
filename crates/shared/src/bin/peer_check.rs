@@ -77,7 +77,7 @@ fn describe(seed: u64) -> (String, String) {
         .query::<&Chest>()
         .iter(world)
         .map(|c| {
-            let items: Vec<String> = chest_contents(&db, m.seed, c.index, c.kind).iter().map(|s| format!("{} {:?} {}", s.id, s.rarity, s.count)).collect();
+            let items: Vec<String> = chest_contents(&db, world.resource::<shared::map::MapLayout>(), m.seed, c.index, c.kind).iter().map(|s| format!("{} {:?} {}", s.id, s.rarity, s.count)).collect();
             (c.index, items.join(", "))
         })
         .collect();

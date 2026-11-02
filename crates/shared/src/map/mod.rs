@@ -11,6 +11,7 @@ pub mod kit;
 pub mod navigation;
 pub mod ncr;
 mod ncr_art;
+pub mod place;
 pub mod terrain;
 
 /// The maps: the NCR, the game's one final map, and the four small Delhi maps merged into it,
@@ -252,6 +253,8 @@ pub struct MapLayout {
     /// Which family of map this is: what the client paints it with and how bots find their way.
     pub style: MapStyle,
     pub terrain: terrain::Terrain,
+    /// Where the roof slabs are, for `place_at`.
+    pub overhead: place::Overhead,
 }
 
 /// How a map is dressed and walked.
