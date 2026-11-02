@@ -781,7 +781,8 @@ pub(crate) fn drive_bots(
                     // A first bow is worth a slot, whatever has to go for it (`loot::interact` swaps).
                     let needed = !holds_bow && matches!(kind, ItemKind::Bow { .. });
                     // With no gun yet a street weapon is only worth stooping for.
-                    let sight = if !holds_bow && matches!(kind, ItemKind::Melee { .. }) { STOOP } else if floor.ready() && needed { GUN_SIGHT } else { 45.0 };
+                    let street = matches!(kind, ItemKind::Melee { .. }) || p.stack.id == "chappal";
+                    let sight = if !holds_bow && street { STOOP } else if floor.ready() && needed { GUN_SIGHT } else { 45.0 };
                     let far = t.translation.distance(pos);
                     // As with a chest, a gun a long way off is one bot's: eight bots ran for one
                     // 200 m away. One close by goes to whoever gets there first.
@@ -1081,6 +1082,8 @@ fn choose_weapon(inv: &Inventory, db: &ItemDb, dist: f32) -> usize {
             ItemKind::Melee { reach, .. } => if dist < reach + 1.0 { 11.0 } else { 0.5 },
             // Fire astras go to a mid-range target; the wind astra is left to players.
             ItemKind::Astra { effect: AstraEffect::Fire { .. }, .. } if s.count > 0 && (8.0..24.0).contains(&dist) => 7.0,
+            // A chappal or a chakri is for when there's nothing better to hand.
+            ItemKind::Astra { effect: AstraEffect::Chakra { range, .. }, .. } if s.count > 0 && (4.0..*range * 0.8).contains(&dist) => 5.0,
             _ => 0.0,
         } * s.rarity.damage_scale();
         if score > best.1 {

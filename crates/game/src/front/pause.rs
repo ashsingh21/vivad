@@ -4,6 +4,7 @@
 use bevy::prelude::*;
 use shared::sim::{Hold, LocalPlayer, MatchConfig, PlayerIntent};
 
+use super::settings::{self, Saved};
 use super::theme::{self, Fonts, GHOST, MUSTARD, Shortcut, u};
 use super::{Press, Screen};
 use crate::input::{Act, ActionState};
@@ -26,7 +27,7 @@ fn open(actions: Res<ActionState>, hold: Res<Hold>, mut next: ResMut<NextState<S
     }
 }
 
-fn spawn(mut commands: Commands, fonts: Res<Fonts>) {
+fn spawn(mut commands: Commands, fonts: Res<Fonts>, saved: Res<Saved>) {
     commands.spawn((theme::layer(5), BackgroundColor(Color::srgba(0.078, 0.047, 0.031, 0.55)), DespawnOnExit(Screen::Pause))).with_children(|p| {
         p.spawn((
             Node { position_type: PositionType::Absolute, left: u(72.0), top: u(96.0), width: u(560.0), flex_direction: FlexDirection::Column, row_gap: u(15.0), ..default() },
@@ -38,6 +39,7 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>) {
             theme::small_button(c, &fonts, LEAVE, Press::Ghar, GHOST, None);
             #[cfg(not(target_arch = "wasm32"))]
             theme::small_button(c, &fonts, QUIT, Press::Quit, GHOST, None);
+            settings::sliders(c, &fonts, &saved);
         });
     });
 }

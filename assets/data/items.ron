@@ -148,6 +148,13 @@
             kind: Astra(effect: Blast(radius: 16.0, damage: 140.0, impulse: 20.0), speed: 24.0, count: 1),
             drops: [(Divya, 0.4)],
         ),
+        // Thrown, it flies flat and comes back to the hand, as the Chakri does.
+        "chappal": (
+            name: "Chappal",
+            lore: "Maa ka nishana. Jahan bhi chhupo, dhoondh legi, phir paon mein wapas.",
+            kind: Astra(effect: Chakra(damage: 22.0, range: 26.0), speed: 34.0, count: 1),
+            drops: [(Common, 5.0), (Rare, 2.0)],
+        ),
         "sanjeevani": (
             name: "Haldi Doodh",
             lore: "Maa ka nuskha. Har zakhm ka ilaaj.",

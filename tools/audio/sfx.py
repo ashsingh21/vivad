@@ -10,6 +10,7 @@ by cross-fading their tail into their head.
 """
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -545,6 +546,23 @@ def river_loop():
     return norm(loopable(y, 2.0), -6)
 
 
+def wind_open():
+    """Open land and roofs: a low steady wind with gusts, and dry grass hissing in the gusts."""
+    dur = 30.0
+    t = t_axis(dur + 3)
+    gust = 0.55 + 0.45 * np.sin(2 * np.pi * 0.11 * t + 1) * np.sin(2 * np.pi * 0.047 * t)
+    y = band(spectral(dur + 3, 1.6), 70, 900) * gust
+    y += band(white(dur + 3), 2200, 7000) * gust ** 3 * 0.025
+    return norm(loopable(y, 3.0), -6)
+
+
+def metro_chime():
+    """The Aandhi's announcements: two soft notes of our own, falling a minor third."""
+    def note(f):
+        return modes(1.6, [f, f * 2, f * 3, f * 4.02], [1.3, 0.9, 0.5, 0.3], [1.0, 0.32, 0.12, 0.05])
+    return fade(norm(at(2.1, (0.0, note(659.3)), (0.42, note(523.3)))), 0.002, 0.2)
+
+
 def vimana_loop():
     return tanpura_loop()
 
@@ -596,11 +614,17 @@ SOUNDS = {
     "victory": lambda: fade(norm(at(5.0, (0, bell(620, 3.0)), (0.6, bell(780, 3.0)), (1.2, bell(930, 3.5))))),
     "amb_day": ambience_day,
     "amb_river": river_loop,
+    "amb_wind": wind_open,
+    "metro_chime": metro_chime,
 }
 
 
 def write_ogg(name, x):
     os.makedirs(OUT, exist_ok=True)
+    if shutil.which("oggenc") is None:
+        import soundfile
+        soundfile.write(os.path.join(OUT, f"{name}.ogg"), np.clip(x, -1, 1), SR, format="OGG", subtype="VORBIS")
+        return
     pcm = (np.clip(x, -1, 1) * 32767).astype(np.int16)
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         tmp = f.name

@@ -4,10 +4,11 @@
 use bevy::prelude::*;
 use shared::lines::{Lines, with};
 use shared::map::MapLayout;
+use shared::map::place::{Era, Place};
 use shared::sim::flow::{Match, MatchState};
 use shared::sim::talk::{CalloutMsg, FellMsg, SayMsg};
 use shared::sim::zone::Zone;
-use shared::sim::{DamageCause, Eliminated, LocalPlayer, Warrior};
+use shared::sim::{DamageCause, Eliminated, Kinematic, LocalPlayer, MoveMode, Warrior};
 
 pub struct SayPlugin;
 
@@ -16,7 +17,8 @@ impl Plugin for SayPlugin {
         if std::env::var("VIVAD_CLEAN_CAPTURE").is_ok() {
             return;
         }
-        app.add_systems(Startup, build)
+        app.add_message::<Chime>()
+            .add_systems(Startup, build)
             .add_systems(Update, (callouts, alerts))
             .add_systems(PostUpdate, bubbles.after(crate::camera::CameraSystems));
     }
@@ -94,6 +96,10 @@ fn place_near(layout: &MapLayout, at: Vec2) -> &str {
     layout.pois.iter().min_by(|a, b| a.center.xz().distance(at).total_cmp(&b.center.xz().distance(at))).map_or(layout.name.as_str(), |p| p.name.as_str())
 }
 
+/// The two notes before a Metro-style announcement (crate::audio plays them).
+#[derive(Message)]
+pub struct Chime;
+
 #[derive(Default)]
 struct Watch {
     generation: u32,
@@ -104,6 +110,22 @@ struct Watch {
     outside_at: f32,
     loot_at: f32,
     until: f32,
+    /// The kinds of place named so far this match, and when the ground was last looked at.
+    named: Vec<&'static str>,
+    looked_at: f32,
+}
+
+/// What a place is known for: said once a match on arrival, so a first match learns that what
+/// turns up goes by where it lies. None in the city's plain middle.
+fn known_for(layout: &MapLayout, p: Vec3) -> Option<&'static str> {
+    let spot = layout.place_at(p);
+    match spot.era {
+        Some(Era::Old) => Some("known.old"),
+        Some(Era::Raj) => Some("known.raj"),
+        Some(Era::New) => Some("known.new"),
+        None if spot.place == Place::Open => Some("known.open"),
+        None => None,
+    }
 }
 
 /// Says each turn of the Aandhi as a Metro train would. Everything here is the player's own
@@ -114,15 +136,16 @@ fn alerts(
     m: Res<Match>,
     layout: Res<MapLayout>,
     lines: Res<Lines>,
-    local: Query<(Entity, &Transform, Has<Eliminated>), With<LocalPlayer>>,
+    local: Query<(Entity, &Transform, &Kinematic, Has<Eliminated>), With<LocalPlayer>>,
     mut fell: MessageReader<FellMsg>,
+    mut chime: MessageWriter<Chime>,
     time: Res<Time>,
     mut watch: Local<Watch>,
     mut bar: Query<&mut Visibility, With<AlertBar>>,
     mut text: Query<&mut Text, With<AlertText>>,
 ) {
     let now = time.elapsed_secs();
-    let Ok((me, tf, dead)) = local.single() else { return };
+    let Ok((me, tf, kin, dead)) = local.single() else { return };
     if watch.generation != m.generation {
         *watch = Watch { generation: m.generation, loot_at: -LOOT_EVERY, ..default() };
     }
@@ -140,16 +163,28 @@ fn alerts(
             say = Some(if shrinking && last {
                 lines.text("alert.tiny").to_string()
             } else if shrinking && zone.phase + 2 >= rings {
+                chime.write(Chime);
                 lines.pick("alert.last", seed, step).to_string()
             } else {
+                if !shrinking {
+                    chime.write(Chime);
+                }
                 with(lines.pick(if shrinking { "alert.moving" } else { "alert.next" }, seed, step), &[("place", place)])
             });
         } else if !shrinking && left <= 10.0 && watch.warned < 2 {
             watch.warned = 2;
+            chime.write(Chime);
             say = Some(lines.text("alert.doors").to_string());
         } else if !shrinking && left <= 30.0 && watch.warned < 1 {
             watch.warned = 1;
             say = Some(with(lines.text("alert.soon"), &[("t", "30")]));
+        }
+        if say.is_none() && kin.mode == MoveMode::Ground && now - watch.looked_at > 1.0 {
+            watch.looked_at = now;
+            if let Some(known) = known_for(&layout, tf.translation).filter(|k| !watch.named.contains(k)) {
+                watch.named.push(known);
+                say = Some(lines.text(known).to_string());
+            }
         }
         let outside = zone.outside(tf.translation);
         if outside && !watch.was_outside {

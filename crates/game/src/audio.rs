@@ -11,7 +11,7 @@
 use std::collections::{HashMap, HashSet};
 
 use avian3d::prelude::*;
-use bevy::audio::{SpatialScale, Volume};
+use bevy::audio::{GlobalVolume, SpatialScale, Volume};
 use bevy::prelude::*;
 use shared::items::{ItemDb, ItemKind};
 use shared::map::{ChestKind, MapLayout, Mat};
@@ -38,7 +38,7 @@ impl Plugin for SoundPlugin {
         app.init_resource::<Played>()
             .add_plugins(crate::street_sound::StreetSoundPlugin)
             .add_systems(Startup, load)
-            .add_systems(Update, (listener, footsteps, warrior_events, combat_events, melee_events, world_events, beds, log_counts, late_sounds));
+            .add_systems(Update, (listener, footsteps, warrior_events, combat_events, melee_events, world_events, chimes, beds, log_counts, late_sounds));
         // Automated runs (autoplay, tours) shouldn't sound through the speakers.
         if std::env::var("VIVAD_MUTE").is_ok() {
             app.insert_resource(GlobalVolume::new(Volume::Linear(0.0)));
@@ -60,7 +60,7 @@ const FAR_FROM: f32 = 90.0;
 /// Metres a second: a far shot is heard late.
 const SOUND_SPEED: f32 = 343.0;
 
-const NAMES: [&str; 73] = [
+const NAMES: [&str; 75] = [
     "step_dirt_0", "step_dirt_1", "step_dirt_2", "step_dirt_3", "step_stone_0", "step_stone_1", "step_stone_2", "step_stone_3",
     "step_wood_0", "step_wood_1", "step_wood_2", "step_wood_3", "step_grass_0", "step_grass_1", "step_grass_2", "step_grass_3",
     "step_water_0", "step_water_1", "step_water_2", "step_water_3", "sword_whoosh_0", "sword_whoosh_1", "sword_whoosh_2",
@@ -69,12 +69,12 @@ const NAMES: [&str; 73] = [
     "bullet_impact_wood", "katta_click", "katta_backfire", "chakra_throw", "brahmastra_blast", "hit_flesh", "hit_shield", "hitmarker", "hitmarker_head", "hurt", "jump", "land", "glider_open",
     "glide_loop", "freefall_loop", "vimana_loop", "chest_open", "kalash_open", "pickup", "drink", "reload", "fire_ignite",
     "fire_loop", "wind_gust", "throw", "zone_warn", "zone_loop", "kill", "eliminated", "victory", "amb_day", "amb_river",
-    "gun_thri_not_thri", "gun_thaana_slr", "gun_saintalis", "gun_rifle_far", "gun_auto_far", "bullet_crack",
+    "gun_thri_not_thri", "gun_thaana_slr", "gun_saintalis", "gun_rifle_far", "gun_auto_far", "bullet_crack", "amb_wind", "metro_chime",
 ];
 
 /// The fights' sounds, cut from recordings.
-pub const MELEE_NAMES: [&str; 15] = [
-    "swing_light_0", "swing_light_1", "swing_stick", "swing_heavy", "hit_bat", "hit_stick", "hit_pan", "hit_dhal", "hit_blade", "hit_gada",
+pub const MELEE_NAMES: [&str; 16] = [
+    "swing_light_0", "swing_light_1", "swing_stick", "swing_heavy", "hit_bat", "hit_stick", "hit_pan", "hit_dhal", "hit_blade", "hit_gada", "hit_chappal",
     "guard_wood", "guard_metal", "guard_pan", "break_wood", "break_metal",
 ];
 
@@ -97,6 +97,7 @@ fn blow_sound(item: &str) -> &'static str {
         "dhal" => "hit_dhal",
         "talwar" => "hit_blade",
         "gada" => "hit_gada",
+        "chappal" => "hit_chappal",
         _ => "hit_bat",
     }
 }
@@ -126,6 +127,8 @@ enum Bed {
     /// The city far off.
     Far,
     River,
+    /// Wind over the open land and the roofs.
+    Wind,
     Vimana,
     Freefall,
     Glide,
@@ -135,26 +138,28 @@ enum Bed {
 fn load(mut commands: Commands, assets: Res<AssetServer>) {
     let names = NAMES.iter().chain(MELEE_NAMES.iter()).chain(crate::street_sound::NAMES.iter());
     let sfx = Sfx(names.map(|n| (*n, assets.load(format!("audio/{n}.ogg")))).collect());
-    for (bed, name) in [(Bed::Day, "amb_day"), (Bed::Traffic, "amb_traffic"), (Bed::Market, "amb_market"), (Bed::Far, "amb_far"), (Bed::River, "amb_river"), (Bed::Vimana, "vimana_loop"), (Bed::Freefall, "freefall_loop"),
+    for (bed, name) in [(Bed::Day, "amb_day"), (Bed::Traffic, "amb_traffic"), (Bed::Market, "amb_market"), (Bed::Far, "amb_far"), (Bed::River, "amb_river"), (Bed::Wind, "amb_wind"), (Bed::Vimana, "vimana_loop"), (Bed::Freefall, "freefall_loop"),
                         (Bed::Glide, "glide_loop"), (Bed::Zone, "zone_loop")] {
         commands.spawn((bed, AudioPlayer(sfx.0[name].clone()), PlaybackSettings::LOOP.with_volume(Volume::Linear(0.0))));
     }
     commands.insert_resource(sfx);
 }
 
-/// How many times each sound was triggered (VIVAD_AUDIO_LOG prints it every 30 s).
+/// How many times each sound was triggered (VIVAD_AUDIO_LOG prints it every 30 s, or every
+/// VIVAD_AUDIO_LOG=<n> seconds).
 #[derive(Resource, Default)]
 struct Played(HashMap<String, u32>);
 
 fn log_counts(time: Res<Time>, played: Res<Played>, street: Res<crate::street_sound::Ambience>, mut next: Local<f32>) {
-    if std::env::var("VIVAD_AUDIO_LOG").is_err() || time.elapsed_secs() < *next {
+    let Ok(every) = std::env::var("VIVAD_AUDIO_LOG") else { return };
+    if time.elapsed_secs() < *next {
         return;
     }
-    *next = time.elapsed_secs() + 30.0;
+    *next = time.elapsed_secs() + every.parse::<f32>().ok().filter(|s| *s > 1.0).unwrap_or(30.0);
     let mut v: Vec<_> = played.0.iter().collect();
     v.sort();
     info!("sounds played: {v:?}");
-    info!("street beds: traffic {:.2}, market {:.2}, far {:.2}, park {:.2}", street.traffic, street.market, street.far, street.park);
+    info!("street beds: traffic {:.2}, market {:.2}, far {:.2}, park {:.2}, wind {:.2}, river {:.2}, indoors {}", street.traffic, street.market, street.far, street.park, street.wind, street.river, street.indoors);
 }
 
 /// A rifle's far take, and at what pitch.
@@ -509,7 +514,8 @@ fn combat_events(
         }
     }
     for h in hits.read() {
-        let melee = inv.get(h.attacker).ok().and_then(|i| i.current()).filter(|s| matches!(db.get(&s.id).kind, ItemKind::Melee { .. }));
+        let held = inv.get(h.attacker).ok().and_then(|i| i.current());
+        let melee = held.filter(|s| matches!(db.get(&s.id).kind, ItemKind::Melee { .. }) || s.id == "chappal");
         play.at(melee.map_or(if h.shield { "hit_shield" } else { "hit_flesh" }, |s| blow_sound(&s.id)), h.at, IMPACT, 60.0);
         if Some(h.attacker) == me {
             play.ui(if h.headshot { "hitmarker_head" } else { "hitmarker" }, UI);
@@ -525,6 +531,13 @@ fn combat_events(
         if Some(k.killer) == me {
             play.ui("kill", UI);
         }
+    }
+}
+
+/// A Metro-style announcement's two notes.
+fn chimes(mut play: Player, mut chimes: MessageReader<crate::say::Chime>) {
+    if chimes.read().count() > 0 {
+        play.ui("metro_chime", UI * 1.3);
     }
 }
 
@@ -596,6 +609,7 @@ fn beds(
     zone: Res<Zone>,
     layout: Res<MapLayout>,
     street: Res<crate::street_sound::Ambience>,
+    global: Res<GlobalVolume>,
     mut sinks: Query<(&Bed, &mut AudioSink)>,
 ) {
     // At the menu nobody stands anywhere: only the city far off, or the last match's street would
@@ -607,13 +621,14 @@ fn beds(
             (Bed::Traffic, _) => street.traffic,
             (Bed::Market, _) => street.market,
             (Bed::Far, _) => street.far,
+            (Bed::Wind, _) => street.wind,
             (_, None) => 0.0,
-            (Bed::River, Some((tf, _))) => (1.0 - layout.river.distance(tf.translation.xz()) / 45.0).clamp(0.0, 1.0),
+            (Bed::River, Some((tf, _))) => (1.0 - layout.river.distance(tf.translation.xz()) / 45.0).clamp(0.0, 1.0).max(street.river),
             (Bed::Vimana, Some((_, kin))) => if kin.mode == MoveMode::Vimana { 0.9 } else { 0.0 },
             (Bed::Freefall, Some((_, kin))) => if kin.mode == MoveMode::Freefall { 0.5 + 0.5 * (kin.velocity.length() / 40.0).min(1.0) } else { 0.0 },
             (Bed::Glide, Some((_, kin))) => if kin.mode == MoveMode::Gliding { 0.8 } else { 0.0 },
             (Bed::Zone, Some((tf, _))) => (1.0 - (tf.translation.xz().distance(zone.center) - zone.radius).abs() / 40.0).clamp(0.0, 1.0),
-        } * BED;
+        } * BED * global.volume.to_linear();
         let cur = sink.volume().to_linear();
         let k = (time.delta_secs() * 2.5).min(1.0);
         let v = cur + (target - cur) * k;

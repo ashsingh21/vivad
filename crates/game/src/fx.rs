@@ -9,12 +9,14 @@ use std::collections::VecDeque;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use rand::RngExt;
 use shared::items::{ItemDb, ItemKind};
 use shared::lines::{Lines, with};
+use shared::sim::bots::BotBrain;
 use shared::sim::combat::Projectile;
 use shared::sim::melee::{BrokeMsg, GuardMsg};
-use shared::sim::{Action, FeedMsg, HitMsg, Inventory, LocalPlayer, PlayerIntent, btn};
+use shared::sim::{Action, Eliminated, FeedMsg, HitMsg, Inventory, Kinematic, LocalPlayer, MatchConfig, MoveMode, PlayerIntent, Warrior, btn};
 
 use crate::animation::WarriorAnim;
 use crate::visuals::{Shot, shot_kind};
@@ -26,19 +28,28 @@ impl Plugin for FxPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraPunch>()
             .add_systems(Startup, setup)
-            .add_systems(Update, (add_streaks, muzzle_flash, misfire_smoke, blast_shake, hit_sparks, guard_sparks, broke_splinters, arrow_dust, landing_dust, fly_sparks, punch_camera, hit_stop))
+            .add_systems(Update, (add_streaks, muzzle_flash, misfire_smoke, blast_shake, hit_sparks, guard_sparks, broke_splinters, arrow_dust, landing_dust, fly_sparks, drift_puffs, scope_glints, punch_camera, climb, hit_stop))
             .add_systems(PostUpdate, (update_streaks, swing_ribbons).after(TransformSystems::Propagate));
     }
 }
 
 /// Camera offsets the follow camera adds on top of the aim: a pitch kick (radians), a shake
 /// amplitude (metres) and a field-of-view change (radians). Kick and shake decay by themselves.
+/// `kick` chases `kick_target`, which each shot pushes up and which falls back on its own
+/// (`punch_camera`).
 #[derive(Resource, Default)]
 pub struct CameraPunch {
     pub kick: f32,
+    pub kick_target: f32,
     pub shake: f32,
     pub fov: f32,
 }
+
+/// How fast the view chases a shot's kick, how fast the kick falls back, and the most it adds up
+/// to: a shot rises over a few frames and settles, where it used to jump and fade.
+const KICK_RISE: f32 = 42.0;
+const KICK_FALL: f32 = 8.0;
+const KICK_MOST: f32 = 0.09;
 
 #[derive(Resource)]
 struct FxAssets {
@@ -56,9 +67,32 @@ struct FxAssets {
     gulal: Handle<StandardMaterial>,
     dust: Handle<StandardMaterial>,
     smoke: Handle<StandardMaterial>,
+    /// Black powder's white cloud: a soft round sprite, at each stage of its thinning out.
+    puff: Handle<Mesh>,
+    powder: [Handle<StandardMaterial>; PUFF_STAGES],
+    /// A scope's lens catching the sun.
+    lens: Handle<StandardMaterial>,
 }
 
-fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>) {
+/// A soft round blot of white, opaque in the middle and gone at the edge, a little uneven.
+fn soft_blot() -> Image {
+    const SIDE: usize = 64;
+    let mut data = Vec::with_capacity(SIDE * SIDE * 4);
+    for j in 0..SIDE {
+        for i in 0..SIDE {
+            let p = (Vec2::new(i as f32, j as f32) + 0.5) / SIDE as f32 * 2.0 - 1.0;
+            let lump = 0.1 * (p.x * 7.0 + 1.0).sin() * (p.y * 6.0 + 2.0).cos();
+            let d = (p.length() + lump).clamp(0.0, 1.0);
+            let a = (1.0 - d * d).powi(2);
+            data.extend_from_slice(&[255, 255, 255, (a * 255.0) as u8]);
+        }
+    }
+    let size = Extent3d { width: SIDE as u32, height: SIDE as u32, depth_or_array_layers: 1 };
+    Image::new(size, TextureDimension::D2, data, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD)
+}
+
+fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>) {
+    let soft = images.add(soft_blot());
     let glow = |mats: &mut Assets<StandardMaterial>, c: Color, e: LinearRgba, a: f32| {
         mats.add(StandardMaterial {
             base_color: c.with_alpha(a),
@@ -105,6 +139,24 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: Res
             unlit: true,
             ..default()
         }),
+        puff: meshes.add(Rectangle::new(1.0, 1.0)),
+        powder: std::array::from_fn(|k| {
+            mats.add(StandardMaterial {
+                base_color: Color::srgba(0.9, 0.89, 0.85, 0.3 * (1.0 - k as f32 / PUFF_STAGES as f32)),
+                base_color_texture: Some(soft.clone()),
+                alpha_mode: AlphaMode::Blend,
+                unlit: true,
+                ..default()
+            })
+        }),
+        // Unlit draws base colour alone, so the light that blooms goes there.
+        lens: mats.add(StandardMaterial {
+            base_color: LinearRgba::rgb(9.0, 8.0, 6.0).into(),
+            base_color_texture: Some(soft.clone()),
+            alpha_mode: AlphaMode::Add,
+            unlit: true,
+            ..default()
+        }),
     });
 }
 
@@ -128,6 +180,7 @@ fn add_streaks(mut commands: Commands, q: Query<(Entity, &Projectile, &Transform
         let (mat, width, time) = match p.astra.as_ref() {
             Some(_) if p.item == "agneyastra" => (fx.fire_streak.clone(), 0.09, STREAK_TIME),
             Some(_) if p.item == "chakra" => (fx.gold_spark.clone(), 0.06, STREAK_TIME * 1.5),
+            Some(_) if p.item == "chappal" => (fx.streak.clone(), 0.03, STREAK_TIME * 0.6),
             Some(_) if p.item == "brahmastra" => (fx.gold_spark.clone(), 0.12, STREAK_TIME * 2.0),
             Some(_) => (fx.wind_streak.clone(), 0.08, STREAK_TIME),
             None if shot_kind(&p.item) == Shot::Bullet => (fx.tracer.clone(), if p.item == "dunali" { 0.018 } else { 0.03 }, TRACER_TIME),
@@ -431,7 +484,7 @@ fn misfire_smoke(mut commands: Commands, mut msgs: MessageReader<shared::sim::co
 
 /// A gun going off: a hot flash at the muzzle with a moment of light round it, and a few sparks
 /// thrown forward. Once per shot, however many pellets it fires.
-fn muzzle_flash(mut commands: Commands, q: Query<(&Projectile, &Transform), Added<Projectile>>, fx: Res<FxAssets>) {
+fn muzzle_flash(mut commands: Commands, q: Query<(&Projectile, &Transform), Added<Projectile>>, shooters: Query<&Transform, With<Warrior>>, fx: Res<FxAssets>) {
     let mut fired: Vec<Entity> = vec![];
     for (p, t) in &q {
         if p.astra.is_some() || shot_kind(&p.item) != Shot::Bullet || fired.contains(&p.owner) {
@@ -452,9 +505,142 @@ fn muzzle_flash(mut commands: Commands, q: Query<(&Projectile, &Transform), Adde
         burst(&mut commands, &fx, &fx.gold_spark, at, ahead, 5, 7.0, 0.01, 4.0);
         // Black powder: the big white puff that gives a Toradar's shooter away.
         if p.item == "toradar" {
-            billow(&mut commands, &fx, &fx.smoke, at + ahead * 0.5, ahead, 22, 2.4, 0.2);
+            // A fast bullet is metres gone by the time it is seen here: the smoke starts at the gun.
+            let gun = shooters.get(p.owner).map_or(at, |s| s.translation + Vec3::Y * shared::sim::EYE_OFFSET * 0.7 + ahead * 0.9);
+            powder_cloud(&mut commands, &fx, gun, ahead);
         }
     }
+}
+
+/// A blot of black powder's smoke, always facing the view: it blows out of the muzzle, slows,
+/// swells and thins for as long as it takes a far shooter to be seen.
+#[derive(Component)]
+struct Puff {
+    vel: Vec3,
+    life: f32,
+    max: f32,
+    size: f32,
+    stage: usize,
+}
+
+/// Blots in the cloud, how far along the shot they reach, their width at birth, how many times over
+/// they swell, seconds they hang, and the steps of their thinning.
+const PUFF_BLOTS: usize = 22;
+const PUFF_REACH: f32 = 4.5;
+const PUFF_SIZE: (f32, f32) = (1.0, 2.2);
+const PUFF_SWELL: f32 = 2.8;
+const PUFF_LIFE: (f32, f32) = (6.0, 9.5);
+const PUFF_STAGES: usize = 6;
+
+fn powder_cloud(commands: &mut Commands, fx: &FxAssets, at: Vec3, ahead: Vec3) {
+    let mut rng = rand::rng();
+    let wind = Vec3::new(rng.random_range(-0.4..0.4), 0.0, rng.random_range(-0.4..0.4));
+    for k in 0..PUFF_BLOTS {
+        // Strung out along the shot's first metres, as a matchlock blows it, thickest at the muzzle.
+        let along = PUFF_REACH * ((k as f32 + rng.random_range(0.0..1.0)) / PUFF_BLOTS as f32).powf(1.5);
+        let off = Vec3::new(rng.random_range(-0.3..0.3), rng.random_range(-0.15..0.35), rng.random_range(-0.3..0.3));
+        let max = rng.random_range(PUFF_LIFE.0..PUFF_LIFE.1);
+        let size = rng.random_range(PUFF_SIZE.0..PUFF_SIZE.1);
+        let vel = ahead * rng.random_range(0.5..2.0) + wind + Vec3::Y * rng.random_range(0.05..0.3);
+        commands.spawn((
+            Puff { vel, life: max, max, size, stage: 0 },
+            Mesh3d(fx.puff.clone()),
+            MeshMaterial3d(fx.powder[0].clone()),
+            Transform::from_translation(at + ahead * along + off).with_scale(Vec3::splat(size)),
+            bevy::light::NotShadowCaster,
+        ));
+    }
+}
+
+fn drift_puffs(
+    mut commands: Commands,
+    time: Res<Time>,
+    fx: Res<FxAssets>,
+    camera: Query<&GlobalTransform, With<crate::camera::MainCamera>>,
+    mut q: Query<(Entity, &mut Puff, &mut Transform, &mut MeshMaterial3d<StandardMaterial>)>,
+) {
+    let dt = time.delta_secs();
+    let facing = camera.single().map_or(Quat::IDENTITY, |c| c.rotation());
+    for (e, mut p, mut t, mut look) in &mut q {
+        p.life -= dt;
+        if p.life <= 0.0 {
+            commands.entity(e).despawn();
+            continue;
+        }
+        p.vel *= 1.0 - 0.6 * dt;
+        t.translation += p.vel * dt;
+        t.rotation = facing;
+        let age = 1.0 - p.life / p.max;
+        t.scale = Vec3::splat(p.size * (1.0 + (PUFF_SWELL - 1.0) * age.sqrt()));
+        let stage = ((age * PUFF_STAGES as f32) as usize).min(PUFF_STAGES - 1);
+        if stage != p.stage {
+            p.stage = stage;
+            look.0 = fx.powder[stage].clone();
+        }
+    }
+}
+
+/// A scope seen from in front catches the sun: far rifles show where they are, more the more nearly
+/// they point at you. A small point of light, the same size on the screen near or far. A player is
+/// at the scope while holding aim; a bot, whose rifle is always up, while it has somebody to shoot.
+#[derive(Component)]
+struct Glint(Entity);
+
+/// How near facing the viewer a scope must be to catch the light, 1 being dead on.
+const GLINT_FROM: f32 = 0.55;
+/// Its soft blot's width as a share of its distance, faintest and full.
+const GLINT_SIZE: (f32, f32) = (0.002, 0.008);
+/// The sun's hours: at night a lens has nothing to catch.
+const SUN_UP: (f32, f32) = (6.0, 19.0);
+
+#[allow(clippy::type_complexity)]
+fn scope_glints(
+    mut commands: Commands,
+    warriors: Query<(Entity, &Transform, &PlayerIntent, &Inventory, &Kinematic, Option<&BotBrain>), (With<Warrior>, Without<LocalPlayer>, Without<Eliminated>)>,
+    mut glints: Query<(Entity, &Glint, &mut Transform), Without<Warrior>>,
+    camera: Query<&GlobalTransform, With<crate::camera::MainCamera>>,
+    db: Res<ItemDb>,
+    fx: Res<FxAssets>,
+    tod: Res<crate::visuals::TimeOfDay>,
+    time: Res<Time>,
+    mut had: Local<Vec<Entity>>,
+) {
+    let Ok(cam) = camera.single() else { return };
+    let (facing_view, cam) = (cam.rotation(), cam.translation());
+    let hour = tod.hour.rem_euclid(24.0);
+    let day = (SUN_UP.0..SUN_UP.1).contains(&hour);
+    let t = time.elapsed_secs();
+    let mut now: Vec<(Entity, Vec3, f32)> = vec![];
+    for (e, tf, intent, inv, kin, brain) in &warriors {
+        let looking = intent.held(btn::AIM) || brain.is_some_and(|b| b.target.is_some());
+        if !day || !looking || kin.mode != MoveMode::Ground || inv.current().is_none_or(|s| db.get(&s.id).kind.scope().is_none()) {
+            continue;
+        }
+        let aim = intent.aim_dir();
+        let lens = tf.translation + Vec3::Y * (shared::sim::EYE_OFFSET - intent.drop()) + aim * 0.4;
+        let facing = aim.dot((cam - lens).normalize_or_zero());
+        if facing > GLINT_FROM {
+            let k = ((facing - GLINT_FROM) / (1.0 - GLINT_FROM)).powi(2);
+            let twinkle = 0.8 + 0.2 * (t * 11.0 + e.index().index() as f32).sin();
+            now.push((e, lens, lens.distance(cam) * (GLINT_SIZE.0 + (GLINT_SIZE.1 - GLINT_SIZE.0) * k) * twinkle));
+        }
+    }
+    for (e, g, mut tf) in &mut glints {
+        match now.iter().find(|n| n.0 == g.0) {
+            Some((_, at, size)) => {
+                tf.translation = *at;
+                tf.rotation = facing_view;
+                tf.scale = Vec3::splat(*size);
+            }
+            None => commands.entity(e).despawn(),
+        }
+    }
+    for (e, at, size) in &now {
+        if !had.contains(e) {
+            commands.spawn((Glint(*e), Mesh3d(fx.puff.clone()), MeshMaterial3d(fx.lens.clone()), Transform::from_translation(*at).with_rotation(facing_view).with_scale(Vec3::splat(*size)), bevy::light::NotShadowCaster));
+        }
+    }
+    *had = now.iter().map(|n| n.0).collect();
 }
 
 fn fly_sparks(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &mut Spark, &mut Transform, Has<Billow>)>) {
@@ -473,6 +659,67 @@ fn fly_sparks(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &mu
     }
 }
 
+// ------------------------------------------------------------------ the Saintalis's climb
+
+/// How a held-down Saintalis walks off the target, shot by shot: (up, sideways) in radians. The
+/// first few stay close, then it climbs and swings. The Saintalis's lore says it: stop and start, or
+/// the bullets go to the sky. The pattern's idea is bevy_fps_game's `spray_pattern` (MIT, see
+/// docs/references.md); the numbers are ours. Past its end it keeps on with the last rows.
+const CLIMB: [(f32, f32); 14] = [
+    (0.003, 0.000), (0.004, 0.001), (0.007, -0.002), (0.010, -0.003), (0.012, 0.002), (0.013, 0.005), (0.013, 0.006),
+    (0.012, 0.002), (0.011, -0.004), (0.010, -0.007), (0.009, -0.005), (0.008, 0.001), (0.008, 0.005), (0.008, 0.002),
+];
+/// Seconds without a shot that end a burst: it starts low again.
+const BURST_GAP: f32 = 0.36;
+/// The share of the climb that settles back once the trigger is let go, and how fast.
+const CLIMB_BACK: f32 = 0.55;
+const SETTLE: f32 = 7.0;
+
+#[derive(Default)]
+struct Climbing {
+    shot: usize,
+    last_shot: f32,
+    /// What is still to settle back.
+    owed: f32,
+    /// The pitch as this left it, to see the player pulling down against it.
+    pitch: f32,
+}
+
+/// The local aim itself climbs, so where the shots go moves with the view, and the player pulls
+/// down against it with the mouse. This is the player's own aim, sent as any other: nothing here
+/// goes through the sim, and the other peers see where the shots really went.
+fn climb(mut local: Query<(Entity, &mut PlayerIntent), With<LocalPlayer>>, shots: Query<&Projectile, Added<Projectile>>, time: Res<Time>, config: Res<MatchConfig>, mut c: Local<Climbing>) {
+    let Ok((me, mut intent)) = local.single_mut() else { return };
+    if config.autopilot {
+        return;
+    }
+    let (now, dt) = (time.elapsed_secs(), time.delta_secs());
+    // Pulling down has paid off what would have settled back.
+    c.owed = (c.owed - (c.pitch - intent.pitch).max(0.0)).max(0.0);
+    let mut fired = false;
+    for p in &shots {
+        if p.owner == me && p.item == "saintalis" {
+            if now - c.last_shot > BURST_GAP {
+                c.shot = 0;
+            }
+            let k = if c.shot < CLIMB.len() { c.shot } else { CLIMB.len() - 3 + (c.shot - CLIMB.len()) % 3 };
+            let (up, side) = CLIMB[k];
+            intent.pitch += up;
+            intent.yaw += side;
+            c.owed += up * CLIMB_BACK;
+            c.shot += 1;
+            c.last_shot = now;
+            fired = true;
+        }
+    }
+    if !fired && now - c.last_shot > BURST_GAP * 0.5 {
+        let back = c.owed * (1.0 - (-dt * SETTLE).exp());
+        intent.pitch -= back;
+        c.owed -= back;
+    }
+    c.pitch = intent.pitch;
+}
+
 // ------------------------------------------------------------------ hit-stop and camera
 
 /// A sword hit holds the attacker's swing for a few frames, so the blow lands with weight.
@@ -488,6 +735,12 @@ fn hit_stop(mut hits: MessageReader<HitMsg>, sims: Query<&Inventory>, db: Res<It
     }
 }
 
+/// One frame of the kick: the target falls back and the view chases it.
+fn kick_step(kick: f32, target: f32, dt: f32) -> (f32, f32) {
+    let target = target * (-dt * KICK_FALL).exp();
+    (kick + (target - kick) * (1.0 - (-dt * KICK_RISE).exp()), target)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn punch_camera(
     mut punch: ResMut<CameraPunch>,
@@ -498,7 +751,7 @@ fn punch_camera(
     db: Res<ItemDb>,
 ) {
     let dt = time.delta_secs();
-    punch.kick *= (-dt * 14.0).exp();
+    (punch.kick, punch.kick_target) = kick_step(punch.kick, punch.kick_target, dt);
     punch.shake *= (-dt * 16.0).exp();
     let Ok((me, inv, act, intent)) = local.single() else { return };
     let held = inv.current().map(|s| &db.get(&s.id).kind);
@@ -519,7 +772,7 @@ fn punch_camera(
                 "toradar" => (0.07, 0.03),
                 _ => (0.012, 0.0),
             };
-            punch.kick = punch.kick.max(kick);
+            punch.kick_target = (punch.kick_target + kick).min(KICK_MOST.max(kick));
             punch.shake = punch.shake.max(rattle);
         }
     }
@@ -536,4 +789,98 @@ fn punch_camera(
         _ => 0.0,
     };
     punch.fov += (want - punch.fov) * (dt * 8.0).min(1.0);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use bevy::time::{TimePlugin, TimeUpdateStrategy};
+
+    use super::*;
+
+    /// A kick rises over a few frames, tops out and is gone in a moment.
+    #[test]
+    fn a_kick_rises_then_falls_back() {
+        let (dt, shot) = (1.0 / 60.0, 0.05);
+        let (mut kick, mut target) = (0.0, shot);
+        let mut seen = vec![];
+        for _ in 0..40 {
+            (kick, target) = kick_step(kick, target, dt);
+            seen.push(kick);
+        }
+        let top = seen.iter().copied().fold(0.0, f32::max);
+        let at = seen.iter().position(|k| *k == top).unwrap();
+        assert!((2..8).contains(&at), "peaks on frame {at}: {seen:?}");
+        assert!(top > shot * 0.55 && top < shot, "{top}");
+        assert!(seen[1] > seen[0], "it builds");
+        assert!(seen[39] < top * 0.2, "gone after two thirds of a second: {}", seen[39]);
+    }
+
+    fn firing_range() -> (App, Entity) {
+        let mut app = App::new();
+        app.add_plugins(TimePlugin)
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(30)))
+            .insert_resource(MatchConfig { autopilot: false, ..default() })
+            .add_systems(Update, climb);
+        let me = app.world_mut().spawn((LocalPlayer, PlayerIntent::default())).id();
+        app.update();
+        (app, me)
+    }
+
+    fn shoot(app: &mut App, owner: Entity, item: &str) {
+        app.world_mut().spawn(Projectile { owner, velocity: Vec3::NEG_Z, gravity: 0.0, damage: 0.0, headshot_mult: 1.0, ttl: 1.0, item: item.into(), astra: None, stuck: false });
+    }
+
+    fn pitch(app: &App, me: Entity) -> f32 {
+        app.world().get::<PlayerIntent>(me).unwrap().pitch
+    }
+
+    /// Run `frames` of 30 ms with a Saintalis shot every sixth, as its 0.18 s between shots does.
+    fn hold_fire(app: &mut App, me: Entity, shots: usize) {
+        for _ in 0..shots {
+            shoot(app, me, "saintalis");
+            for _ in 0..6 {
+                app.update();
+            }
+        }
+    }
+
+    #[test]
+    fn a_held_saintalis_climbs_and_bursts_stay_on_target() {
+        let (mut app, me) = firing_range();
+        hold_fire(&mut app, me, 3);
+        let burst = pitch(&app, me);
+        assert!(burst > 0.0 && burst < 0.02, "the first three stay close: {burst}");
+        hold_fire(&mut app, me, 9);
+        let held = pitch(&app, me);
+        assert!(held > 0.08, "twelve shots go to the sky: {held}");
+        for _ in 0..60 {
+            app.update();
+        }
+        let settled = pitch(&app, me);
+        assert!(settled < held * 0.6 && settled > held * 0.3, "part of it settles back: {held} to {settled}");
+    }
+
+    #[test]
+    fn pulling_down_beats_the_climb() {
+        let (mut app, me) = firing_range();
+        hold_fire(&mut app, me, 12);
+        let held = pitch(&app, me);
+        app.world_mut().get_mut::<PlayerIntent>(me).unwrap().pitch = 0.0;
+        for _ in 0..60 {
+            app.update();
+        }
+        assert!(pitch(&app, me).abs() < held * 0.05, "the player's pull stands: {}", pitch(&app, me));
+    }
+
+    #[test]
+    fn only_the_saintalis_climbs() {
+        let (mut app, me) = firing_range();
+        for _ in 0..6 {
+            shoot(&mut app, me, "vajra9");
+            app.update();
+        }
+        assert_eq!(pitch(&app, me), 0.0);
+    }
 }

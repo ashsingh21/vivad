@@ -75,6 +75,13 @@ Render switches for comparisons: `VIVAD_EV=9.7` (camera exposure, default 12), `
 `VIVAD_PERF_LOG=1` the game logs FPS every 10 s; `VIVAD_NO_VSYNC=1` uncaps the frame rate so
 the numbers mean something (with vsync they stop at the display's 60).
 
+**What lies where.** `sim_check` opens each match with what lay out by place and era (floor pickups
+and chests' first finds), and `VIVAD_LOOT_LOG=1` prints the same in a real game; `assets/data/drops.ron`
+sets the odds. `VIVAD_NO_LEAVES=1` leaves the NCR's bushes and thickets out, to measure what they
+cost. `VIVAD_PLACE=<n>` shows the result card for that place, and `VIVAD_SAVE=<file>` moves the
+settings file from `~/.panga.ron`, which test recipes never write otherwise. `VIVAD_ARMOURY_RULES=1`
+with `VIVAD_ARMOURY=<dir>` shoots a far scope's glint, the Toradar's smoke and the chappal.
+
 **Frame rate per view.** `just perf` holds every tour view for 400 frames uncapped and prints
 its frame rate (`[tour-fps]`); compare runs before and after a change. `VIVAD_PERF_ALL=1` logs
 every diagnostic, including the GPU time of each render pass: the shadow pass is the largest.

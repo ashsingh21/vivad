@@ -28,7 +28,7 @@ use super::bots::{ANSWER_RANGE, BotBrain};
 use super::combat::Projectile;
 use super::movement::WALK_SPEED;
 use super::stance::Stance;
-use super::{EYE_OFFSET, Eliminated, HALF_HEIGHT, Kinematic, MoveMode, PlayerIntent, Warrior, btn, sight_mask};
+use super::{EYE_OFFSET, Eliminated, HALF_HEIGHT, Kinematic, MoveMode, PlayerIntent, Warrior, btn, sight_mask, solid_mask};
 use crate::map::MapLayout;
 
 /// The whole cone of sight.
@@ -37,6 +37,8 @@ pub const FOV_DEG: f32 = 120.0;
 pub const NEAR: f32 = 4.0;
 /// A crouched warrior is noticed at this share of a bot's range, and of `NEAR`.
 pub const CROUCH_SIGHT: f32 = 0.6;
+/// Leaves and washing hide nobody from this close.
+pub const SOFT_NEAR: f32 = 5.0;
 /// Seconds to notice somebody at the end of a bot's range, and right by it.
 const NOTICE_FAR: f32 = 0.9;
 const NOTICE_NEAR: f32 = 0.12;
@@ -58,9 +60,10 @@ pub const WALK_NOISE: f32 = 15.0;
 pub const CROUCH_NOISE: f32 = 8.0;
 /// How far an engine carries, flat out or ticking over.
 pub const ENGINE_NOISE: f32 = 60.0;
-/// How far a shot carries, and a gulel's twang.
+/// How far a shot carries, a gulel's twang, and a matchlock's boom and cloud of smoke.
 pub const SHOT_NOISE: f32 = 110.0;
 const TWANG_NOISE: f32 = 28.0;
+const TORADAR_NOISE: f32 = 260.0;
 /// Close enough to the place to start looking round; seconds given to the walk, and to the looking.
 const ARRIVE: f32 = 2.2;
 const SEARCH_WALK: f32 = 16.0;
@@ -225,7 +228,7 @@ pub fn clear_line(spatial: &SpatialQuery, filter: &SpatialQueryFilter, eye: Vec3
 
 /// Whether an eye at `from` has a clear line to the head or chest of a warrior centred at `center`.
 pub fn in_sight(spatial: &SpatialQuery, from: Vec3, center: Vec3, drop: f32) -> bool {
-    let filter = SpatialQueryFilter::from_mask(sight_mask());
+    let filter = SpatialQueryFilter::from_mask(if from.distance(center) < SOFT_NEAR { solid_mask() } else { sight_mask() });
     body_points(center, drop).iter().any(|p| clear_line(spatial, &filter, from, *p))
 }
 
@@ -250,7 +253,11 @@ pub fn hiding_spot(spatial: &SpatialQuery, walkable: &impl Fn(Vec2) -> bool, lay
 /// Each new arrow or astra (here or an echo of another peer's) is a noise where it left the hand.
 pub(crate) fn shot_noise(shots: Query<(&Transform, &Projectile), Added<Projectile>>, mut noise: MessageWriter<NoiseMsg>) {
     for (tf, shot) in &shots {
-        let radius = if shot.item == "gulel" { TWANG_NOISE } else { SHOT_NOISE };
+        let radius = match shot.item.as_str() {
+            "gulel" => TWANG_NOISE,
+            "toradar" => TORADAR_NOISE,
+            _ => SHOT_NOISE,
+        };
         noise.write(NoiseMsg { at: tf.translation, radius, source: Some(shot.owner) });
     }
 }

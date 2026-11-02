@@ -9,6 +9,7 @@ use shared::sim::flow::{self, Match, MatchState};
 use shared::sim::net::{NetId, Peers};
 use shared::sim::{DamageCause, DamageMsg, Eliminated, HitMsg, LocalPlayer, MatchConfig, Warrior};
 
+use super::settings::{Saved, today};
 use super::theme::{self, CREAM, Fonts, GHOST, INK, MARIGOLD, MUSTARD, RED, Shortcut, TEAL, u};
 use super::{Press, Screen};
 
@@ -48,6 +49,29 @@ pub(super) struct Tally {
 /// When the card came up.
 #[derive(Resource, Default)]
 struct Opened(f32);
+
+/// How little a place missed the top 5 or the top 10 by: (that top, the places short).
+fn near_miss(place: u32, total: u32) -> Option<(u32, u32)> {
+    const CLOSE: u32 = 5;
+    [5, 10].into_iter().filter(|top| total >= top * 3).find_map(|top| (place > top && place - top <= CLOSE).then(|| (top, place - top)))
+}
+
+/// Today's best, for the card: this match's place goes into it, and into the file unless a test
+/// recipe is playing.
+fn best_line(lines: &Lines, saved: &mut Saved, place: u32, autopilot: bool) -> String {
+    if autopilot {
+        return String::new();
+    }
+    let before = saved.record(today(), place);
+    if !super::skip_home() || std::env::var_os("VIVAD_SAVE").is_some() {
+        saved.save();
+    }
+    match before {
+        Some(best) if place < best => with(lines.text("best.new"), &[("p", &place.to_string())]),
+        Some(best) => with(lines.text("best.today"), &[("p", &best.to_string())]),
+        None => with(lines.text("best.today"), &[("p", &place.to_string())]),
+    }
+}
 
 /// The live line on the card: who is left, and who won.
 #[derive(Component)]
@@ -108,6 +132,8 @@ fn spawn(
     names: Query<&Warrior>,
     time: Res<Time>,
     mut opened: ResMut<Opened>,
+    mut saved: ResMut<Saved>,
+    config: Res<MatchConfig>,
 ) {
     opened.0 = time.elapsed_secs();
     let Ok((me, w, id, fell)) = local.single() else { return };
@@ -116,6 +142,10 @@ fn spawn(
     let seconds = tally.out_at.unwrap_or(m.elapsed) as u32;
     let numbers = [(w.kills.to_string(), KILLS), ((tally.damage.round() as u32).to_string(), DAMAGE), (format!("{}:{:02}", seconds / 60, seconds % 60), TIME)];
     let won = m.winner == Some(me);
+    let place = if won { 1 } else { fell.map_or(m.alive, |e| e.placement) };
+    // VIVAD_PLACE=<n>: the card as a match ending there would show it, for pictures of it.
+    let place = std::env::var("VIVAD_PLACE").ok().and_then(|s| s.parse().ok()).unwrap_or(place);
+    let best = best_line(&lines, &mut saved, place, config.autopilot);
     commands.spawn((theme::layer(5), theme::scrim_left(), DespawnOnExit(Screen::Result))).with_children(|p| {
         p.spawn((
             Node { position_type: PositionType::Absolute, left: u(72.0), top: u(60.0), width: u(640.0), flex_direction: FlexDirection::Column, row_gap: u(16.0), ..default() },
@@ -128,8 +158,8 @@ fn spawn(
                 c.spawn((Node { column_gap: u(52.0), margin: UiRect::top(u(12.0)), ..default() }, Pickable::IGNORE)).with_children(|row| {
                     stats(row, &fonts, &numbers, MUSTARD, CREAM);
                 });
+                c.spawn(theme::line(best.clone(), &fonts.body, 27.0, CREAM));
             } else {
-                let place = fell.map_or(m.alive, |e| e.placement);
                 c.spawn(theme::line(with(lines.text("hud.place"), &[("p", &place.to_string()), ("n", &m.total.to_string())]), &fonts.number, 104.0, MUSTARD));
                 let (title, detail) = who_got_you(me, fell, tally.last_hit.as_ref(), &names, &db, &pick);
                 // Near the end, or out among the first quarter to fall: a word on it.
@@ -146,11 +176,19 @@ fn spawn(
                     if !finish.is_empty() {
                         s.spawn(theme::line(finish, &fonts.body, 23.0, INK));
                     }
+                    if let Some((top, short)) = near_miss(place, m.total) {
+                        s.spawn(theme::line(with(lines.text("elim.near"), &[("top", &top.to_string()), ("n", &short.to_string())]), &fonts.body, 23.0, RED));
+                    }
                     s.spawn((Node { justify_content: JustifyContent::SpaceBetween, margin: UiRect::top(u(14.0)), ..default() }, Pickable::IGNORE)).with_children(|row| {
                         stats(row, &fonts, &numbers, INK, INK);
                     });
                 });
-                c.spawn(theme::sign(TEAL, MUSTARD, UiRect::axes(u(30.0), u(16.0)))).with_child((Status, theme::line("", &fonts.body, 25.0, CREAM)));
+                c.spawn(theme::sign(TEAL, MUSTARD, UiRect::axes(u(30.0), u(16.0)))).with_children(|s| {
+                    s.spawn((Status, theme::line("", &fonts.body, 25.0, CREAM)));
+                    if !best.is_empty() {
+                        s.spawn(theme::line(best.clone(), &fonts.body, 25.0, MUSTARD));
+                    }
+                });
             }
         });
         p.spawn(theme::corner()).with_children(|c| {
@@ -195,6 +233,21 @@ fn who_got_you(me: Entity, fell: Option<&Eliminated>, last_hit: Option<&DamageCa
         (Some(DamageCause::Weapon(id)), None) => (own_weapon(&db.get(id).name), pick("elim.self")),
         (None, Some(k)) => got_you(k, String::new()),
         (None, None) => (OUT.into(), String::new()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::near_miss;
+
+    #[test]
+    fn a_near_miss_is_named_only_when_it_is_near() {
+        assert_eq!(near_miss(7, 64), Some((5, 2)));
+        assert_eq!(near_miss(6, 64), Some((5, 1)));
+        assert_eq!(near_miss(13, 64), Some((10, 3)));
+        assert_eq!(near_miss(5, 64), None, "in the top 5");
+        assert_eq!(near_miss(40, 64), None);
+        assert_eq!(near_miss(13, 16), None, "no top 10 to speak of among 16");
     }
 }
 

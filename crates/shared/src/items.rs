@@ -5,6 +5,8 @@ use std::collections::BTreeMap;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::map::place::{Era, Place, Spot};
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash, PartialOrd, Ord, Reflect)]
 pub enum Rarity {
     Common,
@@ -153,6 +155,45 @@ pub struct ItemDb {
     pub items: BTreeMap<String, ItemDef>,
     /// The weapon every warrior starts with and cannot drop.
     pub default_melee: String,
+    #[serde(skip, default = "Drops::builtin")]
+    pub drops: Drops,
+}
+
+/// Weapons by place (assets/data/drops.ron): what each place and era does to an item's drop weights.
+#[derive(Clone, Debug, Deserialize)]
+pub struct Drops {
+    /// What a place does to an item it doesn't name.
+    rest: f32,
+    /// Nothing is multiplied by less.
+    lowest: f32,
+    /// A place's favourite below its lowest tier: this share of that tier's weight.
+    step_down: f32,
+    places: BTreeMap<Place, BTreeMap<String, f32>>,
+    eras: BTreeMap<Era, BTreeMap<String, f32>>,
+}
+
+impl Drops {
+    pub fn builtin() -> Self {
+        ron::from_str(include_str!("../../../assets/data/drops.ron")).expect("drops.ron")
+    }
+
+    /// What a spot multiplies an item's drop weights by.
+    pub fn odds(&self, at: Spot, id: &str) -> f32 {
+        let place = self.places.get(&at.place).and_then(|t| t.get(id)).copied().unwrap_or(self.rest);
+        let era = at.era.and_then(|e| self.eras.get(&e)).and_then(|t| t.get(id)).copied().unwrap_or(1.0);
+        (place * era).max(self.lowest)
+    }
+
+    /// An item's weight among a tier's finds at a spot, if it is among them there. What a place
+    /// favours turns up below its usual rarity; Divya items never do.
+    pub fn weight(&self, at: Spot, id: &str, def: &ItemDef, tier: Rarity) -> Option<f32> {
+        let odds = self.odds(at, id);
+        if let Some((_, w)) = def.drops.iter().find(|(r, _)| *r == tier) {
+            return Some(w * odds);
+        }
+        let &(first, w) = def.drops.iter().min_by_key(|(r, _)| *r)?;
+        (odds > 1.0 && first > tier && first < Rarity::Divya).then_some(w * odds * self.step_down)
+    }
 }
 
 impl ItemDb {

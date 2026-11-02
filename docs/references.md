@@ -377,3 +377,17 @@ the game.
 `assets/data/lines.ron` holds every on-screen line. The words were drafted from public clips and
 photos of daily Delhi speech (`research/delhi-words/`); no text was copied from any game. Every line
 is a draft until a Delhi native has read it (`ok: false`).
+
+## Weapons by place, leaves, the Pause menu's sliders
+
+- `crates/game/src/fx.rs` `CLIMB`: the idea of a shot-by-shot spray list is bevy_fps_game's
+  `gun_control.rs` `spray_pattern` (https://github.com/Biped-Potato/bevy_fps_game, MIT); no
+  code was copied and the numbers are our own. The kick that falls back while the view chases it
+  is the idea of Godot Simple FPS Weapon System's `camera_recoil_holder_script.gd` (MIT).
+- `crates/game/src/front/settings.rs`: Bevy's own headless `Slider`, laid out as in Bevy's
+  `standard_widgets` example (MIT or Apache 2.0).
+- `assets/audio/hit_chappal.ogg`: slap1.wav by fellur, CC0
+  (https://freesound.org/people/fellur/sounds/429722/), cut by `tools/audio/street.py`.
+- `assets/audio/metro_chime.ogg` and `amb_wind.ogg`: synthesized by `tools/audio/sfx.py`. The chime
+  is two notes of our own, not any real Metro's.
+- `assets/models/weapons/chappal.glb`: modelled by `tools/blender/weapons/chappal.py`.

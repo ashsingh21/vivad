@@ -241,6 +241,7 @@ def main():
     mix("hit_dhal", [("impactPlate_heavy_000", 1.0), ("impactPunch_medium_000", 0.8)], "Blow: dhal, a boom", "plate and punch, pitched down", pitch=0.75)
     one_shot("hit_blade", "441666", "Blow: talwar", k=0, dur=0.6, fade=0.15)
     mix("hit_gada", [("impactPunch_heavy_001", 1.0), ("impactSoft_heavy_000", 0.9)], "Blow: gada, very low", "punch and soft thud, pitched down", pitch=0.72)
+    one_shot("hit_chappal", "429722", "A chappal landing: the slap", pick="0.0", dur=0.2, fade=0.03)
 
     # ---- guards and breaks
     mix("guard_wood", [("impactWood_medium_002", 1.0)], "Guard: wood takes the blow (bat, lathi, hockey stick, gada)", "one Kenney file")
