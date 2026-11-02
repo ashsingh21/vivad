@@ -43,7 +43,13 @@ Last full gate, on `ddd5e25`: 0 warnings, 193 tests, `cp` 3 of 3, NCR 2 of 2 wit
 
 Real 64-warrior NCR match on a quiet Mac, uncapped, 170 s, autopilot: Medium 105 to 160 fps with 4.8 GB peak memory, High 50 to 70 fps with 5.3 GB. Medium stays the default on this Mac; F4 changes level. The memory budget of 4.4 GB is missed and was not raised on purpose: decide it with a real play test.
 
-Open, biggest first: nobody has played it by hand or heard it; F4 freezes the picture for seconds on a level change; market stalls are not solid; vehicles pass through street people; rifle crouch-walk is very slow at 0.93 m/s; a person must judge the sound mix and `lines.ron`. The real merge with Ashu's line is still owed: his city and Connaught Place work stays out, and `origin/main` moved on past `4670d1b`. Before release: credits on Home for OpenStreetMap and the CC-BY models, the ODbL offer, the dhal from its original source, and pack-derived meshes in private repos only.
+Landed after that on 2 Nov: solid market tables (`map/stalls.rs`, 16,634 tables, real cover on every peer), people and animals who clear a vehicle's path, rifle crouch-walk at 1.75 m/s, a soft muzzle flash, see-through car glass, the camera kept on the player's side of a wall, chests that load with the map, Credits on Home with the ODbL offer.
+
+Held back on `claude/fix-render`, skipped by the owner on 2 Nov: F4 with no freeze and peak memory near 3.1 GB. It vendors `bevy_render`, and about 2 runs in 100 came up fully black or magenta with no log line, cause unknown. Do not land `a64fd96` or anything needing it until 40 of 40 fresh starts pass on `cp` and NCR. The memory commits (`a6009b7`, `141d200`, `054eee4`, `7270e9b`) may be separable, but that was not proven.
+
+`just sense` fails about 1 run in 5 on its last line, "standing and aiming": the count of shots that went off varies from 3 to 30, while every run lands within 0.03 m of the crosshair. The line was not fixed, and the cause is not proven.
+
+Open, biggest first: nobody has played it by hand or heard it; F4 still freezes the picture for seconds on a level change; peak memory is 4.8 GB; handcarts and parked scooter bunches are still walk-through; a person must judge the sound mix and `lines.ron`. The real merge with Ashu's line is still owed: his city and Connaught Place work stays out, and `origin/main` moved on past `4670d1b`. Before release: credits on Home for OpenStreetMap and the CC-BY models, the ODbL offer, the dhal from its original source, and pack-derived meshes in private repos only.
 
 ## Merge of the seven parts (2 Nov 2026)
 
