@@ -776,6 +776,52 @@ fn long_shots(stage: &mut Stage, check: &mut Check) {
     stage.intent(player).held = 0;
 }
 
+/// A wall with a window in it at his back, and the follow camera's line through that window: the
+/// camera and the crosshair's ray stay on his side. Walls alongside him don't pull it in.
+fn window_behind(stage: &mut Stage, check: &mut Check) {
+    println!("a window at his back");
+    let spot = open_spot(stage, 9.0);
+    let feet = spot.extend(stage.ground(spot)).xzy();
+    let player = stage.player;
+    stage.put(player, feet);
+    stage.tick(3);
+    let mut intent = stage.intent(player);
+    (intent.yaw, intent.pitch, intent.held, intent.move_axis) = (0.0, 0.0, 0, Vec2::ZERO);
+    stage.tick(3);
+    let at = stage.pos(player);
+    let solid = |stage: &mut Stage, pos: Vec3, size: Vec3| stage.app.world_mut().spawn((Transform::from_translation(pos), RigidBody::Static, Collider::cuboid(size.x, size.y, size.z), CollisionLayers::new(Layer::World, LayerMask::ALL))).id();
+    let camera = move |stage: &mut Stage| {
+        stage.tick(2);
+        stage.app.world_mut().run_system_once(move |spatial: SpatialQuery, q: Query<(&Transform, &PlayerIntent)>| {
+            let (t, intent) = q.get(player).unwrap();
+            shared::sim::aim_origin(&spatial, t.translation, intent, player)
+        }).unwrap()
+    };
+    let free = camera(stage);
+    check.that(free.z - at.z > 3.0, &format!("in the open the camera is {:.1} m behind him", free.z - at.z));
+    // 1.4 m square, round where the line goes through it, 1.5 m behind him.
+    let wall_z = at.z + 1.5;
+    let hole = Vec3::new(at.x + CAMERA_SHOULDER * 1.5 / CAMERA_DISTANCE, at.y + EYE_OFFSET, wall_z);
+    let parts = [
+        solid(stage, hole + Vec3::new(-4.7, 0.0, 0.0), Vec3::new(8.0, 8.0, 0.3)),
+        solid(stage, hole + Vec3::new(4.7, 0.0, 0.0), Vec3::new(8.0, 8.0, 0.3)),
+        solid(stage, hole + Vec3::new(0.0, 4.7, 0.0), Vec3::new(1.4, 8.0, 0.3)),
+        solid(stage, hole + Vec3::new(0.0, -4.7, 0.0), Vec3::new(1.4, 8.0, 0.3)),
+    ];
+    let walled = camera(stage);
+    check.that(walled.z < wall_z - 0.1, &format!("a window 1.5 m behind him: the camera stops {:.1} m behind him, on his side of the wall", walled.z - at.z));
+    for part in parts {
+        stage.app.world_mut().despawn(part);
+    }
+    let parts = [solid(stage, at + Vec3::new(-1.6, 0.0, 0.0), Vec3::new(0.3, 8.0, 16.0)), solid(stage, at + Vec3::new(2.2, 0.0, 0.0), Vec3::new(0.3, 8.0, 16.0))];
+    let lane = camera(stage);
+    check.that(lane.z - at.z > 3.0, &format!("walls alongside him leave it {:.1} m behind him", lane.z - at.z));
+    for part in parts {
+        stage.app.world_mut().despawn(part);
+    }
+    stage.tick(2);
+}
+
 fn flocks(stage: &mut Stage, check: &mut Check) {
     println!("birds");
     let player = stage.player;
@@ -816,6 +862,7 @@ fn main() {
     let mut check = Check { failed: 0 };
     crouching(&mut stage, &mut check);
     shutter(&mut stage, &mut check);
+    window_behind(&mut stage, &mut check);
     cover(&mut stage, &mut check);
     leaves(&mut stage, &mut check);
     flocks(&mut stage, &mut check);
