@@ -808,16 +808,19 @@ PISTOL_DROP = 0.6
 RIFLE_PACK = False
 # A long gun carried: the shoulders turned this far (radians), the left one forward.
 RIFLE_TURN = 0.7
+# ...and the torso straightened to this forward lean (radians; the jog leans well past it).
+RIFLE_LEAN = math.radians(6)
 ARM_BONES = ("clavicle", "upperarm", "lowerarm", "hand", "thumb", "index", "middle", "ring", "pinky")
 
 
-def carry(rig, name, base, hold, drop=0.0, turn=0.0):
+def carry(rig, name, base, hold, drop=0.0, turn=0.0, upright=None):
     """A gun carried on the move: `base`'s legs, hips and torso (the plain walk or run, its natural
     bounce and twist) with `hold`'s arms kept as they sit on the chest (each arm bone's turn from
     its parent copied, so the gun rides the torso as it swings). `drop` (radians) lowers both arms
     from the shoulders about the chest's side-to-side line, hands together: a pistol's aim grip
     carried at low ready. `turn` (radians) brings the left shoulder forward, the head kept to the
-    front: a long gun's fore-end within the left hand's reach."""
+    front: a long gun's fore-end within the left hand's reach. `upright` (radians): the torso's
+    forward lean (hips to neck) eased to this, frame by frame, the run's bounce and twist kept."""
     held = [b.name for b in rig.pb if b.name.split("_")[0] in ARM_BONES]
     sc = bpy.context.scene
     rig.obj.animation_data.action = bpy.data.actions[hold]
@@ -831,10 +834,23 @@ def carry(rig, name, base, hold, drop=0.0, turn=0.0):
         sc.frame_set(f)
         poses.append({pb.name: pb.matrix_basis.copy() for pb in rig.pb})
     new_action(rig, name)
+    leans, leans_after = [], []
     for i, pose in enumerate(poses):
         for pb in rig.pb:
             pb.matrix_basis = grip.get(pb.name, pose[pb.name])
         bpy.context.view_layer.update()
+        if upright is not None:
+            v = rig.head("neck_01") - rig.head("spine_01")
+            lean = math.atan2(-v.y, v.z)
+            leans.append(lean)
+            # The head keeps looking where it did (the clip's head is bent up to see out of its
+            # lean; straightened, it would tip back).
+            look = rig.world_rot("head")
+            rig.rotate("spine_01", LEFT, -(lean - upright) * 0.5)
+            rig.rotate("spine_02", LEFT, -(lean - upright) * 0.5)
+            rig.set_world_rot("head", look)
+            v = rig.head("neck_01") - rig.head("spine_01")
+            leans_after.append(math.atan2(-v.y, v.z))
         if turn:
             rig.rotate("spine_02", UP, -turn * 0.5)
             rig.rotate("spine_03", UP, -turn * 0.5)
@@ -845,6 +861,8 @@ def carry(rig, name, base, hold, drop=0.0, turn=0.0):
             for s in "lr":
                 rig.rotate(f"upperarm_{s}", side, drop)
         rig.key(i + 1)
+    if leans:
+        print(f"[anims] {name}: torso lean {math.degrees(sum(leans) / len(leans)):.0f} -> {math.degrees(sum(leans_after) / len(leans_after)):.0f} deg")
     return f1 - f0
 
 
@@ -1252,13 +1270,13 @@ def main():
                 cycles[f"pistol_{m}_{d}"] = carry(rig, f"pistol_{m}_{d}", f"{m}_{d}", "pistol_idle", drop=PISTOL_DROP)
     if not RIFLE_PACK:
         hold_pose(rig, "rifle_carry", 1, rifle_carry_pose)
-        carry(rig, "rifle_idle", "idle", "rifle_carry", turn=RIFLE_TURN)
-        carry(rig, "rifle_crouch_idle", "crouch_idle", "rifle_carry", turn=RIFLE_TURN)
+        carry(rig, "rifle_idle", "idle", "rifle_carry", turn=RIFLE_TURN, upright=RIFLE_LEAN)
+        carry(rig, "rifle_crouch_idle", "crouch_idle", "rifle_carry", turn=RIFLE_TURN, upright=RIFLE_LEAN)
         for d in "fblr":
-            cycles[f"rifle_crouch_{d}"] = carry(rig, f"rifle_crouch_{d}", f"crouch_{d}", "rifle_carry", turn=RIFLE_TURN)
+            cycles[f"rifle_crouch_{d}"] = carry(rig, f"rifle_crouch_{d}", f"crouch_{d}", "rifle_carry", turn=RIFLE_TURN, upright=RIFLE_LEAN)
             for m in ("walk", "run"):
-                cycles[f"rifle_{m}_{d}"] = carry(rig, f"rifle_{m}_{d}", f"{m}_{d}", "rifle_carry", turn=RIFLE_TURN)
-        cycles["rifle_sprint_f"] = carry(rig, "rifle_sprint_f", "sprint_f", "rifle_carry", turn=RIFLE_TURN)
+                cycles[f"rifle_{m}_{d}"] = carry(rig, f"rifle_{m}_{d}", f"{m}_{d}", "rifle_carry", turn=RIFLE_TURN, upright=RIFLE_LEAN)
+        cycles["rifle_sprint_f"] = carry(rig, "rifle_sprint_f", "sprint_f", "rifle_carry", turn=RIFLE_TURN, upright=RIFLE_LEAN)
         bpy.data.actions.remove(bpy.data.actions["rifle_carry"])
     if not os.path.exists(os.path.join(MIXAMO, "Running Slide.fbx")):
         src, objs, acts = load_mocap("ual2")

@@ -610,13 +610,14 @@ struct Facing {
 
 /// The drawn body: between the last two sim ticks; facing, as a player would expect, the way it
 /// runs when it's just moving (so the legs run forward rather than crabbing sideways at speed),
-/// turning back to the aim when aiming, attacking or standing; turning smoothly, never snapping,
+/// turning back to the aim when aiming, attacking or standing, and always with a gun in hand (it
+/// backpedals and strafes, the gun kept toward the crosshair); turning smoothly, never snapping,
 /// and leaning a little into turns. The sim's own facing (aim, hits) is untouched.
 #[allow(clippy::type_complexity)]
 fn interpolate_warriors(
     fixed: Res<Time<Fixed>>,
     time: Res<Time>,
-    sims: Query<(&PosHistory, &Transform, &shared::sim::PlayerIntent, &shared::sim::Action, &Kinematic), Without<WarriorVisual>>,
+    sims: Query<(&PosHistory, &Transform, &shared::sim::PlayerIntent, &shared::sim::Action, &Kinematic, &Inventory), Without<WarriorVisual>>,
     mut vis: Query<(Entity, &WarriorVisual, &mut Transform)>,
     mut facing: Local<HashMap<Entity, Facing>>,
 ) {
@@ -624,12 +625,13 @@ fn interpolate_warriors(
     let dt = time.delta_secs().max(1e-4);
     facing.retain(|e, _| vis.contains(*e));
     for (e, v, mut t) in &mut vis {
-        let Ok((h, st, intent, act, kin)) = sims.get(v.sim) else { continue };
+        let Ok((h, st, intent, act, kin, inv)) = sims.get(v.sim) else { continue };
         t.translation = h.prev.lerp(h.curr, a);
         let aim_yaw = st.rotation.to_euler(EulerRot::YXZ).0;
         let vel = (h.curr - h.prev) / fixed.timestep().as_secs_f32().max(1e-4);
         let ground = Vec2::new(vel.x, vel.z);
-        let fighting = intent.held(shared::sim::btn::AIM) || act.since_attack < 1.2 || act.charge > 0.0;
+        let gun = inv.current().is_some_and(|s| shot_kind(&s.id) == Shot::Bullet);
+        let fighting = intent.held(shared::sim::btn::AIM) || act.since_attack < 1.2 || act.charge > 0.0 || gun;
         let target = if kin.mode == MoveMode::Ground && ground.length() > 1.2 && !fighting {
             // The model faces -Z: the yaw that points it along the motion.
             (-ground.x).atan2(-ground.y)

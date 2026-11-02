@@ -209,7 +209,11 @@ fn orient_bows(
         let (Ok((_, hand_g)), Ok((grip, _)), Ok((bow_local, _))) = (tf.get(hand), tf.get(socket), tf.get(e)) else { continue };
         let (mut hand_g, grip, bow_local) = (*hand_g, *grip, *bow_local);
         let aim = intent.aim_dir();
-        let ahead = aim.with_y(0.0).normalize_or(Vec3::NEG_Z);
+        // Ahead: the way the body faces (running off to the side or toward the camera it turns
+        // from the aim), swinging to the aim as the gun comes up.
+        let aim_flat = aim.with_y(0.0).normalize_or(Vec3::NEG_Z);
+        let facing = tf.get(body.root).map(|(_, g)| (g.rotation() * Vec3::Z).with_y(0.0).normalize_or(aim_flat)).unwrap_or(aim_flat);
+        let ahead = facing.lerp(aim_flat, w).normalize_or(aim_flat);
         // A long gun is placed here rather than by the clips (whose arms ride hips the legs layer
         // tilts its own way, and were authored round other guns): carried, the stock tucked under
         // the right arm and the barrel down and across; aimed, the butt in the shoulder's pocket and

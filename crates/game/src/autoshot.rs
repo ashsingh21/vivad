@@ -68,6 +68,10 @@ enum Use {
     Strike,
     /// Carried at a run, on the spot (a treadmill: the run is pinned back each tick).
     Run,
+    /// Running back toward the camera.
+    RunBack,
+    /// Crouch-walking forward.
+    Crouch,
 }
 
 #[derive(Clone, Copy)]
@@ -102,6 +106,8 @@ impl Armoury {
             Use::Hold => "hold",
             Use::Strike => "strike",
             Use::Run => "run",
+            Use::RunBack => "runback",
+            Use::Crouch => "crouch",
         };
         let view = match p.view {
             View::Front => "front",
@@ -253,6 +259,9 @@ impl Plugin for AutoshotPlugin {
                 p("katta", Use::Aim, View::Back, 0.0),
                 p("dunali", Use::Carry, View::Side, 0.0),
                 p("dunali", Use::Run, View::Side, 0.0),
+                p("dunali", Use::RunBack, View::Back, 0.0),
+                p("dunali", Use::RunBack, View::Side, 0.0),
+                p("dunali", Use::Crouch, View::Side, 0.0),
                 p("dunali", Use::Aim, View::Side, 0.0),
                 p("gulel", Use::Hold, View::Side, 0.0),
                 p("gulel", Use::Hold, View::Front, -0.4),
@@ -473,7 +482,7 @@ fn armoury_actor(
     kin.mode = MoveMode::Ground;
     health.hp = 40.0;
     let Some(pose) = arm.poses.get(arm.index).copied() else { return };
-    if pose.state != Use::Run {
+    if !matches!(pose.state, Use::Run | Use::RunBack | Use::Crouch) {
         kin.velocity = Vec3::ZERO;
     }
     let t = arm.t;
@@ -491,7 +500,7 @@ fn armoury_actor(
             inv.selected = 1;
         }
     }
-    if matches!(pose.state, Use::Carry | Use::Run) {
+    if matches!(pose.state, Use::Carry | Use::Run | Use::RunBack | Use::Crouch) {
         act.since_attack = act.since_attack.max(5.0);
     }
     intent.yaw = 0.0;
@@ -517,10 +526,16 @@ fn armoury_actor(
             }
         }
     }
-    intent.move_axis = if pose.state == Use::Run { Vec2::Y } else { Vec2::ZERO };
+    intent.move_axis = match pose.state {
+        Use::Run => Vec2::Y,
+        Use::RunBack => Vec2::NEG_Y,
+        Use::Crouch => Vec2::Y,
+        _ => Vec2::ZERO,
+    };
     intent.select = None;
     intent.held = match pose.state {
-        Use::Carry | Use::Run => 0,
+        Use::Carry | Use::Run | Use::RunBack => 0,
+        Use::Crouch => btn::CROUCH,
         Use::Aim => btn::AIM,
         Use::Hold => btn::FIRE | btn::AIM,
         Use::Strike => if t >= STRIKE_AT { btn::FIRE } else { 0 },
