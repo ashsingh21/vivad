@@ -102,8 +102,9 @@ speed, height and stance as `[foot]` lines. `VIVAD_KEYS="2:+KeyW,6:+ShiftLeft,..
 match times through the same bindings as a keyboard, `VIVAD_TURN=<t>:<degrees>,...` turns the view,
 and `VIVAD_GIVE=saintalis,talwar` fills the first slots. With `VIVAD_CLIP=<dir>,<from>,<to>,<fps>` and
 `VIVAD_CLIP_VIEW=1` that films a run from the game's own camera with the window hidden.
-`VIVAD_KEYS` also takes KeyE, KeyM, KeyN, KeyT, Escape, Enter and F4, at match times, so a key that
-pauses holds the rest of the script. `VIVAD_FOOT=chest,<x>,<z>` (or `chestup`, `pickup`, `vehicle`)
+`VIVAD_KEYS` also takes KeyE, KeyT, Escape, Enter and F4, at match times, so a key that pauses holds
+the rest of the script. M and N come too late for the map that way: use `VIVAD_SHOTS_KEYS=m:9,m:13`.
+`VIVAD_FOOT=chest,<x>,<z>` (or `chestup`, `pickup`, `vehicle`)
 stands the player beside the nearest of those, `VIVAD_FOOT_BOTS=8,saintalis` stands that many armed
 bots round it at 6 s, and `VIVAD_WINDOW=1512x982` opens the window at that size, to read the HUD on
 another screen. macOS itself shrinks a window that is too big for the screen.
