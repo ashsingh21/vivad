@@ -86,6 +86,12 @@ impl Plugin for LootPlugin {
     }
 }
 
+/// Street weapons come on top of the guns, never in their place: sharing the guns' roll left a
+/// third fewer on the NCR, and one bot in four with none a minute after landing. They lie on half
+/// the floor spots that hold nothing else, and in this share of petis, beside the gun.
+const MELEE_ON_FLOOR: f64 = 0.5;
+const MELEE_IN_PETI: f64 = 0.4;
+
 pub fn spawn_pickup(commands: &mut Commands, id: PickupId, at: Vec3, stack: ItemStack) {
     commands.spawn((Pickup { id, stack, delay: 0.6 }, Transform::from_translation(at)));
 }
@@ -137,13 +143,16 @@ pub fn make_stack(db: &ItemDb, id: &str, rarity: Rarity) -> ItemStack {
         ItemKind::Astra { count, .. } => *count,
         ItemKind::Consumable { stack, .. } => (*stack / 3).max(1),
         ItemKind::Arrows { amount } => *amount,
-        ItemKind::Melee { .. } => 1,
+        ItemKind::Melee { durability, .. } => (*durability).max(1),
     };
     ItemStack { id: id.into(), rarity, count }
 }
 
 fn is_weapon(k: &ItemKind) -> bool {
     matches!(k, ItemKind::Bow { .. } | ItemKind::Astra { .. })
+}
+fn is_melee(k: &ItemKind) -> bool {
+    matches!(k, ItemKind::Melee { .. })
 }
 fn is_consumable(k: &ItemKind) -> bool {
     matches!(k, ItemKind::Consumable { .. })
@@ -181,6 +190,7 @@ pub fn spill_spot(layout: &MapLayout, ct: &Transform, i: usize) -> Vec3 {
 /// only be entities every bot looks over.
 pub fn spawn_loot(commands: &mut Commands, layout: &MapLayout, db: &ItemDb, seed: u64, disc: (Vec2, f32)) {
     let mut rng = match_rng(seed, stream::FLOOR_LOOT);
+    let mut street = match_rng(seed, stream::STREET_WEAPONS);
     let inside = |p: Vec3| p.xz().distance(disc.0) <= disc.1;
     let sets = chest_sets(seed);
     for (index, c) in layout.chests.iter().enumerate() {
@@ -193,7 +203,13 @@ pub fn spawn_loot(commands: &mut Commands, layout: &MapLayout, db: &ItemDb, seed
         ));
     }
     for (k, p) in layout.floor_loot.iter().enumerate() {
-        if !inside(*p) || !rng.random_bool(0.75) {
+        if !inside(*p) {
+            continue;
+        }
+        if !rng.random_bool(0.75) {
+            if street.random_bool(MELEE_ON_FLOOR) && let Some(st) = roll_item(db, roll_rarity(None, &mut street), is_melee, &mut street) {
+                commands.spawn((Pickup { id: PickupId::floor(k), stack: st, delay: 0.0 }, Transform::from_translation(*p)));
+            }
             continue;
         }
         let rarity = roll_rarity(None, &mut rng);
@@ -223,6 +239,8 @@ pub fn chest_contents(db: &ItemDb, seed: u64, index: usize, kind: ChestKind) -> 
     out.push(make_stack(db, "arrows", Rarity::Common));
     if kind == ChestKind::Kalash {
         out.extend(roll_item(db, Rarity::Legendary, is_consumable, &mut rng));
+    } else if rng.random_bool(MELEE_IN_PETI) {
+        out.extend(roll_item(db, roll_rarity(Some(kind), &mut rng), is_melee, &mut rng));
     }
     out
 }
@@ -318,7 +336,7 @@ fn interact(
                 claims.0.push(Claim { pickup: p.id, by, at: m.elapsed, stack: p.stack.clone() });
             }
             if let Some(rest) = give(&mut inv, &db, p.stack.clone()) {
-                // Full: swap with the held slot (or slot 1 when holding the khanda).
+                // Full: swap with the held slot (or slot 1 when holding the bat).
                 let slot = if inv.selected > 0 { inv.selected - 1 } else { 0 };
                 let old = inv.slots[slot].replace(rest);
                 if let (Some(old), Some(&by)) = (old, net_id) {
@@ -418,6 +436,21 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A peti's first find is a gun or an astra, as ever: a street weapon only ever joins it.
+    #[test]
+    fn street_weapons_leave_the_guns_alone() {
+        let db = ItemDb::load_from_str(include_str!("../../../../assets/data/items.ron")).unwrap();
+        let melee = |s: &ItemStack| matches!(db.get(&s.id).kind, ItemKind::Melee { .. });
+        let mut extra = 0;
+        for index in 0..500 {
+            let items = chest_contents(&db, 7, index, ChestKind::Peti);
+            assert!(!melee(&items[0]), "{items:?}");
+            assert!(items.len() <= 4, "{items:?}");
+            extra += items.iter().filter(|s| melee(s)).count();
+        }
+        assert!((100..300).contains(&extra), "{extra} street weapons in 500 petis");
     }
 
     /// A match opens one set of chests in each district, the same on every peer, and the sets move

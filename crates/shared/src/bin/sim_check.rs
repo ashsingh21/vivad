@@ -188,6 +188,7 @@ fn main() {
         .filter(|(_, d)| matches!(d.kind, ItemKind::Bow { .. }))
         .map(|(id, _)| id.clone())
         .collect();
+    let melee = |id: &str, db: &ItemDb| matches!(db.get(id).kind, ItemKind::Melee { .. });
 
     let mut results = vec![];
     for n in 0..matches {
@@ -201,6 +202,8 @@ fn main() {
         let mut kills_by_zone = 0;
         let mut kills_by_self = 0;
         let mut kills_other = 0;
+        let mut kills_by_item: HashMap<String, u32> = HashMap::new();
+        let mut carried_melee: HashSet<Entity> = HashSet::new();
         let mut tracks: HashMap<Entity, Track> = HashMap::new();
         let mut next_sample = 0.0;
         let mut reasons: Vec<(String, &'static str)> = vec![];
@@ -255,7 +258,10 @@ fn main() {
                     }
                     // A gun that backfired.
                     DamageCause::Weapon(_) if f.by == Some(f.victim) => kills_by_self += 1,
-                    DamageCause::Weapon(_) => kills_by_weapon += 1,
+                    DamageCause::Weapon(item) => {
+                        kills_by_weapon += 1;
+                        *kills_by_item.entry(item.clone()).or_default() += 1;
+                    }
                     DamageCause::Fall => {
                         kills_other += 1;
                         let t = tracks.get(&f.victim);
@@ -380,10 +386,14 @@ fn main() {
                         landed_at.insert(e, at);
                     }
                 }
+                let db = world.resource::<ItemDb>().clone();
                 for (e, inv, fallen) in world.query_filtered::<(Entity, &Inventory, Has<Eliminated>), With<Warrior>>().iter(world) {
                     let armed = armed_at.entry(e).or_insert(None);
                     if armed.is_none() && !fallen && inv.slots.iter().flatten().any(|s| bows.contains(&s.id)) {
                         *armed = Some(m.elapsed);
+                    }
+                    if inv.slots.iter().flatten().any(|s| melee(&s.id, &db)) {
+                        carried_melee.insert(e);
                     }
                 }
             }
@@ -509,6 +519,9 @@ fn main() {
                 let chests = world.query::<&Chest>().iter(world).count();
                 println!("chests opened {opened}/{chests} ({:.0}%)", opened as f32 * 100.0 / chests.max(1) as f32);
                 println!("pickups taken {}", world.resource::<Taken>().0);
+                let mut by_item: Vec<_> = kills_by_item.iter().collect();
+                by_item.sort_by_key(|(id, n)| (std::cmp::Reverse(**n), (*id).clone()));
+                println!("kills by weapon: {}; {} warriors carried a street weapon", by_item.iter().map(|(id, n)| format!("{id} {n}")).collect::<Vec<_>>().join(", "), carried_melee.len());
                 println!(
                     "ground: {on_decks:.0} bot-seconds on bridges ({} bots), {in_water:.0} in water, {on_hills:.0} on the hills",
                     crossed.len()

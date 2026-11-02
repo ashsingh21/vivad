@@ -88,8 +88,8 @@ impl Plugin for VisualsPlugin {
 }
 
 /// Baked models in assets/models/weapons, one per item (the arrow-quiver pickup shows the tarkash).
-pub const WEAPON_MODELS: [&str; 20] = [
-    "bat", "katta", "tamancha", "dunali", "gulel", "chakra", "brahmastra", "arrow", "tarkash", "agneyastra", "vayavyastra", "sanjeevani",
+pub const WEAPON_MODELS: [&str; 26] = [
+    "bat", "lathi", "tawa", "hockey_stick", "gada", "talwar", "dhal", "katta", "tamancha", "dunali", "gulel", "chakra", "brahmastra", "arrow", "tarkash", "agneyastra", "vayavyastra", "sanjeevani",
     "soma", "amrita", "vajra9", "trishul_carbine", "saintalis", "thaana_slr", "thri_not_thri", "toradar",
 ];
 

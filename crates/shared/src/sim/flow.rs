@@ -230,12 +230,6 @@ const BOT_NAMES: [&str; 23] = [
     "Pinky", "Dolly", "Sweety", "Bittu", "Chotu", "Lallan", "Babli", "Chikki", "Laddoo", "Jhumri", "Bobby",
 ];
 
-pub fn tick_simulation_pause(mut pause: ResMut<super::SimulationPause>, time: Res<Time>) {
-    if pause.timer > 0.0 {
-        pause.timer -= time.delta_secs();
-    }
-}
-
 fn start_match_on_startup(world: &mut World) {
     let config = world.resource::<super::MatchConfig>();
     if !config.online && !config.menu {

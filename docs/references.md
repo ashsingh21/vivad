@@ -203,16 +203,43 @@ remaining foot slide per clip, under 1 cm). Clips are per rig because the male a
 bone orientations differ. In game (`crates/game/src/animation.rs`) they are blended from the
 simulation state, with weapon actions layered on the torso by bone masks.
 
+## Street fights
+
+| Item | Built as | Source and licence |
+|---|---|---|
+| Lathi, gada, tawa, hockey stick | Lathed and lofted by `tools/blender/weapons/melee.py` | Ours. The gada is the plain wrestler's stone on bamboo, no gold, no god. The stick has no maker's name |
+| Talwar | Our old straight sword (`old_sword.glb`, `old_sword.py`) with the blade bent | Ours |
+| Dhal | ["Indian dhal (shield), 19th century"](https://sketchfab.com/3d-models/indian-dhal-shield-19th-century-fca1088c468c480a845977189d66bf59) by Pedram Ashoori, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changed: painted lions and sun face painted out, red lacquer and plain brass in their place, resized, glow removed | Credit required |
+
+| Swing rules | `crates/shared/src/sim/melee.rs`: swing phases, the `struck` list, `in_front` and the order of the guard's tests, adapted by hand | [wow-souls](https://github.com/jackke88/wow-souls), MIT (notice kept at the top of that file). Its GPL `dsr-*` crates are not used. The swing as data (direction and time, no bones) is an idea from Left 4 Dead 2's `cricket_bat.txt`, no code. All numbers are ours |
+
+The credit above must appear on the game's credits screen. The dhal came through the public
+Objaverse mirror; fetch the original with a free Sketchfab login before shipping.
+
 ## Sound
 
-The rifles are free recordings, cut by `tools/audio/rifles.py` (see the licence table). All else is
-synthesized in `tools/audio/sfx.py` (noise, filters, modal resonators, Karplus-Strong
+The rifles are free recordings, cut by `tools/audio/rifles.py` (see the licence table). The street
+and the fights are cut from recordings too (below). Most of the rest are synthesized in
+`tools/audio/sfx.py` (noise, filters, modal resonators, Karplus-Strong
 strings), no recordings: footsteps on dirt, stone, wood, grass and water; sword whooshes and
 hits; bow twang and draw, arrow impacts; flesh and shield hits; hit markers; jump, land, glider;
 chest creak with coins, and a temple bell (ghanta) for the golden kalash; drinking, reloading;
 Agni fire and Vayu gusts; a conch (shankha) when the Pralaya starts to close, a bell for kills,
 a low gong on elimination; loops for wind, freefall, the zone wall, the river, a tanpura drone
 aboard the vimana and the day's ambience (wind, koel, sparrows, crows).
+
+### Street and fight recordings
+
+Cut by `tools/audio/street.py` from CC0 recordings, so no credit is owed, but the sources are
+named here: Freesound files by SoundEnsemble, Alcappuccino, florianreichelt, kyles, Kriaa,
+AntumDeluge, erosax, Ambientsoundapp, IENBA, HowardV, Jibanshil, cupido-1, Jofae, giddster,
+ramblinglibrarian, edranil, csaszi, FreeToUseSounds, makbulchowdhury, Dalesome, zapsplat.com,
+newlocknew, worthahep88, Whiprealgood, ethanchase7744, spycrah and tbone1999, and Kenney's Impact
+Sounds (https://kenney.nl/assets/impact-sounds). `previews/fights-sounds/sound_list.md` gives each
+sound's source, the part cut and where it plays. Each licence was read on the sound's own page
+(`research/fights-sounds/data/freesound_licences.csv`). They came as Freesound's public previews.
+CC0 is the uploader's claim, and nobody has listened to them all yet: music or clear voices must be
+checked by ear before release. Left out: temple crowds, real Metro announcements, anything CC-BY.
 
 ## Hiding and bot senses
 

@@ -43,8 +43,10 @@ const UPPER_BODY: [&str; 6] = ["melee_guard", "melee_swing", "melee_swing_b", "b
 const LOWER_BONES: [&str; 10] = ["Root", "pelvis", "thigh_l", "thigh_r", "calf_l", "calf_r", "foot_l", "foot_r", "ball_l", "ball_r"];
 const LOWER: u32 = 0;
 const UPPER: u32 = 1;
-/// The authored swing lasts this long (melee_swing is 12 frames at 30 fps).
-const SWING_TIME: f32 = 0.4;
+/// The authored swing's contact comes this far through it (melee_swing is 12 frames at 30 fps).
+const SWING_CONTACT: f32 = 0.5;
+/// A raised guard holds the swing's cocked pose, this far through the clip.
+const GUARD_POSE: f32 = 0.17;
 const FADE_RATE: f32 = 12.0;
 
 struct AnimSet {
@@ -355,7 +357,11 @@ fn drive(
                     let swung = (act.since_attack - anim.swing_lag).max(0.0);
                     let loaded = inv.current().is_some_and(|s| s.count > 0);
                     let action = match held {
-                        Some(ItemKind::Melee { .. }) if swung < SWING_TIME => Some((swing, swung / SWING_TIME * dur(swing))),
+                        Some(ItemKind::Melee { .. }) if intent.held(btn::AIM) => Some(("melee_swing", GUARD_POSE * dur("melee_swing"))),
+                        // A slow weapon plays the swing slowly, its contact on the sweep.
+                        Some(ItemKind::Melee { windup, active, .. }) if swung < (windup + active / 2.0) / SWING_CONTACT => {
+                            Some((swing, swung / ((windup + active / 2.0) / SWING_CONTACT) * dur(swing)))
+                        }
                         Some(ItemKind::Melee { .. }) => Some(("melee_guard", clock % dur("melee_guard"))),
                         // A long gun is shouldered; pistols are held up at the start of the draw, both
                         // hands on the gun.

@@ -1,7 +1,7 @@
 set dotenv-load := true
 
 blender := env_var_or_default("BLENDER", "blender")
-weapons := "khanda"
+weapons := "old_sword"
 
 # Rebuild every model from its script (bake + LODs + GLB export).
 assets:
@@ -97,7 +97,7 @@ street-guns:
 nature:
     {{blender}} -b --factory-startup -P tools/blender/nature/trees.py 2>&1 | grep -E '^\[|Error|Traceback' || true
 
-# Build one weapon: just weapon khanda
+# Build one weapon: just weapon old_sword
 weapon name:
     {{blender}} -b --factory-startup -P tools/blender/weapons/{{name}}.py 2>&1 | grep -E '^\[|Error|Traceback|  File' || true
     test -f assets/models/weapons/{{name}}.glb
@@ -118,7 +118,7 @@ armoury only="":
 desi *names:
     {{blender}} -b --factory-startup -P tools/blender/weapons/desi.py -- {{names}} 2>&1 | grep -E '^\[|Error|Traceback|  File' || true
 
-# Render review images from the exported GLB: just preview khanda pass2
+# Render review images from the exported GLB: just preview old_sword pass2
 preview name tag="latest" samples="64":
     {{blender}} -b --factory-startup -P tools/blender/render_preview.py -- assets/models/weapons/{{name}}.glb previews/{{name}}/{{tag}} {{samples}} 2>&1 | grep -E '^\[|Error|Traceback' || true
 
@@ -154,6 +154,23 @@ loop map="ncr" fall="15":
     rm -rf previews/front-door/frames && mkdir -p previews/front-door/frames
     VIVAD_MAP={{map}} VIVAD_LOOP=previews/front-door,6 VIVAD_LOOP_FALL={{fall}} caffeinate -d -i -u cargo run --release -q -p game --bin game
     python3 tools/clip.py previews/front-door/frames 6 previews/front-door/full_loop.webp
+
+# A staged melee fight (crates/game/src/brawl.rs), six warriors at one spot: just fight-clip,
+# or just fight-clip 0,-170 16.5 for another place and hour. Works with the window hidden.
+fight-clip at="0,-170" hour="16.5":
+    rm -rf previews/fights-sounds/clip && mkdir -p previews/fights-sounds/clip
+    VIVAD_HOUR={{hour}} VIVAD_BRAWL={{at}} VIVAD_BOTS=5 VIVAD_AUTOPILOT=1 VIVAD_BOT_SKILL=normal VIVAD_MAP=cp VIVAD_ROTATE=0 VIVAD_MUTE=1 VIVAD_CLIP=previews/fights-sounds/clip,2,18,12 VIVAD_CLIP_VIEW=1 cargo run --release -q -p game --bin game
+    python3 tools/clip.py previews/fights-sounds/clip 12 previews/fights-sounds/melee_fight.webp
+
+# Every melee weapon carried, on guard and swung, on one sheet.
+melee-sheet:
+    rm -rf previews/fights-sounds/armoury && mkdir -p previews/fights-sounds/armoury
+    VIVAD_HOUR=10.5 VIVAD_ARMOURY_SPOT=0,-170 VIVAD_CLIP_VIEW=1 VIVAD_MAP=cp VIVAD_ROTATE=0 VIVAD_MUTE=1 VIVAD_BOTS=1 VIVAD_ARMOURY=previews/fights-sounds/armoury VIVAD_ARMOURY_ONLY="lathi,tawa,dhal,hockey,talwar,gada,bat" cargo run --release -q -p game --bin game
+    python3 tools/melee_sheet.py previews/fights-sounds/armoury previews/fights-sounds/weapons_sheet.png
+
+# Cut the street's and the fights' sounds from the recordings in research/fights-sounds (not in git).
+street-sounds:
+    python3 tools/audio/street.py
 
 # Headless matches to sanity-check the loop and bots: just sim 5, or just sim 3 15 for 16 warriors
 sim matches="3" bots="63":

@@ -11,8 +11,10 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use rand::RngExt;
 use shared::items::{ItemDb, ItemKind};
+use shared::lines::{Lines, with};
 use shared::sim::combat::Projectile;
-use shared::sim::{Action, HitMsg, Inventory, LocalPlayer, PlayerIntent, btn};
+use shared::sim::melee::{BrokeMsg, GuardMsg};
+use shared::sim::{Action, FeedMsg, HitMsg, Inventory, LocalPlayer, PlayerIntent, btn};
 
 use crate::animation::WarriorAnim;
 use crate::visuals::{Shot, shot_kind};
@@ -24,7 +26,7 @@ impl Plugin for FxPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraPunch>()
             .add_systems(Startup, setup)
-            .add_systems(Update, (add_streaks, muzzle_flash, misfire_smoke, blast_shake, hit_sparks, arrow_dust, landing_dust, fly_sparks, punch_camera, hit_stop))
+            .add_systems(Update, (add_streaks, muzzle_flash, misfire_smoke, blast_shake, hit_sparks, guard_sparks, broke_splinters, arrow_dust, landing_dust, fly_sparks, punch_camera, hit_stop))
             .add_systems(PostUpdate, (update_streaks, swing_ribbons).after(TransformSystems::Propagate));
     }
 }
@@ -187,9 +189,20 @@ struct SwingRibbon {
     mesh: Handle<Mesh>,
 }
 
-const RIBBON_TIME: f32 = 0.13;
-/// The swing ribbon spans this part of the bat's blade (its glTF +Y from the grip).
-const BLADE: (f32, f32) = (0.2, 0.7);
+const RIBBON_TIME: f32 = 0.08;
+/// How wide the ribbon is behind the tip, metres: a thin arc, not a sheet the length of the blade.
+const RIBBON_WIDTH: f32 = 0.06;
+/// Where a weapon's blade runs (its glTF +Y from the grip): the ribbon follows the end of it.
+fn blade_of(item: &str) -> (f32, f32) {
+    match item {
+        "lathi" => (0.45, 1.15),
+        "tawa" => (0.1, 0.38),
+        "dhal" => (0.1, 0.22),
+        "talwar" => (0.2, 0.85),
+        "gada" => (0.45, 0.85),
+        _ => (0.2, 0.7),
+    }
+}
 
 #[allow(clippy::type_complexity)]
 fn swing_ribbons(
@@ -206,12 +219,15 @@ fn swing_ribbons(
     let now = time.elapsed_secs();
     for (e, wv, socket) in &vis {
         let Ok((inv, act)) = sims.get(wv.sim) else { continue };
-        let melee = inv.current().is_some_and(|s| matches!(db.get(&s.id).kind, ItemKind::Melee { .. }));
-        if !(melee && act.since_attack > 0.06 && act.since_attack < 0.32) {
+        let Some((id, ItemKind::Melee { windup, active, .. })) = inv.current().map(|s| (s.id.as_str(), &db.get(&s.id).kind)) else { continue };
+        // Only while the blade comes through, not on the way up.
+        if !(act.since_attack > *windup && act.since_attack < windup + active + 0.03) {
             continue;
         }
         let Ok(g) = globals.get(socket.0) else { continue };
-        let (base, tip) = (g.transform_point(Vec3::Y * BLADE.0), g.transform_point(Vec3::Y * BLADE.1));
+        let blade = blade_of(id);
+        let (base, tip) = (g.transform_point(Vec3::Y * blade.0), g.transform_point(Vec3::Y * blade.1));
+        let base = tip + (base - tip).normalize_or_zero() * RIBBON_WIDTH;
         if let Some((_, mut r, _)) = ribbons.iter_mut().find(|(_, r, _)| r.of == e) {
             r.samples.push_back((now, base, tip));
         } else {
@@ -241,14 +257,15 @@ fn swing_ribbons(
             continue;
         }
         *v = Visibility::Inherited;
-        // Two vertices per sample; the edge nearest the tip is brightest and newest samples opaque.
+        // Two vertices per sample; the edge nearest the tip is brightest, the newest sample widest
+        // and most opaque, and it tapers to nothing behind.
         let (mut pos, mut col, mut idx) = (vec![], vec![], vec![]);
         for (i, &(t, b, tip)) in r.samples.iter().enumerate() {
             let a = (1.0 - (now - t) / RIBBON_TIME).clamp(0.0, 1.0);
-            pos.push(b.to_array());
+            pos.push(tip.lerp(b, a).to_array());
             pos.push(tip.to_array());
-            col.push([1.0, 1.0, 1.0, a * a * 0.05]);
-            col.push([1.0, 1.0, 1.0, a * a * 0.55]);
+            col.push([1.0, 1.0, 1.0, a * a * 0.1]);
+            col.push([1.0, 1.0, 1.0, a * a * 0.5]);
             if i > 0 {
                 let k = (i as u32 - 1) * 2;
                 idx.extend_from_slice(&[k, k + 1, k + 3, k, k + 3, k + 2]);
@@ -328,6 +345,25 @@ fn hit_sparks(mut commands: Commands, mut hits: MessageReader<HitMsg>, fx: Res<F
         }
         if h.headshot {
             burst(&mut commands, &fx, &fx.gold_spark, at, Vec3::Y, 8, 3.5, 0.02, 6.0);
+        }
+    }
+}
+
+/// A blow on a raised guard rings off it in sparks.
+fn guard_sparks(mut commands: Commands, mut guards: MessageReader<GuardMsg>, fx: Res<FxAssets>) {
+    for g in guards.read() {
+        burst(&mut commands, &fx, &fx.shield_spark, g.at, Vec3::Y, 12, 5.0, 0.02, 9.0);
+    }
+}
+
+/// An old weapon flies apart, and its owner is told.
+fn broke_splinters(mut commands: Commands, mut broke: MessageReader<BrokeMsg>, fx: Res<FxAssets>, me: Query<(), With<LocalPlayer>>, db: Res<ItemDb>, lines: Res<Lines>, mut feed: MessageWriter<FeedMsg>) {
+    for b in broke.read() {
+        let at = b.at + Vec3::Y * 0.4;
+        burst(&mut commands, &fx, &fx.gold_spark, at, Vec3::Y, 10, 4.0, 0.02, 9.0);
+        billow(&mut commands, &fx, &fx.dust, at, Vec3::Y, 8, 1.6, 0.04);
+        if me.contains(b.who) {
+            feed.write(FeedMsg(with(lines.text("hud.broke"), &[("item", &db.get(&b.item).name)])));
         }
     }
 }

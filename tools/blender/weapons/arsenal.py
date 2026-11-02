@@ -1,6 +1,6 @@
 """The rest of the armoury: the three divine bows, the arrow and its quiver, the two thrown astras and
 the three healing vessels. Each model is lofted, given procedural materials, baked to one texture
-set and exported like the khanda. See docs/references.md ("Bows, astras and vessels").
+set and exported like the old sword. See docs/references.md ("Bows, astras and vessels").
 
 Axes follow the weapon convention (crates/shared/src/weapon.rs): origin where the hand closes,
 business end Blender +Z. Bows are the exception the convention leaves room for: the limbs run

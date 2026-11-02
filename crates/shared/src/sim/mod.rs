@@ -7,6 +7,7 @@ pub mod bots;
 pub mod combat;
 pub mod flow;
 pub mod loot;
+pub mod melee;
 pub mod movement;
 pub mod nav;
 pub mod net;
@@ -216,8 +217,11 @@ pub struct Action {
     pub cooldown: f32,
     pub reload_left: f32,
     pub charge: f32,
-    /// Melee swing: time until the hit lands.
-    pub swing_hit_in: Option<f32>,
+    /// The melee swing in the air.
+    #[reflect(ignore)]
+    pub swing: Option<melee::Swing>,
+    /// Seconds left dazed by a heavy blow: no swinging or shooting, barely walking.
+    pub stun: f32,
     /// Consumable in use: (slot, time left).
     pub using: Option<(usize, f32)>,
     /// Seconds since the last swing or shot (for client animation).
@@ -356,17 +360,6 @@ pub struct MatchConfig {
     pub rotate: bool,
 }
 
-#[derive(Resource, Default, Debug)]
-pub struct SimulationPause {
-    pub timer: f32,
-}
-
-impl SimulationPause {
-    pub fn active(&self) -> bool {
-        self.timer > 0.0
-    }
-}
-
 /// While set, the match stands still (online, until every peer has loaded it).
 #[derive(Resource, Default, Debug)]
 pub struct Hold(pub bool);
@@ -423,6 +416,8 @@ pub mod stream {
     pub const DISC: u64 = 4;
     /// Which of each district's sets of chests is out (the NCR).
     pub const CHEST_SETS: u64 = 5;
+    /// Street weapons on the floor, apart from `FLOOR_LOOT`, so they leave the guns where they lay.
+    pub const STREET_WEAPONS: u64 = 7;
     /// + the zone phase.
     pub const ZONE: u64 = 0x100;
     /// + the chest's index in `MapLayout::chests`.
@@ -476,8 +471,6 @@ impl Plugin for SimPlugin {
                     .chain(),
             )
             .init_resource::<Hold>()
-            .init_resource::<SimulationPause>()
-            .add_systems(FixedUpdate, flow::tick_simulation_pause)
             .configure_sets(
                 FixedUpdate,
                 (
@@ -490,7 +483,7 @@ impl Plugin for SimPlugin {
                     SimSet::Zone,
                     SimSet::Cleanup,
                 )
-                    .distributive_run_if(|(hold, pause): (Res<Hold>, Res<SimulationPause>)| !hold.0 && !pause.active()),
+                    .distributive_run_if(|hold: Res<Hold>| !hold.0),
             )
             .add_systems(Startup, spawn_map)
             .add_systems(FixedFirst, record_prev_positions)
@@ -499,6 +492,7 @@ impl Plugin for SimPlugin {
                 flow::FlowPlugin,
                 movement::MovementPlugin,
                 combat::CombatPlugin,
+                melee::MeleePlugin,
                 loot::LootPlugin,
                 zone::ZonePlugin,
                 bots::BotPlugin,

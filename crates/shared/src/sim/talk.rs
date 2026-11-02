@@ -53,7 +53,7 @@ pub struct TalkPlugin;
 
 impl Plugin for TalkPlugin {
     fn build(&self, app: &mut App) {
-        // Not in a SimSet: those stop for the melee hit-stop, and the news would age out meanwhile.
+        // Not in a SimSet, so `Hold` doesn't stop it: its timers go by `m.elapsed`, which `Hold` does.
         app.add_message::<FellMsg>()
             .add_message::<CalloutMsg>()
             .add_message::<SayMsg>()

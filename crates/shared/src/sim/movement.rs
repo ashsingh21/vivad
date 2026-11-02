@@ -5,7 +5,7 @@ use bevy::prelude::*;
 
 use super::flow::Rules;
 use super::stance::{CROUCH_SPEED, size_bodies, update_stance};
-use super::{CAPSULE_LENGTH, CAPSULE_RADIUS, DamageCause, DamageMsg, Eliminated, HALF_HEIGHT, Kinematic, MoveMode, PlayerIntent, SimSet, btn, solid_mask};
+use super::{Action, CAPSULE_LENGTH, CAPSULE_RADIUS, DamageCause, DamageMsg, Eliminated, HALF_HEIGHT, Kinematic, MoveMode, PlayerIntent, SimSet, btn, solid_mask};
 use crate::map::MapLayout;
 use crate::map::terrain::ground;
 
@@ -14,6 +14,8 @@ pub const JUMP_SPEED: f32 = 7.6;
 pub const WALK_SPEED: f32 = 5.6;
 pub const SPRINT_SPEED: f32 = 7.4;
 pub const AIM_SPEED: f32 = 3.6;
+/// Dazed by a heavy blow.
+pub const STUN_SPEED: f32 = 1.4;
 pub const GROUND_ACCEL: f32 = 70.0;
 pub const AIR_ACCEL: f32 = 12.0;
 pub const FREEFALL_MAX: f32 = 42.0;
@@ -96,7 +98,7 @@ fn feet_probe(spatial: &SpatialQuery, center: Vec3, entity: Entity, max: f32) ->
 
 #[allow(clippy::type_complexity)]
 fn move_warriors(
-    mut q: Query<(Entity, &mut Transform, &mut Kinematic, &PlayerIntent, &Collider), (Without<Eliminated>, Without<super::net::Remote>)>,
+    mut q: Query<(Entity, &mut Transform, &mut Kinematic, &PlayerIntent, &Collider, &Action), (Without<Eliminated>, Without<super::net::Remote>)>,
     move_and_slide: MoveAndSlide,
     spatial: SpatialQuery,
     time: Res<Time>,
@@ -106,7 +108,7 @@ fn move_warriors(
     let dt = time.delta_secs();
     let config = MoveAndSlideConfig::default();
     let rules = Rules::of(layout.style);
-    for (entity, mut tf, mut kin, intent, collider) in &mut q {
+    for (entity, mut tf, mut kin, intent, collider, act) in &mut q {
         tf.rotation = intent.body_rotation();
         let wish = wish_dir(intent);
         match kin.mode {
@@ -137,7 +139,9 @@ fn move_warriors(
                     }
                 }
                 let crouched = intent.held(btn::CROUCH);
-                let speed = if crouched {
+                let speed = if act.stun > 0.0 {
+                    STUN_SPEED
+                } else if crouched {
                     CROUCH_SPEED
                 } else if intent.held(btn::AIM) {
                     AIM_SPEED

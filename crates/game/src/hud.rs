@@ -353,7 +353,7 @@ fn hotbar(
             Some(s) => {
                 let d = db.get(&s.id);
                 match d.kind {
-                    ItemKind::Melee { .. } => d.name.clone(),
+                    ItemKind::Melee { durability: 0, .. } => d.name.clone(),
                     _ => format!("{}\n{}", d.name, s.count),
                 }
             }

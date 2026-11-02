@@ -339,7 +339,7 @@ def idle(rig):
 # ------------------------------------------------------------------ air
 
 def blade_clearance(rig):
-    """How far the khanda's blade (as the game holds it: grip in the right fist, blade out of the
+    """How far the old sword's blade (as the game holds it: grip in the right fist, blade out of the
     thumb side, 0.06 to 0.88 m) passes from the head and pagri (a capsule up the head bone)."""
     h = rig.head("hand_r")
     fwd, k, palm = palm_frame(rig, "r")

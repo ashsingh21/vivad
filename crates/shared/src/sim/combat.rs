@@ -4,6 +4,7 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use rand::RngExt;
 
+use super::melee::{BrokeMsg, Fights, Stroke, Swing, SwingPhase};
 use super::{
     Action, DamageCause, DamageMsg, Door, EYE_OFFSET, Eliminated, HEADSHOT_HEIGHT, Health, HitMsg, Inventory,
     Kinematic, MoveMode, PlayerIntent, SimSet, Warrior, aim_origin, aim_ray, btn, hit_mask,
@@ -86,7 +87,7 @@ fn select_slot(mut q: Query<(&PlayerIntent, &mut Inventory, &mut Action), (Witho
                 act.reload_left = 0.0;
                 act.charge = 0.0;
                 act.using = None;
-                act.swing_hit_in = None;
+                act.swing = None;
                 act.cooldown = act.cooldown.max(0.25);
             }
         }
@@ -108,6 +109,7 @@ fn use_items(
     time: Res<Time>,
     mut damage: MessageWriter<DamageMsg>,
     mut misfires: MessageWriter<MisfireMsg>,
+    mut broke: MessageWriter<BrokeMsg>,
     mut outbox: ResMut<Outbox>,
 ) {
     let dt = time.delta_secs();
@@ -130,6 +132,12 @@ fn use_items(
         };
         act.cooldown = (act.cooldown - dt).max(0.0);
         act.since_attack += dt;
+        act.stun = (act.stun - dt).max(0.0);
+        if act.stun > 0.0 {
+            act.swing = None;
+            act.charge = 0.0;
+            continue;
+        }
         if kin.mode != MoveMode::Ground {
             act.charge = 0.0;
             continue;
@@ -143,34 +151,35 @@ fn use_items(
         let muzzle = body + Vec3::Y * 0.5 + intent.body_rotation() * Vec3::new(0.3, 0.0, -0.4);
 
         match &def.kind {
-            ItemKind::Melee { damage: dmg, interval, reach, hit_delay } => {
-                if let Some(t) = act.swing_hit_in.as_mut() {
-                    *t -= dt;
-                    if *t <= 0.0 {
-                        act.swing_hit_in = None;
-                        // Swept sphere along the swing direction (flattened aim).
-                        let dir = Dir3::new(Vec3::new(aim.x, aim.y.clamp(-0.5, 0.5), aim.z)).unwrap_or(Dir3::NEG_Z);
-                        let start = body + Vec3::Y * 0.35;
-                        let filter = SpatialQueryFilter::from_mask(hit_mask()).with_excluded_entities([entity]);
-                        if let Some(hit) = spatial.cast_shape(
-                            &Collider::sphere(0.45),
-                            start,
-                            Quat::IDENTITY,
-                            dir,
-                            &ShapeCastConfig::from_max_distance(*reach),
-                            &filter,
-                        ) {
+            ItemKind::Melee { damage: dmg, interval, reach, windup, active, arc_deg, max_hits, .. } => {
+                // Guard up: no swinging.
+                if intent.held(btn::AIM) {
+                    act.swing = None;
+                    continue;
+                }
+                let stroke = Stroke { windup: *windup, active: *active, reach: *reach, arc: arc_deg.to_radians(), max_hits: *max_hits };
+                if let Some(mut swing) = act.swing.take() {
+                    swing.t += dt;
+                    let phase = swing.phase(&stroke);
+                    if phase != SwingPhase::Startup {
+                        for target in swing.sweep(entity, body, aim, &stroke, &spatial) {
                             damage.write(DamageMsg {
-                                target: hit.entity,
+                                target,
                                 amount: dmg * scale,
                                 source: Some(entity),
                                 headshot: false,
                                 cause: DamageCause::Weapon(stack.id.clone()),
                             });
+                            if super::melee::wear(&mut inv, &db) {
+                                broke.write(BrokeMsg { who: entity, at: tf.translation, item: stack.id.clone() });
+                            }
                         }
                     }
+                    if phase != SwingPhase::Recovery {
+                        act.swing = Some(swing);
+                    }
                 } else if intent.held(btn::FIRE) && act.cooldown <= 0.0 {
-                    act.swing_hit_in = Some(*hit_delay);
+                    act.swing = Some(Swing::default());
                     act.cooldown = *interval;
                     act.since_attack = 0.0;
                 }
@@ -571,8 +580,8 @@ fn apply_damage(
     mut commands: Commands,
     mut msgs: MessageReader<DamageMsg>,
     // Each peer applies damage only to its own warriors (hits on others go to their owners).
-    mut targets: Query<(&mut Health, &Transform, &mut Inventory), (Without<Eliminated>, Without<Remote>)>,
-    remote_targets: Query<(&NetId, &Health, &Transform), (With<Remote>, Without<Eliminated>)>,
+    mut targets: Query<(&mut Health, &Transform, &mut Inventory, &PlayerIntent), (Without<Eliminated>, Without<Remote>)>,
+    remote_targets: Query<(&NetId, &Health, &Transform, &PlayerIntent, &Inventory), (With<Remote>, Without<Eliminated>)>,
     net_ids: Query<&NetId>,
     mut outbox: ResMut<Outbox>,
     mut doors: Query<&mut Door>,
@@ -581,7 +590,7 @@ fn apply_damage(
     mut fell: MessageWriter<FellMsg>,
     mut hits: MessageWriter<HitMsg>,
     mut kill_msgs: MessageWriter<KillMsg>,
-    mut pause: ResMut<super::SimulationPause>,
+    mut fights: Fights,
 ) {
     let mut alive_count = alive.iter().count() as u32;
     for msg in msgs.read() {
@@ -596,42 +605,44 @@ fn apply_damage(
             continue;
         }
         // Another peer's warrior: tell its owner, who applies it.
-        if let Ok((target, h, tf)) = remote_targets.get(msg.target) {
+        if let Ok((target, h, tf, intent, inv)) = remote_targets.get(msg.target) {
             let (Some(src), DamageCause::Weapon(item)) = (msg.source, &msg.cause) else { continue };
             let Ok(&by) = net_ids.get(src) else { continue };
             outbox.0.push(NetMsg::Hit { target: *target, by, amount: msg.amount, headshot: msg.headshot, item: item.clone() });
+            // Its owner's peer decides what its guard stops; this shows what its copy here is doing.
+            let amount = fights.guarded(&db, msg, tf, intent, inv);
             hits.write(HitMsg {
                 attacker: src,
                 target: msg.target,
-                amount: msg.amount,
+                amount,
                 headshot: msg.headshot,
                 shield: h.shield > 0.0,
                 at: tf.translation + Vec3::Y * 1.0,
             });
             continue;
         }
-        let Ok((mut h, tf, mut inv)) = targets.get_mut(msg.target) else { continue };
+        let Ok((mut h, tf, mut inv, intent)) = targets.get_mut(msg.target) else { continue };
         if h.hp <= 0.0 {
             continue;
         }
+        let amount = fights.guarded(&db, msg, tf, intent, &inv);
+        if amount < msg.amount {
+            fights.wear(&db, msg.target, tf.translation, &mut inv);
+        }
+        fights.land(&db, msg, amount);
         let shield_hit = h.shield > 0.0;
-        let absorbed = msg.amount.min(h.shield);
+        let absorbed = amount.min(h.shield);
         h.shield -= absorbed;
-        h.hp -= msg.amount - absorbed;
+        h.hp -= amount - absorbed;
         if let Some(src) = msg.source {
             hits.write(HitMsg {
                 attacker: src,
                 target: msg.target,
-                amount: msg.amount,
+                amount,
                 headshot: msg.headshot,
                 shield: shield_hit,
                 at: tf.translation + Vec3::Y * 1.0,
             });
-            if let DamageCause::Weapon(id) = &msg.cause {
-                if matches!(db.get(id).kind, ItemKind::Melee { .. }) {
-                    pause.timer = 0.05;
-                }
-            }
         }
         if h.hp <= 0.0 {
             h.hp = 0.0;

@@ -6,8 +6,47 @@
         "bat": (
             name: "Cricket Bat",
             lore: "Gully cricket ka asli hathiyar. Sixer!",
-            kind: Melee(damage: 30.0, interval: 0.65, reach: 2.3, hit_delay: 0.18),
+            kind: Melee(damage: 30.0, interval: 0.65, reach: 2.1, windup: 0.18, active: 0.1, arc_deg: 110.0, max_hits: 2, guard: 0.5, knock: 5.0),
             drops: [],
+        ),
+        // Twins with one job each: the new thing is common and comic, the old one rare and may
+        // break. Bat and gada hit hard, hockey stick and talwar hit fast, tawa and dhal stop
+        // blows. The lathi is both ages at once.
+        "lathi": (
+            name: "Lathi",
+            lore: "Chowkidar ka saathi. Door se hi samjha deta hai.",
+            kind: Melee(damage: 24.0, interval: 0.8, reach: 2.9, windup: 0.22, active: 0.12, arc_deg: 30.0, max_hits: 1, guard: 0.5, knock: 3.0),
+            drops: [(Common, 7.0), (Rare, 3.0), (Epic, 1.0)],
+        ),
+        "tawa": (
+            name: "Tawa",
+            lore: "Roti bhi sekta hai, goli bhi rokta hai.",
+            kind: Melee(damage: 22.0, interval: 0.7, reach: 1.8, windup: 0.16, active: 0.1, arc_deg: 90.0, max_hits: 1, guard: 0.75, shot_guard: 0.6, knock: 3.0),
+            drops: [(Common, 6.0), (Rare, 3.0)],
+        ),
+        "hockey_stick": (
+            name: "Hockey Stick",
+            lore: "School ki trophy nahi aayi, par stick kaam aa gayi.",
+            kind: Melee(damage: 26.0, interval: 0.6, reach: 2.4, windup: 0.15, active: 0.1, arc_deg: 80.0, max_hits: 1, guard: 0.4, knock: -3.5),
+            drops: [(Common, 6.0), (Rare, 3.0)],
+        ),
+        "dhal": (
+            name: "Dhal",
+            lore: "Chor Bazaar ki purani dhal. Sab rokti hai, par kitni baar?",
+            kind: Melee(damage: 20.0, interval: 0.7, reach: 1.7, windup: 0.16, active: 0.1, arc_deg: 100.0, max_hits: 2, guard: 0.9, shot_guard: 0.85, knock: 6.0, stun: 0.2, durability: 30),
+            drops: [(Epic, 1.5), (Legendary, 0.8)],
+        ),
+        "talwar": (
+            name: "Talwar",
+            lore: "Chor Bazaar ka maal. Dhaar abhi baaki hai, warranty nahi.",
+            kind: Melee(damage: 38.0, interval: 0.55, reach: 2.3, windup: 0.13, active: 0.1, arc_deg: 90.0, max_hits: 2, guard: 0.6, knock: 1.5, durability: 24),
+            drops: [(Epic, 1.5), (Legendary, 1.0)],
+        ),
+        "gada": (
+            name: "Gada",
+            lore: "Akhade ka purana gada. Bhaari hai, par ek baar pada toh yaad rahega.",
+            kind: Melee(damage: 55.0, interval: 1.2, reach: 2.2, windup: 0.45, active: 0.12, arc_deg: 120.0, max_hits: 3, guard: 0.4, knock: 12.0, stun: 0.4, durability: 16),
+            drops: [(Epic, 1.2), (Legendary, 0.8)],
         ),
         "katta": (
             name: "Katta",

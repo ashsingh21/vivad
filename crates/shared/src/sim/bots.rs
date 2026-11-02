@@ -8,7 +8,7 @@ use super::aim::{self, AimSkill, Seen};
 use super::flow::{Match, Rules};
 use super::loot::{Chest, INTERACT_RANGE, Pickup};
 use super::zone::Zone;
-use super::{BotSkill, 
+use super::{Action, BotSkill, 
     EYE_OFFSET, Eliminated, HALF_HEIGHT, Health, HitMsg, Inventory, Kinematic, MoveMode, PlayerIntent, SimSet, Warrior, btn, solid_mask,
 };
 use super::movement::{FALL_DAMAGE, GLIDE_FALL, GLIDE_HORIZ, GRAVITY, OPEN_GLIDE_HEIGHT, SAFE_LANDING, SPRINT_SPEED, WALK_SPEED, dive_reach};
@@ -75,8 +75,12 @@ const DOOR_TRIES: f32 = 8.0;
 /// How far off a bot with no bow makes for one on the NCR, metres: chests are hundreds of metres
 /// apart there, and a bot that landed between them had nothing else to look for.
 const GUN_SIGHT: f32 = 220.0;
+/// How far a bot with no bow goes for a street weapon, metres.
+const STOOP: f32 = 6.0;
 /// A bot shoots back at whoever hit it out to here; from farther off it runs for cover instead.
 pub(super) const ANSWER_RANGE: f32 = 120.0;
+/// Seconds after a foe in reach starts a swing that a bot keeps its guard up.
+const GUARD_READ: f32 = 0.4;
 
 #[derive(Component, Clone, Debug)]
 pub struct BotBrain {
@@ -501,6 +505,7 @@ pub(crate) fn drive_bots(
     >,
     others: Query<(Entity, &Transform, &Kinematic), (With<Warrior>, Without<Eliminated>)>,
     stances: Query<&Stance>,
+    swings: Query<&Action, With<Warrior>>,
     chests: Query<(&Transform, &Chest)>,
     pickups: Query<(&Transform, &Pickup)>,
     m: Res<Match>,
@@ -770,7 +775,9 @@ pub(crate) fn drive_bots(
                         || inv.slots.iter().flatten().all(|s| s.id != p.stack.id || s.rarity < p.stack.rarity);
                     // A first bow is worth a slot, whatever has to go for it (`loot::interact` swaps).
                     let needed = !holds_bow && matches!(kind, ItemKind::Bow { .. });
-                    let (far, sight) = (t.translation.distance(pos), if floor.ready() && needed { GUN_SIGHT } else { 45.0 });
+                    // With no gun yet a street weapon is only worth stooping for.
+                    let sight = if !holds_bow && matches!(kind, ItemKind::Melee { .. }) { STOOP } else if floor.ready() && needed { GUN_SIGHT } else { 45.0 };
+                    let far = t.translation.distance(pos);
                     // As with a chest, a gun a long way off is one bot's: eight bots ran for one
                     // 200 m away. One close by goes to whoever gets there first.
                     let spoken_for = floor.ready() && needed && far > 45.0 && theirs(t.translation);
@@ -912,8 +919,10 @@ pub(crate) fn drive_bots(
             }
             // Shots follow the over-the-shoulder aim ray (like a player's crosshair), not the eye
             // line, so solve the angles from that ray's origin (two fixed-point steps suffice).
+            // A swing goes where the body faces.
             let (mut yaw, mut pitch) = yaw_pitch_to(eye, aim_at);
-            for _ in 0..2 {
+            let shoots = !matches!(held, Some(ItemKind::Melee { .. }));
+            for _ in 0..if shoots { 2 } else { 0 } {
                 let probe = PlayerIntent { yaw, pitch, ..default() };
                 let (origin, _) = super::aim_ray(pos, &probe);
                 (yaw, pitch) = yaw_pitch_to(origin, aim_at);
@@ -930,8 +939,8 @@ pub(crate) fn drive_bots(
             let on_beat = (m.elapsed * 0.4 + brain.tempo.1).fract() < brain.tempo.0;
             if brain.seen_for > brain.react && on_beat {
                 match held {
-                    Some(ItemKind::Melee { .. }) => {
-                        if dist < 2.6 {
+                    Some(ItemKind::Melee { reach, .. }) => {
+                        if dist < reach + 0.3 {
                             intent.held |= btn::FIRE;
                         }
                     }
@@ -945,6 +954,10 @@ pub(crate) fn drive_bots(
                     Some(ItemKind::Astra { .. }) => intent.pressed |= btn::FIRE,
                     _ => {}
                 }
+            }
+            // A blow coming: up with whatever is in hand (a chill bot often misses it).
+            if matches!(held, Some(ItemKind::Melee { .. })) && dist < 3.6 && (!brain.calm || on_beat) && swings.get(foe).is_ok_and(|a| a.since_attack < GUARD_READ) {
+                intent.held = (intent.held & !btn::FIRE) | btn::AIM;
             }
             // Movement: melee rushes, archers keep a band and strafe.
             brain.strafe_timer -= dt;
@@ -1059,6 +1072,8 @@ fn choose_weapon(inv: &Inventory, db: &ItemDb, dist: f32) -> usize {
                     6.0
                 }
             }
+            // Whatever is in hand beats the bat up close, and is what a warrior with no gun carries.
+            ItemKind::Melee { reach, .. } => if dist < reach + 1.0 { 11.0 } else { 0.5 },
             // Fire astras go to a mid-range target; the wind astra is left to players.
             ItemKind::Astra { effect: AstraEffect::Fire { .. }, .. } if s.count > 0 && (8.0..24.0).contains(&dist) => 7.0,
             _ => 0.0,

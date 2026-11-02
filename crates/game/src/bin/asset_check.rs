@@ -1,7 +1,7 @@
 //! Loads a weapon GLB, lays out its LODs side by side, draws the weapon axes at the grip origin,
 //! saves a screenshot and exits. Verifies scale, orientation and materials survive the export.
 //!
-//! cargo run -p game --bin asset_check -- models/weapons/khanda.glb previews/khanda/bevy_khanda.png
+//! cargo run -p game --bin asset_check -- models/weapons/old_sword.glb previews/old_sword/bevy_old_sword.png
 
 use bevy::gltf::Gltf;
 use bevy::light::GeneratedEnvironmentMapLight;
@@ -33,7 +33,7 @@ struct Frames {
 
 fn main() {
     let mut argv = std::env::args().skip(1);
-    let model = argv.next().unwrap_or_else(|| "models/weapons/khanda.glb".into());
+    let model = argv.next().unwrap_or_else(|| "models/weapons/old_sword.glb".into());
     let out = argv.next().unwrap_or_else(|| "previews/bevy_check.png".into());
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {

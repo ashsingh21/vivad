@@ -231,7 +231,7 @@ mod tests {
             ("alert.next", &["place"]), ("alert.soon", &["t"]), ("alert.doors", &[]), ("alert.moving", &["place"]), ("alert.outside", &[]), ("alert.first", &[]),
             ("alert.last", &[]), ("alert.tiny", &[]), ("alert.loot", &[]), ("alert.thanks", &[]),
             ("hud.vitals", &["hp", "sh"]), ("hud.ammo", &["n"]), ("hud.reload", &[]), ("hud.draw", &[]), ("hud.counts", &["alive", "kills"]), ("hud.wait", &["t"]),
-            ("hud.move", &["t"]), ("hud.idle", &[]), ("hud.safe.far", &["d"]), ("hud.safe.in", &[]), ("hud.vote", &[]), ("hud.place", &["p", "n"]),
+            ("hud.move", &["t"]), ("hud.idle", &[]), ("hud.safe.far", &["d"]), ("hud.safe.in", &[]), ("hud.vote", &[]), ("hud.place", &["p", "n"]), ("hud.broke", &["item"]),
             ("prompt.peti", &[]), ("prompt.ghada", &[]), ("prompt.pickup", &["item", "rarity"]), ("prompt.drink", &["item"]), ("prompt.backfire", &[]),
             ("prompt.misfire", &[]), ("prompt.reload", &[]), ("prompt.empty", &[]),
             ("rarity.common", &[]), ("rarity.rare", &[]), ("rarity.epic", &[]), ("rarity.legendary", &[]), ("rarity.divya", &[]),

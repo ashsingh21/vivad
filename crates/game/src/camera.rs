@@ -5,9 +5,10 @@ use avian3d::prelude::*;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
+use shared::items::{ItemDb, ItemKind};
 use shared::sim::flow::Match;
 use shared::sim::stance::Stance;
-use shared::sim::{ADS_DISTANCE, CAMERA_DISTANCE, CAMERA_SHOULDER, EYE_OFFSET, Kinematic, LocalPlayer, MoveMode, PlayerIntent, btn, camera_spot};
+use shared::sim::{ADS_DISTANCE, CAMERA_DISTANCE, CAMERA_SHOULDER, EYE_OFFSET, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, btn, camera_spot};
 
 use crate::visuals::{WarriorVisual, TimeOfDay};
 
@@ -148,9 +149,10 @@ fn grading(ncr: bool, ultra: bool) -> bevy::render::view::ColorGrading {
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn follow(
-    local: Query<(Entity, &PlayerIntent, &Kinematic, Option<&Stance>), With<LocalPlayer>>,
+    local: Query<(Entity, &PlayerIntent, &Kinematic, &Inventory, Option<&Stance>), With<LocalPlayer>>,
     visuals: Query<(&WarriorVisual, &Transform), Without<MainCamera>>,
     mut cam: Query<(&mut Transform, &mut Projection, &mut MainCamera)>,
+    db: Res<ItemDb>,
     m: Res<Match>,
     spatial: SpatialQuery,
     time: Res<Time>,
@@ -159,10 +161,12 @@ fn follow(
     scope: Res<crate::scope::Scope>,
 ) {
     let Ok((mut ct, mut proj, mut mc)) = cam.single_mut() else { return };
-    let Ok((me, intent, kin, stance)) = local.single() else { return };
+    let Ok((me, intent, kin, inv, stance)) = local.single() else { return };
     let Some(body) = visuals.iter().find(|(v, _)| v.sim == me).map(|(_, t)| t.translation) else { return };
     let rot = intent.aim_rotation();
-    let aiming = intent.held(btn::AIM) && kin.mode == MoveMode::Ground;
+    // A raised guard keeps the wide view: a fight needs it.
+    let guard = inv.current().is_some_and(|s| matches!(db.get(&s.id).kind, ItemKind::Melee { .. }));
+    let aiming = intent.held(btn::AIM) && kin.mode == MoveMode::Ground && !guard;
     let dt = time.delta_secs();
     mc.drop += (stance.map_or(0.0, Stance::drop) - mc.drop) * (1.0 - (-dt * 12.0).exp());
     let eye = body + Vec3::Y * (EYE_OFFSET - mc.drop);

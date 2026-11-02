@@ -1,5 +1,6 @@
-"""Every sound in the game, synthesized from noise, filters, resonant modes and plucked strings:
-no recordings, no third-party samples.
+"""The game's synthesized sounds, from noise, filters, resonant modes and plucked strings: no
+recordings, no third-party samples. The street's and the fights' are cut from recordings by
+tools/audio/street.py.
 
 python3 tools/audio/sfx.py            build all into assets/audio/ (ogg via oggenc)
 python3 tools/audio/sfx.py --report   also print level / length / brightness / loop-seam numbers

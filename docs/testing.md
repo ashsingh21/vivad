@@ -162,4 +162,5 @@ Ajanta.
 
 **Sound** can't be judged by ear here: `just sfx` prints peak / RMS level, length, spectral
 centroid and loop-seam size per sound, and `VIVAD_AUDIO_LOG=1` makes the game log how often each
-sound fired (run automated sessions with `VIVAD_MUTE=1`). Whether it sounds right needs a listen.
+sound fired and how loud the street's beds are where the player stands (run automated sessions with
+`VIVAD_MUTE=1`). Whether it sounds right needs a listen.

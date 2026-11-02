@@ -291,6 +291,25 @@ impl Plugin for AutoshotPlugin {
                 p("bat", Use::Carry, View::Front, 0.0),
                 p("bat", Use::Strike, View::Front, 0.0),
                 p("bat", Use::Strike, View::Side, 0.0),
+                p("lathi", Use::Carry, View::Front, 0.0),
+                p("lathi", Use::Aim, View::Front, 0.0),
+                p("lathi", Use::Strike, View::Side, 0.0),
+                p("tawa", Use::Carry, View::Front, 0.0),
+                p("tawa", Use::Aim, View::Front, 0.0),
+                p("tawa", Use::Strike, View::Side, 0.0),
+                p("dhal", Use::Carry, View::Front, 0.0),
+                p("dhal", Use::Aim, View::Front, 0.0),
+                p("dhal", Use::Strike, View::Side, 0.0),
+                p("hockey_stick", Use::Carry, View::Front, 0.0),
+                p("hockey_stick", Use::Aim, View::Front, 0.0),
+                p("hockey_stick", Use::Strike, View::Side, 0.0),
+                p("talwar", Use::Carry, View::Front, 0.0),
+                p("talwar", Use::Aim, View::Front, 0.0),
+                p("talwar", Use::Strike, View::Side, 0.0),
+                p("gada", Use::Carry, View::Front, 0.0),
+                p("gada", Use::Aim, View::Front, 0.0),
+                p("gada", Use::Strike, View::Side, 0.0),
+                p("bat", Use::Aim, View::Front, 0.0),
                 p("tamancha", Use::Carry, View::Front, 0.0),
                 p("tamancha", Use::Aim, View::Front, 0.0),
                 p("tamancha", Use::Aim, View::Side, 0.0),
@@ -817,7 +836,7 @@ fn armoury_actor(
     let def = db.get(pose.item);
     let stack = |count| Some(ItemStack { id: pose.item.into(), rarity: Rarity::Epic, count });
     match &def.kind {
-        ItemKind::Melee { .. } => inv.selected = 0,
+        ItemKind::Melee { .. } if pose.item == db.default_melee => inv.selected = 0,
         ItemKind::Bow { magazine, .. } => {
             inv.slots[0] = stack(*magazine);
             inv.arrows = 60;
@@ -918,6 +937,7 @@ fn armoury_camera(
     player: Query<Entity, With<LocalPlayer>>,
     visuals: Query<(&crate::visuals::WarriorVisual, &Transform), Without<MainCamera>>,
     mut cam: Query<&mut Transform, With<MainCamera>>,
+    view3d: Res<crate::quality::View3d>,
     mut exit: MessageWriter<AppExit>,
 ) {
     arm.t += time.delta_secs();
@@ -952,7 +972,12 @@ fn armoury_camera(
     }
     if arm.t >= at && !arm.shot {
         let path = format!("{}/{}.png", arm.dir, arm.name(&pose));
-        shoot(&mut commands, path);
+        // As for a clip: VIVAD_CLIP_VIEW=1 works with the window hidden, without the HUD.
+        if std::env::var("VIVAD_CLIP_VIEW").is_ok() {
+            commands.spawn(Screenshot::image(view3d.image.clone())).observe(save_to_disk(path));
+        } else {
+            shoot(&mut commands, path);
+        }
         arm.shot = true;
     }
     if arm.t >= at + 0.25 {

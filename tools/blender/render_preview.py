@@ -128,7 +128,7 @@ def main():
         "6_close_plate_tip": camera("plate", Vector((0.17, -0.02, 0.50)), Vector((0, 0.0, 0.48)), y, lens=60),
         "7_close_tip": camera("tip", Vector((0.20, 0.05, 0.84)), Vector((0, 0.004, 0.84)), y, lens=60),
     }
-    if name != "khanda":
+    if name != "old_sword":
         for v in ("5_close_hilt", "6_close_plate_tip", "7_close_tip"):
             del views[v]
         # Other models: close-ups on the upper end, the middle and the lower end of the long axis,

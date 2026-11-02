@@ -41,8 +41,30 @@ impl Rarity {
 
 #[derive(Clone, Debug, Deserialize)]
 pub enum ItemKind {
-    /// Swept-sphere melee swing.
-    Melee { damage: f32, interval: f32, reach: f32, hit_delay: f32 },
+    /// A swing (see `sim::melee`): `windup` seconds, then the blade sweeps `arc_deg` of the front out
+    /// to `reach` in `active` seconds and may strike `max_hits` warriors; ready again after
+    /// `interval`. A blow pushes its target at `knock` m/s (below zero pulls it in) and dazes it for
+    /// `stun` seconds. Aim held is a guard: from the front it stops `guard` of a blow and
+    /// `shot_guard` of a bullet. Old things wear out: `durability` blows and it breaks (0: never),
+    /// counted down in its stack's `count`.
+    Melee {
+        damage: f32,
+        interval: f32,
+        reach: f32,
+        windup: f32,
+        active: f32,
+        arc_deg: f32,
+        max_hits: u32,
+        guard: f32,
+        #[serde(default)]
+        knock: f32,
+        #[serde(default)]
+        stun: f32,
+        #[serde(default)]
+        shot_guard: f32,
+        #[serde(default)]
+        durability: u32,
+    },
     /// Arrows (or bullets): `pellets` per shot spread over `spread_deg`. `charge` > 0 means hold to
     /// draw. A country-made gun can let its owner down: `misfire` is the chance a pull of the
     /// trigger only clicks (the round is spent), `backfire` the chance it blows back in their face.
@@ -148,6 +170,6 @@ impl ItemDb {
 pub struct ItemStack {
     pub id: String,
     pub rarity: Rarity,
-    /// Arrows in the bow, astras held, consumables held.
+    /// Arrows in the bow, astras held, consumables held, blows left in an old melee weapon.
     pub count: u32,
 }

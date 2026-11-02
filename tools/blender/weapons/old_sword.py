@@ -1,8 +1,8 @@
-"""Khanda: broad straight Indian sword with a spatulate tip, riveted spine reinforcement and a
+"""A broad straight Indian sword with a spatulate tip, riveted spine reinforcement and a
 Hindu basket hilt (disc pommel with spike, broad knuckle guard). See docs/references.md.
 
 Blender axes (exported Y-up): blade +Z, cutting edge +Y, spine -Y, flats +-X, origin = grip centre.
-Run: blender -b --factory-startup -P tools/blender/weapons/khanda.py
+Run: blender -b --factory-startup -P tools/blender/weapons/old_sword.py
 """
 
 import math
@@ -22,7 +22,7 @@ import geo  # noqa: E402
 import materials  # noqa: E402
 from geo import catmull_rom, clamp01, interp_keys, lerp, smoothstep  # noqa: E402
 
-NAME = "khanda"
+NAME = "old_sword"
 
 # ------------------------------------------------------------------ dimensions (metres)
 GUARD_TOP = 0.058          # top of quillon block; blade emerges here

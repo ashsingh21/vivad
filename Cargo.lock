@@ -3470,6 +3470,7 @@ dependencies = [
  "getrandom 0.4.3",
  "net",
  "rand",
+ "rodio",
  "ron",
  "serde",
  "shared",

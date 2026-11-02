@@ -187,6 +187,7 @@
         (id: "hud.10", at: ["hud.safe.in"], ok: false, check: Plain, text: "Safe zone mein ho", mean: "You are in the safe zone.", note: "In the game today."),
         (id: "hud.11", at: ["hud.vote"], ok: false, check: Plain, text: "Agla map? Number dabao", mean: "Next map? Press a number.", note: "In the game today."),
         (id: "hud.12", at: ["hud.place"], ok: false, check: Plain, text: "#{p} / {n}", mean: "Place out of total.", note: "Replaces the word of."),
+        (id: "hud.13", at: ["hud.broke"], ok: false, check: Read, text: "Chor Bazaar ka maal: {item} khatam", mean: "Chor Bazaar goods: the {item} is finished.", note: "An old weapon just broke in the player's hand."),
 
         // prompt
         (id: "prompt.1", at: ["prompt.peti"], ok: false, check: Plain, text: "[E] Peti kholo", mean: "Press E, open the crate.", note: "In the game today."),

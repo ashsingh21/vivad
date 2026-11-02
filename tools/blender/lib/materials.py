@@ -16,7 +16,7 @@ import math
 from nodes import Graph, new_material
 
 
-def wootz_steel(name="khanda_blade"):
+def wootz_steel(name="sword_blade"):
     """Watered (wootz) crucible steel, brushed along the blade, honed bright at the edge."""
     m = new_material(name)
     g = Graph(m)
@@ -65,7 +65,7 @@ def wootz_steel(name="khanda_blade"):
     return m
 
 
-def koftgari_iron(name="khanda_hilt"):
+def koftgari_iron(name="sword_hilt"):
     """Blackened iron with gold koftgari (overlaid gold) borders and scrolling vine, worn at the edges."""
     m = new_material(name)
     g = Graph(m)

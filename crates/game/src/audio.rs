@@ -1,10 +1,11 @@
 //! Sound: positional one-shots for what happens in the world, looping beds for where the local
 //! warrior is (vimana, freefall, glide, zone wall, river, the day around them).
 //!
-//! Sounds are synthesized by tools/audio/sfx.py, the rifles cut from free recordings by
-//! tools/audio/rifles.py. Events come from the simulation's messages
+//! Most sounds are synthesized by tools/audio/sfx.py; the rifles are cut from free recordings by
+//! tools/audio/rifles.py, the street's and the fights' by tools/audio/street.py (crate::street_sound
+//! plays the street's). Events come from the simulation's messages
 //! and from state changes noticed here (a swing starting, landing, a chest lid going up), so the
-//! sim stays free of presentation. Distance attenuation is rodio's 1/d, scaled by
+//! sim stays free of presentation. Distance attenuation is rodio's 1/d², scaled by
 //! `SPATIAL_SCALE` so full volume reaches out to ~6 m; beyond `cull` metres a sound isn't played.
 
 use std::collections::{HashMap, HashSet};
@@ -15,6 +16,7 @@ use bevy::prelude::*;
 use shared::items::{ItemDb, ItemKind};
 use shared::map::{ChestKind, MapLayout, Mat};
 use shared::sim::combat::{Burst, FireZone, KillMsg, Projectile};
+use shared::sim::melee::{BrokeMsg, GuardMsg};
 use shared::sim::flow::{Match, MatchState};
 use shared::sim::loot::Chest;
 use shared::sim::zone::Zone;
@@ -24,14 +26,19 @@ use crate::animation::Footstep;
 use crate::camera::MainCamera;
 
 pub const SPATIAL_SCALE: f32 = 0.16;
+/// The street carries further than a fight: full volume out to about 16 m.
+const STREET_SCALE: f32 = 0.06;
+/// Metres between the listener's ears.
+const EAR_GAP: f32 = 0.3;
 
 pub struct SoundPlugin;
 
 impl Plugin for SoundPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Played>()
+            .add_plugins(crate::street_sound::StreetSoundPlugin)
             .add_systems(Startup, load)
-            .add_systems(Update, (listener, footsteps, warrior_events, combat_events, world_events, beds, log_counts, late_sounds));
+            .add_systems(Update, (listener, footsteps, warrior_events, combat_events, melee_events, world_events, beds, log_counts, late_sounds));
         // Automated runs (autoplay, tours) shouldn't sound through the speakers.
         if std::env::var("VIVAD_MUTE").is_ok() {
             app.insert_resource(GlobalVolume::new(Volume::Linear(0.0)));
@@ -65,13 +72,59 @@ const NAMES: [&str; 73] = [
     "gun_thri_not_thri", "gun_thaana_slr", "gun_saintalis", "gun_rifle_far", "gun_auto_far", "bullet_crack",
 ];
 
+/// The fights' sounds, cut from recordings.
+pub const MELEE_NAMES: [&str; 15] = [
+    "swing_light_0", "swing_light_1", "swing_stick", "swing_heavy", "hit_bat", "hit_stick", "hit_pan", "hit_dhal", "hit_blade", "hit_gada",
+    "guard_wood", "guard_metal", "guard_pan", "break_wood", "break_metal",
+];
+
+/// The whoosh of a swing of `item`, and its pitch.
+fn swing_sound(item: &str) -> (&'static str, f32) {
+    match item {
+        "gada" => ("swing_heavy", 1.0),
+        "bat" => ("swing_stick", 0.9),
+        "lathi" => ("swing_stick", 1.1),
+        "hockey_stick" => ("swing_light_1", 1.0),
+        "talwar" => ("swing_light_1", 1.25),
+        _ => ("swing_light_0", 1.0),
+    }
+}
+
+fn blow_sound(item: &str) -> &'static str {
+    match item {
+        "lathi" | "hockey_stick" => "hit_stick",
+        "tawa" => "hit_pan",
+        "dhal" => "hit_dhal",
+        "talwar" => "hit_blade",
+        "gada" => "hit_gada",
+        _ => "hit_bat",
+    }
+}
+
+fn guard_sound(item: &str) -> &'static str {
+    match item {
+        "tawa" => "guard_pan",
+        "dhal" | "talwar" => "guard_metal",
+        _ => "guard_wood",
+    }
+}
+
+fn break_sound(item: &str) -> &'static str {
+    if item == "gada" { "break_wood" } else { "break_metal" }
+}
+
 #[derive(Resource)]
 struct Sfx(HashMap<&'static str, Handle<AudioSource>>);
 
 /// Looping beds, faded by `beds` each frame.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Hash)]
 enum Bed {
+    /// The park's birds and breeze.
     Day,
+    Traffic,
+    Market,
+    /// The city far off.
+    Far,
     River,
     Vimana,
     Freefall,
@@ -80,8 +133,9 @@ enum Bed {
 }
 
 fn load(mut commands: Commands, assets: Res<AssetServer>) {
-    let sfx = Sfx(NAMES.iter().map(|n| (*n, assets.load(format!("audio/{n}.ogg")))).collect());
-    for (bed, name) in [(Bed::Day, "amb_day"), (Bed::River, "amb_river"), (Bed::Vimana, "vimana_loop"), (Bed::Freefall, "freefall_loop"),
+    let names = NAMES.iter().chain(MELEE_NAMES.iter()).chain(crate::street_sound::NAMES.iter());
+    let sfx = Sfx(names.map(|n| (*n, assets.load(format!("audio/{n}.ogg")))).collect());
+    for (bed, name) in [(Bed::Day, "amb_day"), (Bed::Traffic, "amb_traffic"), (Bed::Market, "amb_market"), (Bed::Far, "amb_far"), (Bed::River, "amb_river"), (Bed::Vimana, "vimana_loop"), (Bed::Freefall, "freefall_loop"),
                         (Bed::Glide, "glide_loop"), (Bed::Zone, "zone_loop")] {
         commands.spawn((bed, AudioPlayer(sfx.0[name].clone()), PlaybackSettings::LOOP.with_volume(Volume::Linear(0.0))));
     }
@@ -92,7 +146,7 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
 #[derive(Resource, Default)]
 struct Played(HashMap<String, u32>);
 
-fn log_counts(time: Res<Time>, played: Res<Played>, mut next: Local<f32>) {
+fn log_counts(time: Res<Time>, played: Res<Played>, street: Res<crate::street_sound::Ambience>, mut next: Local<f32>) {
     if std::env::var("VIVAD_AUDIO_LOG").is_err() || time.elapsed_secs() < *next {
         return;
     }
@@ -100,6 +154,7 @@ fn log_counts(time: Res<Time>, played: Res<Played>, mut next: Local<f32>) {
     let mut v: Vec<_> = played.0.iter().collect();
     v.sort();
     info!("sounds played: {v:?}");
+    info!("street beds: traffic {:.2}, market {:.2}, far {:.2}, park {:.2}", street.traffic, street.market, street.far, street.park);
 }
 
 /// A rifle's far take, and at what pitch.
@@ -138,15 +193,22 @@ fn late_sounds(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &m
     }
 }
 
+/// rodio 0.22 gives the nearer ear half the volume (its issue 884), so a negative gap puts each
+/// ear on the far side; the tests below fail the day rodio fixes it. Every spatial sound goes
+/// through this one listener, near or far.
+fn ears() -> SpatialListener {
+    SpatialListener::new(-EAR_GAP)
+}
+
 fn listener(mut commands: Commands, cam: Query<Entity, (With<MainCamera>, Without<SpatialListener>)>) {
     for e in &cam {
-        commands.entity(e).insert(SpatialListener::new(0.3));
+        commands.entity(e).insert(ears());
     }
 }
 
 /// Plays sounds; positional ones beyond `cull` metres from the listener are skipped.
 #[derive(bevy::ecs::system::SystemParam)]
-struct Player<'w, 's> {
+pub(crate) struct Player<'w, 's> {
     commands: Commands<'w, 's>,
     sfx: Res<'w, Sfx>,
     played: ResMut<'w, Played>,
@@ -196,6 +258,21 @@ impl Player<'_, '_> {
         self.commands.spawn((
             LateSound { wait: d / SOUND_SPEED, sound: h.clone(), volume: volume * (1.0 - d / (reach * 1.15)), speed: pitch },
             Transform::from_translation(ear + (pos - ear).normalize_or(Vec3::NEG_Z) * 5.0),
+        ));
+    }
+
+    /// A sound of the street round the listener, at a given pitch.
+    pub(crate) fn street(&mut self, name: &str, pos: Vec3, volume: f32, speed: f32) {
+        let Some(h) = self.sfx.0.get(name) else { return };
+        *self.played.0.entry(name.to_owned()).or_default() += 1;
+        self.commands.spawn((
+            AudioPlayer(h.clone()),
+            PlaybackSettings::DESPAWN
+                .with_spatial(true)
+                .with_spatial_scale(SpatialScale::new(STREET_SCALE))
+                .with_volume(Volume::Linear(volume))
+                .with_speed(speed),
+            Transform::from_translation(pos),
         ));
     }
 
@@ -286,7 +363,7 @@ struct Heard {
     grounded: bool,
     mode: Option<MoveMode>,
     vy: f32,
-    swinging: bool,
+    since_attack: f32,
     reloading: bool,
     using: bool,
     charging: bool,
@@ -308,10 +385,14 @@ fn warrior_events(
         let p = tf.translation;
         let held = inv.current().map(|s| (s.id.clone(), db.get(&s.id).kind.clone()));
         // Swings, draws, reloads, drinking.
-        let swinging = act.swing_hit_in.is_some();
-        if swinging && !h.swinging {
-            *n += 1;
-            play.at(&format!("sword_whoosh_{}", *n % 3), p, WEAPON, 60.0);
+        // Every peer sees this time drop when a swing starts, whoever's warrior it is.
+        if let Some((id, ItemKind::Melee { .. })) = &held {
+            if act.since_attack < h.since_attack {
+                let (name, pitch) = swing_sound(id);
+                *n += 1;
+                let name = if name == "swing_light_0" && *n % 2 == 0 { "swing_light_1" } else { name };
+                play.at_pitched(name, p, WEAPON, 60.0, pitch);
+            }
         }
         let charging = act.charge > 0.0;
         if charging && !h.charging {
@@ -337,7 +418,7 @@ fn warrior_events(
         if kin.mode == MoveMode::Gliding && h.mode != Some(MoveMode::Gliding) {
             play.at("glider_open", p, if local { 0.7 } else { 0.4 }, 60.0);
         }
-        *h = Heard { grounded: kin.grounded, mode: Some(kin.mode), vy: kin.velocity.y, swinging, reloading, using, charging };
+        *h = Heard { grounded: kin.grounded, mode: Some(kin.mode), vy: kin.velocity.y, since_attack: act.since_attack, reloading, using, charging };
     }
 }
 
@@ -428,8 +509,8 @@ fn combat_events(
         }
     }
     for h in hits.read() {
-        let melee = inv.get(h.attacker).ok().and_then(|i| i.current()).is_some_and(|s| matches!(db.get(&s.id).kind, ItemKind::Melee { .. }));
-        play.at(if h.shield { "hit_shield" } else if melee { "sword_hit_flesh" } else { "hit_flesh" }, h.at, IMPACT, 60.0);
+        let melee = inv.get(h.attacker).ok().and_then(|i| i.current()).filter(|s| matches!(db.get(&s.id).kind, ItemKind::Melee { .. }));
+        play.at(melee.map_or(if h.shield { "hit_shield" } else { "hit_flesh" }, |s| blow_sound(&s.id)), h.at, IMPACT, 60.0);
         if Some(h.attacker) == me {
             play.ui(if h.headshot { "hitmarker_head" } else { "hitmarker" }, UI);
         }
@@ -444,6 +525,17 @@ fn combat_events(
         if Some(k.killer) == me {
             play.ui("kill", UI);
         }
+    }
+}
+
+/// A guard taking a blow, and an old weapon giving out.
+fn melee_events(mut play: Player, mut guards: MessageReader<GuardMsg>, mut broke: MessageReader<BrokeMsg>, inv: Query<&Inventory>) {
+    for g in guards.read() {
+        let held = inv.get(g.target).ok().and_then(|i| i.current()).map_or("bat", |s| s.id.as_str());
+        play.at(guard_sound(held), g.at, IMPACT, 60.0);
+    }
+    for b in broke.read() {
+        play.at(break_sound(&b.item), b.at, IMPACT, 60.0);
     }
 }
 
@@ -503,21 +595,24 @@ fn beds(
     me: Query<(&Transform, &Kinematic), With<LocalPlayer>>,
     zone: Res<Zone>,
     layout: Res<MapLayout>,
+    street: Res<crate::street_sound::Ambience>,
     mut sinks: Query<(&Bed, &mut AudioSink)>,
 ) {
-    let Ok((tf, kin)) = me.single() else { return };
-    let p = tf.translation;
-    let river_d = layout.river.distance(p.xz());
-    let wall_d = (p.xz().distance(zone.center) - zone.radius).abs();
-    let speed = kin.velocity.length();
+    // At the menu nobody stands anywhere: only the city far off, or the last match's street would
+    // play on over Home.
+    let here = me.single().ok();
     for (bed, mut sink) in &mut sinks {
-        let target = match bed {
-            Bed::Day => if kin.mode == MoveMode::Vimana { 0.25 } else { 0.8 },
-            Bed::River => (1.0 - river_d / 45.0).clamp(0.0, 1.0),
-            Bed::Vimana => if kin.mode == MoveMode::Vimana { 0.9 } else { 0.0 },
-            Bed::Freefall => if kin.mode == MoveMode::Freefall { 0.5 + 0.5 * (speed / 40.0).min(1.0) } else { 0.0 },
-            Bed::Glide => if kin.mode == MoveMode::Gliding { 0.8 } else { 0.0 },
-            Bed::Zone => (1.0 - wall_d / 40.0).clamp(0.0, 1.0),
+        let target = match (bed, here) {
+            (Bed::Day, _) => street.park * 0.8,
+            (Bed::Traffic, _) => street.traffic,
+            (Bed::Market, _) => street.market,
+            (Bed::Far, _) => street.far,
+            (_, None) => 0.0,
+            (Bed::River, Some((tf, _))) => (1.0 - layout.river.distance(tf.translation.xz()) / 45.0).clamp(0.0, 1.0),
+            (Bed::Vimana, Some((_, kin))) => if kin.mode == MoveMode::Vimana { 0.9 } else { 0.0 },
+            (Bed::Freefall, Some((_, kin))) => if kin.mode == MoveMode::Freefall { 0.5 + 0.5 * (kin.velocity.length() / 40.0).min(1.0) } else { 0.0 },
+            (Bed::Glide, Some((_, kin))) => if kin.mode == MoveMode::Gliding { 0.8 } else { 0.0 },
+            (Bed::Zone, Some((tf, _))) => (1.0 - (tf.translation.xz().distance(zone.center) - zone.radius).abs() / 40.0).clamp(0.0, 1.0),
         } * BED;
         let cur = sink.volume().to_linear();
         let k = (time.delta_secs() * 2.5).min(1.0);
@@ -530,6 +625,55 @@ fn beds(
             }
         } else if sink.is_paused() {
             sink.play();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZero;
+
+    use rodio::SpatialPlayer;
+    use rodio::buffer::SamplesBuffer;
+    use rodio::mixer::mixer;
+
+    use super::{SPATIAL_SCALE, ears};
+
+    /// The level each ear gets from a steady tone `x` metres to the listener's right, through the
+    /// rodio player Bevy plays spatial sounds with (a mixer read by hand, so no audio device).
+    fn heard(x: f32) -> (f32, f32) {
+        let rate = NonZero::new(44_100).unwrap();
+        let ears = ears();
+        let (mix, mut out) = mixer(NonZero::new(2).unwrap(), rate);
+        let player = SpatialPlayer::connect_new(&mix, [x, 0.0, -0.5], ears.left_ear_offset.to_array(), ears.right_ear_offset.to_array());
+        player.append(SamplesBuffer::new(NonZero::new(1).unwrap(), rate, vec![0.5; 44_100]));
+        let (mut left, mut right) = (0.0, 0.0);
+        for _ in 0..8_000 {
+            left += out.next().unwrap_or(0.0).abs();
+            right += out.next().unwrap_or(0.0).abs();
+        }
+        (left, right)
+    }
+
+    #[test]
+    fn a_sound_on_the_left_is_louder_in_the_left_ear() {
+        let (left, right) = heard(-0.8);
+        assert!(left > 0.0 && right > 0.0, "silent: {left} {right}");
+        assert!(left > right * 1.2, "sound on the left: left ear {left}, right ear {right}");
+    }
+
+    #[test]
+    fn a_sound_on_the_right_is_louder_in_the_right_ear() {
+        let (left, right) = heard(0.8);
+        assert!(right > left * 1.2, "sound on the right: left ear {left}, right ear {right}");
+    }
+
+    /// Rifles use the same listener: the far take plays 5 m from the ear, a near shot at its spot.
+    #[test]
+    fn a_rifle_on_the_left_stays_on_the_left_near_and_far() {
+        for metres in [5.0, 60.0, 90.0] {
+            let (left, right) = heard(-metres * SPATIAL_SCALE);
+            assert!(left > right * 1.2, "a shot {metres} m to the left: left ear {left}, right ear {right}");
         }
     }
 }
