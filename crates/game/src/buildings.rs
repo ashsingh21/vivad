@@ -107,7 +107,7 @@ fn material_for(mat: Mat, sets: &HashMap<&'static str, TexSet>, materials: &mut 
         })
     };
     match mat {
-        Mat::ContainerRed => materials.add(StandardMaterial { base_color: Color::srgb(0.55,0.16,0.10), metallic: 0.35, perceptual_roughness: 0.65, ..default() }),
+        Mat::ContainerRed => materials.add(StandardMaterial { base_color: Color::srgb(0.44,0.22,0.17), metallic: 0.35, perceptual_roughness: 0.65, ..default() }),
         Mat::Concrete | Mat::Asphalt | Mat::Glass | Mat::Steel | Mat::Pavers => {
             let key=match mat {Mat::Concrete=>"urban_concrete",Mat::Asphalt=>"urban_asphalt",Mat::Glass=>"urban_glass",Mat::Steel=>"urban_steel",_=>"urban_pavers"};
             let s=&sets[key];
@@ -130,7 +130,7 @@ fn material_for(mat: Mat, sets: &HashMap<&'static str, TexSet>, materials: &mut 
         Mat::Thatch => textured("thatch", Color::WHITE, 0.95, materials),
         Mat::Dirt => textured("sandstone", Color::srgb(0.75, 0.62, 0.48), 0.95, materials),
         Mat::Gold => materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.76, 0.34), metallic: 1.0, perceptual_roughness: 0.3, ..default() }),
-        Mat::Cloth => materials.add(StandardMaterial { base_color: Color::srgb(0.85, 0.22, 0.32), perceptual_roughness: 0.9, double_sided: true, cull_mode: None, ..default() }),
+        Mat::Cloth => materials.add(StandardMaterial { base_color: Color::srgb(0.62, 0.27, 0.30), perceptual_roughness: 0.9, double_sided: true, cull_mode: None, ..default() }),
         Mat::Foliage => materials.add(StandardMaterial { base_color: Color::srgb(0.26, 0.42, 0.18), perceptual_roughness: 0.95, ..default() }),
         Mat::Bark => textured("wood", Color::srgb(0.7, 0.65, 0.6), 0.95, materials),
         Mat::Grass => materials.add(StandardMaterial { base_color: Color::srgb(0.42, 0.50, 0.25), perceptual_roughness: 0.95, ..default() }),
@@ -467,8 +467,10 @@ pub(crate) const WALLS: [[f32; 3]; 9] = [
 /// Boards in the signs atlas (4 x 8), and a board's width (its height is a quarter and a bit).
 const SIGN_BOARDS: usize = 32;
 const SIGN_W: f32 = 3.6;
-/// Off-white trim: parapet coping, cornices, pilasters, sills.
+/// Off-white trim: parapet coping, cornices, pilasters, sills. Only about half of Delhi's is painted
+/// at all: the rest is bare concrete, or the wall's own colour.
 const TRIM_WHITE: [f32; 3] = [0.80, 0.78, 0.74];
+const TRIM_CONCRETE: [f32; 3] = [0.60, 0.59, 0.56];
 /// How high a roof's parapet stands, and how thick it is.
 const PARAPET: (f32, f32) = (0.9, 0.3);
 /// Half the width of a corner pilaster: clear of the parapet and coping behind it, so no faces meet.
@@ -531,7 +533,7 @@ struct Paint {
     /// material's tint).
     wall: [f32; 3],
     value: f32,
-    /// Trim mostly white; now and then the wall's own colour, deeper.
+    /// Trim white, bare concrete, or the wall's own colour, deeper.
     trim: [f32; 4],
 }
 
@@ -542,7 +544,11 @@ impl Paint {
         let r = |k: u32| hash01(seed, k, 11);
         let painted = !bare(mat);
         let wall = if painted { WALLS[(r(4) * WALLS.len() as f32) as usize % WALLS.len()] } else { [1.0; 3] };
-        let trim = if r(5) < 0.75 || !painted { lin(TRIM_WHITE) } else { lin(wall.map(|c| c * 0.78)) };
+        let trim = match r(5) {
+            t if t < 0.3 => lin(TRIM_CONCRETE),
+            t if t < 0.7 || !painted => lin(TRIM_WHITE),
+            _ => lin(wall.map(|c| c * 0.78)),
+        };
         Paint { seed, wall, value: 0.90 + 0.10 * r(1), trim }
     }
 
