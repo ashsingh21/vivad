@@ -43,8 +43,8 @@ pub fn spawn_camera(mut commands: Commands, mut images: ResMut<Assets<Image>>, l
     ));
     if ncr {
         cam.insert(
-            EnvironmentMapLight::hemispherical_gradient(&mut images, Color::srgb(0.42, 0.60, 0.80), Color::srgb(0.72, 0.77, 0.81), Color::srgb(0.25, 0.24, 0.22))
-                .with_intensity(1800.0),
+            EnvironmentMapLight::hemispherical_gradient(&mut images, Color::srgb(0.66, 0.70, 0.74), Color::srgb(0.78, 0.78, 0.76), Color::srgb(0.36, 0.33, 0.29))
+                .with_intensity(2600.0),
         );
     }
 }
@@ -54,10 +54,10 @@ pub fn ev_override() -> Option<f32> {
     std::env::var("VIVAD_EV").ok()?.parse().ok()
 }
 
-/// The exposure below Ultra. Most of a stop under Bevy's default (9.7): the afternoon sun and sky
-/// were washing out the ground and plaster.
+/// The exposure below Ultra: sunlit mid grey at about 0.25 before tone mapping. Anything brighter
+/// clips the sunlit ground to chalk.
 pub fn fixed_ev() -> f32 {
-    ev_override().unwrap_or(10.8)
+    ev_override().unwrap_or(12.0)
 }
 
 /// The haze below Ultra, where the atmosphere's aerial perspective takes over (crate::ultra).
@@ -96,13 +96,12 @@ fn big_map_haze(far: f32) -> FogFalloff {
     FogFalloff::from_visibility_squared(far * SHARE_OF_FAR)
 }
 
-/// The picture's finish: AgX and a grade below Ultra; TonyMcMapface, near-neutral, on Ultra, where
-/// the light itself is right. Also a soft glow round the sun's glints, lamps and muzzle flashes, and
+/// The picture's finish: TonyMcMapface and a near-neutral grade on every level. Also a soft glow round the sun's glints, lamps and muzzle flashes, and
 /// the frame's edges darkened a little to draw the eye to the middle: cheap, and most of what reads
 /// as a "finished" look. VIVAD_NO_POST=1 turns those two off, for comparisons.
 pub fn look(ncr: bool, ultra: bool) -> impl Bundle {
-    // VIVAD_TONEMAP=agx: compare the looks on Ultra.
-    let tony = ultra && std::env::var("VIVAD_TONEMAP").as_deref() != Ok("agx");
+    // VIVAD_TONEMAP=agx: compare the looks.
+    let tony = std::env::var("VIVAD_TONEMAP").as_deref() != Ok("agx");
     (if tony { Tonemapping::TonyMcMapface } else { Tonemapping::AgX }, grading(ncr, ultra), post(ultra))
 }
 
@@ -115,13 +114,11 @@ fn post(ultra: bool) -> (bevy::post_process::bloom::Bloom, bevy::post_process::e
     (Bloom { intensity: bloom, ..Bloom::NATURAL }, Vignette { intensity: vignette, radius: 0.9, smoothness: 2.5, ..default() })
 }
 
-/// AgX alone leaves the sunlit ground chalky: a little more saturation, midtone and highlight
-/// contrast (not in the shadows, which would crush the characters' brown skin), and highlights
-/// pulled down. Ultra needs only a touch of saturation, and no painted warmth: the sun's colour
-/// comes through the air. VIVAD_GRADE="saturation,contrast,highlight gain" overrides for tuning.
-fn grading(ncr: bool, ultra: bool) -> bevy::render::view::ColorGrading {
+/// Only a touch of saturation: the light and the surfaces carry the picture.
+/// VIVAD_GRADE="saturation,contrast,highlight gain" overrides for tuning.
+fn grading(_ncr: bool, ultra: bool) -> bevy::render::view::ColorGrading {
     let v: Vec<f32> = std::env::var("VIVAD_GRADE").unwrap_or_default().split(',').filter_map(|s| s.parse().ok()).collect();
-    let (dsat, dcon, dhi) = if ultra { (1.05, 1.0, 1.0) } else { (1.1, 1.06, 0.85) };
+    let (dsat, dcon, dhi) = (1.05, 1.0, 1.0);
     let (sat, con, hi) = (v.first().copied().unwrap_or(dsat), v.get(1).copied().unwrap_or(dcon), v.get(2).copied().unwrap_or(dhi));
     let mut g = bevy::render::view::ColorGrading::default();
     for s in [&mut g.shadows, &mut g.midtones, &mut g.highlights] {
@@ -132,13 +129,6 @@ fn grading(ncr: bool, ultra: bool) -> bevy::render::view::ColorGrading {
     g.highlights.gain = hi;
     // A touch of afternoon warmth over the whole frame.
     g.global.temperature = if ultra { 0.0 } else { 0.015 };
-    if ncr {
-        // The NCR arena: cooler and a little drained, more contrast: a smoggy city, not golden Bharat.
-        g.global.temperature = -0.01;
-        g.midtones.saturation *= 0.8;
-        g.highlights.saturation *= 0.85;
-        g.midtones.contrast *= 1.06;
-    }
     g
 }
 

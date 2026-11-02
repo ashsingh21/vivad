@@ -1,7 +1,7 @@
 //! The Ultra level's sky and finish: Bevy's physical atmosphere with a sky-generated environment
-//! light, the sun on the clock, TonyMcMapface and an exposure set by the sun's height. Every other level keeps the
-//! painted sky (crate::sky), the fixed sun, AgX and fixed exposure, and F4 moves cleanly between
-//! the two (`apply`, from crate::quality).
+//! light, the sun on the clock and an exposure set by the sun's height. Every other level keeps the
+//! dome of crate::sky, the fixed sun and fixed exposure, and F4 moves cleanly between the two
+//! (`apply`, from crate::quality).
 //!
 //! Switches, for comparisons:
 //!   VIVAD_NO_ATMO=1      Ultra on the painted sky and fixed sun, with distance fog.
@@ -9,7 +9,7 @@
 //!                        frame on an M4, and once on, Bevy 0.20 keeps metering after the component
 //!                        is removed, so leaving Ultra with F4 would dim the lower levels.
 //!   VIVAD_EV=<ev100>     one fixed exposure, no metering.
-//!   VIVAD_TONEMAP=agx    AgX on Ultra too, to compare with TonyMcMapface.
+//!   VIVAD_TONEMAP=agx    AgX, to compare with TonyMcMapface.
 //!   VIVAD_HOUR=<h>       pins the clock (`18.5` or `18:30`).
 //!   VIVAD_ATMO_FULL=1    Bevy's full-size lookup tables instead of the lean set.
 //!   VIVAD_ATMO_ENV=<n>   environment map size in pixels, a power of two; 0 for none.
@@ -475,7 +475,7 @@ mod tests {
             assert!(w.get::<AutoExposure>(cam).is_none());
             assert!(w.get::<SunDisk>(sun).is_none());
             assert!(w.get::<DistanceFog>(cam).is_some());
-            assert_eq!(*w.get::<Tonemapping>(cam).unwrap(), Tonemapping::AgX);
+            assert_eq!(*w.get::<Tonemapping>(cam).unwrap(), Tonemapping::TonyMcMapface);
             assert_eq!(w.get::<Exposure>(cam).unwrap().ev100, crate::camera::fixed_ev());
             assert_eq!(*w.get::<Transform>(sun).unwrap(), sun_at);
             assert_eq!(w.get::<DirectionalLight>(sun).unwrap().illuminance, 27_000.0);
