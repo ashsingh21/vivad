@@ -48,6 +48,9 @@ const REBUILD: f32 = 3.0;
 const FINE: f32 = 8.0;
 /// A fine chunk goes back to plain blades this far out.
 const COARSE: f32 = 20.0;
+/// Milliseconds a frame may spend growing chunks. They are built on the main thread, a few
+/// milliseconds each on full cover, and a player crossing a park can want dozens at once.
+const BUILD_MS: f32 = 2.5;
 /// Clumps per square metre at full cover, and blades per clump; plus short single blades
 /// scattered between the clumps (per square metre) so the ground between them isn't bare.
 const CLUMPS: f32 = 10.0;
@@ -354,8 +357,12 @@ fn stream_chunks(
         .filter(|&k| ((k.0 as f32 + 0.5) * CHUNK).abs() < lim && ((k.1 as f32 + 0.5) * CHUNK).abs() < lim)
         .collect();
     want.sort_by(|a, b| reach(*a).total_cmp(&reach(*b)));
-    // A few per frame, nearest first.
-    for k in want.into_iter().take(6) {
+    // As many as the frame can spare, nearest first.
+    let started = bevy::platform::time::Instant::now();
+    for k in want {
+        if started.elapsed().as_secs_f32() * 1000.0 > BUILD_MS {
+            break;
+        }
         let keep = keep_at(k);
         let fine = nearest(k) < FINE;
         let e = match build_chunk(k, &layout.terrain, &grass.blockers, keep, fine, grass.density, layout.style == shared::map::MapStyle::Ncr) {

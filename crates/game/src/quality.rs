@@ -141,7 +141,7 @@ impl Quality {
     pub fn grass(self) -> f32 {
         match self {
             Quality::Low => 0.12,
-            Quality::Medium => 0.45,
+            Quality::Medium => 0.3,
             Quality::High => 0.5,
             Quality::Ultra => 0.5,
         }
