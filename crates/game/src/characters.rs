@@ -235,6 +235,7 @@ fn dress_warriors(mut commands: Commands, q: Query<(Entity, &WarriorVisual), Add
                         fingers_l,
                         shoulder_r: named.get("upperarm_r").copied(),
                         head: named.get("head").copied(),
+                        weapon_r: named.get("weapon_r").copied(),
                     });
                 }
                 commands.entity(vis).insert(CharRig { bones, weapon_attached: false, variant, rig_root, named });

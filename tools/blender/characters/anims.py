@@ -28,6 +28,10 @@ from mathutils import Matrix, Quaternion, Vector
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
+sys.path.insert(0, HERE)
+
+from skeleton import MIXAMO_BONES, MOTUS_BONES  # noqa: E402
+
 FPS = 30
 
 WALK, RUN, SPRINT, CROUCH = 1.8, 5.6, 8.6, 1.4
@@ -361,24 +365,13 @@ def load_mocap(pack):
     return next(o for o in new if o.type == "ARMATURE"), new, [a for a in bpy.data.actions if a not in acts]
 
 
-# Mixamo (tools/blender/characters/mixamo, not in the repository: Adobe's terms): our bones' names
-# in its rig.
-MIXAMO_BONES = {
-    "pelvis": "mixamorig:Hips", "spine_01": "mixamorig:Spine", "spine_02": "mixamorig:Spine1", "spine_03": "mixamorig:Spine2",
-    "neck_01": "mixamorig:Neck", "head": "mixamorig:Head",
-    **{f"{a}_{s}": f"mixamorig:{S}{b}" for s, S in (("l", "Left"), ("r", "Right"))
-       for a, b in (("clavicle", "Shoulder"), ("upperarm", "Arm"), ("lowerarm", "ForeArm"), ("hand", "Hand"),
-                    ("thigh", "UpLeg"), ("calf", "Leg"), ("foot", "Foot"), ("ball", "ToeBase"))},
-}
-MIXAMO_BONES.update({f"{f}_0{k}_{s}": f"mixamorig:{S}Hand{F}{k}" for s, S in (("l", "Left"), ("r", "Right"))
-                     for f, F in (("index", "Index"), ("middle", "Middle"), ("ring", "Ring"), ("pinky", "Pinky"), ("thumb", "Thumb"))
-                     for k in (1, 2, 3)})
+# Mixamo (tools/blender/characters/mixamo, not in the repository: Adobe's terms). Each source's
+# bone names for ours: skeleton.py.
 MIXAMO = os.path.join(HERE, "mixamo")
 # MoCap Online's Rifle Basic pack (tools/blender/characters/mocaponline, not in the repository: its
 # licence): the Motus Man rig, Mixamo's bone names without the prefix. Its rifle clips, untouched,
 # over the Mixamo pack's.
 MOTUS = os.path.join(HERE, "mocaponline", "FBX_Rifle_Basic_27A2", "Animation", "In-Place")
-MOTUS_BONES = {k: v.removeprefix("mixamorig:") for k, v in MIXAMO_BONES.items()}
 # Moving with a long gun, each gait's speed by direction (forward, back, left, right; m/s): the
 # pack's own, as recorded (measured on the male; the female's clips are set to the same, as both
 # move alike). Must match RIFLE_GAIT in crates/shared/src/sim/movement.rs.

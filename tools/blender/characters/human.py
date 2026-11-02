@@ -50,6 +50,12 @@ VARIANTS = {
                  "nose/nose-hump-incr": 0.5, "nose/nose-scale-vert-incr": 0.4,
                  "mouth/mouth-lowerlip-volume-decr": 0.7, "mouth/mouth-upperlip-volume-decr": 0.6, "mouth/mouth-scale-horiz-decr": 0.3,
                  "eyes/l-eye-height2-incr": 0.7, "eyes/r-eye-height2-incr": 0.7, "eyes/l-eye-scale-incr": 0.3, "eyes/r-eye-scale-incr": 0.3},
+        # Arms and shoulders to the proportions of the mannequin the gun clips were captured on
+        # (skeleton.py; MoCap Online's Motus Man: upper arm 30.3 cm, forearm 27.0, shoulder joints
+        # 17.7 cm off the midline; this body had 27.1, 28.1 and 20.7), so a captured hold puts the
+        # hands where the gun is.
+        "shape": {"arms/measure-upperarm-length-incr": 0.46, "arms/measure-lowerarm-length-decr": 0.24,
+                  "torso/measure-shoulder-dist-decr": 1.0, "torso/torso-scale-horiz-decr": 0.5},
         # Modelled clothes from the MakeHuman library (CC0): a striped shirt over washed jeans,
         # sneakers.
         "clothes": ["male_casualsuit03", "shoes06"],
@@ -67,6 +73,9 @@ VARIANTS = {
         "face": {"nose/nose-scale-horiz-decr": 0.7, "nose/nose-flaring-decr": 0.9, "nose/nose-point-width-decr": 0.7,
                  "mouth/mouth-lowerlip-volume-decr": 0.5, "mouth/mouth-upperlip-volume-decr": 0.5, "mouth/mouth-scale-horiz-decr": 0.2,
                  "eyes/l-eye-height2-incr": 0.8, "eyes/r-eye-height2-incr": 0.8, "eyes/l-eye-scale-incr": 0.35, "eyes/r-eye-scale-incr": 0.35},
+        # The mannequin's arm proportions scaled to her height (1.63 m to its 1.83): upper arm 23.6
+        # to 26.9 cm, forearm 21.6 to 24.0 (her shoulders already match).
+        "shape": {"arms/measure-upperarm-length-incr": 0.47, "arms/measure-lowerarm-length-incr": 0.37},
         # A tee and jeans (its logo painted out: tools/textures/mh_clothes.py), sneakers.
         "clothes": ["female_casualsuit01", "shoes05"],
         "outfit": outfits.female_street,
@@ -85,7 +94,7 @@ def build_body(cfg):
     hs = mpfb()
     body = hs.create_human(macro_detail_dict=cfg["macro"])
     from bl_ext.blender_org.mpfb.services.targetservice import TargetService
-    for name, w in cfg.get("face", {}).items():
+    for name, w in {**cfg.get("face", {}), **cfg.get("shape", {})}.items():
         TargetService.load_target(body, os.path.join(TARGETS, f"{name}.target.gz"), weight=w)
     rig = hs.add_builtin_rig(body, "game_engine")
     # Modelled clothes, fitted to the body and rigged by MPFB like the hair. Added before the proxy

@@ -100,6 +100,8 @@ pub struct Body {
     /// For the gun check: the right shoulder and the head.
     pub shoulder_r: Option<Entity>,
     pub head: Option<Entity>,
+    /// The bone a long gun rides (tools/blender/characters/skeleton.py), if the rig has one.
+    pub weapon_r: Option<Entity>,
 }
 
 /// The local player's long-gun hold by the numbers, this frame (the armoury logs it with each
@@ -267,7 +269,18 @@ fn orient_bows(
         // Weapon frame: -Z (a bow's back, a barrel's line) along f, +Y up.
         let raised = Quat::from_mat3(&Mat3::from_cols(up.cross(-f), up, -f));
         let (scale, rot, pos) = held.to_scale_rotation_translation();
-        let socket_g = GlobalTransform::from(Transform { translation: pos, rotation: rot.slerp(raised, raise), scale });
+        // A long gun rides the weapon bone, where the rifle pack's clips hold theirs (the guns are
+        // the pack's own, origin at the grip): carried exactly as captured, its barrel swung onto
+        // the aim as it comes up. Else as placed above.
+        let captured = if gun && long && long_f.is_none() { body.weapon_r.and_then(|b| tf.get(b).ok()).map(|(_, g)| *g) } else { None };
+        let socket_g = match captured {
+            Some(wg) => {
+                let (scale, rot, pos) = wg.to_scale_rotation_translation();
+                let onto = Quat::IDENTITY.slerp(Quat::from_rotation_arc(rot * Vec3::NEG_Z, aim), w);
+                GlobalTransform::from(Transform { translation: pos, rotation: onto * rot, scale })
+            }
+            None => GlobalTransform::from(Transform { translation: pos, rotation: rot.slerp(raised, raise), scale }),
+        };
         if let Ok((_, mut g)) = tf.get_mut(socket) {
             *g = socket_g;
         }
@@ -297,17 +310,22 @@ fn orient_bows(
                 tf.get(hand).map(|(_, g)| g.transform_point(body.knuckle_l * 0.55 + body.palm_l * 0.022)).unwrap_or(contact)
             };
             let mut wrist = tf.get(hand).map(|(_, g)| g.translation()).unwrap_or(contact);
-            for _ in 0..2 {
+            // VIVAD_RAW_HANDS: the clip's own left hand, uncorrected (the armoury's [guncheck] then
+            // says how far off the captured hold lands).
+            let raw = std::env::var_os("VIVAD_RAW_HANDS").is_some();
+            for _ in 0..(if raw { 0 } else { 2 }) {
                 reach(upper, lower, hand, wrist, Vec3::NEG_Y - right * 0.7, want, &kids, &mut tf);
                 wrist += contact - palm_at(&tf);
             }
-            reach(upper, lower, hand, wrist, Vec3::NEG_Y - right * 0.7, want, &kids, &mut tf);
+            if !raw {
+                reach(upper, lower, hand, wrist, Vec3::NEG_Y - right * 0.7, want, &kids, &mut tf);
+            }
             if local.contains(wv.sim) {
                 check.1 = Some(contact);
                 check.0 = Some(gun_check(body, &socket_g, fore, ahead, palm_at(&tf), hand_g.translation(), &tf));
             }
             // Close the fingers round it: each joint curled toward the palm.
-            for &f in &body.fingers_l {
+            for &f in body.fingers_l.iter().filter(|_| !raw) {
                 let Ok((_, g)) = tf.get(f) else { continue };
                 let (at, axis) = (g.translation(), fingers.cross(palm));
                 turn_subtree(f, at, Quat::from_axis_angle(axis, GRIP_CURL), &kids, &mut tf);
