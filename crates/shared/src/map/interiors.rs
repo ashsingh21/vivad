@@ -148,6 +148,12 @@ impl Stair {
         if storey % 2 == 0 { self.x.0 + self.landing / 2.0 } else { self.x.1 - self.landing / 2.0 }
     }
 
+    /// The middle of a storey's door to the stairs. The ground floor's is as wide as its other
+    /// doors, for a bot that has come down, so it runs on past the landing beside the first steps.
+    fn door_x(&self, storey: u32) -> f32 {
+        if storey == 0 { self.x.0 + GROUND_DOOR / 2.0 + 0.05 } else { self.landing_x(storey) }
+    }
+
     /// The hole flight `k` needs in the floor above it.
     pub fn well(&self, k: u32) -> (Vec2, Vec2) {
         let (a, b) = self.run();
@@ -433,12 +439,12 @@ impl Interior {
             return None;
         }
         let feet = pos.y - HALF_HEIGHT;
-        if feet < self.level(1) - 2.0 {
-            return None;
-        }
         let world = |p: Vec2| self.at(p.x, 0.0, p.y).xz();
         // On a flight: on down it, and past its foot.
         let in_shaft = l.x > s.x.0 - 0.1 && l.x < s.x.1 + 0.1 && l.y > s.z.0 - 0.1 && l.y < s.z.1 + 0.1;
+        if feet < self.level(1) - 2.0 && !in_shaft {
+            return None;
+        }
         let (lo, hi) = s.run();
         if in_shaft && l.x > lo - 0.2 && l.x < hi + 0.2 {
             let k = (0..self.storeys).filter(|k| (s.lane(*k) - l.y).abs() < LANE / 2.0 + 0.1).find(|k| {
@@ -447,9 +453,6 @@ impl Interior {
                 (feet - (foot.y + (head.y - foot.y) * t)).abs() < 1.0
             });
             if let Some(k) = k {
-                if k == 0 && feet < self.level(0) + 0.8 {
-                    return None;
-                }
                 let (foot, _) = s.flight(k);
                 let past = foot + (foot - s.flight(k).1).signum() * self.stair_step(s);
                 return Some(world(Vec2::new(past, s.lane(k))));
@@ -508,7 +511,11 @@ impl Interior {
             way.push(flat(exit.beyond, g));
             room = at(exit.beyond)?;
         }
-        let s = self.stair.as_ref()?;
+        // A tower's lobby is as far as it goes.
+        let Some(s) = self.stair.as_ref() else {
+            way.push(flat(room.middle(), g));
+            return Some(way);
+        };
         for k in 0..self.storeys {
             let (foot, head) = s.flight(k);
             let (lane, dir) = (s.lane(k), (head - foot).signum());
@@ -530,11 +537,13 @@ impl Interior {
     }
 
     /// What the bots' floor marks on the ground floor beyond `solids`: flight 0, as they don't climb.
+    /// Grown by a warrior's clearance when it's drawn, so drawn that much smaller here, or the
+    /// landing beside it would be closed.
     pub fn stair_block(&self) -> Option<Block> {
         let s = self.stair.as_ref()?;
         let (a, b) = s.run();
         let z = s.lane(0);
-        Some(self.solid(Vec3::new(a, self.floor + 0.5, z - LANE / 2.0), Vec3::new(b, self.floor + 1.8, z + LANE / 2.0)))
+        Some(self.solid(Vec3::new(a + 0.5, self.floor + 0.5, z - 0.2), Vec3::new(b, self.floor + 1.8, z + 0.2)))
     }
 
     /// Points just inside each way in from outside, for the bots' floor to flood from.
@@ -680,7 +689,7 @@ impl Maker<'_> {
         // Partitions on the bay lines, between the windows; a shop's at the shutter bays' middles,
         // between two open bays. Clear of the stair door.
         let shops = self.site.shops && k == 0;
-        let keep = stair.map(|s| s.landing_x(k));
+        let keep = stair.map(|s| s.door_x(k));
         let mut planes: Vec<f32> = vec![];
         let mut last = x0;
         for j in 0..=((w + along0) / BAY) as i32 + 1 {
@@ -734,8 +743,8 @@ impl Maker<'_> {
         let Some(s) = stair else { return };
         // The wall along the stairs, with the door onto this storey's landing.
         let at = s.z.0 - PARTITION / 2.0;
-        let x = s.landing_x(k);
-        let half = (s.landing / 2.0 - 0.05).min(0.8);
+        let x = s.door_x(k);
+        let half = if k == 0 { GROUND_DOOR / 2.0 } else { (s.landing / 2.0 - 0.05).min(0.8) };
         let mut cuts = vec![Cut { s0: x - half, s1: x + half, y0, y1: y0 + DOOR_TOP }];
         let back_row = room_at(rows - 1, 0);
         let reaches = cols.iter().position(|c| x > c.0 && x < c.1).unwrap_or(0);
@@ -898,6 +907,19 @@ impl Maker<'_> {
                 }
             }
         }
+        // A narrow room keeps one long side clear, the side its door is on: furniture on facing
+        // walls would close it to a squeeze.
+        let (wide, deep) = (room.x.1 - room.x.0, room.z.1 - room.z.0);
+        if wide.min(deep) < NARROW {
+            let opens = |along_x: bool, at: f32, span: (f32, f32)| int.cuts_on(along_x, at, span, (y0, y1)).iter().any(|c| c.y0 < y0 + 0.5);
+            taken.push(if deep < wide {
+                let z = if opens(true, room.z.0 - PARTITION / 2.0, room.x) { room.z.0 } else { room.z.1 - lane };
+                (Vec2::new(room.x.0, z), Vec2::new(room.x.1, z + lane))
+            } else {
+                let x = if opens(false, room.x.0 - PARTITION / 2.0, room.z) { room.x.0 } else { room.x.1 - lane };
+                (Vec2::new(x, room.z.0), Vec2::new(x + lane, room.z.1))
+            });
+        }
         let inside = |lo: Vec2, hi: Vec2| lo.x >= room.x.0 - 0.01 && hi.x <= room.x.1 + 0.01 && lo.y >= room.z.0 - 0.01 && hi.y <= room.z.1 + 0.01;
         let meets = |a: (Vec2, Vec2), b: (Vec2, Vec2)| a.0.x < b.1.x && a.1.x > b.0.x && a.0.y < b.1.y && a.1.y > b.0.y;
         let turn = rng.random_range(0..4usize);
@@ -929,6 +951,28 @@ impl Maker<'_> {
             None
         };
         let mut pieces = vec![];
+        // The middle of a big room: rows of whatever it holds, with a warrior's lane round each,
+        // so a hall has something to fight round and isn't one bare floor.
+        if let Some((cluster, half)) = island(room.plan) {
+            let (x0, x1, z0, z1) = (room.x.0 + 1.5 + half.x, room.x.1 - 1.5 - half.x, room.z.0 + 1.5 + half.y, room.z.1 - 1.5 - half.y);
+            let pitch = 2.0 * half + Vec2::splat(ISLAND_LANE);
+            let (columns, ranks) = (((x1 - x0) / pitch.x).floor(), ((z1 - z0) / pitch.y).floor());
+            let mut left = MAX_ISLANDS;
+            for j in 0..=ranks as i32 {
+                for i in 0..=columns as i32 {
+                    let c = Vec2::new(x0 + (x1 - x0 - columns * pitch.x) / 2.0 + i as f32 * pitch.x, z0 + (z1 - z0 - ranks * pitch.y) / 2.0 + j as f32 * pitch.y);
+                    let rect = (c - half - ISLAND_LANE / 2.0, c + half + ISLAND_LANE / 2.0);
+                    if x1 >= x0 && z1 >= z0 && left > 0 && !taken.iter().any(|t| meets(*t, rect)) {
+                        // Its lane with it: what stands along the walls can't close it off.
+                        taken.push(rect);
+                        left -= 1;
+                        for &(name, offset, face) in cluster {
+                            pieces.push((name, Vec3::new(c.x + offset.x, y0 + offset.y, c.y + offset.z), face));
+                        }
+                    }
+                }
+            }
+        }
         for &name in list {
             if name == "fan" {
                 let c = room.middle();
@@ -942,10 +986,13 @@ impl Maker<'_> {
         }
         let mut spots = vec![];
         // Spots come with room to walk up to them.
-        const APPROACH: f32 = 1.4;
+        const APPROACH: f32 = 1.8;
+        // Out from the wall by a warrior's clearance and half a cell: the bots go only for what's
+        // on a cell of their floor they could stand on.
+        const OFF_WALL: f32 = 0.78;
         for _ in 0..2 {
             if let Some((c, into)) = fit(Vec3::new(1.7, 0.7, APPROACH), &mut taken, rng, 0.1) {
-                let c = c - into * (APPROACH / 2.0 - 0.4);
+                let c = c - into * (APPROACH / 2.0 + 0.04 - OFF_WALL);
                 spots.push((Vec3::new(c.x, y0, c.y), into));
             }
         }
@@ -1072,6 +1119,27 @@ fn make(site: &Site, open: &dyn Fn(Vec2, f32) -> bool, rng: &mut SmallRng) -> (I
     let _ = &m.placed;
     (m.int, m.spots)
 }
+
+/// What stands in the middle of a big room of this kind: pieces at offsets from the middle of a
+/// group, each with the way it faces, and half the group's size.
+fn island(plan: Plan) -> Option<(&'static [(&'static str, Vec3, Vec2)], Vec2)> {
+    const TABLE: [(&str, Vec3, Vec2); 3] = [("table", Vec3::ZERO, Vec2::NEG_Y), ("plastic_chair", Vec3::new(0.0, 0.0, 0.72), Vec2::NEG_Y), ("plastic_chair", Vec3::new(0.0, 0.0, -0.72), Vec2::Y)];
+    const SACKS: [(&str, Vec3, Vec2); 3] = [("sacks", Vec3::new(-0.55, 0.0, 0.0), Vec2::Y), ("sacks", Vec3::new(0.55, 0.0, 0.0), Vec2::X), ("sacks", Vec3::new(-0.55, 0.7, 0.0), Vec2::X)];
+    const DESK: [(&str, Vec3, Vec2); 2] = [("desk", Vec3::ZERO, Vec2::NEG_Y), ("plastic_chair", Vec3::new(0.0, 0.0, 0.66), Vec2::NEG_Y)];
+    const AISLE: [(&str, Vec3, Vec2); 2] = [("shelf", Vec3::new(-0.47, 0.0, 0.0), Vec2::NEG_Y), ("shelf", Vec3::new(0.47, 0.0, 0.0), Vec2::NEG_Y)];
+    match plan {
+        Plan::Dhaba => Some((&TABLE, Vec2::new(0.6, 1.0))),
+        Plan::Godown => Some((&SACKS, Vec2::new(1.1, 0.55))),
+        Plan::Office => Some((&DESK, Vec2::new(0.7, 0.85))),
+        Plan::Shop => Some((&AISLE, Vec2::new(0.95, 0.25))),
+        _ => None,
+    }
+}
+/// A room narrower than this has furniture along one long wall only.
+const NARROW: f32 = 3.6;
+/// The room left between groups, and at most how many a room has.
+const ISLAND_LANE: f32 = 1.9;
+const MAX_ISLANDS: usize = 8;
 
 /// Hollow buildings each district has, as low buildings and tower lobbies.
 fn quota(name: &str) -> (usize, usize) {
@@ -1257,7 +1325,9 @@ pub fn hollow(map: &mut MapLayout, per_cell: usize) -> Vec<Spot> {
             let door = bays(along[i], len)
                 .into_iter()
                 .filter(|(bay, s)| (!shops || bay.rem_euclid(2) == 1) && free(*s))
-                .min_by_key(|(bay, s)| ((s - len / 2.0).abs() * 2.0) as i32 + 2 * (bay.rem_euclid(2) == 0) as i32);
+                // Nearest the middle, but a shuttered bay first: a balcony bay's painted rail would
+                // be left sticking out either side of the door.
+                .min_by_key(|(bay, s)| ((s - len / 2.0).abs() * 2.0) as i32 + 1000 * (!shops && bay.rem_euclid(2) == 0) as i32);
             if let Some((bay, _)) = door
                 && best.is_none_or(|b| score > b.0)
             {
@@ -1269,13 +1339,16 @@ pub fn hollow(map: &mut MapLayout, per_cell: usize) -> Vec<Spot> {
         let r = hash01(seed, 1, 31);
         let flats_above = matches!(district.map(|d| compose::PLACES[d].name), Some("Chandni Chowk" | "Karol Bagh" | "Hauz Khas" | "Laxmi Nagar" | "Ghaziabad"));
         let area = lu * lv;
+        // Over a Delhi shop there are flats, and now and then an office or a storeroom.
+        let up = hash01(seed, 2, 37);
+        let over_shop = if !flats_above || up < 0.2 { Plan::Office } else if up < 0.34 { Plan::Godown } else { Plan::Flat };
         let (plan, upper) = if tower {
             (Plan::Lobby, Plan::Lobby)
         } else if district.is_none() {
             (if area > 170.0 { Plan::Godown } else if r < 0.5 { Plan::Dhaba } else { Plan::Shop }, Plan::Godown)
         } else if shops {
-            (if r < 0.14 { Plan::Dhaba } else if r < 0.24 { Plan::Godown } else { Plan::Shop }, if flats_above { Plan::Flat } else { Plan::Office })
-        } else if flats_above {
+            (if r < 0.14 { Plan::Dhaba } else if r < 0.24 { Plan::Godown } else { Plan::Shop }, over_shop)
+        } else if flats_above && r > 0.15 {
             (Plan::Flat, Plan::Flat)
         } else {
             (Plan::Office, Plan::Office)
@@ -1394,10 +1467,17 @@ fn flatten(map: &mut MapLayout, r: &Interior) {
             let (a, b) = (l.dot(r.x), l.dot(r.z));
             if a > -step && b > -step && a < r.w + step && b < r.d + step {
                 t.h[i * n + j] = r.floor;
+                // No grass through the floor.
+                if t.ground[i * n + j] != ground::ROAD {
+                    t.ground[i * n + j] = ground::PAVEMENT;
+                }
             }
         }
     }
 }
+
+/// The share of indoor finds upstairs, about.
+const UPSTAIRS_FINDS: f32 = 0.25;
 
 /// Half of each district's chest set moves indoors, gold to the top floors and the roofs, the rest
 /// onto ground floors the bots walk, and about 240 floor finds with them.
@@ -1431,6 +1511,8 @@ pub fn move_loot(map: &mut MapLayout, spots: &[Spot], rng: &mut SmallRng) {
     }
     let mut free: Vec<usize> = (0..spots.len()).filter(|i| !used[*i] && !spots[*i].roof).collect();
     compose::shuffle(&mut free, rng);
+    // Mostly ground floors, where the bots loot too: an upstairs full of finds would leave them short.
+    free.sort_by_key(|i| spots[*i].storey > 0 && hash01(*i as u32, 5, 7) > UPSTAIRS_FINDS);
     let mut left = vec![true; map.floor_loot.len()];
     for &i in free.iter().take(FLOOR_FINDS) {
         let spot = spots[i].pos;

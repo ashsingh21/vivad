@@ -1225,7 +1225,7 @@ impl StreetFloor {
 /// For a warrior on an upper floor or a roof of a hollow building: where to walk next, on the way
 /// down its stairs. `roof_edge` would strand a bot here: a parapet stops it, and a window's sill.
 pub fn way_down(layout: &MapLayout, pos: Vec3) -> Option<Vec2> {
-    if pos.y - HALF_HEIGHT - layout.terrain.height(pos.x, pos.z) < 1.5 {
+    if pos.y - HALF_HEIGHT - layout.terrain.height(pos.x, pos.z) < 0.35 {
         return None;
     }
     layout.rooms.iter().find(|r| r.corner.distance_squared(pos.xz()) < 3600.0 && r.contains(pos.xz())).and_then(|r| r.way_down(pos))

@@ -224,8 +224,8 @@ fn look(room: &Room) -> Look {
         Plan::Flat => Look { wall_row: WALL, wall: DISTEMPER[t % 6], floor_row: MOSAIC, floor: [1.0, 0.97, 0.92] },
         Plan::Office => Look { wall_row: WALL, wall: OFFICE[t % 3], floor_row: MARBLE, floor: [1.0, 0.98, 0.94] },
         Plan::Shop => Look { wall_row: WALL, wall: SHOP[t % 4], floor_row: TILES, floor: [1.0, 0.97, 0.92] },
-        Plan::Dhaba => Look { wall_row: WALL, wall: [0.93, 0.84, 0.60], floor_row: TILES, floor: [0.74, 0.70, 0.64] },
-        Plan::Godown => Look { wall_row: OLD_WALL, wall: [0.95, 0.91, 0.84], floor_row: CONCRETE, floor: [0.86, 0.84, 0.80] },
+        Plan::Dhaba => Look { wall_row: WALL, wall: [0.93, 0.84, 0.60], floor_row: TILES, floor: [0.9, 0.86, 0.8] },
+        Plan::Godown => Look { wall_row: OLD_WALL, wall: [0.95, 0.91, 0.84], floor_row: CONCRETE, floor: [0.98, 0.94, 0.86] },
         Plan::Lobby => Look { wall_row: WALL, wall: [0.94, 0.91, 0.84], floor_row: MARBLE, floor: [1.0, 1.0, 0.98] },
     }
 }
@@ -425,7 +425,7 @@ pub(super) fn build(commands: &mut Commands, layout: &MapLayout, assets: &AssetS
         bevy::render::render_resource::TextureFormat::Rgba8Unorm,
         bevy::asset::RenderAssetUsages::RENDER_WORLD,
     ));
-    let material = materials.add(StandardMaterial { base_color: Color::WHITE, base_color_texture: Some(atlas), occlusion_texture: Some(shut_in), perceptual_roughness: 0.8, reflectance: 0.3, ..default() });
+    let material = materials.add(StandardMaterial { base_color: Color::WHITE, base_color_texture: Some(atlas), occlusion_texture: Some(shut_in), perceptual_roughness: 0.88, reflectance: 0.2, ..default() });
     let mut cells: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     for r in &layout.rooms {
         let c = r.at(r.w / 2.0, 0.0, r.d / 2.0);
@@ -499,7 +499,7 @@ fn reset(mut furniture: ResMut<Furniture>, mut doors: ResMut<Doors>) {
     furniture.live.clear();
     furniture.groups.clear();
     furniture.cells.clear();
-    doors.spots.clear();
+    *doors = Doors::default();
 }
 
 fn load_furniture(mut f: ResMut<Furniture>, layout: Res<MapLayout>, assets: Res<AssetServer>, gltfs: Res<Assets<Gltf>>, gltf_meshes: Res<Assets<GltfMesh>>, gltf_materials: Res<Assets<GltfMaterial>>, mut materials: ResMut<Assets<StandardMaterial>>) {
@@ -591,6 +591,8 @@ struct Doors {
     slots: Vec<Option<u32>>,
     built: bool,
     frame: u32,
+    /// Where the rooms are, for the fill lights; empty until they are spawned.
+    rooms: HashMap<(i32, i32), Vec<u32>>,
 }
 
 /// The pool of leaves: each slot two leaves, hung at the jambs, a door the camera is near given to
@@ -674,12 +676,12 @@ struct Fill(usize);
 
 /// A few warm lights in the rooms nearest the camera: no light per room, and none of them casts a
 /// shadow. They do what a bounce off the floor would.
-fn place_fills(mut commands: Commands, layout: Res<MapLayout>, camera: Query<&GlobalTransform, With<MainCamera>>, mut fills: Query<(&mut Transform, &mut PointLight, &Fill)>, mut cells: Local<HashMap<(i32, i32), Vec<u32>>>, mut frame: Local<u32>) {
+fn place_fills(mut commands: Commands, layout: Res<MapLayout>, mut doors: ResMut<Doors>, camera: Query<&GlobalTransform, With<MainCamera>>, mut fills: Query<(&mut Transform, &mut PointLight, &Fill)>, mut frame: Local<u32>) {
     if layout.rooms.is_empty() {
         return;
     }
-    if cells.is_empty() {
-        *cells = index_rooms(&layout);
+    if doors.rooms.is_empty() {
+        doors.rooms = index_rooms(&layout);
         for k in 0..FILLS {
             let light = PointLight { color: Color::srgb(1.0, 0.86, 0.68), intensity: 0.0, range: 9.0, shadow_maps_enabled: false, ..default() };
             commands.spawn((light, Transform::default(), Fill(k), OfMap));
@@ -692,7 +694,7 @@ fn place_fills(mut commands: Commands, layout: Res<MapLayout>, camera: Query<&Gl
     let Ok(camera) = camera.single() else { return };
     let at = camera.translation();
     let mut near: Vec<(f32, Vec3)> = vec![];
-    for k in around(&cells, at.xz(), FILL_NEAR + 30.0) {
+    for k in around(&doors.rooms, at.xz(), FILL_NEAR + 30.0) {
         let r = &layout.rooms[k as usize];
         for room in &r.rooms {
             let (mx, mz) = ((room.x.0 + room.x.1) / 2.0, (room.z.0 + room.z.1) / 2.0);

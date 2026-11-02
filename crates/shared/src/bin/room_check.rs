@@ -10,8 +10,9 @@
 //! What it checks: every door has the street's routes at it; every ground-floor room can be reached
 //! from a door; everything indoors that loot stands on can be reached; a walker goes door to room to
 //! stairs to roof in 60 buildings, and how much of that walk was lost to walls is reported, as
-//! sticking is what a player would feel; a bot set on every 10th roof gets down to the street
-//! within 30 s by `way_down` alone. It exits with a failure if any of that doesn't hold.
+//! sticking is what a player would feel; a bot set on every 10th roof gets down the stairs within
+//! 30 s by `way_down` alone, onto a floor the bots' routes lead out of. It exits with a failure if
+//! any of that doesn't hold.
 use avian3d::prelude::*;
 use bevy::{ecs::message::Messages, prelude::*, time::TimeUpdateStrategy};
 use shared::{
@@ -111,7 +112,7 @@ fn walk(app: &mut App, way: &[(Vec2, f32)], trace: bool) -> Walked {
 }
 
 /// Sets a walker on the roof, and lets `way_down` take it to the street.
-fn come_down(app: &mut App, r: &Interior) -> (bool, f32, Vec3) {
+fn come_down(app: &mut App, r: &Interior, floor: &StreetFloor) -> (bool, f32, Vec3) {
     // Mid-roof, away from the stair room.
     let z = r.stair.map_or(r.d / 2.0, |s| (s.z.0 - 1.0).max(1.0) / 2.0 + 0.5);
     let start = r.at(r.w / 2.0, r.roof + HALF_HEIGHT + 0.1, z);
@@ -126,11 +127,11 @@ fn come_down(app: &mut App, r: &Interior) -> (bool, f32, Vec3) {
         if std::env::var("ONLY").is_ok() && (seconds * 2.0f32).fract() < 0.02 {
             println!("    t {seconds:.1} local {:.2} y {:.2} heading {:.2?}", r.local(pos.xz()), pos.y, nav::way_down(layout, pos).map(|p| r.local(p)));
         }
-        if pos.y - HALF_HEIGHT - layout.terrain.height(pos.x, pos.z) < 1.5 {
-            down = true;
+        let Some(p) = nav::way_down(layout, pos) else {
+            // Down: from where it stands, the floor must know the way on, as it does for a bot.
+            down = pos.y - HALF_HEIGHT - layout.terrain.height(pos.x, pos.z) < 1.5 && floor.snap(pos.xz(), 2.0).is_some_and(|q| floor.reachable(q));
             break;
-        }
-        let Some(p) = nav::way_down(layout, pos) else { break };
+        };
         let d = p - pos.xz();
         {
             let mut intent = app.world_mut().get_mut::<PlayerIntent>(id).expect("walker");
@@ -296,9 +297,10 @@ fn main() {
                 unreached += 1;
                 println!("  upstairs loot at {p:.1} in no room that leads to the stairs");
             }
-        } else if !floor.snap(p.xz(), 1.2).is_some_and(|q| floor.is_indoors(q)) {
+        } else if !floor.is_indoors(p.xz()) {
             unreached += 1;
-            println!("  loot at {p:.1} is off the floor the bots can reach");
+            let room = r.rooms.iter().find(|m| m.storey == 0 && r.local(p.xz()).x > m.x.0 - 0.1 && r.local(p.xz()).x < m.x.1 + 0.1 && r.local(p.xz()).y > m.z.0 - 0.1 && r.local(p.xz()).y < m.z.1 + 0.1);
+            println!("  loot at {p:.1} is off the floor the bots can reach: building {}, local {:.1}, room {:.1?} {:.1?} {:?}", map.rooms.iter().position(|q| std::ptr::eq(q, r)).unwrap_or(0), r.local(p.xz()), room.map(|m| m.x), room.map(|m| m.z), room.map(|m| m.plan));
         }
     }
     println!("loot indoors: {indoors}, {upstairs} of it upstairs, {unreached} out of reach");
@@ -342,7 +344,7 @@ fn main() {
     };
     let (mut down, mut longest) = (0, 0.0f32);
     for &k in &downs {
-        let (done, s, end) = come_down(&mut app, &map.rooms[k]);
+        let (done, s, end) = come_down(&mut app, &map.rooms[k], &floor);
         if done {
             down += 1;
             longest = longest.max(s);
