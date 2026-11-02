@@ -19,6 +19,8 @@ const OUT: &str = "TAPAK GAYE";
 const KILLS: &str = "KILLS";
 const DAMAGE: &str = "DAMAGE";
 const TIME: &str = "TIME";
+/// How wide a win title may run, of a 900-high window.
+const TITLE_ROOM: f32 = 840.0;
 
 fn with_weapon(weapon: &str) -> String {
     format!("{weapon} se")
@@ -153,7 +155,8 @@ fn spawn(
         ))
         .with_children(|c| {
             if won {
-                c.spawn(theme::painted(pick("win.title"), &fonts.title, 100.0, MUSTARD));
+                let title = pick("win.title");
+                c.spawn((theme::painted(title.clone(), &fonts.title, title_size(&title), MUSTARD), TextLayout { linebreak: LineBreak::NoWrap, ..default() }));
                 c.spawn(theme::line(pick("win.sub"), &fonts.body, 27.0, CREAM));
                 c.spawn((Node { column_gap: u(52.0), margin: UiRect::top(u(12.0)), ..default() }, Pickable::IGNORE)).with_children(|row| {
                     stats(row, &fonts, &numbers, MUSTARD, CREAM);
@@ -200,6 +203,12 @@ fn spawn(
             c.commands().entity(again).insert(InteractionDisabled);
         });
     });
+}
+
+/// A win card's title on one line, however long, over the scrim's dark side of the window: the title
+/// font's letters average 0.64 of its size at their widest.
+fn title_size(title: &str) -> f32 {
+    (TITLE_ROOM / (0.64 * title.chars().count() as f32)).min(100.0)
 }
 
 fn stats(row: &mut ChildSpawnerCommands, fonts: &Fonts, numbers: &[(String, &str)], number: Color, label: Color) {
