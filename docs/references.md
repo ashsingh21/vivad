@@ -99,9 +99,9 @@ upper limb toward the thumb, edge or bow's back along the hand); see `crates/gam
 | studio_small_09 HDRI (2k) | [Poly Haven](https://polyhaven.com/a/studio_small_09) | CC0 | Preview renders (alternative) |
 
 | Ultra surface scans (plaster, asphalt, concrete and others, listed in `assets/textures/ultra/sources.json`) | [Poly Haven](https://polyhaven.com) | CC0 | Ultra materials on the city maps (`assets/textures/ultra/`) |
-| Leaf scans LeafSet013, 022, 023 and 024 (2K) | [ambientCG](https://ambientcg.com/view?id=LeafSet023) | CC0 | Trees' and bushes' leaf atlas (`tools/blender/nature/leaf_atlas.py`, `assets/models/textures/leaf_atlas_*.png`) |
 | MPFB (MakeHuman plugin for Blender) | [extensions.blender.org/add-ons/mpfb](https://extensions.blender.org/add-ons/mpfb/) | GPL (tool only); generated humans are CC0 | Character base bodies, rig (`game_engine`) |
 | LGDuel's bot aim (`crates/bot/src/lib.rs`), adapted in `crates/shared/src/sim/aim.rs` | [github.com/s0pk/lgduel](https://github.com/s0pk/lgduel) | MIT, notice kept in the file | How bots turn and see: a limited turn speed and a late sight of targets |
+| Leaf scans LeafSet013, 022, 023 and 024 (2K) | [ambientCG](https://ambientcg.com/view?id=LeafSet023) | CC0 | Trees' and bushes' leaf atlas (`tools/blender/nature/leaf_atlas.py`, `assets/models/textures/leaf_atlas_*.png`) |
 | MakeHuman system assets (`makehuman_system_assets_cc0.zip`, sha256 `b542127a…0107`) | [makehumancommunity.org](https://static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html) | CC0 | Body proxies, skin detail (re-toned), eyes, brows, lashes, hair (short04, braid01) |
 | "Male classic jeans", punkduck, MakeHuman community pack pants02 | [asset packs](https://static.makehumancommunity.org/assets/assetpacks.html) | CC-BY 4.0: credit needed | Man's jeans, recoloured, top cut away under the polo |
 | "Running shoes 01", punkduck, MakeHuman community pack shoes02 | [asset packs](https://static.makehumancommunity.org/assets/assetpacks.html) | CC-BY 3.0: credit needed | Man's shoes, recoloured |
