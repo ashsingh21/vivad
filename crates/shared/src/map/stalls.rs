@@ -6,7 +6,8 @@
 //! Each table is one box, and the boxes of a patch of street are one compound collider
 //! (`Rows::patches`): the rows are thousands of tables and a few hundred colliders. The street floor
 //! draws them (`StreetFloor::new`), so bots walk round them; bullets, sight and vehicles meet them as
-//! they meet any wall. A table is a little over a crouched warrior's head from where it counts.
+//! they meet any wall. A table stands as high as what is heaped on it, which hides a warrior crouched
+//! behind it from anyone standing and shows the head and shoulders of one standing.
 //!
 //! What keeps a row from shutting anything: nothing stands on a door's way out, near a bay (a parked
 //! vehicle has to get out again), on a bridge or its ramps, or on the loot, a row leaves the
@@ -685,7 +686,7 @@ pub struct Report {
     pub lanes_narrow: usize,
     /// Tables with less than a warrior's way between them and a shop front.
     pub shop_ways_narrow: usize,
-    /// Walls too long, and the longest.
+    /// Unbroken walls of tables longer than `WALL` allows, give or take a table.
     pub too_long: usize,
 }
 
