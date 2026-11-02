@@ -287,8 +287,49 @@ def paint_bullet():
     put_pixels(img, a)
 
 
+def paint_jeep():
+    """An army star on the bonnet, its serial numbers either side and the maker's name in a corner go.
+    The plank of a bumper becomes the steel one a real one has, the tyres black rubber."""
+    img = image_named("Image_0")
+    a = pixels(img)
+    h = a.shape[0]
+    clone(a, (24, 515, 128, 619), 84, 0, oval=True)
+    clone(a, (78, 478, 142, 510), 0, 32)
+    clone(a, (78, 628, 142, 660), 0, -32)
+    a[h - 990 : h - 850, 930:990, :3] = a[h - 900, 1010, :3]
+    # The bonnet came dark and the tub light.
+    hue, sat, val = hsv_arrays(a[..., :3].reshape(-1, 3).astype(np.float64))
+    olive = ((hue > 0.17) & (hue < 0.38) & (sat > 0.16) & (val > 0.12) & (val < 0.8)).reshape(a.shape[:2])
+    even(a, olive, (0.31, 0.34, 0.23))
+    hull = next(o for o in meshes() if o.name.startswith("hull"))
+    plank = texels(img, hull, in_box(-0.8, 1.3, 0.37, 0.8, 1.7, 0.6))
+    lum = a[..., :3].mean(2)[plank]
+    a[plank, :3] = np.array((0.070, 0.078, 0.052))[None] * (0.45 + 1.6 * lum)[:, None]
+    wheel = next(o for o in meshes() if o.name.startswith("wheel"))
+    co = np.array([v.co for v in wheel.data.vertices])
+    mid = (co.min(0) + co.max(0)) / 2
+    r = (co.max(0) - co.min(0))[1] / 2
+    tyre = texels(img, wheel, lambda c: np.hypot(c[:, 1] - mid[1], c[:, 2] - mid[2]) > 0.71 * r)
+    a[tyre, :3] = a[tyre, :3].mean(1, keepdims=True) * 0.34
+    put_pixels(img, a)
+
+
 CFG = {
     "auto": dict(src="auto/tuk_tuk_rikshaw__0bdfdf/scene.gltf", turn=180, length=2.72, body=9000, paint=paint_auto),
+    # A toon shell, a shadow card, and three guns on the bonnet and wings (the model is a war game's).
+    # It drives on the left, too.
+    "gaadi_khuli": dict(src="open_jeep/jeep_willys__a28600/model.glb", turn=0, length=3.33, body=9000, drop=r"^(Outline|Plane001)", wheels=r"^wheel\d", paint=paint_jeep, sides=28, rough=0.55, mirror=True, strip=(
+        (-0.40, 0.28, 1.012, 0.40, 0.62, 1.30),
+        (-0.40, 0.28, 1.0335, 0.40, 1.52, 1.30),
+        (-0.28, 1.15, 1.01, -0.20, 1.32, 1.05),
+        (0.20, 1.15, 1.01, 0.28, 1.32, 1.05),
+        (-0.82, 0.48, 0.856, -0.47, 1.45, 1.13),
+        (0.47, 0.48, 0.856, 0.82, 1.45, 1.13),
+        (-0.82, 0.63, 0.75, -0.59, 0.72, 0.98),
+        (0.59, 0.63, 0.75, 0.82, 0.72, 0.98),
+    ), spare=((-0.65, -1.70, 0.55, 0.10, -1.445, 1.34), (-0.2675, -1.5575, 0.9429)),
+        panes=(((-0.5129, 0.2919, 1.1849), (-0.0232, 0.2919, 1.1849), (-0.0232, 0.1738, 1.5085), (-0.5129, 0.1738, 1.5085)),
+               ((0.0232, 0.2919, 1.1849), (0.5129, 0.2919, 1.1849), (0.5129, 0.1738, 1.5085), (0.0232, 0.1738, 1.5085)))),
     "scooter": dict(src="scooter/honda_smart_dio_z4_2006_1__ef6060/model.glb", turn=-90, length=1.78, body=11000, paint=paint_scooter),
     "commuter": dict(src="commuter_bike/pulsar_135_ls_2__accbf2/model.glb", turn=0, length=2.02, body=12000, drop=r"^placa", level=True),
     "bullet": dict(src="heavy_bike/classic_motorcycle__f246ff/model.glb", turn=None, length=2.14, body=14000, paint=paint_bullet, level=True),
