@@ -55,7 +55,9 @@ fn main() {
     }
     if args.first().is_some_and(|a| a == "--at") {
         let n: Vec<f32> = args[1..].iter().map(|a| a.parse().expect("--at x z radius")).collect();
-        here(&map, bevy::math::Vec2::new(n[0], n[1]), n[2]);
+        let at = bevy::math::Vec2::new(n[0], n[1]);
+        here(&map, at, n[2]);
+        print!("{}", floor.sketch(at - bevy::math::Vec2::splat(n[2]), at + bevy::math::Vec2::splat(n[2])));
         return;
     }
     if args.first().is_some_and(|a| a == "--line") {

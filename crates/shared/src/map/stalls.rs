@@ -10,9 +10,10 @@
 //!
 //! What keeps a row from shutting anything: nothing stands on a door's way out, near a bay (a parked
 //! vehicle has to get out again), on a bridge or its ramps, or on the loot, a row leaves the
-//! carriageway clear, and no unbroken wall of tables runs longer than `WALL`: `cut_walls` opens a way
-//! through it, across both rows, whatever line the road takes. `report` measures all of that on the
-//! finished map, and `ncr_map_check` and a test fail if any of it stops being so.
+//! carriageway clear and a way along the shop fronts, and no unbroken wall of tables runs longer than
+//! `WALL`: `cut_walls` opens a way through it, across both rows, whatever line the road takes.
+//! `report` measures all of that on the finished map, and `ncr_map_check` and a test fail if any of it
+//! stops being so.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -210,6 +211,11 @@ impl Stall {
     /// Which way it faces, on the ground.
     pub fn facing(&self) -> Vec2 {
         (Quat::from_rotation_y(self.yaw) * Vec3::NEG_Z).xz()
+    }
+
+    /// Which way the shops lie: behind a first row, before the second, which faces them.
+    fn shop_side(&self) -> Vec2 {
+        if self.first { -self.facing() } else { self.facing() }
     }
 
     /// The solid box of a table.
@@ -477,6 +483,15 @@ fn lay_rows(g: &Ground, rows: &mut Rows) {
     }
 }
 
+/// Takes out a table that leaves less than a warrior's way between it and a shop front, at either
+/// end of it as well as its middle.
+fn keep_walkways(g: &Ground, stalls: &mut Vec<Stall>) {
+    stalls.retain(|s| {
+        let (f, p) = (s.shop_side(), s.pos.xz());
+        s.kind != RowKind::Table || [-1.1, 0.0, 1.1].iter().all(|k| !g.built(p + f.perp() * *k + f * (s.half().y + PASS)))
+    });
+}
+
 /// The nearest two tables' footprints come to each other, near enough: the largest gap on any of
 /// their edges' axes, which is never more than the true one.
 fn apart(a: &Stall, b: &Stall) -> f32 {
@@ -637,6 +652,7 @@ pub(super) fn lay(map: &mut MapLayout) {
     let loot = spots.map(|p| ((p.x / 3.0).floor() as i32, (p.z / 3.0).floor() as i32)).collect();
     let ground = Ground { map, floor: &floor, busy: Busy::of(map), buildings, loot };
     lay_rows(&ground, &mut rows);
+    keep_walkways(&ground, &mut rows.stalls);
     keep_lanes(map, &mut rows.stalls);
     cut_walls(&mut rows.stalls);
     open_lanes(map, &mut floor, &mut rows.stalls);
@@ -667,13 +683,15 @@ pub struct Report {
     pub no_way_round: usize,
     /// Tables on the road with less than `LANE` of open road before them.
     pub lanes_narrow: usize,
+    /// Tables with less than a warrior's way between them and a shop front.
+    pub shop_ways_narrow: usize,
     /// Walls too long, and the longest.
     pub too_long: usize,
 }
 
 impl Report {
     pub fn failures(&self) -> usize {
-        self.on_doors + self.on_bays + self.on_bridges + self.on_loot + self.doors_shut + self.rooms_shut + self.bays_shut + self.no_way_round + self.lanes_narrow + self.too_long
+        self.on_doors + self.on_bays + self.on_bridges + self.on_loot + self.doors_shut + self.rooms_shut + self.bays_shut + self.no_way_round + self.lanes_narrow + self.shop_ways_narrow + self.too_long
     }
 }
 
@@ -746,6 +764,18 @@ pub fn report(map: &MapLayout, floor: &StreetFloor) -> Report {
         out.lanes_narrow += !open as usize;
         if !open {
             trace(&format!("little road before the table at {:.1}\n{}", s.pos.xz(), floor.sketch(s.pos.xz() - Vec2::splat(14.0), s.pos.xz() + Vec2::splat(14.0))));
+        }
+    }
+    // The pavement: from any part of a table's shop side, a way along the fronts.
+    for s in &tables {
+        let (f, p) = (s.shop_side(), s.pos.xz());
+        let narrow = [-1.1, 0.0, 1.1].iter().any(|k| {
+            let q = p + f.perp() * *k + f * (s.half().y + PASS);
+            !floor.walkable(q) && !table_at(q) && super::compose::built(map, q)
+        });
+        out.shop_ways_narrow += narrow as usize;
+        if narrow {
+            trace(&format!("no way along the shops behind the table at {:.1}\n{}", p, floor.sketch(p - Vec2::splat(14.0), p + Vec2::splat(14.0))));
         }
     }
     out

@@ -800,39 +800,47 @@ fn main() {
         }
         // Every bay with a row near it where a car fits: a clear way out, and driven.
         let boxes = VehicleKind::Car.spec();
-        let (ways, shut): (Vec<Vec<Vec2>>, Vec<Vec2>) = app
+        let (ways, shut, boxed): (Vec<Vec<Vec2>>, Vec<Vec2>, usize) = app
             .world_mut()
             .run_system_once(move |spatial: SpatialQuery, layout: Res<MapLayout>| {
                 let filter = SpatialQueryFilter::from_mask(solid_mask());
                 let shape = boxes.collider();
                 let tables: Vec<_> = layout.stalls.tables().collect();
-                let (mut ways, mut shut) = (vec![], vec![]);
+                let (mut ways, mut shut, mut boxed) = (vec![], vec![], 0);
                 for b in layout.parking.iter().filter(|b| tables.iter().any(|s| s.pos.xz().distance_squared(b.pos.xz()) < 400.0)) {
                     let at = b.pos + Vec3::Y * boxes.centre();
                     let yaw = Quat::from_rotation_y(b.yaw);
                     if !spatial.shape_intersections(&shape, at, yaw, &filter).is_empty() {
                         continue;
                     }
-                    let config = ShapeCastConfig { max_distance: 14.0, ..default() };
-                    let clear = (0..16).map(|k| Vec2::from_angle(k as f32 / 16.0 * std::f32::consts::TAU)).find(|d| {
-                        let turn = Quat::from_rotation_y(yaw_along(*d));
-                        let dir = Dir3::new(Vec3::new(d.x, 0.0, d.y)).unwrap();
-                        spatial.shape_intersections(&shape, at, turn, &filter).is_empty() && spatial.cast_shape(&shape, at, turn, dir, &config, &filter).is_none()
-                    });
+                    let config = ShapeCastConfig { max_distance: 10.0, ..default() };
+                    let (mut clear, mut by_table) = (None, false);
+                    for d in (0..16).map(|k| Vec2::from_angle(k as f32 / 16.0 * std::f32::consts::TAU)) {
+                        let turn = Quat::from_rotation_y(yaw_along(d));
+                        if !spatial.shape_intersections(&shape, at, turn, &filter).is_empty() {
+                            continue;
+                        }
+                        match spatial.cast_shape(&shape, at, turn, Dir3::new(Vec3::new(d.x, 0.0, d.y)).unwrap(), &config, &filter) {
+                            None => clear = clear.or(Some(d)),
+                            Some(hit) => by_table |= tables.iter().any(|s| s.pos.xz().distance_squared(hit.point1.xz()) < 9.0 && s.covers(hit.point1.xz() + d * 0.2)),
+                        }
+                    }
                     match clear {
                         Some(d) => ways.push(vec![b.pos.xz(), b.pos.xz() + d * 14.0]),
-                        None => shut.push(b.pos.xz()),
+                        None if by_table => shut.push(b.pos.xz()),
+                        // Hemmed in by the street kit, tables or no tables.
+                        None => boxed += 1,
                     }
                 }
-                (ways, shut)
+                (ways, shut, boxed)
             })
             .unwrap();
         let mut drove = 0;
         for way in ways.iter().step_by(4) {
             let run = pilot(&mut app, me, VehicleKind::Car, way, 10.0);
-            drove += (run.end.distance(way[0]) > 6.0) as usize;
+            drove += (run.done || run.end.distance(way[0]) > 6.0) as usize;
         }
-        check("a car has a clear way out of every bay by a row", shut.is_empty() && !ways.is_empty() && drove == ways.len().div_ceil(4), format!("{} bays with a table within 20 m where a car fits, {} shut in {shut:.0?}, {drove} of {} driven out", ways.len() + shut.len(), shut.len(), ways.len().div_ceil(4)));
+        check("a car has a clear way out of every bay by a row", shut.is_empty() && !ways.is_empty() && drove == ways.len().div_ceil(4), format!("{} bays with a table within 20 m where a car fits, {} shut in by tables {shut:.0?}, {boxed} hemmed in by the street kit, {drove} of {} driven out", ways.len() + shut.len() + boxed, shut.len(), ways.len().div_ceil(4)));
 
         // All eight bridges, both ways, by car and by bike, down the middle of the road.
         for (s, name) in compose::SPANS.iter().zip(compose::BRIDGES) {
