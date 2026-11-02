@@ -2,9 +2,10 @@
 
 blender -b -P tools/blender/characters/human.py -- male|female [--stage build|full]
 
-Pipeline: MPFB body + game_engine rig + generic proxy -> garments grown from the body's own
-topology (so they inherit its bone weights) -> jewellery and turban -> hidden body faces removed
--> head subdivided, eyes split (head.py) -> procedural materials -> bake one texture set per part
+Pipeline: MPFB body + game_engine rig + generic proxy -> MakeHuman community clothes fitted by MPFB
+(so they inherit the body's bone weights; outfits.py, needs research/characters/scripts/fetch_mh.sh)
+-> hidden body faces removed -> head subdivided, eyes split (head.py) -> procedural materials and
+the garments' own textures -> bake one texture set per part
 (head, body, outfit, eyes, mouth) + alpha hair cards -> four LODs ->
 assets/models/characters/<variant>_parts.glb, 4K head sources in build/textures. See finish.py.
 
@@ -45,10 +46,13 @@ VARIANTS = {
         # MakeHuman macros (0..1). Lean, athletic warrior; mixed ancestry sliders give South Asian features.
         "macro": {"gender": 1.0, "age": 0.5, "muscle": 0.78, "weight": 0.52, "proportions": 0.75, "height": 0.58,
                   "cupsize": 0.5, "firmness": 0.5, "race": {"asian": 0.22, "caucasian": 0.48, "african": 0.30}},
+        # The flesh on those bones: an everyday body, set after rigging so the rig and every clip stay.
+        "flesh": {"muscle": 0.42, "weight": 0.5},
         "proxy": "proxymeshes/male_generic/male_generic.proxy",
         "skin": "skins/young_african_male/young_african_male.mhmat",
-        "hair": "hair/short02/short02.mhclo",
+        "hair": "hair/short04/short04.mhclo",
         "brows": "eyebrows/eyebrow006/eyebrow006.mhclo",
+        "brow_strands": "mindfront_eyebrows_05",
         "eyes": "brown",
         # Face detail targets (MPFB data/targets/<group>/<name>), weight 0..1: a narrower, longer
         # nose with a slight bridge, finer lips, eyes opened a little.
@@ -61,10 +65,12 @@ VARIANTS = {
     "female": {
         "macro": {"gender": 0.0, "age": 0.5, "muscle": 0.62, "weight": 0.48, "proportions": 0.75, "height": 0.52,
                   "cupsize": 0.45, "firmness": 0.6, "race": {"asian": 0.22, "caucasian": 0.48, "african": 0.30}},
+        "flesh": {"muscle": 0.38, "weight": 0.54},
         "proxy": "proxymeshes/female_generic/female_generic.proxy",
         "skin": "skins/young_african_female/young_african_female.mhmat",
-        "hair": "hair/long01/long01.mhclo",
+        "hair": "hair/braid01/braid01.mhclo",
         "brows": "eyebrows/eyebrow010/eyebrow010.mhclo",
+        "brow_strands": "mindfront_eyebrows_02",
         "eyes": "brown",
         "face": {"nose/nose-scale-horiz-decr": 0.7, "nose/nose-flaring-decr": 0.9, "nose/nose-point-width-decr": 0.7,
                  "mouth/mouth-lowerlip-volume-decr": 0.5, "mouth/mouth-upperlip-volume-decr": 0.5, "mouth/mouth-scale-horiz-decr": 0.2,
@@ -84,10 +90,14 @@ TARGETS = LocationService.get_mpfb_data("targets")
 def build_body(cfg):
     hs = mpfb()
     body = hs.create_human(macro_detail_dict=cfg["macro"])
+    from bl_ext.blender_org.mpfb.entities.objectproperties import HumanObjectProperties
     from bl_ext.blender_org.mpfb.services.targetservice import TargetService
     for name, w in cfg.get("face", {}).items():
         TargetService.load_target(body, os.path.join(TARGETS, f"{name}.target.gz"), weight=w)
     rig = hs.add_builtin_rig(body, "game_engine")
+    for name, value in cfg.get("flesh", {}).items():
+        HumanObjectProperties.set_value(name, value, entity_reference=body)
+    TargetService.reapply_macro_details(body)
     proxy = hs.add_mhclo_asset(os.path.join(MPFB_DATA, cfg["proxy"]), body, asset_type="Proxymeshes", subdiv_levels=0)
     hs.set_character_skin(os.path.join(MPFB_DATA, cfg["skin"]), body, skin_type="GAMEENGINE")
     parts = {"proxy": proxy}
@@ -113,7 +123,7 @@ def bone_weight_map(obj):
     return out
 
 
-def delete_hidden_body(proxy, covers, gap=0.035):
+def delete_hidden_body(proxy, covers, gap=0.05):
     """Delete body faces whose every vertex is covered by a garment within `gap` along its normal.
     Saves triangles and prevents skin poking through cloth when animated."""
     trees = []
@@ -149,9 +159,11 @@ def main():
     body, rig, parts = build_body(cfg)
     proxy = parts["proxy"]
     ctx = garments.BodyContext(proxy, rig, bone_weight_map(proxy))
+    ctx.body, ctx.parts = body, parts
     ctx.brow_top = max((parts["eyebrows"].matrix_world @ v.co).z for v in parts["eyebrows"].data.vertices)
     items = cfg["outfit"](ctx)          # list of (object, role) where role in {"cover", "accessory", "hair_replace"}
     items += face.decorate(variant, proxy, parts, body, ctx)
+    proxy["brows"] = face.brow_mask(proxy, body, os.path.join(outfits.PACKS, "eyebrows01", "x", "eyebrows", cfg["brow_strands"], f"{cfg['brow_strands']}.mhclo")).name
     if any(role == "hair_replace" for _, role in items):
         # Short hair shows below the turban's lower edge (no bare scalp); the rest is inside it.
         cut = face.trim_hair(parts["hair"], ctx.brow_top + 0.02)

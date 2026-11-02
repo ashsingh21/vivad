@@ -100,8 +100,11 @@ upper limb toward the thumb, edge or bow's back along the hand); see `crates/gam
 
 | Ultra surface scans (plaster, asphalt, concrete and others, listed in `assets/textures/ultra/sources.json`) | [Poly Haven](https://polyhaven.com) | CC0 | Ultra materials on the city maps (`assets/textures/ultra/`) |
 | MPFB (MakeHuman plugin for Blender) | [extensions.blender.org/add-ons/mpfb](https://extensions.blender.org/add-ons/mpfb/) | GPL (tool only); generated humans are CC0 | Character base bodies, rig (`game_engine`) |
-| MakeHuman system assets (`makehuman_system_assets_cc0.zip`, sha256 `b542127a…0107`) | [makehumancommunity.org](https://static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html) | CC0 | Body proxies, skin detail (re-toned), eyes, brows, lashes, hair (long01, short02) |
 | LGDuel's bot aim (`crates/bot/src/lib.rs`), adapted in `crates/shared/src/sim/aim.rs` | [github.com/s0pk/lgduel](https://github.com/s0pk/lgduel) | MIT, notice kept in the file | How bots turn and see: a limited turn speed and a late sight of targets |
+| MakeHuman system assets (`makehuman_system_assets_cc0.zip`, sha256 `b542127a…0107`) | [makehumancommunity.org](https://static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html) | CC0 | Body proxies, skin detail (re-toned), eyes, brows, lashes, hair (short04, braid01) |
+| "Male classic jeans", punkduck, MakeHuman community pack pants02 | [asset packs](https://static.makehumancommunity.org/assets/assetpacks.html) | CC-BY 4.0: credit needed | Man's jeans, recoloured, top cut away under the polo |
+| "Running shoes 01", punkduck, MakeHuman community pack shoes02 | [asset packs](https://static.makehumancommunity.org/assets/assetpacks.html) | CC-BY 3.0: credit needed | Man's shoes, recoloured |
+| Polo shirt, Namuhekam, pack shirts01; flapper dress, AEthelraed_Unraed, pack dress01; harem pants and cloth shoes, MRT (toigo), packs pants01 and shoes01; brows 02 and 05, Mindfront, pack eyebrows01 | [asset packs](https://static.makehumancommunity.org/assets/assetpacks.html) | CC0 | Polo; the dress cut into the woman's kurta; salwar; flat shoes; brow strands baked into the head |
 
 All other textures are generated: weapons and characters are baked from procedural Blender
 materials (`tools/blender/lib/`, `tools/blender/characters/finish.py`); leaf and bark textures are
@@ -109,16 +112,20 @@ drawn procedurally (`tools/blender/nature/textures.py`).
 
 ## Characters
 
-Generic male and female warriors, stylized realistic, warm brown South Asian skin.
-- Male: off-white dhoti with zari border and pleated fold, maroon kamarband, saffron angavastram,
-  red pagdi (crossed wraps, bandhani dots), gold bajuband, kada and hansuli.
-- Female: Maratha nauvari (nine-yard) saree worn for movement, nirya pleats, pallu, maroon choli,
-  gold kamarbandh, bangles, bajuband, silver payal, long centre-parted hair, bindi and kajal.
+Two everyday Delhi people, chosen from street photos and video (`research/characters/README.md`):
+no real person's face or body, warm brown South Asian skin, softer bodies than the rig's build.
+- Man: plain maroon polo, indigo jeans, running shoes, a black school bag (`outfits.backpack`,
+  our own, rigid on `spine_03`), short side-parted hair, stubble.
+- Woman: plain magenta kurta (MakeHuman's flapper dress cut at the knee, slit at the sides),
+  cream salwar (harem pants tucked in under the kurta), flat shoes, a long plait, kajal.
+- Clothes: MakeHuman community garments fitted by MPFB (`outfits.worn`); they need the packs from
+  `research/characters/scripts/fetch_mh.sh <dest>`, with `research/characters/downloads/makehuman`
+  as `<dest>`. `finish.fitted_material` recolours them.
 - Faces: MPFB detail targets (narrower nose and nostrils, a slight bridge on the male, finer
   lips, eyes a little larger and more open) over the race macros, in `human.py` VARIANTS.
-  `face.py` measures eyes and nose tip on the mesh and adds the male's moustache (a sculpted
-  tube on the lip) and stubble (a `beard` attribute the skin shader darkens), and trims his hair
-  to what shows below the pagdi. Check with `just faces` (exported GLB) or `just face-lab`.
+  `face.py` measures eyes and nose tip on the mesh, adds the male's stubble (a `beard` attribute
+  the skin shader darkens), paints the scalp under the hair, and bakes strand brows into the skin.
+  Check with `just faces` (exported GLB), `just face-lab` or `just lookbook`.
 - Rig: MPFB `game_engine` (53 bones). GLB faces +Z with origin at the feet; the game turns it to -Z.
 - Budget: LOD0 30k, LOD1 13.5k, LOD2 5.4k tris; one 2k opaque texture set + alpha hair cards.
 

@@ -1,12 +1,16 @@
 """Outfits: each returns [(object, role)], role in {"cover", "accessory", "hair_replace"}.
 
-Colours here are review colours; final cloth patterns (zari borders, bandhani dots, weave) are
-procedural and baked in finish.py.
+Panga's are MakeHuman community clothes fitted to the body (`worn`), chosen from what Delhi's streets
+wear (research/characters/README.md). The Vivad warriors' are grown from the body: colours there are
+review colours, and their cloth patterns (zari borders, bandhani dots, weave) are procedural and
+baked in finish.py.
 """
 
 import math
+import os
 
 import bmesh
+import bpy
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
@@ -106,139 +110,194 @@ def jewellery(ctx, items, *, armbands=True, kadas=1, anklets=False, neck=False, 
         items.append((tag(g.ring(ctx, "hansuli", "neck_01", 0.12, width=0.014, thick=0.011, offset=0.012, min_weight=0.3), metal, True, "gold"), "accessory"))
 
 
-# ------------------------------------------------------------------ Panga: today's street clothes
+# ------------------------------------------------------------------ Panga: real Delhi street clothes
 
-SHIRT_BLUE = (0.12, 0.42, 0.86)
-DENIM = (0.14, 0.22, 0.42)
-GAMCHHA_RED = (0.88, 0.12, 0.10)
-KAMEEZ_PINK = (0.90, 0.12, 0.46)
-SALWAR_CREAM = (0.92, 0.88, 0.78)
-DUPATTA_YELLOW = (0.99, 0.76, 0.10)
-STEEL = (0.72, 0.73, 0.75)
+# MakeHuman community packs, fetched by research/characters/scripts/fetch_mh.sh; credits in
+# docs/references.md.
+PACKS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "research", "characters", "downloads", "makehuman")
+
+# Strong plain colours: they read at distance and don't shimmer.
+POLO_MAROON = (0.52, 0.09, 0.14)
+JEANS_INDIGO = (0.16, 0.23, 0.38)
+SHOE_WHITE = (0.80, 0.79, 0.76)
+BAG_BLACK = (0.10, 0.11, 0.13)
+KURTA_MAGENTA = (0.60, 0.06, 0.30)
+SALWAR_CREAM = (0.90, 0.86, 0.76)
+FLATS_BROWN = (0.34, 0.19, 0.12)
 
 
-def upper_body(ctx, L, hem, sleeve, neck_front, neck_back, lower_sleeve=0.0):
-    """A top's face predicate: torso (and hips down to `hem`), sleeves to `sleeve` of the upper
-    arm (or into the forearm to `lower_sleeve`), and a neckline `neck_front` / `neck_back` below
-    the collarbone."""
-    def pred(vids):
-        for i in vids:
-            x, y, z = ctx.co[i]
-            arm = ctx.w(i, "upperarm_l", "upperarm_r")
-            fore = ctx.w(i, "lowerarm_l", "lowerarm_r")
-            side = "l" if x > 0 else "r"
-            if fore > 0.5:
-                s, _ = g.bone_param(ctx, f"lowerarm_{side}", Vector(ctx.co[i]))
-                if s > lower_sleeve:
-                    return False
-                continue
-            if arm > 0.5:
-                s, _ = g.bone_param(ctx, f"upperarm_{side}", Vector(ctx.co[i]))
-                if s > sleeve:
-                    return False
-                continue
-            if ctx.w(i, *(TORSO_GROUPS + ("thigh_l", "thigh_r"))) < 0.5 or z < hem:
-                return False
-            if z > L.clav - (neck_front if y < 0 else neck_back) + 0.03 * min(abs(x) / 0.1, 1.0) ** 2:
-                return False
-        return True
-    return pred
+def worn(ctx, pack, name, *, tint=None, detail=1.0, rough=0.8, normal=None):
+    """A MakeHuman community garment on this body. MPFB fits it from its .mhclo, which ties each
+    vertex to three body vertices, and copies the body's bone weights through the same tie, so it
+    follows any shape and every clip. See finish.fitted_material for `tint`, `detail` and `rough`;
+    `normal` names a normal map beside the garment that its .mhmat leaves out."""
+    from bl_ext.blender_org.mpfb.services.humanservice import HumanService
+    path = os.path.join(PACKS, pack, "x", "clothes", name, f"{name}.mhclo")
+    obj = HumanService.add_mhclo_asset(path, ctx.body, asset_type="Clothes", subdiv_levels=0, material_type="MAKESKIN")
+    for m in list(obj.modifiers):
+        if m.type != "ARMATURE":
+            obj.modifiers.remove(m)
+    tag(obj, tint or (0.8, 0.8, 0.8), kind="fitted")
+    obj["detail"], obj["rough"] = detail, rough
+    if tint:
+        obj["tint"] = tint
+    if normal:
+        obj["normal_map"] = bpy.data.images.load(os.path.join(os.path.dirname(path), normal), check_existing=True).name
+    return obj
+
+
+def tuck(obj, L, lo, hi, gap=0.006):
+    """Pull cloth in against the body from height `lo` up (all the way by `hi`), so a layer worn over
+    it doesn't get poked through: two garments fitted to one body each think they sit on the skin."""
+    for v in obj.data.vertices:
+        t = smoothstep(lo, hi, v.co.z)
+        if t > 0.0:
+            hit, normal = L.bvh.find_nearest(v.co)[:2]
+            v.co = v.co.lerp(hit + normal * gap, t)
+
+
+def hem_of(obj):
+    return min(v.co.z for v in obj.data.vertices)
+
+
+def flare(obj, L, lo, hi, out):
+    """Let cloth hang off the body: pushed out from its middle by `out` at height `lo`, by nothing
+    from `hi` up. Straight out, not along the normals, or a folded hem's two layers part."""
+    for v in obj.data.vertices:
+        away = Vector((v.co.x, v.co.y - L.hip_l.y, 0.0)).normalized()
+        v.co += away * out * smoothstep(hi, lo, v.co.z)
+
+
+def drop_fold(obj, L, top):
+    """A folded hem's inner layer pokes through the outer one once fitted: take it off, up to `top`."""
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    inner = []
+    for f in bm.faces:
+        c = f.calc_center_median()
+        if c.z < top and f.normal.dot(Vector((c.x, c.y - L.hip_l.y, 0.0))) < 0.0:
+            inner.append(f)
+    bmesh.ops.delete(bm, geom=inner, context="FACES")
+    bm.to_mesh(obj.data)
+    bm.free()
+
+
+def cut_above(obj, z):
+    """Take off the part of a garment that a layer over it hides for good."""
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bmesh.ops.delete(bm, geom=[f for f in bm.faces if min(v.co.z for v in f.verts) > z], context="FACES")
+    bm.to_mesh(obj.data)
+    bm.free()
+
+
+def block(ctx, name, centre, size, bone):
+    """A soft-cornered box of `size` (x, y, z), rigid on `bone`."""
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=2.0)
+    bmesh.ops.subdivide_edges(bm, edges=bm.edges[:], cuts=3, use_grid_fill=True)
+    soft = 0.4
+    for v in bm.verts:
+        # Part of the way from a cube to a sphere.
+        x, y, z = (c * c for c in v.co)
+        rounded = (math.sqrt(1 - soft * (b + c) / 2 + soft * soft * b * c / 3) * a for a, b, c in ((v.co.x, y, z), (v.co.y, x, z), (v.co.z, x, y)))
+        v.co = Vector(s * r / 2 for s, r in zip(size, rounded)) + centre
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    obj = g.new_object(name, me, ctx)
+    g.set_weight(obj, bone)
+    g.finish_cloth(obj, 0)
+    return obj
+
+
+def backpack(ctx, L, shirt):
+    """A school bag on the back, the thing the player looks at all game: rigid on the upper spine,
+    with straps over `shirt` that follow the body."""
+    back = L.surface(0.1, L.chest, front=False).y
+    front = L.surface(0.12, L.chest).y
+    top, bottom = L.clav - 0.02, L.waist - 0.01
+    mid = Vector((0.0, back + 0.085, (top + bottom) / 2))
+    size = (0.30, 0.14, top - bottom)
+    items = [(tag(block(ctx, "backpack", mid, size, "spine_03"), BAG_BLACK), "accessory")]
+    pocket = mid + Vector((0.0, 0.075, -0.075))
+    items.append((tag(block(ctx, "backpack_pocket", pocket, (0.23, 0.07, 0.17), "spine_03"), BAG_BLACK), "accessory"))
+    for side in (1.0, -1.0):
+        # Up from the bag, over the shoulder, down the chest and back under the arm.
+        marks = ((0.08, back + 0.03, top - 0.03), (0.10, back - 0.01, L.clav + 0.03), (0.115, back + 0.5 * (front - back), L.clav + 0.06), (0.125, front + 0.01, L.clav + 0.02),
+                 (0.14, front, L.clav - 0.07), (0.16, front, L.clav - 0.17), (0.20, back + 0.4 * (front - back), L.clav - 0.24), (0.17, back + 0.02, bottom + 0.09))
+        path, normals = [], []
+        centre = Vector((0.1, (front + back) / 2, L.chest))
+        for a, b in zip(marks, marks[1:]):
+            for k in range(4):
+                p = Vector(a).lerp(Vector(b), k / 4)
+                path.append(Vector((side * p.x, p.y, p.z)))
+                normals.append(Vector((side * (p.x - centre.x), p.y - centre.y, p.z - centre.z)).normalized())
+        strap = g.strip(ctx, f"backpack_strap_{'l' if side > 0 else 'r'}", path, [0.05] * len(path), normals=normals, thickness=0.005, shrink_to=shirt, shrink_offset=0.008)
+        items.append((tag(strap, BAG_BLACK), "accessory"))
+    return items
 
 
 def male_street(ctx):
-    """A half-sleeve checked shirt worn out over jeans and a belt, a chequered gamchha over the
-    right shoulder, a steel kada; his own hair."""
+    """The young man the street is full of: plain polo, jeans, running shoes, a backpack."""
     L = Landmarks(ctx)
-    items = []
-    waistline = L.waist - 0.03
-    shirt_hem = L.hip - 0.07
-    ankle = L.ankle + 0.035
+    polo = worn(ctx, "shirts01", "namuhekam_male_polo_shirt", tint=POLO_MAROON, normal="Polo_Normal_OpenGL.png")
+    jeans = worn(ctx, "pants02", "punkduck_male_classic_jeans", tint=JEANS_INDIGO)
+    tuck(jeans, L, hem_of(polo) - 0.06, hem_of(polo) - 0.01)
+    cut_above(jeans, hem_of(polo) + 0.015)
+    drop_fold(polo, L, hem_of(polo) + 0.07)
+    flare(polo, L, hem_of(polo), L.waist + 0.04, 0.014)
+    items = [(polo, "cover"), (jeans, "cover"),
+             (worn(ctx, "shoes02", "punkduck_running_shoes_01", tint=SHOE_WHITE, detail=0.7), "cover")]
+    return items + backpack(ctx, L, polo)
 
-    def jeans_offset(co, n):
-        t = (waistline - co.z) / (waistline - ankle)
-        return 0.008 + 0.006 * t + 0.008 * smoothstep(0.75, 1.0, t)
 
-    jeans = g.shell(ctx, "jeans", lambda v: all_in(ctx, v, LEG_GROUPS, ankle, waistline), jeans_offset, smooth=4,
-                    snap=g.z_snap(ankle, waistline))
-    items.append((tag(jeans, DENIM), "cover"))
-    belt = g.shell(ctx, "belt", lambda v: all_in(ctx, v, LEG_GROUPS, waistline - 0.035, waistline), lambda co, n: 0.016, smooth=3,
-                   thickness=0.005, snap=g.z_snap(waistline - 0.035, waistline))
-    items.append((tag(belt, (0.22, 0.12, 0.06)), "accessory"))
+def as_kurta(obj, L):
+    """The flapper dress is nearly a kurta: elbow sleeves, a straight fall. Take off its side sashes
+    (the strip of its texture left of u=0.25), cut the hem at the knee and open the sides up to the
+    hips, front and back panels parted a little, so they swing apart over a running leg."""
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    uv = bm.loops.layers.uv.active
+    sash = [f for f in bm.faces if sum(c[uv].uv.x for c in f.loops) / len(f.loops) < 0.25]
+    bmesh.ops.delete(bm, geom=sash, context="FACES")
+    knee, top, seam = L.knee + 0.03, L.hip - 0.04, L.hip_l.y
+    bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], plane_co=(0, 0, knee), plane_no=(0, 0, 1), clear_inner=True)
+    bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], plane_co=(0, seam, 0), plane_no=(0, 1, 0))
+    slit = [e for e in bm.edges if all(abs(v.co.y - seam) < 1e-4 and v.co.z < top for v in e.verts)]
+    bmesh.ops.split_edges(bm, edges=slit)
+    for v in bm.verts:
+        if v.co.z < top:
+            side = sum(f.calc_center_median().y - seam for f in v.link_faces)
+            v.co.y += math.copysign(0.025, side) * smoothstep(top, knee, v.co.z) * smoothstep(0.08, 0.0, abs(v.co.y - seam))
+    bm.to_mesh(obj.data)
+    bm.free()
+    return obj
 
-    # The shirt, loose, hanging over the belt and the top of the hips.
-    def shirt_offset(co, n):
-        below = smoothstep(waistline + 0.05, shirt_hem, co.z)
-        return 0.011 + 0.022 * below
-    shirt = g.shell(ctx, "shirt", upper_body(ctx, L, shirt_hem, 0.42, 0.06, 0.02), shirt_offset, smooth=3, thickness=0.003,
-                    edge_iters=20)
-    items.append((tag(shirt, SHIRT_BLUE), "cover"))
-    # The button placket down the front.
-    top_z = L.clav - 0.06
-    placket = [L.surface(0.0, top_z - (top_z - shirt_hem) * s, push=0.017) for s in [i / 10 for i in range(11)]]
-    items.append((tag(g.strip(ctx, "shirt_placket", placket, [0.028] * 11, thickness=0.003), SHIRT_BLUE), "accessory"))
 
-    # Gamchha thrown over the right shoulder: one end down the chest, the other down the back.
-    for k, front in enumerate((True, False)):
-        top = L.surface(-0.115, L.clav + 0.005, front=front, push=0.03)
-        length = 0.42 if front else 0.36
-        path = [top + Vector((0.01 * s, 0.0, -length * s)) for s in [i / 9 for i in range(10)]]
-        items.append((tag(g.strip(ctx, f"gamchha{k}", path, [0.16 + 0.03 * i / 9 for i in range(10)],
-                                  normals=[Vector((0, -1 if front else 1, 0))] * 10, thickness=0.003,
-                                  shrink_to=ctx.proxy, shrink_offset=0.028), GAMCHHA_RED), "accessory"))
-
-    jewellery(ctx, items, armbands=False, kadas=1, neck=False, metal=STEEL, metal_kind="silver")
-    return items
+def neat_plait(ctx, hair, L):
+    """MakeHuman's braid has a thick side fringe over one eye. Bring its cap in toward the skull and
+    comb what falls past the brow back up to a soft hairline, lower at the temples; the plait down
+    the back stays."""
+    skull = ctx.bone("head")[0]
+    for v in hair.data.vertices:
+        t = smoothstep(skull.z - 0.08, skull.z, v.co.z) * 0.4
+        if t > 0.0:
+            v.co = v.co.lerp(L.bvh.find_nearest(v.co)[0], t)
+        line = ctx.brow_top + 0.02 - 1.1 * max(0.0, abs(v.co.x) - 0.04)
+        v.co.z += max(0.0, line - v.co.z) * smoothstep(skull.y + 0.01, skull.y - 0.035, v.co.y)
 
 
 def female_street(ctx):
-    """Salwar kameez: a kameez with its front and back panels falling to the knee (slit at the
-    sides), a full salwar gathered at the ankles, a dupatta across the chest from the right hip over
-    the left shoulder and down the back; glass bangles and payal."""
+    """The commonest woman on the street: a plain kurta over a salwar, flat shoes, a long plait."""
     L = Landmarks(ctx)
-    items = []
-    waistline = L.waist - 0.02
-    hem = L.ankle + 0.05
-
-    def salwar_offset(co, n):
-        t = (waistline - co.z) / (waistline - hem)
-        loose = 0.01 + 0.04 * math.sin(math.pi * min(max(t, 0.0) * 0.95, 1.0))
-        inner = 1.0 - 0.6 * max(0.0, -n.x * math.copysign(1.0, co.x)) * smoothstep(L.hip, L.knee, co.z)
-        return loose * inner
-
-    salwar = g.shell(ctx, "salwar", lambda v: all_in(ctx, v, LEG_GROUPS, hem, waistline), salwar_offset, smooth=6,
-                     snap=g.z_snap(hem, waistline))
-    items.append((tag(salwar, SALWAR_CREAM), "cover"))
-
-    # The kameez: fitted through the body to the hips, three-quarter sleeves, round neck...
-    kameez_hem = L.hip - 0.05
-
-    def kameez_offset(co, n):
-        return 0.009 + 0.028 * smoothstep(waistline, kameez_hem, co.z)
-    kameez = g.shell(ctx, "kameez", upper_body(ctx, L, kameez_hem, 1.0, 0.07, 0.03, lower_sleeve=0.45), kameez_offset,
-                     smooth=3, thickness=0.003, edge_iters=20)
-    items.append((tag(kameez, KAMEEZ_PINK), "cover"))
-    # ...and below the hips to the knee, over the salwar (just outside it), with a narrow panel
-    # front and back closing the gap between the legs.
-    skirt = g.shell(ctx, "kameez_skirt", lambda v: all_in(ctx, v, LEG_GROUPS, L.knee + 0.03, kameez_hem + 0.03),
-                    lambda co, n: salwar_offset(co, n) + 0.014, smooth=6, snap=g.z_snap(L.knee + 0.03, kameez_hem + 0.03))
-    items.append((tag(skirt, KAMEEZ_PINK), "cover"))
-    for k, front in enumerate((True, False)):
-        sgn = -1.0 if front else 1.0
-        top = L.surface(0.0, kameez_hem, front=front) + Vector((0.0, sgn * 0.045, 0.02))
-        drop = kameez_hem - L.knee - 0.01
-        path = [top + Vector((0.0, sgn * 0.035 * s, -drop * s)) for s in [i / 9 for i in range(10)]]
-        items.append((tag(g.strip(ctx, f"kameez_panel{k}", path, [0.16 + 0.04 * i / 9 for i in range(10)],
-                                  normals=[Vector((0, -1 if front else 1, 0))] * 10, thickness=0.003), KAMEEZ_PINK), "accessory"))
-
-    items.append((tag(diagonal_sash(ctx, L, "dupatta", half_width=0.075, offset=0.016, z_min=waistline - 0.03, smooth=9),
-                      DUPATTA_YELLOW), "cover"))
-    back_top = L.surface(0.10, L.clav - 0.02, front=False, push=0.02)
-    fall = [back_top + Vector((0.02 * s, 0.0, -(L.clav - L.knee) * 0.62 * s)) for s in [i / 14 for i in range(15)]]
-    items.append((tag(g.strip(ctx, "dupatta_fall", fall, [0.16 + 0.06 * i / 14 for i in range(15)], normals=[Vector((0, 1, 0))] * 15,
-                              thickness=0.003, shrink_to=ctx.proxy, shrink_offset=0.03), DUPATTA_YELLOW), "accessory"))
-
-    jewellery(ctx, items, armbands=False, kadas=4, anklets=True, neck=False)
-    return items
+    kurta = as_kurta(worn(ctx, "dress01", "aethelraed_flapper_dress", tint=KURTA_MAGENTA, detail=0.05), L)
+    flare(kurta, L, hem_of(kurta), L.waist, 0.035)
+    salwar = worn(ctx, "pants01", "toigo_harem_pants", tint=SALWAR_CREAM, detail=0.05)
+    tuck(salwar, L, hem_of(kurta) - 0.1, hem_of(kurta) - 0.01)
+    cut_above(salwar, L.hip - 0.03)
+    neat_plait(ctx, ctx.parts["hair"], L)
+    return [(kurta, "cover"), (salwar, "cover"), (worn(ctx, "shoes01", "toigo_mj_cloth_shoes", tint=FLATS_BROWN, detail=0.8), "cover")]
 
 
 # ------------------------------------------------------------------ Vivad: the ancient warriors

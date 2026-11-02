@@ -1,8 +1,8 @@
 """Finish a character: procedural materials -> one baked texture set per part (+ alpha hair cards)
 -> four LODs -> skinned GLB, <variant>_parts.glb.
 
-Parts: head (with any sculpted facial hair), body (the skin below the neck), outfit (garments and
-jewellery), eyes, cornea (a glass cap, unbaked), mouth (teeth and tongue). Each is its own mesh and material on each LOD, named
+Parts: head, body (the skin below the neck), outfit (garments and jewellery), eyes, cornea (a glass
+cap, unbaked), mouth (teeth and tongue). Each is its own mesh and material on each LOD, named
 <variant>_<part>_LOD<k>, all skinned to the one rig. Hair, brows and lashes stay alpha-tested cards
 with their own small textures, named the same way.
 
@@ -24,8 +24,9 @@ import head as head_build
 from nodes import Graph, new_material
 
 # Target skin tone (sRGB) for South Asian warm brown, per variant.
-# Alpha cards: (part, tint sRGB, how far the texture is pulled to the tint).
-CARDS = (("hair", (0.045, 0.032, 0.026), 0.7), ("eyebrows", (0.035, 0.025, 0.02), 0.85), ("eyelashes", (0.03, 0.02, 0.02), 0.6))
+# Alpha cards: (part, tint sRGB, how far the texture is pulled to the tint, alpha cut).
+HAIR_TINT = (0.06, 0.045, 0.038)
+CARDS = (("hair", HAIR_TINT, 1.0, 0.5), ("eyebrows", (0.035, 0.025, 0.02), 0.85, 0.2), ("eyelashes", (0.03, 0.02, 0.02), 0.6, 0.5))
 
 SKIN_TONE = {"male": (0.66, 0.44, 0.31), "female": (0.71, 0.48, 0.35)}
 LIP_TONE = {"male": (0.42, 0.22, 0.20), "female": (0.48, 0.19, 0.20)}
@@ -33,16 +34,10 @@ LIP_TONE = {"male": (0.42, 0.22, 0.20), "female": (0.48, 0.19, 0.20)}
 CLOTH = {
     # name prefix: (base sRGB, border sRGB or None, pattern, border width m). Longer prefixes first:
     # a garment takes the first that its name starts with.
-    # Panga: modern desi clothes.
-    "shirt_placket": ((0.14, 0.26, 0.52), None, "check", 0.0),
-    "shirt": ((0.14, 0.26, 0.52), None, "check", 0.0),
-    "jeans": ((0.13, 0.19, 0.33), None, "denim", 0.0),
-    "belt": ((0.22, 0.12, 0.06), None, "weave", 0.0),
-    "gamchha": ((0.78, 0.10, 0.10), None, "check_fine", 0.0),
-    "kameez": ((0.74, 0.10, 0.38), (0.86, 0.64, 0.24), "buti", 0.012),
-    "salwar": ((0.92, 0.88, 0.78), None, "weave", 0.0),
-    "dupatta_fall": ((0.94, 0.70, 0.12), (0.74, 0.10, 0.38), "weave", 0.03),
-    "dupatta": ((0.94, 0.70, 0.12), (0.74, 0.10, 0.38), "weave", 0.025),
+    # Panga: what MakeHuman's clothes don't bring.
+    "backpack_strap": ((0.09, 0.10, 0.12), None, "weave", 0.0),
+    "backpack_pocket": ((0.15, 0.17, 0.21), None, "weave", 0.0),
+    "backpack": ((0.10, 0.11, 0.13), None, "weave", 0.0),
     # Vivad: the ancient warriors' clothes.
     "dhoti_fold": ((0.88, 0.85, 0.77), (0.72, 0.52, 0.18), "weave", 0.012),
     "dhoti": ((0.88, 0.85, 0.77), (0.72, 0.52, 0.18), "weave", 0.035),
@@ -77,6 +72,31 @@ def find_image(obj):
                 if n.type == "TEX_IMAGE" and n.image:
                     return n.image
     return None
+
+
+def find_maps(obj):
+    """(colour, normal) images of a MakeSkin material: either can come first, or be missing."""
+    colour, normal = None, None
+    for m in obj.data.materials:
+        for n in (m.node_tree.nodes if m and m.node_tree else ()):
+            if n.type == "TEX_IMAGE" and n.image:
+                names = f"{n.name} {n.label} {n.image.name}".lower()
+                if "norm" in names or "nrm" in names:
+                    normal = normal or n.image
+                elif "diffuse" in names or colour is None:
+                    colour = n.image
+    return colour, normal
+
+
+def image_brightness(img):
+    """The mean brightness of a texture as the shader reads it: byte images hand back sRGB."""
+    px = np.empty(img.size[0] * img.size[1] * 4, dtype=np.float32)
+    img.pixels.foreach_get(px)
+    px = px.reshape(-1, 4)
+    rgb = px[px[:, 3] > 0.5][:, :3]
+    if not img.is_float:
+        rgb = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
+    return float((rgb @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)).mean())
 
 
 # ------------------------------------------------------------------ materials
@@ -132,7 +152,7 @@ def head_material(variant, img, marks=None, age=0.5):
     """The face: `skin_base` and the region masks of `face.regions` (lips, blush over the blood-rich
     parts, darker sockets, shine on the T zone, pores coarse on the nose and cheeks and all but gone
     on the lids), then the marks `face.decorate` stored on the proxy (`marks`): stubble, kajal round
-    the eyes, a bindi."""
+    the eyes, the scalp under the hair."""
     m = new_material(f"{variant}_head_skin")
     g = Graph(m)
     co = g.texcoord("Object")
@@ -172,11 +192,12 @@ def head_material(variant, img, marks=None, age=0.5):
             # Bold along the upper lid, a fine line beneath.
             line = g.mul(line, g.add(0.35, g.mul(g.smooth(dz, -0.1 * rad, 0.2 * rad), 0.55)))
             col = g.mixc(line, col, (*srgb_to_lin((0.045, 0.03, 0.028)), 1))
-    if marks.get("bindi"):
-        d = g.vec("DISTANCE", co, tuple(marks["bindi"]))
-        dot = g.smooth(d, 0.0036, 0.0029)
-        col = g.mixc(dot, col, (*srgb_to_lin((0.55, 0.02, 0.05)), 1))
-        rough = g.mix(dot, rough, 0.45)
+    col = g.mixc(g.smooth(g.attr("scalp"), 0.15, 0.6), col, (*srgb_to_lin(HAIR_TINT), 1))
+    if marks.get("brows"):
+        uv = g.node("ShaderNodeUVMap", uv_map="src").outputs["UV"]
+        brow = g.node("ShaderNodeTexImage", {"Vector": uv}, image=bpy.data.images[marks["brows"]]).outputs["Color"]
+        col = g.mixc(g.mul(brow, 0.8), col, (*srgb_to_lin((0.05, 0.036, 0.03)), 1))
+        rough = g.mix(brow, rough, 0.8)
     g.principled(col, 0.0, rough, g.bump(height, 0.18, 0.0005))
     return m
 
@@ -204,17 +225,6 @@ def cornea_material(name):
     g = Graph(m)
     p = g.principled((0.0, 0.0, 0.0, 1.0), 0.0, 0.02)
     p.inputs["Alpha"].default_value = 0.08
-    return m
-
-
-def hair_mesh_material(name):
-    """Sculpted facial hair: near-black brown with fine strands running down the lip."""
-    m = new_material(name)
-    g = Graph(m)
-    co = g.texcoord("Object")
-    strands = g.noise(g.mapping(co, scale=(1, 1, 0.06)), 2200.0, detail=1.0)
-    col = g.mixc(g.mul(strands, 0.7), (*srgb_to_lin((0.045, 0.033, 0.027)), 1), (*srgb_to_lin((0.13, 0.095, 0.075)), 1))
-    g.principled(col, 0.0, g.add(0.62, g.mul(strands, 0.2)), g.bump(strands, 0.6, 0.0005))
     return m
 
 
@@ -284,6 +294,28 @@ def cloth_material(name, base_rgb, border_rgb, pattern, border_w):
     return m
 
 
+def fitted_material(name, img, normal, tint, detail, rough):
+    """A fitted garment from its own texture. With `tint` the texture gives only its light and dark:
+    its brightness over its own mean, so a dark texture can't drag the colour down (a plain multiply
+    turned the trial's red tee brown), then `detail` of that contrast over the tint; a printed
+    garment at a low `detail` goes plain."""
+    m = new_material(f"cloth_{name}")
+    g = Graph(m)
+    uv = g.node("ShaderNodeUVMap", uv_map="src").outputs["UV"]
+    col = g.node("ShaderNodeTexImage", {"Vector": uv}, image=img).outputs["Color"]
+    if tint is not None:
+        shade = g.mul(g.node("ShaderNodeRGBToBW", {"Color": col}).outputs["Val"], detail / image_brightness(img))
+        shade = g.add(shade, 1.0 - detail)
+        col = g.vec("MULTIPLY", g.combine(shade, shade, shade), srgb_to_lin(tint))
+    bent = None
+    if normal is not None:
+        normal.colorspace_settings.name = "Non-Color"
+        tex = g.node("ShaderNodeTexImage", {"Vector": uv}, image=normal)
+        bent = g.node("ShaderNodeNormalMap", {"Color": tex.outputs["Color"]}, uv_map="src").outputs["Normal"]
+    g.principled(col, 0.0, rough, bent)
+    return m
+
+
 def metal_material(name, rgb, rough=0.28, metallic=1.0):
     m = new_material(name)
     g = Graph(m)
@@ -300,15 +332,17 @@ def metal_material(name, rgb, rough=0.28, metallic=1.0):
 def tinted_image(name, img, tint_srgb, strength):
     """A copy of a card texture pulled toward `tint` (keeping its strand shading), packed so the
     glTF export carries the colour: the exporter can't follow a node recolour."""
-    import numpy as np
     w, h = img.size
     px = np.empty(w * h * 4, dtype=np.float32)
     img.pixels.foreach_get(px)
     px = px.reshape(-1, 4)
     lum = px[:, :3] @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
-    # Byte images hand back their stored (sRGB-encoded) values, so tint in sRGB.
+    # Its brightness over its own mean: blond or dark, every texture lands on the tint. Byte images
+    # hand back their stored (sRGB-encoded) values, so tint in sRGB.
+    solid = px[:, 3] > 0.5
+    shade = np.clip(lum / max(float(lum[solid].mean()) if solid.any() else 0.5, 1e-3), 0, 3.5)
     tint = np.array(tint_srgb, dtype=np.float32)
-    px[:, :3] = px[:, :3] * (1 - strength) + np.outer(lum * 1.8, tint) * strength
+    px[:, :3] = px[:, :3] * (1 - strength) + np.outer(shade, tint) * strength
     out = bpy.data.images.new(f"{name}_tinted", w, h, alpha=True)
     out.colorspace_settings.name = img.colorspace_settings.name
     out.pixels.foreach_set(px.ravel())
@@ -316,14 +350,13 @@ def tinted_image(name, img, tint_srgb, strength):
     return out
 
 
-def alpha_card_material(name, img, tint_srgb, strength):
-    """Hair / brows / lashes: texture recoloured toward `tint`, alpha-tested."""
+def alpha_card_material(name, img, tint_srgb, strength, cut):
+    """Hair / brows / lashes: texture recoloured toward `tint`, alpha-tested at `cut`."""
     m = new_material(name)
     g = Graph(m)
     tex = g.node("ShaderNodeTexImage", image=tinted_image(name, img, tint_srgb, strength))
-    p = g.principled(tex.outputs["Color"], 0.0, 0.45)
-    cut = g.math("GREATER_THAN", tex.outputs["Alpha"], 0.5)
-    g.set(p.inputs["Alpha"], cut)
+    p = g.principled(tex.outputs["Color"], 0.0, 0.55)
+    g.set(p.inputs["Alpha"], g.math("GREATER_THAN", tex.outputs["Alpha"], cut))
     return m
 
 
@@ -600,7 +633,7 @@ def card_lod(variant, key, src, k):
 
 
 def skin_marks(proxy):
-    return {"beard": "beard" in proxy.data.attributes, "eyes": proxy.get("eyes"), "bindi": proxy.get("bindi")}
+    return {"beard": "beard" in proxy.data.attributes, "eyes": proxy.get("eyes"), "brows": proxy.get("brows")}
 
 
 def finish_character(variant, rig, proxy, parts, items, root, age=0.5):
@@ -619,16 +652,19 @@ def finish_character(variant, rig, proxy, parts, items, root, age=0.5):
         img = find_image(o)
         o.data.materials.clear()
         o.data.materials.append(textured_material(o.name, img, rough))
-    on_head, outfit = [], []
+    outfit = []
     for obj, role in items:
         kind = obj.get("kind", "cloth")
+        colour, normal = find_maps(obj)
         obj.data.materials.clear()
-        if kind == "gold":
+        if kind == "fitted":
+            if "normal_map" in obj:
+                normal = bpy.data.images[obj["normal_map"]]
+            obj.data.materials.append(fitted_material(obj.name, colour, normal, obj.get("tint"), obj["detail"], obj["rough"]))
+        elif kind == "gold":
             obj.data.materials.append(metal_material("gold", (1.0, 0.76, 0.36)))
         elif kind == "silver":
             obj.data.materials.append(metal_material("silver", (0.86, 0.87, 0.89), 0.25))
-        elif kind == "hairmesh":
-            obj.data.materials.append(hair_mesh_material(obj.name))
         elif kind == "lacquer":
             obj.data.materials.append(metal_material("lacquer", (0.62, 0.06, 0.08), 0.18, 0.0))
         else:
@@ -637,9 +673,9 @@ def finish_character(variant, rig, proxy, parts, items, root, age=0.5):
             from garments import edge_distance_attr
             edge_distance_attr(obj)
             obj.data.materials.append(cloth_material(key, base, border, pattern, bw))
-        (on_head if kind == "hairmesh" else outfit).append(obj)
+        outfit.append(obj)
 
-    for o in [proxy, eyes, *mouth, *on_head, *outfit]:
+    for o in [proxy, eyes, *mouth, *outfit]:
         apply_non_armature_modifiers(o)
         prepare_uvs(o)
 
@@ -649,7 +685,7 @@ def finish_character(variant, rig, proxy, parts, items, root, age=0.5):
     head.data.materials.append(head_material(variant, skin_img, skin_marks(proxy), age))
     body.data.materials.append(body_material(variant, skin_img, skin_marks(proxy)))
     meshes = {
-        "head": join(f"{variant}_head", [head, *on_head]),
+        "head": join(f"{variant}_head", [head]),
         "body": join(f"{variant}_body", [body]),
         "outfit": join(f"{variant}_outfit", outfit),
         "eyes": join(f"{variant}_eyes_mesh", [eyes]),
@@ -664,13 +700,13 @@ def finish_character(variant, rig, proxy, parts, items, root, age=0.5):
 
     # --- alpha cards: hair, brows, lashes
     cards = {}
-    for key, tint, strength in CARDS:
+    for key, tint, strength, cut in CARDS:
         o = parts.get(key)
         if o is None or o.name not in bpy.data.objects:
             continue
-        img = find_image(o)
+        img = find_maps(o)[0]
         o.data.materials.clear()
-        o.data.materials.append(alpha_card_material(f"{variant}_{key}", img, tint, strength))
+        o.data.materials.append(alpha_card_material(f"{variant}_{key}", img, tint, strength, cut))
         apply_non_armature_modifiers(o)
         cards[key] = o
 

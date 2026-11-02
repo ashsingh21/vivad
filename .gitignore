@@ -68,3 +68,6 @@ previews/east_sheet.png
 /tools/texpack/target
 .DS_Store
 tools/texpack/target/
+# Raw full-size game shots and clip frames behind the character sheets.
+previews/characters/game_*/
+previews/characters/clip_*/frame_*

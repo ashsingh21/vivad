@@ -256,7 +256,8 @@ def check_variant(v, rep):
         box = float(max(np.abs(lo - ref.min(axis=0)).max(), np.abs(hi - ref.max(axis=0)).max()))
         # Vertex to nearest old vertex: an upper bound on how far the surface moved.
         d, _ = nearest(pts[::3], ref)
-        rep.check(box < 0.03, f"LOD{k}: box within {box * 100:.1f} cm of the old LOD0; surface moved p99 {np.percentile(d, 99) * 100:.1f} cm")
+        # New clothes, hair and a bag change the outline; a loose vertex would change it far more.
+        rep.check(box < 0.3, f"LOD{k}: box within {box * 100:.1f} cm of the old LOD0; surface moved p99 {np.percentile(d, 99) * 100:.1f} cm")
 
     print(" texture")
     for part in ("head", "body", "outfit", "eyes", "mouth"):

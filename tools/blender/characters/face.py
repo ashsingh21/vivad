@@ -1,7 +1,7 @@
 """Face details on top of the MPFB head, placed from landmarks measured on the rest-pose mesh:
-the male's stubble (a `beard` vertex attribute the skin shader darkens by) and moustache (a
-sculpted mesh), the female's bindi and kajal (points the skin shader paints, stored on the
-proxy), and the male's hair trimmed to what shows below the pagri.
+the male's stubble (a `beard` vertex attribute the skin shader darkens by), the female's kajal
+(points the skin shader paints, stored on the proxy), the skin under the hair (`scalp`), and the
+male's hair trimmed to what shows below the pagri.
 
 regions() paints the masks the head material reads, one vertex attribute each: `lip` (from the
 basemesh's own lips group), `blush`, `socket`, `oily`, `pores`, `lines`, and `detail`, the part of
@@ -15,6 +15,7 @@ import bpy
 import numpy as np
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
+from mathutils.geometry import barycentric_transform
 from mathutils.kdtree import KDTree
 
 import garments
@@ -61,55 +62,10 @@ def stubble(proxy, f):
         back = p.y - f.eye_l.y          # 0 at the eyes' plane, positive toward the ears
         w = smoothstep(0.0, -0.022, dz) * smoothstep(-0.15, -0.115, dz)
         w *= smoothstep(0.085, 0.05, back) * smoothstep(0.085, 0.06, abs(p.x))
-        # Clear of the lips (a band below the moustache line, across the mouth).
-        lips = smoothstep(0.03, 0.022, abs(p.x)) * smoothstep(-0.026, -0.03, dz) * smoothstep(-0.056, -0.05, dz)
-        w *= 1.0 - lips
         vals.append(w)
-    attr.data.foreach_set("value", vals)
-
-
-def moustache(f, ctx, name="moustache"):
-    """A full, slightly drooping moustache along the upper lip, parted at the philtrum, built as a
-    closed tube on the skin and skinned to the head."""
-    bm = bmesh.new()
-    n_seg = 26
-    half = 0.033
-    rings = []
-    z0 = f.nose.z - 0.02
-    for i in range(n_seg + 1):
-        u = -1.0 + 2.0 * i / n_seg
-        x = u * half
-        a = abs(u)
-        z = z0 - 0.008 * a ** 1.6 - 0.003 * smoothstep(0.75, 1.0, a)
-        hit, nrm = f.surface(x, z)
-        if hit is None:
-            continue
-        h = (0.0082 * (1 - a ** 2.2) + 0.002) * (0.75 + 0.25 * smoothstep(0.0, 0.16, a))
-        depth = 0.0026 * (1 - 0.6 * a ** 2) + 0.0009
-        up = Vector((0, 0, 1))
-        side = up.cross(nrm).normalized()
-        up = nrm.cross(side).normalized()
-        base = hit - nrm * 0.0008
-        # Section: skin-top, outer-top, outer-bottom (hanging over the lip), skin-bottom.
-        sec = [base + up * h * 0.5, base + up * h * 0.38 + nrm * depth,
-               base - up * h * 0.55 + nrm * depth * 1.1, base - up * h * 0.5 + nrm * 0.0005]
-        rings.append([bm.verts.new(p) for p in sec])
-    for a, b in zip(rings, rings[1:]):
-        for k in range(4):
-            bm.faces.new((a[k], a[(k + 1) % 4], b[(k + 1) % 4], b[k]))
-    bm.faces.new(list(reversed(rings[0])))
-    bm.faces.new(rings[-1])
-    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-    me = bpy.data.meshes.new(name)
-    bm.to_mesh(me)
-    bm.free()
-    for p in me.polygons:
-        p.use_smooth = True
-    obj = garments.new_object(name, me, ctx)
-    garments.ensure_groups(obj, ctx.group_names)
-    obj.vertex_groups["head"].add(range(len(me.vertices)), 1.0, "REPLACE")
-    obj["kind"] = "hairmesh"
-    return obj
+    lip = np.empty(len(vals), dtype=np.float32)
+    proxy.data.attributes["lip"].data.foreach_get("value", lip)
+    attr.data.foreach_set("value", (blur(proxy.data, np.array(vals), 3) * (1.0 - lip)).astype(np.float32))
 
 
 def basemesh_masks(body, co, names):
@@ -153,6 +109,18 @@ def blur(me, values, passes):
     return values
 
 
+def smooth_lip_edges(proxy, f):
+    """The mouth targets leave a hard ridge in the skin on each side of the upper lip."""
+    me = proxy.data
+    co = np.empty(len(me.vertices) * 3)
+    me.vertices.foreach_get("co", co)
+    co = co.reshape(-1, 3)
+    near = gauss((np.abs(co[:, 0]) - 0.031) / 0.013, (co[:, 2] - f.nose.z + 0.016) / 0.013)[:, None]
+    soft = np.stack([blur(me, co[:, axis], 8) for axis in range(3)], axis=1)
+    me.vertices.foreach_set("co", (co + (soft - co) * near).ravel())
+    me.update()
+
+
 def regions(proxy, body, f):
     """The material's masks, as vertex attributes on the proxy. Distances are in metres from the
     measured landmarks, so they follow the face targets."""
@@ -188,6 +156,64 @@ def regions(proxy, body, f):
     print(f"[face] {int(group['lips'].sum())} lip vertices, {int(masks['detail'].sum())} of {len(co)} vertices hold detail")
 
 
+def scalp(proxy, hair, ctx, reach=0.05):
+    """`scalp` attribute, 0..1: the head's skin under the hair, above the brows. The material paints
+    it hair colour, so the gaps between hair cards show dark hair and not a bald head."""
+    bm = bmesh.new()
+    bm.from_mesh(hair.data)
+    tree = BVHTree.FromBMesh(bm)
+    bm.free()
+    me = proxy.data
+    covered = np.zeros(len(me.vertices), dtype=np.float32)
+    for v in me.vertices:
+        if v.co.z > ctx.brow_top and ctx.w(v.index, "head") > 0.5:
+            covered[v.index] = tree.ray_cast(v.co + v.normal * 0.002, v.normal, reach)[0] is not None
+    attr = me.attributes.new("scalp", "FLOAT", "POINT")
+    attr.data.foreach_set("value", blur(me, covered, 2).astype(np.float32))
+
+
+def brow_mask(proxy, body, path, res=2048):
+    """Strand brows drawn into the skin's UV space, as an image for the head material. As meshes
+    they are 18-35k triangles, and a brow card cuts down to a thin line at the alpha test."""
+    from bl_ext.blender_org.mpfb.services.humanservice import HumanService
+    strands = HumanService.add_mhclo_asset(path, body, asset_type="Clothes", subdiv_levels=0, material_type="MAKESKIN")
+    bm = bmesh.new()
+    bm.from_mesh(proxy.data)
+    bmesh.ops.triangulate(bm, faces=bm.faces[:])
+    bm.faces.ensure_lookup_table()
+    layer = bm.loops.layers.uv.active
+    tree = BVHTree.FromBMesh(bm)
+    me = strands.data
+    uv = np.zeros((len(me.vertices), 2))
+    for v in me.vertices:
+        hit, _, face_index, _ = tree.find_nearest(v.co)
+        a, b, c = bm.faces[face_index].loops
+        uv[v.index] = barycentric_transform(hit, a.vert.co, b.vert.co, c.vert.co, a[layer].uv.to_3d(), b[layer].uv.to_3d(), c[layer].uv.to_3d()).xy
+    bm.free()
+    me.calc_loop_triangles()
+    tris = np.empty(len(me.loop_triangles) * 3, dtype=np.int32)
+    me.loop_triangles.foreach_get("vertices", tris)
+    corners = uv[tris.reshape(-1, 3)]
+    # Spatter each triangle, then blur: the strands are finer than a texel.
+    count = np.zeros((res, res), dtype=np.float32)
+    rng = np.random.default_rng(1)
+    for _ in range(12):
+        w = rng.dirichlet((1.0, 1.0, 1.0), len(corners))[:, :, None]
+        spots = np.clip(((corners * w).sum(axis=1) * res).astype(np.int32), 0, res - 1)
+        np.add.at(count, (spots[:, 1], spots[:, 0]), 1.0)
+    for axis in (0, 1):
+        count = (count + np.roll(count, 1, axis) + np.roll(count, -1, axis)) / 3
+    mask = 1.0 - np.exp(-0.3 * count)
+    img = bpy.data.images.new("brow_mask", res, res, alpha=False)
+    img.colorspace_settings.name = "Non-Color"
+    px = np.ones((res, res, 4), dtype=np.float32)
+    px[..., :3] = mask[..., None]
+    img.pixels.foreach_set(px.ravel())
+    img.pack()
+    bpy.data.objects.remove(strands)
+    return img
+
+
 def trim_hair(hair, below_z):
     """Keep only the hair below a covering turban's lower edge (the rest is hidden inside it)."""
     bm = bmesh.new()
@@ -201,20 +227,17 @@ def trim_hair(hair, below_z):
 
 
 def decorate(variant, proxy, parts, body, ctx=None):
-    """Face marks for the skin shader (stored on the proxy) and, for the male, the stubble mask
-    and moustache. `body` is the fitted basemesh. Returns extra (object, role) outfit items."""
+    """Face marks for the skin shader (stored on the proxy) and, for the male, the stubble mask.
+    `body` is the fitted basemesh. Returns extra (object, role) outfit items: none today."""
     f = Face(proxy, parts["eyes"])
+    smooth_lip_edges(proxy, f)
     regions(proxy, body, f)
+    scalp(proxy, parts["hair"], ctx)
     inv = proxy.matrix_world.inverted()
-    items = []
     if variant == "female":
         # Kajal rings round each eye: both centres then the radius, in the proxy's object space.
         proxy["eyes"] = [*(inv @ f.eye_l), *(inv @ f.eye_r), f.eye_rad]
-        hit, _ = f.surface(0.0, f.eye_z + 0.024)
-        proxy["bindi"] = list(inv @ hit)
     else:
         stubble(proxy, f)
-        if ctx is not None:
-            items.append((moustache(f, ctx), "accessory"))
     print(f"[face] nose {f.nose.z - f.eye_z:+.3f} below the eyes; eye radius {f.eye_rad:.4f}")
-    return items
+    return []

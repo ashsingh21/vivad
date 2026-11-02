@@ -35,6 +35,7 @@
 //!   and in use (aiming, drawing, swinging, drinking), from the front and the side, then exit.
 //!   VIVAD_ARMOURY_ONLY=a,b only the poses whose names contain one of these. The range poses
 //!   freeze the one bot (VIVAD_BOTS=1) in front as a target and shoot or cut at it.
+//!   VIVAD_ARMOURY_SPOT=x,z stand there instead (the middle of Connaught Place's park is 30,40).
 
 use bevy::camera::{ImageRenderTarget, RenderTarget};
 use bevy::prelude::*;
@@ -696,7 +697,12 @@ fn armoury_actor(
 ) {
     let Ok((mut tf, mut kin, mut inv, mut intent, mut health, mut act)) = q.single_mut() else { return };
     let spot = *arm.spot.get_or_insert_with(|| {
-        let (x, z) = (38.0, 104.0);
+        let parse = |s: &str| s.trim().parse::<f32>().ok();
+        let spot = std::env::var("VIVAD_ARMOURY_SPOT").ok().and_then(|s| {
+            let (x, z) = s.split_once(',')?;
+            Some((parse(x)?, parse(z)?))
+        });
+        let (x, z) = spot.unwrap_or((38.0, 104.0));
         Vec3::new(x, layout.terrain.height(x, z) + HALF_HEIGHT + 0.05, z)
     });
     tf.translation = spot;

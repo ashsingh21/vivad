@@ -39,6 +39,7 @@ figures:
 
 # Characters (needs the MPFB extension + MakeHuman CC0 assets, see docs/references.md)
 characters:
+    test -d research/characters/downloads/makehuman || zsh research/characters/scripts/fetch_mh.sh research/characters/downloads/makehuman
     for v in male female; do {{blender}} -b -P tools/blender/characters/human.py -- $v 2>&1 | grep -E '^\[|Error|Traceback' || true; done
     just characters-pack
 
@@ -55,6 +56,10 @@ character variant:
 # budgets, the neck seam, shape against the old models, texture sizes.
 check-characters *variants:
     python3 tools/check_characters.py {{variants}}
+
+# Front, side, back and head of a built character in the game's idle clip: just lookbook male
+lookbook variant out="previews/characters/new" samples="64":
+    {{blender}} -b --factory-startup -P tools/blender/characters/lookbook.py -- {{out}} {{variant}} assets/models/characters/{{variant}}_parts.glb assets/models/characters/{{variant}}_anims.glb {{samples}} 2>&1 | grep -E '^\[|Error|Traceback' || true
 
 # The split characters beside the old ones, LOD by LOD: just compare-characters male
 compare-characters variant="male" samples="64":
