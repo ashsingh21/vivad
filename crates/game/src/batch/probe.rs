@@ -271,6 +271,16 @@ fn report(
     }
     let p = tf.translation();
     println!("[draws] {label} at ({:.0},{:.0},{:.0}) main: {}", p.x, p.y, p.z, line(&main));
+    // What the tags don't name, by mesh size.
+    let mut sizes: BTreeMap<usize, usize> = BTreeMap::new();
+    for e in seen.iter(kind) {
+        if let Ok((mesh, _, None)) = q.get(*e) {
+            *sizes.entry(meshes.get(&mesh.0).map_or(0, tris)).or_default() += 1;
+        }
+    }
+    let mut sizes: Vec<(usize, usize)> = sizes.into_iter().collect();
+    sizes.sort_by_key(|(t, n)| std::cmp::Reverse(t * n));
+    println!("[draws] {label} untagged: {}", sizes.iter().take(14).map(|(t, n)| format!("{n} x {t}")).collect::<Vec<_>>().join(", "));
     println!("[draws] {label} shadows: {}", line(&shadow));
 }
 
