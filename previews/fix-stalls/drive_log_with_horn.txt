@@ -1,0 +1,60 @@
+[life-stage] t 0.7 at [-354.00, 0.89, -1243.00] hp 100 shield 0 mode Ground speed 0.0
+[life-stage] t 1.2 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 1.7 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 2.2 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 2.7 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 3.2 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 3.7 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 4.3 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 4.8 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 5.3 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 5.8 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 6.3 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 6.8 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 7.3 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+life traffic so far: 0 stepped aside, 0 leapt, 0 caught
+[life-stage] t 7.8 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 8.3 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 8.8 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 9.3 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 9.8 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 10.3 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 10.8 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 11.3 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 11.9 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 12.4 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 12.9 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 13.4 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 13.9 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+life traffic so far: 0 stepped aside, 0 leapt, 0 caught
+[life-stage] t 14.4 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 14.9 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 15.4 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 15.9 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 16.4 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 16.9 at [-352.51, 0.85, -1242.99] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 17.4 at [-352.49, 0.85, -1243.16] hp 100 shield 0 mode Riding speed 1.3
+[life-stage] t 17.9 at [-352.41, 0.85, -1243.82] hp 100 shield 0 mode Riding speed 2.8
+[life-stage] t 18.4 at [-352.22, 0.85, -1245.53] hp 100 shield 0 mode Riding speed 4.2
+horn: Auto
+[life-stage] t 18.9 at [-352.42, 0.85, -1248.03] hp 100 shield 0 mode Riding speed 5.4
+[life-stage] t 19.4 at [-352.05, 0.85, -1251.02] hp 100 shield 0 mode Riding speed 6.6
+[life-stage] t 19.9 at [-351.62, 0.85, -1254.54] hp 100 shield 0 mode Riding speed 7.6
+horn: Auto
+[life-stage] t 20.4 at [-351.13, 0.85, -1258.47] hp 100 shield 0 mode Riding speed 8.0
+life traffic so far: 13 stepped aside, 0 leapt, 0 caught
+[life-stage] t 21.0 at [-350.64, 0.85, -1262.44] hp 100 shield 0 mode Riding speed 8.0
+[life-stage] t 21.5 at [-350.14, 0.85, -1266.54] hp 100 shield 0 mode Riding speed 8.0
+horn: Auto
+[life-stage] t 22.0 at [-349.63, 0.85, -1270.65] hp 100 shield 0 mode Riding speed 8.0
+[life-stage] t 22.5 at [-349.14, 0.85, -1274.62] hp 100 shield 0 mode Riding speed 8.0
+[life-stage] t 23.0 at [-348.65, 0.85, -1278.59] hp 100 shield 0 mode Riding speed 8.0
+horn: Auto
+[life-stage] t 23.5 at [-348.14, 0.85, -1282.69] hp 100 shield 0 mode Riding speed 8.0
+[life-stage] t 24.0 at [-347.95, 0.85, -1284.20] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 24.5 at [-347.95, 0.85, -1284.20] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 25.0 at [-347.95, 0.85, -1284.20] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 25.5 at [-347.95, 0.85, -1284.20] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 26.0 at [-347.95, 0.85, -1284.20] hp 100 shield 0 mode Riding speed 0.0
+[life-stage] t 26.5 at [-347.95, 0.85, -1284.20] hp 100 shield 0 mode Riding speed 0.0
+life traffic so far: 14 stepped aside, 0 leapt, 0 caught

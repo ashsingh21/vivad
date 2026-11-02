@@ -121,9 +121,11 @@ pub struct Tally {
     pub searches: u32,
     pub arrived: u32,
     pub found: u32,
-    /// Times it ran from a fight, and of those, to somewhere out of its enemy's sight.
+    /// Times it ran from a fight, and of those, to somewhere out of its enemy's sight, or to
+    /// somewhere that hides it crouched.
     pub flights: u32,
     pub hid: u32,
+    pub low: u32,
 }
 
 /// What one bot knows. Part of `BotBrain`, so it goes where the brain goes.

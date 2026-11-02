@@ -11,11 +11,11 @@ use bevy::camera::visibility::{NoAutoAabb, VisibilityRange};
 use bevy::light::NotShadowCaster;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
+use shared::map::stalls::hash;
 use shared::map::terrain::ground;
 use shared::map::{MapLayout, MapStyle, compose};
 use shared::sim::{OfMap, map_reloaded};
 
-use super::goods::hash;
 use crate::batch::probe::Tagged;
 use crate::buildings::tiers;
 

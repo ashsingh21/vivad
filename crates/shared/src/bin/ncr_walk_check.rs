@@ -126,7 +126,9 @@ impl Streets {
                 footprint::contains(&f.pts, p) || f.pts.iter().any(|q| q.distance(p) < Self::BUILDING_CLEAR)
             });
         }
-        for b in map.blocks.iter().filter(|b| b.collide) {
+        // The market's tables stand in a walker's way as any block does.
+        let tables = map.stalls.tables().map(|s| s.block());
+        for b in map.blocks.iter().filter(|b| b.collide).cloned().chain(tables) {
             let half = match b.shape {
                 Shape::Box(v) => v * 0.5,
                 Shape::Cylinder { radius, height } => Vec3::new(radius, height / 2.0, radius),

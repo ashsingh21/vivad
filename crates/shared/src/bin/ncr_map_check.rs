@@ -43,10 +43,21 @@ fn main() {
     for p in map.pois.iter().skip(compose::PLACES.len()) {
         println!("  {:>7.0} {:>7.0}  {}", p.center.x, p.center.z, p.name);
     }
+    let t1 = Instant::now();
+    let floor = shared::sim::nav::StreetFloor::new(&map);
+    println!("street floor built in {:.2} s", t1.elapsed().as_secs_f32());
+    let rows = shared::map::stalls::report(&map, &floor);
+    println!("market rows: {rows:?}");
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if rows.failures() > 0 {
+        println!("FAILED: the rows shut {} things", rows.failures());
+        std::process::exit(1);
+    }
     if args.first().is_some_and(|a| a == "--at") {
         let n: Vec<f32> = args[1..].iter().map(|a| a.parse().expect("--at x z radius")).collect();
-        here(&map, bevy::math::Vec2::new(n[0], n[1]), n[2]);
+        let at = bevy::math::Vec2::new(n[0], n[1]);
+        here(&map, at, n[2]);
+        print!("{}", floor.sketch(at - bevy::math::Vec2::splat(n[2]), at + bevy::math::Vec2::splat(n[2])));
         return;
     }
     if args.first().is_some_and(|a| a == "--line") {
@@ -117,5 +128,8 @@ fn here(map: &shared::map::MapLayout, p: bevy::math::Vec2, r: f32) {
     }
     for f in map.footprints.iter().filter(|f| f.pts[0].distance(p) < r) {
         println!("footprint {:?} {:.1}..{:.1} at {:.1?}", f.mat, f.base, f.top, f.pts[0]);
+    }
+    for s in map.stalls.stalls.iter().filter(|s| s.pos.xz().distance(p) < r) {
+        println!("stall {:?} at {:.1?} facing {:.2?}, first row {}", s.kind, s.pos, s.facing(), s.first);
     }
 }

@@ -1483,6 +1483,7 @@ pub fn generate(seed: u64) -> MapLayout {
     interiors::furnish_ring(&mut map);
     interiors::move_loot(&mut map, &spots, &mut loot);
     parking::lay(&mut map, &network, &SPOTS.map(|s| (Vec2::new(s.1, s.2), s.3.reach())));
+    super::stalls::lay(&mut map);
     map
 }
 

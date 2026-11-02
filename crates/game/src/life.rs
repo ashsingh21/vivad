@@ -1,6 +1,7 @@
-//! A Delhi market that feels alive, without a crowd that would break a battle royale. All of it is
-//! the client's own: no sim code, no network message, no collider, nothing that bends the street
-//! grid or the map's seed, nothing that can stop a bullet or be taken for a warrior.
+//! A Delhi market that feels alive, without a crowd that would break a battle royale. Where the
+//! rows of tables stand is the map's (`shared::map::stalls`), and a table is as solid as a wall.
+//! All the rest is the client's own: no sim code, no network message, no collider, nothing that
+//! bends the street grid or the map's seed, nothing that can stop a bullet or be taken for a warrior.
 //!
 //! Four layers make "busy": goods on the stalls and shop fronts (`goods`), harmless people and
 //! street animals near the player only (`people`), and two hooks for sound: `busy_at` says how
@@ -12,7 +13,7 @@ use std::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
 use shared::map::MapLayout;
-use shared::map::interiors::Door;
+use shared::map::stalls::{self, Busy, RowKind};
 use shared::map::terrain::ground;
 use shared::sim::nav::StreetFloor;
 
@@ -57,43 +58,6 @@ impl Plugin for LifePlugin {
 
 /// Metres a side of the squares the market is indexed by.
 const SQUARE: f32 = 32.0;
-/// How busy a place is at most, by name. Anywhere else keeps to `QUIET`.
-const PLACES: [(&str, f32); 26] = [
-    ("Chandni Chowk", 1.0),
-    ("Karol Bagh", 1.0),
-    ("Lajpat Nagar", 1.0),
-    ("Connaught Place", 0.9),
-    ("Kamla Nagar", 0.95),
-    ("Laxmi Nagar", 0.85),
-    ("Shahdara", 0.8),
-    ("Raj Nagar", 0.7),
-    ("Lal Kuan", 0.7),
-    ("Mayur Vihar", 0.7),
-    ("Surajkund Mela Ground", 0.8),
-    ("Sector 18", 0.75),
-    ("Nehru Place", 0.7),
-    ("Anand Vihar", 0.7),
-    ("Ghaziabad", 0.65),
-    ("Hauz Khas", 0.55),
-    ("Azadpur Mandi", 0.6),
-    ("New Delhi Station", 0.6),
-    ("Kashmere Gate", 0.55),
-    ("Sarai Kale Khan", 0.45),
-    ("MG Road", 0.4),
-    ("Saket", 0.4),
-    ("Indirapuram", 0.3),
-    ("Cyber City", 0.25),
-    ("Rajouri Garden", 0.4),
-    ("City Centre", 0.4),
-];
-const QUIET: f32 = 0.06;
-/// Stalls in a square at which it is as full as its place gets.
-const FULL_SQUARE: f32 = 2.0;
-/// How far out from a door the way is kept clear, the door's own width and this much each side.
-const WALK_LINE: f32 = 9.0;
-const SHOP_FRONT: f32 = 2.4;
-const LANE_SIDE: f32 = 0.5;
-
 /// What a kind of stall is, for who stands at it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum StallKind {
@@ -103,9 +67,9 @@ pub(crate) enum StallKind {
     Chairs,
     /// A spread on the pavement: goods only, worked out here, and no kit under it.
     Patri,
-    /// A trestle stall in a row along a kerb: looks solid, but no collider stands behind it.
+    /// A trestle stall in a row along a kerb: solid, from the map.
     Row,
-    /// A handcart at the kerb, the same.
+    /// A handcart at the kerb: dressing, no collider stands behind it.
     Cart,
     /// Scooters parked in a bunch at the road's edge, the same.
     Scooters,
@@ -123,19 +87,17 @@ pub(crate) struct Stall {
 /// own kit, ground classes and place names, so it works in every district.
 #[derive(Resource, Default)]
 pub struct Market {
-    half: f32,
-    side: usize,
-    busy: Vec<f32>,
+    busy: Busy,
     pub(crate) stalls: Vec<Stall>,
     near: HashMap<(i32, i32), Vec<u32>>,
     /// The electricity poles (kind means nothing).
     pub(crate) poles: Vec<Stall>,
     /// Footprints by the squares they touch.
     buildings: HashMap<(i32, i32), Vec<u32>>,
-    /// The metre squares a row stall stands on: no collider, but nobody here walks through one.
+    /// The metre squares what stands in a row stands on: nobody here walks through a handcart, and
+    /// a table's are the floor's too.
     solid: HashSet<(i32, i32)>,
-    /// The metre squares in front of a building's doors, kept clear: what stands here would look
-    /// like it bars the way in.
+    /// The metre squares in front of a building's doors, as the map keeps them clear.
     lanes: HashSet<(i32, i32)>,
     /// Banners over the road, kerb to kerb.
     pub(crate) banners: Vec<(Vec3, Vec3)>,
@@ -143,14 +105,11 @@ pub struct Market {
     pub(crate) ready: bool,
     /// Where loot lies, by 3 m squares, only while laying out: nothing may stand over it.
     loot: HashSet<(i32, i32)>,
+    /// Half the map's side.
+    half: f32,
 }
 
 impl Market {
-    fn square(&self, p: Vec2) -> Option<usize> {
-        let (i, j) = (((p.x + self.half) / SQUARE).floor(), ((p.y + self.half) / SQUARE).floor());
-        (i >= 0.0 && j >= 0.0 && (i as usize) < self.side && (j as usize) < self.side).then(|| j as usize * self.side + i as usize)
-    }
-
     /// The stalls round `p`, by id into `stalls`.
     pub(crate) fn stalls_near(&self, p: Vec2, reach: f32) -> impl Iterator<Item = u32> + '_ {
         let (x0, x1) = (((p.x - reach) / SQUARE).floor() as i32, ((p.x + reach) / SQUARE).floor() as i32);
@@ -180,9 +139,7 @@ impl Market {
     }
 
     fn build(layout: &MapLayout, floor: &StreetFloor) -> Self {
-        let half = layout.half_extent;
-        let side = (2.0 * half / SQUARE).ceil() as usize;
-        let mut market = Market { half, side, busy: vec![0.0; side * side], ready: floor.ready(), ..default() };
+        let mut market = Market { busy: Busy::of(layout), ready: floor.ready(), lanes: layout.stalls.lanes.clone(), banners: layout.stalls.banners.clone(), half: layout.half_extent, ..default() };
         for (i, f) in layout.footprints.iter().enumerate() {
             let (lo, hi) = f.pts.iter().fold((Vec2::MAX, Vec2::MIN), |(a, b), p| (a.min(*p), b.max(*p)));
             for j in (lo.y / SQUARE).floor() as i32..=(hi.y / SQUARE).floor() as i32 {
@@ -195,82 +152,35 @@ impl Market {
             if k.name == "pole" && !layout.is_holy(k.pos.xz()) {
                 market.poles.push(Stall { kind: StallKind::Crates, pos: k.pos, yaw: k.yaw });
             }
+            if !stalls::street_stall(layout, k) {
+                continue;
+            }
             let kind = match k.name {
                 "thela" => StallKind::Thela,
                 "chai" => StallKind::Chai,
                 "crates" => StallKind::Crates,
-                "chairs" => StallKind::Chairs,
-                _ => continue,
+                _ => StallKind::Chairs,
             };
             let at = k.pos.xz();
-            // On the street, not on a roof or a bridge deck; never in a holy site.
-            if k.pos.y - layout.terrain.height(at.x, at.y) > 0.5 || layout.is_holy(at) {
-                continue;
-            }
             let id = market.stalls.len() as u32;
             market.stalls.push(Stall { kind, pos: k.pos, yaw: k.yaw });
             market.near.entry(((at.x / SQUARE).floor() as i32, (at.y / SQUARE).floor() as i32)).or_default().push(id);
         }
-        let mut stalls = vec![0.0f32; side * side];
-        for s in &market.stalls {
-            if let Some(k) = market.square(s.pos.xz()) {
-                stalls[k] += 1.0;
-            }
-        }
-        let places: Vec<(Vec2, f32, f32)> = layout.pois.iter().filter_map(|p| Some((p.center.xz(), p.radius, PLACES.iter().find(|(n, _)| *n == p.name)?.1))).collect();
-        for j in 0..side {
-            for i in 0..side {
-                let c = Vec2::new(i as f32 + 0.5, j as f32 + 0.5) * SQUARE - Vec2::splat(half);
-                let place = places
-                    .iter()
-                    .map(|(at, r, weight)| {
-                        let d = (c - *at).abs().max_element() / r.max(1.0);
-                        weight * (1.0 - ((d - 0.7) / 0.5).clamp(0.0, 1.0))
-                    })
-                    .fold(QUIET, f32::max);
-                // A stall nearby counts towards this square too.
-                let mut round = 0.0;
-                for dj in -1i32..=1 {
-                    for di in -1i32..=1 {
-                        let (x, z) = (i as i32 + di, j as i32 + dj);
-                        if x >= 0 && z >= 0 && (x as usize) < side && (z as usize) < side {
-                            round += stalls[z as usize * side + x as usize] / if di == 0 && dj == 0 { 1.0 } else { 3.0 };
-                        }
-                    }
-                }
-                let street = street_share(layout, c);
-                market.busy[j * side + i] = place * (0.6 + 0.4 * (round / FULL_SQUARE).min(1.0)) * street;
-            }
-        }
-        for door in layout.rooms.iter().flat_map(|r| &r.doors) {
-            market.keep_clear(door);
+        for s in &layout.stalls.stalls {
+            let kind = match s.kind {
+                RowKind::Table => StallKind::Row,
+                RowKind::Cart => StallKind::Cart,
+                RowKind::Scooters => StallKind::Scooters,
+            };
+            market.add_solid(kind, s.pos, s.yaw, s.half());
         }
         if market.ready {
             let spots = layout.floor_loot.iter().copied().chain(layout.chests.iter().map(|c| c.pos));
             market.loot = spots.map(|p| ((p.x / 3.0).floor() as i32, (p.z / 3.0).floor() as i32)).collect();
-            market.lay_rows(layout, floor);
             market.lay_spreads(layout, floor);
             market.loot = HashSet::new();
         }
         market
-    }
-
-    /// The way out of a door: a walker's line to the road from a real door, and from a shop's open
-    /// bay as far as a customer stands.
-    fn keep_clear(&mut self, door: &Door) {
-        let out_to = if door.leaves { WALK_LINE } else { SHOP_FRONT };
-        let half = door.width * 0.5 + LANE_SIDE;
-        let across = door.out.perp();
-        let (mut s, foot) = (0.0, door.pos.xz());
-        while s <= out_to {
-            let mut t = -half;
-            while t <= half {
-                let p = foot + door.out * s + across * t;
-                self.lanes.insert((p.x.floor() as i32, p.y.floor() as i32));
-                t += 0.5;
-            }
-            s += 0.5;
-        }
     }
 
     /// Whether `p` is on the way out of a door.
@@ -305,165 +215,6 @@ impl Market {
         }
     }
 
-    /// Whether a stall can stand here: open paved ground, or the edge of a wide road if `spilt`, no
-    /// kit or tree, no building against it.
-    fn room_for(&self, layout: &MapLayout, floor: &StreetFloor, p: Vec2, along: Vec2, reach: f32, spilt: bool) -> bool {
-        let t = &layout.terrain;
-        [0.0, reach, -reach].iter().all(|k| {
-            let q = p + along * *k;
-            let deep = along.perp() * 0.7;
-            floor.walkable(q) && (spilt || !road_at(t, q)) && !matches!(t.ground_at(q.x, q.y), Some(ground::WATER | ground::OPEN | ground::SAND)) && !self.built(layout, q + along.perp() * 1.5) && !self.built(layout, q - along.perp() * 1.5) && !self.on_lane(q) && !self.on_lane(q + deep) && !self.on_lane(q - deep)
-        }) && !layout.is_holy(p) && !self.over_loot(p)
-    }
-
-    /// Stall rows along both kerbs of the roads of a busy place: a wall of goods and tarps either
-    /// side of the road, and a second row back to back with the first where the place is busier
-    /// still, facing the shops, with a keeper's gap between them. The map's roads are far wider than
-    /// a market leaves them, so on a wide road the rows step out onto it the way stalls do, up to
-    /// `SPILL`, and the road narrows to about `CARRIAGEWAY` of open tarmac: what the eye reads from
-    /// the road is a lane, and the pavement behind is a way along the shop fronts, clear of every
-    /// table. Handcarts and parked scooters stand along the row's front, and banners go over the road.
-    fn lay_rows(&mut self, layout: &MapLayout, floor: &StreetFloor) {
-        const ROW_BUSY: f32 = 0.3;
-        const SECOND_BUSY: f32 = 0.5;
-        const SPACING: f32 = 2.75;
-        /// A way through a row, every so far along it.
-        const THROUGH: f32 = 15.0;
-        /// From the first row's middle to the second's, back to back.
-        const BACK_ROW: f32 = 2.5;
-        const LOOK: isize = 6;
-        /// The open road left between the rows of a wide road, and how far a row steps out onto it.
-        const CARRIAGEWAY: f32 = 10.0;
-        const SPILL: f32 = 4.5;
-        let t = &layout.terrain;
-        let n = t.n as isize;
-        let road = |i: isize, j: isize| i >= 0 && j >= 0 && i < n && j < n && t.ground[(i * n + j) as usize] == ground::ROAD;
-        // The kerb: paved samples next to road, each with which way the road lies.
-        let mut kerb: Vec<(Vec2, Vec2)> = vec![];
-        for j in 1..n - 1 {
-            for i in 1..n - 1 {
-                if road(i, j) || !(road(i + 1, j) || road(i - 1, j) || road(i, j + 1) || road(i, j - 1)) {
-                    continue;
-                }
-                let p = Vec2::new(t.coord(i as usize), t.coord(j as usize));
-                if busy_at(self, p) < ROW_BUSY {
-                    continue;
-                }
-                let mut to = Vec2::ZERO;
-                for dj in -LOOK..=LOOK {
-                    for di in -LOOK..=LOOK {
-                        if di * di + dj * dj <= LOOK * LOOK && road(i + di, j + dj) {
-                            to += Vec2::new(di as f32, dj as f32);
-                        }
-                    }
-                }
-                if to.length() > 8.0 {
-                    kerb.push((p, to.normalize()));
-                }
-            }
-        }
-        // The road's width from each sample to the far kerb, a junction no wider than a wide road.
-        let widths: Vec<f32> = kerb
-            .iter()
-            .map(|(p, to)| {
-                let mut wide = 2.0;
-                while wide < 28.0 && road_at(t, *p + *to * wide) {
-                    wide += 1.0;
-                }
-                wide
-            })
-            .collect();
-        // Smoothed: the grid makes a kerb a staircase, a row should stand in a line.
-        let mut cells: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
-        for (k, (p, _)) in kerb.iter().enumerate() {
-            cells.entry(((p.x / 8.0).floor() as i32, (p.y / 8.0).floor() as i32)).or_default().push(k as u32);
-        }
-        let mut taken: HashMap<(i32, i32), Vec<Vec2>> = HashMap::new();
-        let close = |taken: &HashMap<(i32, i32), Vec<Vec2>>, p: Vec2, gap: f32| {
-            let (ci, cj) = ((p.x / 4.0).floor() as i32, (p.y / 4.0).floor() as i32);
-            (-1..=1).any(|a| (-1..=1).any(|b| taken.get(&(ci + a, cj + b)).is_some_and(|c| c.iter().any(|q| q.distance_squared(p) < gap * gap))))
-        };
-        let mark = |taken: &mut HashMap<(i32, i32), Vec<Vec2>>, p: Vec2| taken.entry(((p.x / 4.0).floor() as i32, (p.y / 4.0).floor() as i32)).or_default().push(p);
-        for (k, &(p, to)) in kerb.iter().enumerate() {
-            let (a, b) = ((p.x * 3.0) as i32 as u32, (p.y * 3.0) as i32 as u32);
-            let busy = busy_at(self, p);
-            // The same side's kerb round here, averaged.
-            let (ci, cj) = ((p.x / 8.0).floor() as i32, (p.y / 8.0).floor() as i32);
-            let (mut sum_n, mut sum_off, mut sum_wide, mut count, mut far) = (Vec2::ZERO, 0.0, 0.0, 0.0, 0.0);
-            for u in -2..=2 {
-                for v in -2..=2 {
-                    for q in cells.get(&(ci + u, cj + v)).into_iter().flatten() {
-                        let (qp, qn) = kerb[*q as usize];
-                        if qn.dot(to) <= 0.8 {
-                            continue;
-                        }
-                        let d = qp.distance_squared(p);
-                        if d < 64.0 {
-                            sum_n += qn;
-                            sum_off += (qp - p).dot(to);
-                            count += 1.0;
-                        }
-                        // The road's width goes by a longer stretch: a row keeps its line along it.
-                        if d < 400.0 {
-                            sum_wide += widths[*q as usize];
-                            far += 1.0;
-                        }
-                    }
-                }
-            }
-            if count < 2.0 {
-                continue;
-            }
-            let normal = sum_n.normalize_or(to);
-            let edge = p + to * (sum_off / count);
-            let along = normal.perp();
-            let run = edge.dot(along);
-            let through = (run / THROUGH).rem_euclid(1.0) < 3.2 / THROUGH;
-            let yaw = (-normal.x).atan2(-normal.y);
-            let y = |q: Vec2| t.height(q.x, q.y);
-            // How far the row steps out onto the road, only along a straight run of kerb: stepping
-            // out at a corner would close the junction.
-            let straight = [-7.0, 7.0].iter().all(|k| !road_at(t, edge - normal * 1.5 + along * *k) && road_at(t, edge + normal * 2.5 + along * *k));
-            let spill = if straight { ((sum_wide / far - CARRIAGEWAY) * 0.5).clamp(0.0, SPILL) } else { 0.0 };
-            // The first row, its front at the kerb or out on the road.
-            let first = edge + normal * (spill - 1.0);
-            // A row leaves a way along the shop fronts behind it: where the pavement is too thin for
-            // that, a warrior would have to run through the tables, so there's no row.
-            let way_behind = |market: &Self, p: Vec2| !market.built(layout, p - normal * 3.2);
-            if !through && !close(&taken, first, SPACING) && goods::hash(a, b, 31) < busy * 1.9 && (spill > 1.2 || way_behind(self, first)) && self.room_for(layout, floor, first, along, 1.1, spill > 0.0) {
-                mark(&mut taken, first);
-                self.add_solid(StallKind::Row, Vec3::new(first.x, y(first), first.y), yaw, Vec2::new(1.25, 0.55));
-            }
-            // The second, back to back with it, facing the shops.
-            let second = first - normal * BACK_ROW;
-            if !through && busy >= SECOND_BUSY && !close(&taken, second, SPACING) && goods::hash(a, b, 32) < busy * 1.5 && way_behind(self, second) && self.room_for(layout, floor, second, along, 1.1, spill > 0.0) {
-                mark(&mut taken, second);
-                self.add_solid(StallKind::Row, Vec3::new(second.x, y(second), second.y), yaw + std::f32::consts::PI, Vec2::new(1.25, 0.55));
-            }
-            // Parked along the row's front, on the road: bunches of scooters, handcarts.
-            let verge = edge + normal * (spill + 1.3);
-            if road_at(t, verge) && !close(&taken, verge, 5.0) && floor.walkable(verge) && !self.on_lane(verge) && !layout.is_holy(verge) && goods::hash(a, b, 33) < 0.16 + busy * 0.26 {
-                mark(&mut taken, verge);
-                if goods::hash(a, b, 34) < 0.3 {
-                    self.add_solid(StallKind::Cart, Vec3::new(verge.x, y(verge), verge.y), yaw + goods::hash(a, b, 35) * 0.3 + std::f32::consts::FRAC_PI_2, Vec2::new(0.65, 1.1));
-                } else {
-                    self.add_solid(StallKind::Scooters, Vec3::new(verge.x, y(verge), verge.y), yaw, Vec2::new(2.2, 0.9));
-                }
-            }
-            // A banner over the road, once for each crossing.
-            if k % 3 == 0 && (normal.x + normal.y * 0.37) > 0.0 && (run / 26.0).rem_euclid(1.0) < 2.0 / 26.0 {
-                let mut d = 2.0;
-                while d < 34.0 && road_at(t, edge + normal * d) {
-                    d += 1.0;
-                }
-                let far = edge + normal * d;
-                if (8.0..33.0).contains(&d) && !layout.is_holy(edge) && !layout.is_holy(far) && !self.banners.iter().rev().take(40).any(|b| b.0.xz().distance_squared(edge) < 400.0) {
-                    self.banners.push((Vec3::new(edge.x, y(edge), edge.y), Vec3::new(far.x, y(far), far.y)));
-                }
-            }
-        }
-    }
-
     /// Pavement sellers: where the kerb and the shop fronts leave a bit of paved ground in a busy
     /// place, a sheet on the ground facing the road. Flat enough to walk over, so they stand in
     /// the open where a solid stall could not.
@@ -479,8 +230,8 @@ impl Market {
                     continue;
                 }
                 let (a, b) = (i as u32, j as u32);
-                let p = p0 + Vec2::new(goods::hash(a, b, 21) - 0.5, goods::hash(a, b, 22) - 0.5) * 3.0;
-                if goods::hash(a, b, 23) > busy * 0.8 || !matches!(t.ground_at(p.x, p.y), Some(ground::PAVEMENT | ground::PLAZA | ground::PATH)) {
+                let p = p0 + Vec2::new(stalls::hash(a, b, 21) - 0.5, stalls::hash(a, b, 22) - 0.5) * 3.0;
+                if stalls::hash(a, b, 23) > busy * 0.8 || !matches!(t.ground_at(p.x, p.y), Some(ground::PAVEMENT | ground::PLAZA | ground::PATH)) {
                     continue;
                 }
                 // Nothing under it or quite against it.
@@ -509,25 +260,6 @@ impl Market {
     }
 }
 
-fn road_at(t: &shared::map::terrain::Terrain, p: Vec2) -> bool {
-    t.ground_at(p.x, p.y) == Some(ground::ROAD)
-}
-
-/// How much of a square round `c` is ground people walk on.
-fn street_share(layout: &MapLayout, c: Vec2) -> f32 {
-    let t = &layout.terrain;
-    let mut on = 0;
-    for j in 0..4 {
-        for i in 0..4 {
-            let p = c + (Vec2::new(i as f32, j as f32) - 1.5) * SQUARE / 4.0;
-            if matches!(t.ground_at(p.x, p.y), Some(ground::ROAD | ground::PAVEMENT | ground::PATH | ground::PLAZA | ground::PARKING)) {
-                on += 1;
-            }
-        }
-    }
-    (on as f32 / 8.0).min(1.0)
-}
-
 fn index_market(mut market: ResMut<Market>, layout: Res<MapLayout>, floor: Res<StreetFloor>) {
     let start = bevy::platform::time::Instant::now();
     *market = Market::build(&layout, &floor);
@@ -554,7 +286,7 @@ fn index_market(mut market: ResMut<Market>, layout: Res<MapLayout>, floor: Res<S
 /// sound: it reads the map, not who happens to be there, so a market a fight has emptied still
 /// says what it is.
 pub fn busy_at(market: &Market, p: Vec2) -> f32 {
-    market.square(p).map_or(0.0, |k| market.busy[k])
+    market.busy.at(p)
 }
 
 /// Time spent here, for VIVAD_LIFE_LOG=1: the frame budget is about a millisecond in a busy market.
@@ -567,6 +299,10 @@ pub(crate) mod spent {
 
     pub static PEOPLE: AtomicU64 = AtomicU64::new(0);
     pub static GOODS: AtomicU64 = AtomicU64::new(0);
+    /// Those who stepped out of a vehicle's way, those who had to leap, and those a vehicle caught.
+    pub static ASIDE: AtomicU64 = AtomicU64::new(0);
+    pub static LEAPT: AtomicU64 = AtomicU64::new(0);
+    pub static CAUGHT: AtomicU64 = AtomicU64::new(0);
 
     fn on() -> bool {
         static ON: OnceLock<bool> = OnceLock::new();
@@ -601,6 +337,7 @@ pub(crate) mod spent {
             let per = |c: &AtomicU64| c.swap(0, Ordering::Relaxed) as f32 / n;
             frames.sort_by(f32::total_cmp);
             info!("life spent: people {:.0} us, goods {:.0} us a frame; frame median {:.2} ms, 1% slowest from {:.2} ms", per(&PEOPLE), per(&GOODS), frames[frames.len() / 2], frames[frames.len() * 99 / 100]);
+            info!("life traffic so far: {} stepped aside, {} leapt, {} caught", ASIDE.load(Ordering::Relaxed), LEAPT.load(Ordering::Relaxed), CAUGHT.load(Ordering::Relaxed));
             frames.clear();
         }
     }

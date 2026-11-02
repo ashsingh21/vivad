@@ -532,6 +532,8 @@ const LANE: f32 = 8.0;
 const LANE_SNAP: f32 = 5.0;
 /// What a metre of route costs.
 const COST_PER_M: f32 = 10.0 / LANE;
+/// Cells a side of the patches the rows' ground is flooded over: a `stalls::PATCH`.
+const ROW_PATCH: usize = 128;
 /// The eight ways out of a route point and what each costs, in opposite pairs.
 const WAYS: [(isize, isize, u32); 8] = [(1, 0, 10), (-1, 0, 10), (0, 1, 10), (0, -1, 10), (1, 1, 14), (-1, -1, 14), (1, -1, 14), (-1, 1, 14)];
 /// How far past its end a deck is reached from, metres: the ramp's foot, on a bridge that has one.
@@ -577,6 +579,9 @@ pub struct StreetFloor {
     /// A bit per cell: the hollow buildings' ground floors, flooded in from their doors. The routes
     /// don't go indoors, so these are the cells a warrior can walk out from without one.
     indoors: Vec<u64>,
+    /// A bit per cell, on the patches the market's rows stand on: the ground a warrior can walk to
+    /// from the routes there. No route point need be in sight of the pavement behind a row.
+    beside_rows: Vec<u64>,
     scratch: Mutex<FloorScratch>,
     /// Searches run, seconds in all, the longest, nodes expanded in all: for the checks.
     stats: Mutex<(u32, f32, f32, u64)>,
@@ -609,6 +614,40 @@ impl StreetFloor {
         if map.style != crate::map::MapStyle::Ncr {
             return Self::default();
         }
+        let mut floor = Self::drawn(map);
+        // Routes go round a hollow building as round any other, so they are the same with or
+        // without rooms: it is drawn solid for them, and then its rooms take its place. They don't
+        // know the market's tables either: the next stretch of a route is walked round those.
+        let open = floor.blocked.clone();
+        for r in &map.rooms {
+            floor.draw_building(map, &map.footprints[r.footprint]);
+        }
+        floor.lay_routes();
+        if !map.rooms.is_empty() {
+            floor.blocked = open;
+            floor.draw_rooms(map);
+        }
+        floor.draw_rows(map);
+        floor
+    }
+
+    /// What stands in a warrior's way before the market's rows go up, with no routes: what the rows
+    /// are laid out against.
+    pub fn without_stalls(map: &MapLayout) -> Self {
+        let mut floor = Self::drawn(map);
+        floor.draw_rooms(map);
+        floor
+    }
+
+    /// Adds the market's tables to a floor, for laying out what comes after them.
+    pub fn draw_tables(&mut self, map: &MapLayout, tables: &[Block]) {
+        for b in tables {
+            self.draw_block(map, b);
+        }
+    }
+
+    /// The map's shapes, but for the hollow buildings and the rows.
+    fn drawn(map: &MapLayout) -> Self {
         let n = (2.0 * map.half_extent / CELL).ceil() as usize;
         let mut floor = Self { n, half: map.half_extent, blocked: vec![0; (n * n).div_ceil(64)], ..default() };
         floor.draw_water(map);
@@ -626,18 +665,53 @@ impl StreetFloor {
             }
         }
         floor.draw_steep(map);
-        // Routes go round a hollow building as round any other, so they are the same with or
-        // without rooms: it is drawn solid for them, and then its rooms take its place.
-        let open = floor.blocked.clone();
-        for r in &map.rooms {
-            floor.draw_building(map, &map.footprints[r.footprint]);
-        }
-        floor.lay_routes();
-        if !map.rooms.is_empty() {
-            floor.blocked = open;
-            floor.draw_rooms(map);
-        }
         floor
+    }
+
+    /// The market's tables. A route point one stands on steps off it. Then the ground round them is
+    /// flooded from the routes, patch by patch: the row between a pavement and its route points is
+    /// no wall to a warrior who knows where its ways through are.
+    fn draw_rows(&mut self, map: &MapLayout) {
+        let tables: Vec<Block> = map.stalls.tables().map(|s| s.block()).collect();
+        if tables.is_empty() {
+            return;
+        }
+        self.draw_tables(map, &tables);
+        for k in 0..self.m * self.m {
+            if !self.points[k].is_nan() && !self.walkable(self.points[k]) {
+                self.points[k] = self.cell(self.points[k]).and_then(|c| self.nearest_free(c, LANE_SNAP)).map_or(self.points[k], |c| self.centre(c));
+            }
+        }
+        let side = self.n / ROW_PATCH + 1;
+        let patch = |(i, j): (usize, usize)| (j / ROW_PATCH) * side + i / ROW_PATCH;
+        let mut rows = vec![false; side * side];
+        for c in tables.iter().filter_map(|b| self.cell(b.pos.xz())) {
+            rows[patch(c)] = true;
+        }
+        self.beside_rows = vec![0; self.blocked.len()];
+        let mut stack: Vec<(usize, usize)> = (0..self.m * self.m).filter_map(|k| self.cell(self.points[k])).filter(|c| rows[patch(*c)] && !self.is_blocked(*c)).collect();
+        while let Some((i, j)) = stack.pop() {
+            let k = j * self.n + i;
+            if self.beside_rows[k / 64] >> (k % 64) & 1 != 0 {
+                continue;
+            }
+            self.beside_rows[k / 64] |= 1 << (k % 64);
+            for (di, dj) in [(1isize, 0isize), (-1, 0), (0, 1), (0, -1)] {
+                let next = ((i as isize + di) as usize, (j as isize + dj) as usize);
+                if next.0 < self.n && next.1 < self.n && rows[patch(next)] && !self.is_blocked(next) {
+                    stack.push(next);
+                }
+            }
+        }
+    }
+
+    /// Whether a point is ground the rows' flood reached.
+    fn beside_rows(&self, p: Vec2) -> bool {
+        !self.beside_rows.is_empty()
+            && self.cell(p).is_some_and(|(i, j)| {
+                let k = j * self.n + i;
+                self.beside_rows[k / 64] >> (k % 64) & 1 != 0
+            })
     }
 
     /// The hollow buildings' ground floors: their walls and furniture, and the cells a warrior can
@@ -809,6 +883,41 @@ impl StreetFloor {
         self.cell(p).is_some_and(|c| !self.is_blocked(c))
     }
 
+    /// For the checks: how many cells can be walked to from `p`, counted up to `most`: a pocket
+    /// between two tables is nowhere a warrior can get to, and proves nothing.
+    pub fn room_round(&self, p: Vec2, most: usize) -> usize {
+        let mut seen = std::collections::HashSet::new();
+        let mut stack: Vec<(usize, usize)> = self.cell(p).filter(|c| !self.is_blocked(*c)).into_iter().collect();
+        while let Some(c) = stack.pop() {
+            if seen.len() >= most || !seen.insert(c) {
+                continue;
+            }
+            for (di, dj) in [(1isize, 0isize), (-1, 0), (0, 1), (0, -1)] {
+                let next = ((c.0 as isize + di) as usize, (c.1 as isize + dj) as usize);
+                if next.0 < self.n && next.1 < self.n && !self.is_blocked(next) {
+                    stack.push(next);
+                }
+            }
+        }
+        seen.len()
+    }
+
+    /// For the checks: a rectangle of the floor, a row of `#`/`.` per z.
+    pub fn sketch(&self, min: Vec2, max: Vec2) -> String {
+        let mut out = String::new();
+        let mut z = min.y;
+        while z < max.y {
+            let mut x = min.x;
+            while x < max.x {
+                out.push(if self.walkable(Vec2::new(x, z)) { '.' } else { '#' });
+                x += CELL;
+            }
+            out.push('\n');
+            z += CELL;
+        }
+        out
+    }
+
     /// Lays the routes over the finished floor.
     fn lay_routes(&mut self) {
         let m = (2.0 * self.half / LANE) as usize;
@@ -978,7 +1087,7 @@ impl StreetFloor {
 
     /// Whether a warrior at `p` could join the routes on foot: not walled up in a yard.
     pub fn reachable(&self, p: Vec2) -> bool {
-        self.walkable(p) && (self.is_indoors(p) || self.grid_points(p, ENTRY_NEAR).iter().any(|n| self.line_clear(p, self.points[n.1 as usize])))
+        self.walkable(p) && (self.is_indoors(p) || self.beside_rows(p) || self.grid_points(p, ENTRY_NEAR).iter().any(|n| self.line_clear(p, self.points[n.1 as usize])))
     }
 
     /// The way from one point of the map to another along the routes, as points with the next one
