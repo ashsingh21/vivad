@@ -88,6 +88,15 @@ pub fn is_static_visual(b: &Block) -> bool {
     b.visible && !matches!(b.mat, Mat::Water)
 }
 
+/// The plastered materials' tints: a plaster texture is around 0.7 in linear light, so with these
+/// nothing passes sRGB 0.80.
+const PLASTER_TINT: Color = Color::srgb(0.90, 0.88, 0.84);
+const OCHRE_TINT: Color = Color::srgb(0.84, 0.70, 0.50);
+const BLUE_TINT: Color = Color::srgb(0.66, 0.73, 0.78);
+const MARBLE_TINT: Color = Color::srgb(0.90, 0.89, 0.87);
+/// The drawn brick is a bright new orange: old Delhi brick is duller and browner.
+const BRICK_TINT: Color = Color::srgb(0.78, 0.86, 0.92);
+
 fn material_for(mat: Mat, sets: &HashMap<&'static str, TexSet>, materials: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
     let textured = |set: &str, tint: Color, rough: f32, materials: &mut Assets<StandardMaterial>| {
         let s = &sets[set];
@@ -100,30 +109,30 @@ fn material_for(mat: Mat, sets: &HashMap<&'static str, TexSet>, materials: &mut 
         })
     };
     match mat {
-        Mat::ContainerRed => materials.add(StandardMaterial { base_color: Color::srgb(0.55,0.16,0.10), metallic: 0.35, perceptual_roughness: 0.65, ..default() }),
+        Mat::ContainerRed => materials.add(StandardMaterial { base_color: Color::srgb(0.44,0.22,0.17), metallic: 0.35, perceptual_roughness: 0.65, ..default() }),
         Mat::Concrete | Mat::Asphalt | Mat::Glass | Mat::Steel | Mat::Pavers => {
             let key=match mat {Mat::Concrete=>"urban_concrete",Mat::Asphalt=>"urban_asphalt",Mat::Glass=>"urban_glass",Mat::Steel=>"urban_steel",_=>"urban_pavers"};
             let s=&sets[key];
             materials.add(StandardMaterial {base_color:Color::WHITE,base_color_texture:Some(s.base.clone()),normal_map_texture:Some(s.normal.clone()),metallic_roughness_texture:s.mr.clone(),perceptual_roughness:1.0,metallic:1.0,reflectance:0.5,..default()})
         },
         Mat::Rubber => materials.add(StandardMaterial {base_color:Color::srgb(0.035,0.04,0.045),perceptual_roughness:0.94,..default()}),
-        Mat::PaintWhite => materials.add(StandardMaterial {base_color:Color::srgb(0.78,0.81,0.79),metallic:0.25,perceptual_roughness:0.32,..default()}),
+        Mat::PaintWhite => materials.add(StandardMaterial {base_color:Color::srgb(0.74,0.76,0.74),metallic:0.25,perceptual_roughness:0.32,..default()}),
         Mat::ShopSign | Mat::MetroSign => materials.add(StandardMaterial {base_color:Color::WHITE,base_color_texture:Some(sets[if mat==Mat::ShopSign {"shop"}else{"metro"}].base.clone()),perceptual_roughness:0.7,..default()}),
-        Mat::TransitBlue => materials.add(StandardMaterial { base_color: Color::srgb(0.08,0.55,0.8), emissive: LinearRgba::rgb(0.02,0.2,0.4), ..default() }),
-        Mat::TransitYellow => materials.add(StandardMaterial { base_color: Color::srgb(0.95,0.7,0.15), ..default() }),
+        Mat::TransitBlue => materials.add(StandardMaterial { base_color: Color::srgb(0.14,0.38,0.52), ..default() }),
+        Mat::TransitYellow => materials.add(StandardMaterial { base_color: Color::srgb(0.76,0.60,0.20), ..default() }),
         Mat::Sandstone => textured("sandstone", Color::WHITE, 0.85, materials),
         Mat::RedSandstone => textured("sandstone", Color::srgb(0.86, 0.50, 0.40), 0.85, materials),
         Mat::Granite => textured("granite", Color::WHITE, 0.8, materials),
-        Mat::Plaster => textured("plaster", Color::srgb(0.97, 0.95, 0.90), 0.9, materials),
-        Mat::PlasterOchre => textured("plaster", Color::srgb(0.95, 0.74, 0.44), 0.9, materials),
-        Mat::PlasterBlue => textured("plaster", Color::srgb(0.55, 0.72, 0.95), 0.9, materials),
-        Mat::Marble => textured("plaster", Color::srgb(1.0, 0.99, 0.97), 0.35, materials),
-        Mat::Brick => textured("brick", Color::WHITE, 0.9, materials),
+        Mat::Plaster => textured("plaster", PLASTER_TINT, 0.9, materials),
+        Mat::PlasterOchre => textured("plaster", OCHRE_TINT, 0.9, materials),
+        Mat::PlasterBlue => textured("plaster", BLUE_TINT, 0.9, materials),
+        Mat::Marble => textured("plaster", MARBLE_TINT, 0.35, materials),
+        Mat::Brick => textured("brick", BRICK_TINT, 0.9, materials),
         Mat::Wood => textured("wood", Color::WHITE, 0.75, materials),
         Mat::Thatch => textured("thatch", Color::WHITE, 0.95, materials),
         Mat::Dirt => textured("sandstone", Color::srgb(0.75, 0.62, 0.48), 0.95, materials),
         Mat::Gold => materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.76, 0.34), metallic: 1.0, perceptual_roughness: 0.3, ..default() }),
-        Mat::Cloth => materials.add(StandardMaterial { base_color: Color::srgb(0.85, 0.22, 0.32), perceptual_roughness: 0.9, double_sided: true, cull_mode: None, ..default() }),
+        Mat::Cloth => materials.add(StandardMaterial { base_color: Color::srgb(0.62, 0.27, 0.30), perceptual_roughness: 0.9, double_sided: true, cull_mode: None, ..default() }),
         Mat::Foliage => materials.add(StandardMaterial { base_color: Color::srgb(0.26, 0.42, 0.18), perceptual_roughness: 0.95, ..default() }),
         Mat::Bark => textured("wood", Color::srgb(0.7, 0.65, 0.6), 0.95, materials),
         Mat::Grass => materials.add(StandardMaterial { base_color: Color::srgb(0.42, 0.50, 0.25), perceptual_roughness: 0.95, ..default() }),
@@ -420,37 +429,50 @@ impl MeshBuf {
 pub(crate) const BAY: f32 = 3.2;
 /// How far signs, cables and roof tanks are drawn (scaled by quality like the chunks' LODs).
 const CLUTTER_FAR: f32 = 130.0;
-/// Festival colours, kept for small things so they pop off the pastel walls: signboards,
-/// awnings, bunting. Marigold, rani pink, peacock blue, parrot green, sindoor red, haldi yellow,
-/// jamun purple, white.
+/// How wide a road the cables slung from a building's wall may cross, in metres.
+const CABLE_REACH: i32 = 34;
+/// How far along the road the next pole may stand and still take the lines, and how high they run.
+const POLE_SPAN: f32 = 64.0;
+const POLE_TOP: f32 = 8.55;
+/// How far from a pole a wall may be and still take a drop from it, and how high the lines reach it.
+const DROP_REACH: i32 = 16;
+const DROP_FROM: f32 = 7.4;
+/// Festival colours after a few summers of sun and dust, kept for small things so they still stand
+/// out from the walls: signboards, awnings, bunting. Marigold, rani pink, peacock blue, parrot green,
+/// sindoor red, haldi yellow, jamun purple, white.
 const ACCENTS: [[f32; 3]; 8] = [
-    [0.98, 0.58, 0.06],
-    [0.90, 0.12, 0.46],
-    [0.04, 0.46, 0.62],
-    [0.18, 0.66, 0.24],
-    [0.86, 0.12, 0.10],
-    [0.99, 0.82, 0.10],
-    [0.46, 0.16, 0.58],
-    [0.97, 0.95, 0.90],
+    [0.78, 0.50, 0.16],
+    [0.68, 0.24, 0.38],
+    [0.16, 0.38, 0.48],
+    [0.27, 0.47, 0.28],
+    [0.66, 0.22, 0.18],
+    [0.78, 0.64, 0.22],
+    [0.38, 0.24, 0.44],
+    [0.78, 0.76, 0.72],
 ];
 pub(crate) const STOREY: f32 = 3.4;
-/// Lime-washed walls, sun-faded: Old Delhi's dusty pinks, ochres, mints and blues, and cream.
+/// What Delhi's walls really are: mostly cream, grey and stained concrete, and now and then a colour
+/// the sun has all but taken away. Nothing brighter than sRGB 0.80, which a wall's light can reach and
+/// real paint can't pass: dirty cream, dusty off-white, concrete, beige, sand and dark cement, then
+/// faded salmon, ochre and aqua.
 pub(crate) const WALLS: [[f32; 3]; 9] = [
-    [0.93, 0.62, 0.58],
-    [0.96, 0.72, 0.38],
-    [0.60, 0.82, 0.70],
-    [0.56, 0.72, 0.90],
-    [0.96, 0.91, 0.80],
-    [0.87, 0.50, 0.38],
-    [0.77, 0.66, 0.85],
-    [0.97, 0.84, 0.48],
-    [0.48, 0.75, 0.78],
+    [0.79, 0.74, 0.65],
+    [0.80, 0.78, 0.73],
+    [0.63, 0.62, 0.59],
+    [0.71, 0.67, 0.59],
+    [0.74, 0.67, 0.55],
+    [0.54, 0.53, 0.50],
+    [0.70, 0.60, 0.54],
+    [0.72, 0.64, 0.50],
+    [0.60, 0.65, 0.62],
 ];
 /// Boards in the signs atlas (4 x 8), and a board's width (its height is a quarter and a bit).
 const SIGN_BOARDS: usize = 32;
 const SIGN_W: f32 = 3.6;
-/// Off-white trim: parapet coping, cornices, pilasters, sills.
-const TRIM_WHITE: [f32; 3] = [0.97, 0.94, 0.88];
+/// Off-white trim: parapet coping, cornices, pilasters, sills. Only about half of Delhi's is painted
+/// at all: the rest is bare concrete, or the wall's own colour.
+const TRIM_WHITE: [f32; 3] = [0.80, 0.78, 0.74];
+const TRIM_CONCRETE: [f32; 3] = [0.60, 0.59, 0.56];
 /// How high a roof's parapet stands, and how thick it is.
 const PARAPET: (f32, f32) = (0.9, 0.3);
 /// Half the width of a corner pilaster: clear of the parapet and coping behind it, so no faces meet.
@@ -471,11 +493,16 @@ const BOX_FACES: [(Vec3, Vec3, Vec3); 6] = [
     (Vec3::NEG_Z, Vec3::NEG_X, Vec3::Y),
 ];
 
-/// A colour in shade `k`, warmed a touch as it darkens: lit only by the blue sky, it would read as
-/// blue paint.
+/// A colour in shade `k`, a touch warmer as it darkens: dirt gathers where the rain doesn't reach.
 fn shaded(col: [f32; 4], k: f32) -> [f32; 4] {
     let w = 1.0 - k;
-    [col[0] * k * (1.0 + 0.3 * w), col[1] * k, col[2] * k * (1.0 - 0.4 * w), col[3]]
+    [col[0] * k * (1.0 + 0.1 * w), col[1] * k, col[2] * k * (1.0 - 0.15 * w), col[3]]
+}
+
+/// A roof's bare concrete, a little lighter or darker by `k` (0..1), as a vertex colour over plaster.
+fn roof_shade(k: f32) -> [f32; 4] {
+    let g = 0.56 + 0.16 * k;
+    lin([g, g * 0.98, g * 0.94])
 }
 
 /// The colour `c` (sRGB) as a vertex colour.
@@ -487,11 +514,11 @@ fn lin(c: [f32; 3]) -> [f32; 4] {
 /// The colour of a bare brick or stone facade, which is the facade material's own.
 fn bare_tint(m: Mat) -> Color {
     match m {
-        Mat::PlasterOchre => Color::srgb(0.95, 0.76, 0.48),
-        Mat::Sandstone => Color::srgb(0.85, 0.68, 0.50),
-        Mat::RedSandstone => Color::srgb(0.78, 0.45, 0.36),
-        Mat::Brick => Color::srgb(0.70, 0.40, 0.30),
-        _ => Color::srgb(0.97, 0.95, 0.90),
+        Mat::PlasterOchre => Color::srgb(0.76, 0.64, 0.46),
+        Mat::Sandstone => Color::srgb(0.74, 0.62, 0.48),
+        Mat::RedSandstone => Color::srgb(0.66, 0.43, 0.35),
+        Mat::Brick => Color::srgb(0.60, 0.39, 0.31),
+        _ => Color::srgb(0.80, 0.78, 0.74),
     }
 }
 
@@ -508,7 +535,7 @@ struct Paint {
     /// material's tint).
     wall: [f32; 3],
     value: f32,
-    /// Trim mostly white; now and then the wall's own colour, deeper.
+    /// Trim white, bare concrete, or the wall's own colour, deeper.
     trim: [f32; 4],
 }
 
@@ -519,8 +546,12 @@ impl Paint {
         let r = |k: u32| hash01(seed, k, 11);
         let painted = !bare(mat);
         let wall = if painted { WALLS[(r(4) * WALLS.len() as f32) as usize % WALLS.len()] } else { [1.0; 3] };
-        let trim = if r(5) < 0.75 || !painted { lin(TRIM_WHITE) } else { lin(wall.map(|c| c * 0.78)) };
-        Paint { seed, wall, value: 0.96 + 0.06 * r(1), trim }
+        let trim = match r(5) {
+            t if t < 0.3 => lin(TRIM_CONCRETE),
+            t if t < 0.7 || !painted => lin(TRIM_WHITE),
+            _ => lin(wall.map(|c| c * 0.78)),
+        };
+        Paint { seed, wall, value: 0.90 + 0.10 * r(1), trim }
     }
 
     /// One of this building's random numbers, 0..1.
@@ -528,17 +559,17 @@ impl Paint {
         hash01(self.seed, k, 11)
     }
 
-    /// The wall's colour at a shade. Darker toward the street, and cooler there, as if in the
-    /// lane's blue shade.
+    /// The wall's colour at a shade: darker toward the street, and browner there, with the road's
+    /// dust.
     fn wall_at(&self, shade: f32) -> [f32; 4] {
-        let cool = (1.0 - shade).max(0.0) * 0.25;
-        let l = Color::srgb(self.wall[0] * self.value * shade, self.wall[1] * self.value * shade, self.wall[2] * self.value * (shade + cool)).to_linear();
+        let dust = (1.0 - shade).max(0.0) * 0.2;
+        let l = Color::srgb(self.wall[0] * self.value * shade, self.wall[1] * self.value * (shade - 0.3 * dust), self.wall[2] * self.value * (shade - dust)).to_linear();
         [l.red, l.green, l.blue, 1.0]
     }
 }
 
 /// A cheap hash of a few integers to 0..1, for texture detail that doesn't repeat by the pixel.
-fn hash01(a: u32, b: u32, c: u32) -> f32 {
+pub(crate) fn hash01(a: u32, b: u32, c: u32) -> f32 {
     let mut h = a.wrapping_mul(0x9e37_79b1) ^ b.wrapping_mul(0x85eb_ca77) ^ c.wrapping_mul(0xc2b2_ae3d);
     h ^= h >> 15;
     h = h.wrapping_mul(0x2c1b_3c6d);
@@ -581,7 +612,7 @@ pub(crate) fn facade_image() -> Image {
             // Shutters either side, painted green.
             1 if ((0.10..0.25).contains(&u) || (0.75..0.90).contains(&u)) && (0.13..0.73).contains(&v) => {
                 let slat = if (y % 5) < 2 { 0.8 } else { 1.0 };
-                return [0.30 * slat, 0.50 * slat, 0.38 * slat];
+                return [0.30 * slat, 0.42 * slat, 0.36 * slat];
             }
             // An AC unit hung under the window: a grey box with a grille, and its drip stain.
             2 if (0.34..0.66).contains(&u) && (0.79..0.94).contains(&v) => {
@@ -602,7 +633,7 @@ pub(crate) fn facade_image() -> Image {
             let k = 1.0 - (v - 0.16) / 0.54;
             let curtain = kind == 0 && u > 0.5;
             if curtain {
-                return [0.55, 0.32, 0.26];
+                return [0.44, 0.33, 0.28];
             }
             [0.15 + 0.09 * k, 0.18 + 0.10 * k, 0.22 + 0.13 * k]
         } else if frame || sill {
@@ -732,6 +763,9 @@ fn build_footprints(
     let roof_at = |p: Vec2| to_cell(p).map_or(0.0, |k| solid[k]);
     let occupied = |p: Vec2| roof_at(p) > 0.0;
     let mut clutter: HashMap<(i32, i32), MeshBuf> = HashMap::new();
+    // Overhead cables, apart from the clutter as they cast no shadow: at under 4 cm they are thinner
+    // than a shadow map's texel, and their shadows would flicker over the road.
+    let mut lines: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     let mut trims: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     let mut signs: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     let mut walls: HashMap<(i32, i32, Mat, bool), MeshBuf> = HashMap::new();
@@ -798,7 +832,7 @@ fn build_footprints(
                 let t = trims.entry((cx, cz)).or_default();
                 // The parapet round the roof, and its coping.
                 let (ph, pt) = PARAPET;
-                t.open_box(at(len * 0.5, fp.top + ph * 0.5) - out * pt * 0.5, rot, Vec3::new(len, ph, pt), tint_at(1.06));
+                t.open_box(at(len * 0.5, fp.top + ph * 0.5) - out * pt * 0.5, rot, Vec3::new(len, ph, pt), tint_at(1.0));
                 t.prism(at(len * 0.5, fp.top + ph + 0.07) - out * 0.15, rot, Vec3::new(len, 0.14, 0.4), 0.05, trim);
                 // A chhajja over the ground storey: a deep sunshade ledge, run on round outside
                 // corners to meet the next wall's and stopped short of inside ones.
@@ -851,7 +885,7 @@ fn build_footprints(
             }
             // Two bands, each with its own texture and shading baked into the vertex colour: the
             // ground storey dark with street grime at its foot, the rest lighter toward the top.
-            for (lo, hi, shop, (s0, s1)) in [(fp.base, split, shops, (0.66, 0.84)), (split, fp.top, false, (0.9, 1.06))] {
+            for (lo, hi, shop, (s0, s1)) in [(fp.base, split, shops, (0.66, 0.84)), (split, fp.top, false, (0.86, 1.0))] {
                 if hi - lo < 0.05 {
                     continue;
                 }
@@ -940,19 +974,21 @@ fn build_footprints(
                         }
                     }
                 }
-                // Cables slung across the lane to the building opposite.
-                if len > 4.0 && r(20 + i as u32) < 0.35 {
+                // Cables slung across the lane or road to the building opposite, and now and then a
+                // string of paper flags.
+                if len > 4.0 && r(20 + i as u32) < 0.5 {
                     let from = Vec3::new(mid.x, split + 1.2 + 1.5 * r(40 + i as u32), mid.y) + out * 0.1;
-                    let reach = (2..18).find(|&d| occupied(mid + out2 * d as f32)).map(|d| d as f32 - 0.6);
+                    let reach = (2..CABLE_REACH).find(|&d| occupied(mid + out2 * d as f32)).map(|d| d as f32 - 0.6);
                     if let Some(d) = reach.filter(|d| *d > 3.0) {
                         let to = from + out * d + Vec3::Y * (r(60 + i as u32) - 0.5);
-                        if r(90 + i as u32) < 0.4 {
+                        if r(90 + i as u32) < 0.12 {
                             bunting(k, from, to, 0.25 + 0.05 * d, seed ^ i as u32);
                         } else {
-                            for w in 0..2 + (r(80 + i as u32) * 2.0) as usize {
-                                let sag = 0.4 + 0.25 * w as f32 + 0.1 * d;
+                            let l = lines.entry((cx, cz)).or_default();
+                            for w in 0..2 + (r(80 + i as u32) * 3.0) as usize {
+                                let sag = 0.3 + 0.12 * w as f32 + 0.04 * d;
                                 let shift = dir * (w as f32 * 0.12);
-                                wire(k, from + shift, to + shift, sag);
+                                wire(l, from + shift, to + shift, sag);
                             }
                         }
                     }
@@ -973,8 +1009,7 @@ fn build_footprints(
             }
         }
         let roof = roofs.entry((cx, cz)).or_default();
-        let g = 0.84 + 0.1 * r(6);
-        let roof_col = lin([g, g * 0.97, g * 0.92]);
+        let roof_col = roof_shade(r(6));
         for [i, j, k] in shared::map::footprint::triangulate(&fp.pts) {
             let p = [fp.pts[i as usize], fp.pts[j as usize], fp.pts[k as usize]].map(|q| Vec3::new(q.x, fp.top, q.y));
             let p = if (p[1] - p[0]).cross(p[2] - p[0]).y >= 0.0 { p } else { [p[0], p[2], p[1]] };
@@ -986,6 +1021,34 @@ fn build_footprints(
                 roof.col.push(roof_col);
             }
             roof.idx.extend_from_slice(&[base, base + 1, base + 2]);
+        }
+    }
+    // The road's electric lines: three from each pole to the next along the road, and a drop from it
+    // to the nearest wall on either hand.
+    let poles: Vec<(Vec3, Vec3)> = layout.kit.iter().filter(|k| k.name == "pole").map(|k| (k.pos, Quat::from_rotation_y(k.yaw) * Vec3::X)).collect();
+    for (pole, along) in &poles {
+        let (pole, along) = (*pole, *along);
+        let l = lines.entry(((pole.x / CHUNK).floor() as i32, (pole.z / CHUNK).floor() as i32)).or_default();
+        let side = along.cross(Vec3::Y);
+        let next = poles.iter().map(|(q, _)| *q).filter(|q| (*q - pole).normalize_or_zero().dot(along) > 0.8).map(|q| (q.distance(pole), q)).filter(|(d, _)| *d < POLE_SPAN).min_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((d, q)) = next.filter(|(_, q)| [0.25, 0.5, 0.75].iter().all(|t| roof_at(pole.lerp(*q, *t).xz()) < POLE_TOP)) {
+            for k in -1..=1 {
+                let (a, b) = (pole + Vec3::Y * POLE_TOP + side * (k as f32 * 0.28), q + Vec3::Y * POLE_TOP + side * (k as f32 * 0.28));
+                wire(l, a, b, 0.5 + 0.02 * d);
+            }
+        }
+        for s in [-1.0, 1.0] {
+            let out = side * s;
+            let reach = (2..DROP_REACH).find(|&d| occupied((pole + out * d as f32).xz())).map(|d| d as f32 - 0.6);
+            // Only a wall that stands high enough to carry a line over people's heads.
+            let wall = reach.map_or(0.0, |d| roof_at((pole + out * (d + 1.0)).xz()) - pole.y);
+            if let Some(d) = reach.filter(|_| wall > DROP_FROM - 3.0) {
+                let (a, b) = (pole + Vec3::Y * DROP_FROM, pole + out * d + Vec3::Y * (DROP_FROM - 2.0).min(wall - 0.6));
+                for k in 0..2 {
+                    let shift = along * (k as f32 * 0.14);
+                    wire(l, a + shift, b + shift, 0.2 + 0.03 * d);
+                }
+            }
         }
     }
     let mut facade_mats: HashMap<(Mat, bool), Handle<StandardMaterial>> = HashMap::new();
@@ -1023,7 +1086,16 @@ fn build_footprints(
         let (mesh, centre) = if big { buf.into_plain_mesh() } else { buf.into_mesh() };
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(plain.clone()), Transform::from_translation(centre), range.0.clone(), range, crate::batch::probe::Tagged("clutter"), OfMap));
     }
-    let lettered = materials.add(StandardMaterial { base_color: Color::WHITE, base_color_texture: Some(signs_tex), perceptual_roughness: 0.6, ..default() });
+    // Printed flex, grey with dust: it shouldn't read as a lit screen.
+    for (_, buf) in lines {
+        if buf.idx.is_empty() {
+            continue;
+        }
+        let range = crate::characters::LodRange(near.clone(), 0);
+        let (mesh, centre) = buf.into_plain_mesh();
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(plain.clone()), Transform::from_translation(centre), range.0.clone(), range, bevy::light::NotShadowCaster, crate::batch::probe::Tagged("lines"), OfMap));
+    }
+    let lettered = materials.add(StandardMaterial { base_color: Color::srgb(0.80, 0.79, 0.76), base_color_texture: Some(signs_tex), perceptual_roughness: 0.75, ..default() });
     for (_, buf) in signs {
         let range = crate::characters::LodRange(near.clone(), 0);
         let (mesh, centre) = buf.into_mesh();

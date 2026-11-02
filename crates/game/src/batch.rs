@@ -15,13 +15,15 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use bevy::camera::visibility::VisibilityRange;
+use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 use shared::map::MapLayout;
 use shared::sim::{OfMap, map_reloaded};
 
-use crate::buildings::tiers;
+use crate::buildings::{hash01, tiers};
 use crate::characters::LodRange;
+use crate::quality::Quality;
 
 pub mod near;
 pub mod probe;
@@ -30,6 +32,8 @@ pub mod upload;
 /// Chunk side: a tree is at most `CHUNK * 0.71` from its chunk's centre, the slack in its LOD
 /// switch distances.
 const CHUNK: f32 = 32.0;
+/// How much of the sun gets through a leaf to light its far side.
+const LEAF_TRANSMISSION: f32 = 0.25;
 
 /// Props merged rather than spawned one by one.
 pub fn batched(model: &str) -> bool {
@@ -48,6 +52,8 @@ struct Part {
 struct Templates {
     /// Model path -> its parts, once its template scene has spawned.
     parts: HashMap<&'static str, Vec<Part>>,
+    /// The models' leaf materials, once finished (`finish_leaves`).
+    leaves: Vec<Handle<StandardMaterial>>,
     asked: bool,
     built: bool,
 }
@@ -59,7 +65,7 @@ impl Plugin for BatchPlugin {
         app.add_plugins((probe::ProbePlugin, upload::UploadPlugin))
             .init_resource::<Templates>()
             .init_resource::<near::Near>()
-            .add_systems(Update, ((forget.run_if(map_reloaded)).in_set(near::NearReset), (spawn_templates, build_batches, near::stream).chain().after(near::NearReset)));
+            .add_systems(Update, ((forget.run_if(map_reloaded)).in_set(near::NearReset), (spawn_templates, build_batches, leaf_light, near::stream).chain().after(near::NearReset), near::loot_reach.run_if(|layout: Res<MapLayout>| tiers::big_map(&layout))));
     }
 }
 
@@ -104,6 +110,82 @@ fn spawn_templates(mut commands: Commands, mut t: ResMut<Templates>, layout: Res
                 t.parts.insert(model, found);
                 commands.entity(root).despawn();
             });
+    }
+}
+
+/// What a model file can't say about its leaves, once they are loaded.
+///
+/// A card is drawn from both sides, but as one surface: its normal comes from the crown, pointing
+/// out of it (tools/blender/nature/trees.py), so each leaf is lit by where it stands in the crown.
+/// `double_sided` would flip that for every card seen from behind, which is about half of them,
+/// and shade those as if they faced into the tree: the pale, blue-grey cards scattered over a crown.
+fn finish_leaves(t: &mut Templates, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
+    t.leaves.clear();
+    for (model, parts) in &t.parts {
+        for part in parts {
+            let Some(mut m) = materials.get_mut(&part.mat) else { continue };
+            if matches!(m.alpha_mode, AlphaMode::Opaque) {
+                continue;
+            }
+            m.double_sided = false;
+            m.cull_mode = None;
+            m.perceptual_roughness = 0.85;
+            m.reflectance = 0.06;
+            t.leaves.push(part.mat.clone());
+            if let Some(mut mesh) = meshes.get_mut(&part.mesh) {
+                crown_shade(&mut mesh, !model.contains("palm"));
+            }
+        }
+    }
+}
+
+/// A crown's depth, baked into its leaves' colours. Those deep inside it and under it see little of
+/// the sky, and nothing else darkens them: there's no ambient occlusion at the levels most play at,
+/// and with none a crown reads as a soft ball. `cards`: the mesh is separate quads, which also get
+/// a shade of their own, so a crown isn't all one green.
+fn crown_shade(mesh: &mut Mesh, cards: bool) {
+    let Some(VertexAttributeValues::Float32x3(pos)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { return };
+    let (lo, hi) = pos.iter().fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| (lo.min(Vec3::from(*p)), hi.max(Vec3::from(*p))));
+    let (middle, half) = ((lo + hi) * 0.5, ((hi - lo) * 0.5).max(Vec3::splat(0.01)));
+    let smooth = |a: f32, b: f32, x: f32| {
+        let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    let shade = |at: Vec3| {
+        let p = (at - middle) / half;
+        (0.45 + 0.55 * smooth(0.3, 1.0, p.length())) * (0.7 + 0.3 * smooth(-1.0, 0.2, p.y))
+    };
+    let mut colours: Vec<[f32; 4]> = Vec::with_capacity(pos.len());
+    if cards {
+        for (k, card) in pos.chunks(4).enumerate() {
+            let k = k as u32;
+            let (value, warm) = (0.88 + 0.24 * hash01(k, 1, 7), 0.08 * (2.0 * hash01(k, 2, 7) - 1.0));
+            let at = card.iter().map(|p| Vec3::from(*p)).sum::<Vec3>() / card.len() as f32;
+            let c = shade(at) * value;
+            colours.extend(std::iter::repeat_n([c * (1.0 + warm), c, c * (1.0 - warm), 1.0], card.len()));
+        }
+    } else {
+        colours.extend(pos.iter().map(|p| {
+            let c = shade(Vec3::from(*p));
+            [c, c, c, 1.0]
+        }));
+    }
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colours);
+}
+
+/// The sun through the leaves, a second look at the shadow map for each leaf's pixels, on every level
+/// but the lowest.
+fn leaf_light(quality: Res<Quality>, t: Res<Templates>, mut materials: ResMut<Assets<StandardMaterial>>) {
+    if !quality.is_changed() && !t.is_changed() {
+        return;
+    }
+    let wanted = if *quality == Quality::Low { 0.0 } else { LEAF_TRANSMISSION };
+    for handle in &t.leaves {
+        if materials.get(handle).is_some_and(|m| m.diffuse_transmission != wanted)
+            && let Some(mut m) = materials.get_mut(handle)
+        {
+            m.diffuse_transmission = wanted;
+        }
     }
 }
 
@@ -210,7 +292,7 @@ fn build_batches(
     mut t: ResMut<Templates>,
     layout: Res<MapLayout>,
     mut meshes: ResMut<Assets<Mesh>>,
-    materials: Res<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     mut near: ResMut<near::Near>,
     scale: Res<crate::quality::LodScale>,
 ) {
@@ -224,6 +306,7 @@ fn build_batches(
     if t.parts.values().flatten().any(|p| meshes.get(&p.mesh).is_none()) {
         return;
     }
+    finish_leaves(&mut t, &mut meshes, &mut materials);
     if tiers::big_map(&layout) {
         build_big(&mut commands, &t, &layout, &mut meshes, &materials, &mut near, scale.0);
         t.built = true;
@@ -274,4 +357,43 @@ fn build_batches(
     }
     t.built = true;
     info!("batched {} trees and bushes into {spawned} meshes", layout.props.iter().filter(|p| batched(p.model)).count());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::asset::RenderAssetUsages;
+    use bevy::mesh::PrimitiveTopology;
+
+    fn colours(mesh: &Mesh) -> &Vec<[f32; 4]> {
+        let Some(VertexAttributeValues::Float32x4(c)) = mesh.attribute(Mesh::ATTRIBUTE_COLOR) else { panic!("no colours") };
+        c
+    }
+
+    /// Two cards at the heart of a crown and two on its top, out to the box they make.
+    fn crown() -> Mesh {
+        let card = |c: Vec3| [Vec3::new(-0.1, 0.0, 0.0), Vec3::new(0.1, 0.0, 0.0), Vec3::new(0.1, 0.1, 0.0), Vec3::new(-0.1, 0.1, 0.0)].map(|d| (c + d).to_array());
+        let pos: Vec<[f32; 3]> = [Vec3::ZERO, Vec3::new(5.0, 3.0, 0.0), Vec3::new(-5.0, 3.0, 0.0), Vec3::new(0.0, -3.0, 0.0), Vec3::new(0.0, 3.0, 5.0), Vec3::new(0.0, 3.0, -5.0)].into_iter().flat_map(card).collect();
+        Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default()).with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
+    }
+
+    #[test]
+    fn a_crown_is_dark_inside_and_light_on_top() {
+        let mut mesh = crown();
+        crown_shade(&mut mesh, false);
+        let c = colours(&mesh);
+        assert_eq!(c.len(), mesh.count_vertices());
+        let (heart, top, under) = (c[0][1], c[4][1], c[12][1]);
+        assert!(heart < top * 0.7, "the heart of a crown should be well below its top: {heart} against {top}");
+        assert!(under < top, "under a crown should be darker than its top: {under} against {top}");
+    }
+
+    #[test]
+    fn a_card_is_one_colour() {
+        let mut mesh = crown();
+        crown_shade(&mut mesh, true);
+        for card in colours(&mesh).chunks(4) {
+            assert!(card.iter().all(|c| c == &card[0]), "a card's corners differ, so its outline would show");
+        }
+    }
 }

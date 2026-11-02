@@ -31,11 +31,12 @@ use bevy::prelude::*;
 use shared::map::{Block, Footprint, MapLayout, Mat, Shape, footprint};
 use shared::sim::OfMap;
 
-use super::{BAY, MeshBuf, PARAPET, Paint, STOREY, TRIM, bare, bare_tint, is_static_visual, lin};
+use super::{BAY, BLUE_TINT, BRICK_TINT, MARBLE_TINT, MeshBuf, OCHRE_TINT, PARAPET, PLASTER_TINT, Paint, STOREY, TRIM, bare, bare_tint, is_static_visual, lin, roof_shade};
 use crate::batch::batched;
 use crate::batch::probe::{Tagged, reading_meshes};
 use crate::characters::LodRange;
 use crate::quality::LodShadow;
+use crate::street::{WEAR_MEAN, weathered};
 use crate::surfaces::{Surface, UltraSurfaces};
 
 /// Half a map wider than this, and it has tiers.
@@ -58,8 +59,8 @@ const FAR_BLOCK: f32 = 4.0;
 const COPING: f32 = 0.14;
 
 /// The street kit that is cover, with its collider's size (shared::map::kit) and its colours' mean
-/// (linear, by area, from tools/blender/props/street_kit.py's model). The rest is too small or too
-/// thin to hide a player and stops with the near tier.
+/// (linear, by area, from tools/blender/props/street_kit.py's model, before `weathered`). The rest is
+/// too small or too thin to hide a player and stops with the near tier.
 #[allow(clippy::approx_constant)] // Colours, not 1/pi.
 const COVER: [(&str, [f32; 3], [f32; 3]); 8] = [
     ("auto", [1.4, 1.8, 2.6], [0.354, 0.326, 0.039]),
@@ -72,8 +73,8 @@ const COVER: [(&str, [f32; 3], [f32; 3]); 8] = [
     ("drum", [0.6, 0.95, 0.6], [0.006, 0.119, 0.579]),
 ];
 
-/// The leaf atlas's mean colour and the bark's (linear, from the textures).
-const LEAVES: [f32; 3] = [0.066, 0.093, 0.017];
+/// A crown's mean colour, from the leaf atlas as crate::batch shades it, and the bark's (linear).
+const LEAVES: [f32; 3] = [0.036, 0.061, 0.017];
 const BARK: [f32; 3] = [0.063, 0.052, 0.039];
 
 /// Whether this map is drawn in tiers.
@@ -171,17 +172,24 @@ fn flat_colour(mat: Mat) -> [f32; 4] {
         let t = lin(tint);
         [tex[0] * t[0], tex[1] * t[1], tex[2] * t[2], 1.0]
     };
+    let plastered = |tint: Color| {
+        let t = tint.to_linear();
+        [PLASTER[0] * t.red, PLASTER[1] * t.green, PLASTER[2] * t.blue, 1.0]
+    };
     let raw = |c: [f32; 3]| [c[0], c[1], c[2], 1.0];
     match mat {
-        Mat::Plaster => times(PLASTER, [0.97, 0.95, 0.90]),
-        Mat::PlasterOchre => times(PLASTER, [0.95, 0.74, 0.44]),
-        Mat::PlasterBlue => times(PLASTER, [0.55, 0.72, 0.95]),
-        Mat::Marble => times(PLASTER, [1.0, 0.99, 0.97]),
+        Mat::Plaster => plastered(PLASTER_TINT),
+        Mat::PlasterOchre => plastered(OCHRE_TINT),
+        Mat::PlasterBlue => plastered(BLUE_TINT),
+        Mat::Marble => plastered(MARBLE_TINT),
         Mat::Sandstone => raw(SANDSTONE),
         Mat::RedSandstone => times(SANDSTONE, [0.86, 0.50, 0.40]),
         Mat::Dirt => times(SANDSTONE, [0.75, 0.62, 0.48]),
         Mat::Granite => raw([0.318, 0.26, 0.213]),
-        Mat::Brick => raw([0.351, 0.108, 0.062]),
+        Mat::Brick => {
+            let t = BRICK_TINT.to_linear();
+            raw([0.351 * t.red, 0.108 * t.green, 0.062 * t.blue])
+        }
         Mat::Wood => raw([0.133, 0.058, 0.02]),
         Mat::Bark => times([0.133, 0.058, 0.02], [0.7, 0.65, 0.6]),
         Mat::Thatch => raw([0.348, 0.238, 0.079]),
@@ -192,13 +200,13 @@ fn flat_colour(mat: Mat) -> [f32; 4] {
         Mat::Pavers => raw([0.312, 0.298, 0.266]),
         Mat::ShopSign => raw([0.084, 0.111, 0.091]),
         Mat::MetroSign => raw([0.053, 0.104, 0.16]),
-        Mat::ContainerRed => lin([0.55, 0.16, 0.10]),
+        Mat::ContainerRed => lin([0.44, 0.22, 0.17]),
         Mat::Rubber => lin([0.035, 0.04, 0.045]),
-        Mat::PaintWhite => lin([0.78, 0.81, 0.79]),
-        Mat::TransitBlue => lin([0.08, 0.55, 0.8]),
-        Mat::TransitYellow => lin([0.95, 0.7, 0.15]),
+        Mat::PaintWhite => lin([0.74, 0.76, 0.74]),
+        Mat::TransitBlue => lin([0.14, 0.38, 0.52]),
+        Mat::TransitYellow => lin([0.76, 0.60, 0.20]),
         Mat::Gold => lin([1.0, 0.76, 0.34]),
-        Mat::Cloth => lin([0.85, 0.22, 0.32]),
+        Mat::Cloth => lin([0.62, 0.27, 0.30]),
         Mat::Foliage => lin([0.26, 0.42, 0.18]),
         Mat::Grass => lin([0.42, 0.50, 0.25]),
         Mat::Water => lin([0.10, 0.26, 0.28]),
@@ -326,7 +334,7 @@ fn add_shell(s: &mut Shell, fp: &Footprint, paint: &Paint) {
         let out = Vec3::new(out2.x, 0.0, out2.y);
         let (u0, u1) = (along / (2.0 * BAY), (along + len) / (2.0 * BAY));
         let (a3, b3) = (Vec3::new(a.x, 0.0, a.y), Vec3::new(b.x, 0.0, b.y));
-        for (lo, hi, (s0, s1)) in [(fp.base, split, (0.66, 0.84)), (split, fp.top, (0.9, 1.06))] {
+        for (lo, hi, (s0, s1)) in [(fp.base, split, (0.66, 0.84)), (split, fp.top, (0.86, 1.0))] {
             if hi - lo < 0.05 {
                 continue;
             }
@@ -337,7 +345,7 @@ fn add_shell(s: &mut Shell, fp: &Footprint, paint: &Paint) {
             s.walls.quad_facing([a3.with_y(lo), b3.with_y(lo), b3.with_y(hi), a3.with_y(hi)], out, uv, [c0, c0, c1, c1]);
         }
         // The parapet: its outside, its coping and its inside.
-        let (c, t) = (wall_at(1.06), paint.trim);
+        let (c, t) = (wall_at(1.0), paint.trim);
         let (a_in, b_in) = (a3 - out * 0.4, b3 - out * 0.4);
         let no_uv = [Vec2::ZERO; 4];
         s.plain.quad_facing([a3.with_y(fp.top), b3.with_y(fp.top), b3.with_y(top), a3.with_y(top)], out, no_uv, [c; 4]);
@@ -345,9 +353,8 @@ fn add_shell(s: &mut Shell, fp: &Footprint, paint: &Paint) {
         s.plain.quad_facing([a_in.with_y(fp.top), b_in.with_y(fp.top), b_in.with_y(top), a_in.with_y(top)], -out, no_uv, [c; 4]);
         along += len;
     }
-    let g = 0.84 + 0.1 * paint.r(6);
     let plaster = flat_colour(Mat::Plaster);
-    let shade = lin([g, g * 0.97, g * 0.92]);
+    let shade = roof_shade(paint.r(6));
     let roof = [plaster[0] * shade[0], plaster[1] * shade[1], plaster[2] * shade[2], 1.0];
     for [i, j, k] in footprint::triangulate(&fp.pts) {
         let p = [fp.pts[i as usize], fp.pts[j as usize], fp.pts[k as usize]].map(|q| Vec3::new(q.x, fp.top, q.y));
@@ -398,7 +405,8 @@ pub(super) fn build(
         let Some((size, col)) = cover.get(piece.name) else { continue };
         let size = Vec3::from(*size);
         let c = piece.pos + Vec3::Y * size.y * 0.5;
-        mid.entry(cell_at(c.x, c.z)).or_default().plain.open_box(c, Quat::from_rotation_y(piece.yaw), size, [col[0], col[1], col[2], 1.0]);
+        let [r, g, b] = weathered(*col).map(|x| x * WEAR_MEAN);
+        mid.entry(cell_at(c.x, c.z)).or_default().plain.open_box(c, Quat::from_rotation_y(piece.yaw), size, [r, g, b, 1.0]);
     }
     for p in layout.props.iter().filter(|p| batched(p.model)) {
         let (y, h, r) = crown(p.model);

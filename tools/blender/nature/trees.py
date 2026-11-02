@@ -29,7 +29,8 @@ TEX_DIR = os.path.join(ROOT, "build", "textures", "trees")
 
 def bark_material(name, tint):
     path = os.path.join(TEX_DIR, f"bark_{name}.png")
-    textures.tileable_bark(path, tint=tint, seed=hash(name) % 97)
+    # Its own seed, not hash(name): Python changes that every run, and with it every texture's file.
+    textures.tileable_bark(path, tint=tint, seed=SPECIES[name]["seed"] % 97)
     m = bpy.data.materials.new(f"bark_{name}")
     m.use_nodes = True
     nt = m.node_tree
@@ -61,7 +62,7 @@ def leaf_material(atlas_path):
     cut.inputs[1].default_value = 0.5
     nt.links.new(tex.outputs["Alpha"], cut.inputs[0])
     nt.links.new(cut.outputs[0], p.inputs["Alpha"])
-    p.inputs["Roughness"].default_value = 0.6
+    p.inputs["Roughness"].default_value = 0.85
     return m
 
 
@@ -352,10 +353,12 @@ def build(species, lod, atlas):
 def main():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     wanted = argv or list(SPECIES)
+    # Built by leaf_atlas.py, first, from the photographs.
     atlas = os.path.join(TEX_DIR, "leaf_atlas.png")
+    if not os.path.exists(atlas):
+        sys.exit(f"no {atlas}: run python3 tools/blender/nature/leaf_atlas.py first")
     for species in wanted:
         export.reset_scene()
-        textures.draw_atlas(atlas)
         prefix = "bush" if species in ("lantana", "bougainvillea") else "tree"
         # Bushes are gone by 220 m; trees stand to the horizon and get a third, sparse LOD.
         lods = [build(species, lod, atlas) for lod in ((0, 1) if prefix == "bush" else (0, 1, 2))]
