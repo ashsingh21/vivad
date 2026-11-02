@@ -243,7 +243,17 @@ fn read_pieces() -> Result<(HashMap<String, Piece>, Image), String> {
     let kit_path = std::path::Path::new(crate::ASSET_DIR).join("models/props/street_kit.glb");
     let kit_bytes = std::fs::read(&kit_path).map_err(|e| e.to_string())?;
     let kit = gltf::Gltf::from_slice(&kit_bytes).map_err(|e| e.to_string())?;
-    read_file(&kit, kit.blob.as_deref().ok_or("no binary chunk")?, &["scooter_LOD1", "thela_LOD1"])?;
+    read_file(&kit, kit.blob.as_deref().ok_or("no binary chunk")?, &["scooter_LOD0", "thela_LOD1"])?;
+    // Under this light the goods' plain colours came out as blocks of paint: cloth and tarps fade
+    // and dull in a street's sun and dust, and the eye should go to the warriors.
+    for (_, piece) in out.iter_mut().filter(|(name, _)| !name.contains("_LOD")) {
+        for c in &mut piece.col {
+            let grey = 0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2];
+            for v in c.iter_mut().take(3) {
+                *v = (*v * 0.68 + grey * 0.32) * 0.88;
+            }
+        }
+    }
     if let Some(p) = out.get_mut("thela_LOD1") {
         for c in &mut p.col {
             let grey = 0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2];
@@ -253,7 +263,7 @@ fn read_pieces() -> Result<(HashMap<String, Piece>, Image), String> {
         }
     }
     // The kit's scooter in the colours a street's old ones come in: its red body repainted.
-    if let Some(red) = out.remove("scooter_LOD1") {
+    if let Some(red) = out.remove("scooter_LOD0") {
         for (name, paint) in [("scooter_black", [0.02, 0.02, 0.022]), ("scooter_grey", [0.16, 0.17, 0.18]), ("scooter_blue", [0.03, 0.07, 0.14]), ("scooter_maroon", [0.14, 0.025, 0.03])] {
             let col = red.col.iter().map(|c| if c[0] > 3.0 * c[1] { [paint[0], paint[1], paint[2], 1.0] } else { [c[0] * 0.7, c[1] * 0.7, c[2] * 0.7, 1.0] }).collect();
             out.insert(name.to_owned(), Piece { pos: red.pos.clone(), nrm: red.nrm.clone(), uv: red.uv.clone(), col, idx: red.idx.clone() });
