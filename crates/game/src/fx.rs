@@ -424,7 +424,7 @@ fn broke_splinters(mut commands: Commands, mut broke: MessageReader<BrokeMsg>, f
 #[derive(Component)]
 struct Puffed;
 
-/// A ring of dust kicked up where a warrior lands hard (a jump off a roof, the end of a glide).
+/// A ring of dust kicked up where a warrior lands hard (a jump off a roof), not off a plain jump.
 fn landing_dust(
     mut commands: Commands,
     q: Query<(Entity, &shared::sim::Kinematic, &Transform)>,
@@ -433,10 +433,10 @@ fn landing_dust(
 ) {
     for (e, kin, t) in &q {
         let (grounded, vy) = was.get(&e).copied().unwrap_or((true, 0.0));
-        if !grounded && kin.grounded && vy < -6.0 {
-            let n = (6.0 + -vy).min(20.0) as usize;
+        if !grounded && kin.grounded && vy < -13.0 {
+            let n = (-vy * 0.5).min(12.0) as usize;
             let feet = t.translation - Vec3::Y * shared::sim::HALF_HEIGHT + Vec3::Y * 0.1;
-            billow(&mut commands, &fx, &fx.dust, feet, Vec3::NEG_Y * 0.5, n, 1.2 + -vy * 0.05, 0.12);
+            billow(&mut commands, &fx, &fx.dust, feet, Vec3::NEG_Y * 0.5, n, 1.2 + -vy * 0.05, 0.06);
         }
         was.insert(e, (kin.grounded, kin.velocity.y));
     }
@@ -766,7 +766,7 @@ fn punch_camera(
                 "tamancha" => (0.016, 0.004),
                 "vajra9" => (0.011, 0.012),
                 "trishul_carbine" => (0.022, 0.008),
-                "saintalis" => (0.018, 0.012),
+                "saintalis" | "bandook" => (0.018, 0.012),
                 "thaana_slr" => (0.03, 0.012),
                 "thri_not_thri" => (0.05, 0.02),
                 "toradar" => (0.07, 0.03),

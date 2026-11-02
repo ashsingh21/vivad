@@ -88,6 +88,13 @@ every diagnostic, including the GPU time of each render pass: the shadow pass is
 Knobs for comparisons: `VIVAD_GRASS=<0..1>` (share of blades; default the level's),
 `VIVAD_CASCADES=n` (default 3), `VIVAD_SHADOW_FAR=m` (default 200).
 
+**Movement by the player's own keys.** `VIVAD_FOOT=street,<x>,<z>` starts the match on foot down the
+longest road near a spot (`gumti`, 9 m out from a shutter; `<x>,<z>[,<yaw>]`, exactly there) and logs
+speed, height and stance as `[foot]` lines. `VIVAD_KEYS="2:+KeyW,6:+ShiftLeft,..."` presses keys at
+match times through the same bindings as a keyboard, `VIVAD_TURN=<t>:<degrees>,...` turns the view,
+and `VIVAD_GIVE=saintalis,talwar` fills the first slots. With `VIVAD_CLIP=<dir>,<from>,<to>,<fps>` and
+`VIVAD_CLIP_VIEW=1` that films a run from the game's own camera with the window hidden.
+
 **Weapons in the hand.** `just armoury` stands the player on open ground and captures every item
 carried and in use (aiming, drawing, swinging, drinking) from the front, side and back, then
 tiles them into `previews/armoury_sheet.png`; `just armoury pinaka,soma` for a few. The last

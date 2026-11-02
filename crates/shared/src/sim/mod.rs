@@ -34,11 +34,19 @@ pub const CAPSULE_LENGTH: f32 = 1.0;
 pub const HALF_HEIGHT: f32 = CAPSULE_RADIUS + CAPSULE_LENGTH / 2.0;
 /// Eye / camera pivot height above the capsule centre.
 pub const EYE_OFFSET: f32 = 0.72;
+/// Crouched, the eye comes down less than the capsule's top (stance::CROUCH_DROP), to the head's
+/// height in the crouch clips.
+pub const CROUCH_EYE_DROP: f32 = 0.5;
 /// Over-the-shoulder camera, shared so server-side aim matches the client crosshair.
 pub const CAMERA_DISTANCE: f32 = 3.4;
 pub const CAMERA_SHOULDER: f32 = 0.65;
 /// How far behind the body the camera sits while aiming, on the same line as CAMERA_DISTANCE.
 pub const ADS_DISTANCE: f32 = 1.9;
+/// And under a roof, on that line too, so shots stay on the crosshair: a room's walls would keep
+/// shoving a longer boom about.
+pub const INDOOR_DISTANCE: f32 = 2.4;
+/// How far over the eye a ceiling counts as a roof.
+const ROOF_OVER: f32 = 3.0;
 pub const HEADSHOT_HEIGHT: f32 = 0.5;
 
 #[derive(PhysicsLayer, Clone, Copy, Debug, Default)]
@@ -83,6 +91,8 @@ pub mod btn {
     pub const INTERACT: u16 = 1 << 4;
     pub const SPRINT: u16 = 1 << 5;
     pub const CROUCH: u16 = 1 << 6;
+    /// Walking instead of running (movement::AIM_SPEED).
+    pub const WALK: u16 = 1 << 7;
 }
 
 /// Everything a controller (human, bot or network peer) can ask a warrior to do this tick.
@@ -184,6 +194,23 @@ pub struct Kinematic {
     /// Highest point since last on the ground on foot (fall damage is by height dropped).
     /// None while airborne untracked: thrown by a wind astra, which lands harmlessly.
     pub fall_from: Option<f32>,
+    /// Seconds since last on the ground on foot (a jump still counts just after running off an
+    /// edge: movement::COYOTE).
+    pub air_time: f32,
+    /// Seconds a jump press is still waiting to happen (pressed just before landing: JUMP_BUFFER).
+    pub jump_buffer: f32,
+    /// Low: crouching or sliding, the collider short. Written only by stance::update_stance.
+    pub crouched: bool,
+    pub sliding: bool,
+    /// Seconds before another slide can start.
+    pub slide_cooldown: f32,
+}
+
+/// The eye's height over the capsule's centre: lower crouched (the crouch button held, which every
+/// peer sees). Takes the warrior's Transform as it is: no `PlayerIntent::drop` first, or a crouch
+/// drops twice.
+pub fn eye_offset(intent: &PlayerIntent) -> f32 {
+    EYE_OFFSET - if intent.held(btn::CROUCH) { CROUCH_EYE_DROP } else { 0.0 }
 }
 
 /// Previous and current fixed-tick positions so clients can interpolate between ticks.
@@ -656,7 +683,7 @@ fn clear_latched_input(mut q: Query<(&Transform, &mut PlayerIntent, Option<&mut 
 /// Camera-equivalent aim ray, shared by player shots and the client crosshair.
 pub fn aim_ray(center: Vec3, intent: &PlayerIntent) -> (Vec3, Vec3) {
     let rot = intent.aim_rotation();
-    let pivot = center + Vec3::Y * EYE_OFFSET;
+    let pivot = center + Vec3::Y * eye_offset(intent);
     let origin = pivot + rot * Vec3::new(CAMERA_SHOULDER, 0.0, CAMERA_DISTANCE);
     (origin, rot * Vec3::NEG_Z)
 }
@@ -671,9 +698,16 @@ pub fn camera_spot(spatial: &SpatialQuery, pivot: Vec3, offset: Vec3, me: Entity
     }
 }
 
+/// How far behind the eye the follow camera wants to be: a little in, under a roof.
+pub fn camera_distance(spatial: &SpatialQuery, eye: Vec3, me: Entity) -> f32 {
+    let filter = SpatialQueryFilter::from_mask(solid_mask()).with_excluded_entities([me]);
+    if spatial.cast_ray(eye, Dir3::Y, ROOF_OVER, true, &filter).is_some() { INDOOR_DISTANCE } else { CAMERA_DISTANCE }
+}
+
 /// Where the crosshair's ray really starts for a warrior at `center`: at the camera, aiming or
 /// not, in front of a wall at their back. (`aim_ray` is the same line with nothing in the way.)
 pub fn aim_origin(spatial: &SpatialQuery, center: Vec3, intent: &PlayerIntent, me: Entity) -> Vec3 {
-    let behind = if intent.held(btn::AIM) { ADS_DISTANCE } else { CAMERA_DISTANCE };
-    camera_spot(spatial, center + Vec3::Y * EYE_OFFSET, intent.aim_rotation() * Vec3::new(CAMERA_SHOULDER, 0.0, behind), me)
+    let eye = center + Vec3::Y * eye_offset(intent);
+    let behind = if intent.held(btn::AIM) { ADS_DISTANCE } else { camera_distance(spatial, eye, me) };
+    camera_spot(spatial, eye, intent.aim_rotation() * Vec3::new(CAMERA_SHOULDER, 0.0, behind), me)
 }

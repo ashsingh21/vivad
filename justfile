@@ -34,6 +34,22 @@ jugaad:
 street-kit:
     {{blender}} -b --factory-startup -P tools/blender/props/street_kit.py 2>&1 | grep -E '^\[|Error|Traceback' || true
 
+# The street auto with its baked texture (canvas, panel seams, dust): assets/models/props/auto.glb.
+auto:
+    {{blender}} -b --factory-startup -P tools/blender/props/auto.py 2>&1 | grep -E '^\[|Error|Traceback' || true
+
+# Turntable renders of a model from six angles: just orbit assets/models/props/auto.glb previews/auto
+# The two loot chests (peti, kalash), body and hinged lid, baked: assets/models/props/chest_*.glb.
+chests:
+    {{blender}} -b --factory-startup -P tools/blender/props/chests.py 2>&1 | grep -E '^\[|Error|Traceback' || true
+
+orbit model out:
+    {{blender}} -b --factory-startup -P tools/blender/orbit.py -- {{model}} {{out}} 48 2>&1 | grep -E '^\[|Error|Traceback' || true
+
+# The city facade and shopfront textures: colour, normal, roughness/metal (numpy, no Blender).
+city-textures:
+    python3 tools/textures/city.py
+
 # The drivable vehicles, from the free models in research/vehicles/models (not in git).
 vehicles:
     {{blender}} -b --factory-startup -P tools/blender/props/vehicles.py 2>&1 | grep -E '^\[done|Error|Traceback' || true
@@ -92,7 +108,13 @@ face-lab variant opts="":
 # Warrior animation clips, per rig (needs build/char_<variant>_final.blend from `just characters`).
 # Prints foot slide per clip; add `-- male --preview DIR --clips run_f,idle` for pose renders.
 anims:
+    @test -d tools/blender/characters/mixamo -a -d tools/blender/characters/mocaponline || (echo "anims needs the Mixamo and MoCap Online downloads, not in git: without them it writes clips with no guns. The baked *_anims.glb in git are the ones to use." && exit 1)
     for v in male female; do {{blender}} -b -P tools/blender/characters/anims.py -- $v 2>&1 | grep -E '^\[|Error|Traceback' || true; done
+
+# Check every clip by the numbers (feet skating or sinking, knees and elbows, hands, pops), one
+# text line each: just animcheck, or just animcheck female, or just animcheck male run_f,slide
+animcheck variant="male" clips="":
+    {{blender}} -b -P tools/blender/characters/anim_check.py -- {{variant}} {{clips}} 2>&1 | grep -E '^\[check|^clip|^[a-z_]+ +[0-9]|Error|Traceback' || true
 
 # Every sound effect, synthesized (prints level, length, brightness and loop-seam numbers).
 sfx:
@@ -126,6 +148,12 @@ armoury only="":
     rm -rf previews/armoury && mkdir -p previews/armoury
     VIVAD_MAP=cp VIVAD_MUTE=1 VIVAD_BOTS=1 VIVAD_ARMOURY=previews/armoury VIVAD_ARMOURY_ONLY="{{only}}" cargo run --release -p game --bin game
     python3 tools/shots.py sheet previews/armoury -o previews/armoury_sheet.png --cols 4 --width 1600
+
+# The guns from MoCap Online's rifle pack (bandook, tamancha), the ones its animations hold:
+# just pack-guns, or just pack-guns bandook
+pack-guns *names:
+    @test -d tools/blender/characters/mocaponline || (echo "pack-guns needs the MoCap Online download, not in git." && exit 1)
+    {{blender}} -b --factory-startup -P tools/blender/weapons/pack_guns.py -- {{names}} 2>&1 | grep -E '^\[|Error|Traceback|  File' || true
 
 # Panga's street armoury (bat, katta, tamancha, dunali, gulel): just desi, or just desi katta
 desi *names:

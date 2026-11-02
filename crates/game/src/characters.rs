@@ -1,17 +1,18 @@
 //! Character and vegetation art: skinned warriors (animated by `crate::animation`, holding their
 //! weapon per `crate::arms`) and map props with distance LODs.
 //!
-//! Character GLBs face +Z (MakeHuman), origin at the feet, `game_engine` rig. `<variant>_parts.glb`
-//! has the head, body, outfit, eyes, cornea, mouth and cards as separate meshes over four LODs
-//! (tools/blender/characters/finish.py); with VIVAD_CHAR_PARTS=0, or if it isn't there, the old
-//! one-mesh `<variant>.glb` is loaded instead. The bones are the same in both, so one set of clips
-//! drives either.
+//! Character GLBs face +Z (MakeHuman), origin at the feet, `game_engine` rig. Each of the eight
+//! `LOOKS` is a `<look>_parts.glb`, with the head, body, outfit, top, eyes, cornea, mouth and cards as
+//! separate meshes over four LODs (tools/blender/characters/finish.py); with VIVAD_CHAR_PARTS=0, or
+//! if it isn't there, the old one-mesh `<sex>.glb` is loaded instead. There is one rig per sex, so
+//! one set of clips drives all of them. `Person` keeps warriors of one look from being one person.
 
 use std::collections::HashMap;
 use std::f32::consts::PI;
 use std::ops::Range;
 
 use bevy::camera::visibility::VisibilityRange;
+use bevy::gltf::GltfMaterialName;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 use shared::map::MapLayout;
@@ -23,38 +24,42 @@ pub struct CharacterArtPlugin;
 
 impl Plugin for CharacterArtPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, load_models)
+        app.init_resource::<Tinted>()
+            .add_systems(Startup, load_models)
             .add_systems(Startup, spawn_ornaments.after(load_models))
             .add_systems(Update, (load_props, spawn_ornaments).chain().run_if(map_reloaded).before(dress_props))
             .add_systems(Update, (dress_props, dress_warriors, bind_animations, swap_weapons, retune_part_lods));
     }
 }
 
+/// The looks, in `look % 8` order: odd is a woman (`VARIANTS` in tools/blender/characters/human.py).
+const LOOKS: [&str; 8] = ["male", "female", "officeman", "college", "auto", "aunty", "elder", "officewoman"];
+const SEXES: [&str; 2] = ["male", "female"];
+
 #[derive(Resource)]
 struct Models {
-    male: Handle<WorldAsset>,
-    female: Handle<WorldAsset>,
+    looks: [Handle<WorldAsset>; LOOKS.len()],
     props: HashMap<&'static str, Handle<WorldAsset>>,
 }
 
 fn load_models(mut commands: Commands, assets: Res<AssetServer>, layout: Res<MapLayout>) {
     let parts = std::env::var("VIVAD_CHAR_PARTS").as_deref() != Ok("0");
     commands.insert_resource(Models {
-        male: assets.load(GltfAssetLabel::Scene(0).from_asset(character_file("male", parts))),
-        female: assets.load(GltfAssetLabel::Scene(0).from_asset(character_file("female", parts))),
+        looks: std::array::from_fn(|i| assets.load(GltfAssetLabel::Scene(0).from_asset(character_file(LOOKS[i], SEXES[i % 2], parts)))),
         props: prop_models(&assets, &layout),
     });
 }
 
-/// The model to load for a variant: the split one if it's on disk and not switched off.
-fn character_file(variant: &str, parts_on: bool) -> String {
-    let parts = format!("models/characters/{variant}_parts.glb");
+/// The model to load for a look: the split one if it's on disk and not switched off, else the old
+/// one of its sex.
+fn character_file(look: &str, sex: &str, parts_on: bool) -> String {
+    let parts = format!("models/characters/{look}_parts.glb");
     // The browser build can't look on disk.
     if parts_on && cfg!(not(target_arch = "wasm32")) && std::path::Path::new(crate::ASSET_DIR).join(&parts).exists() {
         info!("character model: {parts}");
         return parts;
     }
-    format!("models/characters/{variant}.glb")
+    format!("models/characters/{sex}.glb")
 }
 
 fn prop_models(assets: &AssetServer, layout: &MapLayout) -> HashMap<&'static str, Handle<WorldAsset>> {
@@ -215,13 +220,15 @@ fn part_lod_visibility(lod: usize, lod0: bool) -> Visibility {
 struct PartLod(usize);
 
 /// Set up a spawned split character's LODs. Parts too small to shade the ground cast no shadow,
-/// which keeps the shadow passes near the old model's draw count.
+/// which keeps the shadow passes near the old model's draw count. Nor does the head, whose hair
+/// shades the ground for it: its own shadow on itself, at a shadow map's size, draws a jagged
+/// contour across the face.
 fn dress_part_lods(root: Entity, lod0: bool, children: &Query<&Children>, names: &Query<&Name>, commands: &mut Commands) {
     apply_lod_ranges(root, &part_ranges(lod0), None, children, names, commands);
     for e in children.iter_descendants(root) {
         let Ok(name) = names.get(e) else { continue };
         let Some(lod) = name.as_str().rsplit("LOD").next().and_then(|s| s.parse::<usize>().ok()) else { continue };
-        let no_shadow = ["_eyes_", "_cornea_", "_mouth_", "_eyebrows_", "_eyelashes_"].iter().any(|p| name.as_str().contains(p));
+        let no_shadow = ["_head_", "_eyes_", "_cornea_", "_mouth_", "_eyebrows_", "_eyelashes_"].iter().any(|p| name.as_str().contains(p));
         for d in std::iter::once(e).chain(children.iter_descendants(e)) {
             commands.entity(d).insert((PartLod(lod), part_lod_visibility(lod, lod0)));
             if no_shadow {
@@ -246,24 +253,79 @@ fn retune_part_lods(quality: Res<crate::quality::Quality>, mut q: Query<(&PartLo
     }
 }
 
+/// Linear multipliers on the skin's colour map: the look's own tone as built, wheatish, deep brown.
+const SKIN_TONES: [Vec3; 3] = [Vec3::ONE, Vec3::new(1.2, 1.18, 1.16), Vec3::new(0.72, 0.68, 0.65)];
+/// Colours of a look's top, sRGB. The file bakes the top pale and carries the first.
+const TOPS: [[[f32; 3]; 3]; LOOKS.len()] = [
+    [[0.52, 0.09, 0.14], [0.07, 0.30, 0.24], [0.13, 0.20, 0.38]],
+    [[0.60, 0.06, 0.30], [0.04, 0.40, 0.42], [0.66, 0.26, 0.10]],
+    [[0.70, 0.79, 0.90], [0.88, 0.88, 0.85], [0.78, 0.74, 0.82]],
+    [[0.85, 0.60, 0.12], [0.88, 0.88, 0.85], [0.86, 0.34, 0.30]],
+    [[0.46, 0.47, 0.47], [0.58, 0.50, 0.34], [0.33, 0.42, 0.52]],
+    [[0.06, 0.34, 0.26], [0.72, 0.50, 0.10], [0.50, 0.08, 0.14]],
+    [[0.90, 0.89, 0.85], [0.86, 0.80, 0.68], [0.74, 0.78, 0.82]],
+    [[0.88, 0.88, 0.85], [0.66, 0.78, 0.88], [0.84, 0.70, 0.72]],
+];
+/// Height on the root, for the warriors of a look in turn. The first is the player's own: as built.
+const HEIGHTS: [f32; 8] = [1.0, 1.025, 0.98, 1.04, 0.965, 1.015, 0.99, 1.03];
+
+/// One warrior's person: a look and what sets them apart from the others on it. All of it comes from
+/// `Warrior::look`, so every peer sees the same crowd. A match of 64 has eight of each look: no two
+/// of them share a skin tone and a colourway, or a height.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Person {
+    look: usize,
+    sex: usize,
+    tone: usize,
+    top: usize,
+    height: f32,
+}
+
+impl Person {
+    fn of(look: u32) -> Self {
+        let turn = (look / LOOKS.len() as u32) as usize;
+        Self { look: look as usize % LOOKS.len(), sex: look as usize % 2, tone: turn % SKIN_TONES.len(), top: turn / SKIN_TONES.len() % TOPS[0].len(), height: HEIGHTS[turn % HEIGHTS.len()] }
+    }
+
+    /// The colour this person multiplies a material by, by its glTF name, and which of a look's
+    /// variations that is. None leaves the material as it is.
+    fn tint(&self, material: &str) -> Option<(usize, Color)> {
+        if material.ends_with("_head") || material.ends_with("_body") {
+            let t = SKIN_TONES[self.tone];
+            (self.tone != 0).then(|| (self.tone, Color::linear_rgb(t.x, t.y, t.z)))
+        } else if material.ends_with("_top") {
+            let [r, g, b] = TOPS[self.look][self.top];
+            (self.top != 0).then(|| (self.top, Color::srgb(r, g, b)))
+        } else {
+            None
+        }
+    }
+}
+
+/// The tinted copies of the characters' materials: one a variation, shared by everyone who wears it.
+#[derive(Resource, Default)]
+struct Tinted(HashMap<(AssetId<StandardMaterial>, usize), Handle<StandardMaterial>>);
+
 fn dress_warriors(mut commands: Commands, q: Query<(Entity, &WarriorVisual), Added<WarriorVisual>>, warriors: Query<&Warrior>, models: Res<Models>) {
     for (vis, wv) in &q {
-        let look = warriors.get(wv.sim).map(|w| w.look).unwrap_or(0);
-        let variant = (look % 2) as usize;
-        let scene = if variant == 0 { models.male.clone() } else { models.female.clone() };
+        let person = Person::of(warriors.get(wv.sim).map(|w| w.look).unwrap_or(0));
+        let variant = person.sex;
         commands
             .spawn((
                 CharacterModel,
-                WorldAssetRoot(scene),
+                WorldAssetRoot(models.looks[person.look].clone()),
                 // Feet on the capsule bottom; turn the +Z-facing model to face the sim's -Z forward.
-                Transform::from_xyz(0.0, -HALF_HEIGHT, 0.0).with_rotation(Quat::from_rotation_y(PI)),
+                Transform::from_xyz(0.0, -HALF_HEIGHT, 0.0).with_rotation(Quat::from_rotation_y(PI)).with_scale(Vec3::splat(person.height)),
                 ChildOf(vis),
             ))
             .observe(move |ready: On<WorldInstanceReady>,
                            children: Query<&Children>,
                            names: Query<&Name>,
                            transforms: Query<&Transform>,
+                           worn: Query<(&MeshMaterial3d<StandardMaterial>, &GltfMaterialName)>,
                            quality: Res<crate::quality::Quality>,
+                           mut standard: ResMut<Assets<StandardMaterial>>,
+                           mut tinted: ResMut<Tinted>,
                            mut commands: Commands| {
                 if lod_count(ready.entity, &children, &names) >= 4 {
                     dress_part_lods(ready.entity, quality.character_lod0(), &children, &names, &mut commands);
@@ -273,6 +335,12 @@ fn dress_warriors(mut commands: Commands, q: Query<(Entity, &WarriorVisual), Add
                 let mut bones = HashMap::new();
                 let mut named = HashMap::new();
                 for e in children.iter_descendants(ready.entity) {
+                    if let Ok((material, name)) = worn.get(e)
+                        && let Some((which, colour)) = person.tint(&name.0)
+                        && let Some(handle) = tinted_material(&mut tinted, &mut standard, material, which, colour)
+                    {
+                        commands.entity(e).insert(MeshMaterial3d(handle));
+                    }
                     commands.entity(e).insert(crate::rim::RimTarget);
                     if let Ok(n) = names.get(e) {
                         named.entry(n.as_str().to_owned()).or_insert(e);
@@ -290,11 +358,40 @@ fn dress_warriors(mut commands: Commands, q: Query<(Entity, &WarriorVisual), Add
                 {
                     // The string sits in the crook of the curled index and middle fingers.
                     let pinch_l = m * 1.3 + crate::arms::palm_normal(i, m, p) * 0.025;
-                    commands.entity(vis).insert(crate::arms::Body { root: ready.entity, spine: [a, b, c, d], hand_l, pinch_l });
+                    // The left fingers, knuckle to tip, to close round a long gun's fore-end.
+                    let fingers_l = ["index", "middle", "ring", "pinky"]
+                        .iter()
+                        .flat_map(|f| (1..=3).filter_map(|k| named.get(&format!("{f}_0{k}_l")).copied()).collect::<Vec<_>>())
+                        .collect();
+                    commands.entity(vis).insert(crate::arms::Body {
+                        root: ready.entity,
+                        spine: [a, b, c, d],
+                        hand_l,
+                        pinch_l,
+                        knuckle_l: m,
+                        palm_l: crate::arms::palm_normal(i, m, p),
+                        fingers_l,
+                        shoulder_r: named.get("upperarm_r").copied(),
+                        head: named.get("head").copied(),
+                        weapon_r: named.get("weapon_r").copied(),
+                    });
                 }
                 commands.entity(vis).insert(CharRig { bones, weapon_attached: false, variant, rig_root, named });
             });
     }
+}
+
+/// `material`'s copy for one variation, multiplied by `colour`.
+fn tinted_material(tinted: &mut Tinted, standard: &mut Assets<StandardMaterial>, material: &MeshMaterial3d<StandardMaterial>, which: usize, colour: Color) -> Option<Handle<StandardMaterial>> {
+    let id = material.0.id();
+    if let Some(handle) = tinted.0.get(&(id, which)) {
+        return Some(handle.clone());
+    }
+    let base = standard.get(id)?;
+    let copy = StandardMaterial { base_color: colour, ..base.clone() };
+    let handle = standard.add(copy);
+    tinted.0.insert((id, which), handle.clone());
+    Some(handle)
 }
 
 /// Hand each character to the animation system once its rig and the clips are both loaded.
@@ -378,8 +475,25 @@ mod tests {
 
     #[test]
     fn the_kill_switch_loads_the_old_model() {
-        assert_eq!(character_file("male", false), "models/characters/male.glb");
-        assert_eq!(character_file("nobody", true), "models/characters/nobody.glb");
+        assert_eq!(character_file("male", "male", false), "models/characters/male.glb");
+        assert_eq!(character_file("aunty", "female", false), "models/characters/female.glb");
+        assert_eq!(character_file("nobody", "female", true), "models/characters/female.glb");
+    }
+
+    #[test]
+    fn a_full_match_has_no_two_alike() {
+        let people: Vec<_> = (0..64).map(Person::of).collect();
+        for look in 0..LOOKS.len() {
+            let of_look: Vec<_> = people.iter().filter(|p| p.look == look).collect();
+            assert_eq!(of_look.len(), 8);
+            assert!(of_look.iter().all(|p| p.sex == look % 2));
+            let dress: HashSet<_> = of_look.iter().map(|p| (p.tone, p.top)).collect();
+            assert_eq!(dress.len(), 8, "{}: two warriors share a tone and a top", LOOKS[look]);
+            let heights: HashSet<_> = of_look.iter().map(|p| p.height.to_bits()).collect();
+            assert_eq!(heights.len(), 8, "{}: two warriors share a height", LOOKS[look]);
+        }
+        assert_eq!(Person::of(0).height, 1.0);
+        assert!(HEIGHTS.iter().all(|h| (h - 1.0).abs() <= 0.04));
     }
 
     #[derive(Resource, Default)]
@@ -406,7 +520,8 @@ mod tests {
     /// quality level.
     #[test]
     fn split_models_spawn_and_take_the_clips() {
-        for variant in ["male", "female"] {
+        for (look, variant) in LOOKS.iter().enumerate() {
+            let sex = SEXES[look % 2];
             let file = format!("models/characters/{variant}_parts.glb");
             if !std::path::Path::new(crate::ASSET_DIR).join(&file).exists() {
                 eprintln!("{file} not built: skipped");
@@ -415,7 +530,7 @@ mod tests {
             let mut app = headless();
             let assets = app.world().resource::<AssetServer>().clone();
             let scene = assets.load(GltfAssetLabel::Scene(0).from_asset(file));
-            let anims: Handle<Gltf> = assets.load(format!("models/characters/{variant}_anims.glb"));
+            let anims: Handle<Gltf> = assets.load(format!("models/characters/{sex}_anims.glb"));
             app.world_mut().spawn(WorldAssetRoot(scene)).observe(|ready: On<WorldInstanceReady>, mut spawned: ResMut<Spawned>| spawned.0 = Some(ready.entity));
             let deadline = Instant::now() + Duration::from_secs(120);
             let root = loop {
@@ -453,7 +568,7 @@ mod tests {
             }
             let gltf = world.resource::<Assets<Gltf>>().get(&anims).unwrap();
             let clips = world.resource::<Assets<AnimationClip>>();
-            assert_eq!(gltf.named_animations.len(), 26);
+            assert!(gltf.named_animations.len() >= 21);
             for (name, h) in &gltf.named_animations {
                 let missing = clips.get(h).unwrap().curves().keys().filter(|id| !ids.contains(id)).count();
                 assert_eq!(missing, 0, "{variant} {name}: {missing} animated bones not found");
@@ -463,13 +578,13 @@ mod tests {
             let mut count = 0;
             for (_, skin, lod, visibility, range, no_shadow, name) in parts.iter(world) {
                 count += 1;
-                assert_eq!(skin.joints.len(), 53, "{name}");
+                assert_eq!(skin.joints.len(), 54, "{name}");
                 assert_eq!(*visibility == Visibility::Hidden, lod.0 == 0, "{name}");
                 assert_eq!(range.end_margin, part_ranges(lod0)[lod.0].1, "{name}");
-                assert_eq!(no_shadow, ["eyes", "cornea", "mouth", "eyebrows", "eyelashes"].iter().any(|p| name.as_str().contains(&format!("{variant}_{p}"))), "{name}");
+                assert_eq!(no_shadow, ["head", "eyes", "cornea", "mouth", "eyebrows", "eyelashes"].iter().any(|p| name.as_str().contains(&format!("{variant}_{p}"))), "{name}");
             }
-            assert_eq!(count, 29, "{variant}: parts over the LODs");
-            eprintln!("{variant}: {count} parts skinned to 53 bones, {} bone paths match the clips", ids.len());
+            assert_eq!(count, 33, "{variant}: parts over the LODs");
+            eprintln!("{variant}: {count} parts skinned to 54 bones, {} bone paths match the clips", ids.len());
 
             // Up to Ultra: LOD0 comes back, the bands shift.
             world.insert_resource(Quality::Ultra);

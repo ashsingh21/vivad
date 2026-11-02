@@ -7,8 +7,7 @@ use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use shared::items::{ItemDb, ItemKind};
 use shared::sim::flow::Match;
-use shared::sim::stance::Stance;
-use shared::sim::{ADS_DISTANCE, CAMERA_DISTANCE, CAMERA_SHOULDER, EYE_OFFSET, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, btn, camera_spot};
+use shared::sim::{ADS_DISTANCE, CAMERA_DISTANCE, CAMERA_SHOULDER, EYE_OFFSET, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, btn, camera_distance, solid_mask};
 
 use crate::visuals::{WarriorVisual, TimeOfDay};
 
@@ -18,8 +17,36 @@ pub struct CameraSystems;
 #[derive(Component)]
 pub struct MainCamera {
     distance: f32,
-    /// How far a crouch has brought the view down, eased.
-    drop: f32,
+    /// The eye's height over the body, eased as the player crouches and stands.
+    eye: f32,
+    /// How far out along its line the camera is now: in at once at a wall, easing back out.
+    boom: f32,
+    /// How far the view's height trails the body's, and how fast that's changing: a spring, so
+    /// stairs and landings don't jolt the view, sideways it stays rigid and the crosshair true.
+    lag: f32,
+    lag_speed: f32,
+    /// The body's height last frame.
+    body_y: f32,
+    /// The fall speed while in the air, for the dip on landing.
+    falling: f32,
+}
+
+/// The camera's radius against walls.
+const CAMERA_RADIUS: f32 = 0.18;
+/// How fast the camera moves back out once a wall has gone by (m/s).
+const BOOM_OUT: f32 = 4.0;
+/// The height spring's stiffness (radians a second, critically damped), and how far it can trail.
+const SPRING: f32 = 22.0;
+const MOST_LAG: f32 = 0.3;
+/// The view dips on landing at this share of the fall speed, for an instant, up to the most.
+const DIP: f32 = 0.16;
+const MOST_DIP: f32 = 1.6;
+
+/// How far a sphere gets out from `pivot` along `dir`, up to `len`.
+fn boom_room(spatial: &SpatialQuery, pivot: Vec3, dir: Dir3, len: f32, me: Entity) -> f32 {
+    let config = ShapeCastConfig { max_distance: len, ignore_origin_penetration: true, ..default() };
+    let filter = SpatialQueryFilter::from_mask(solid_mask()).with_excluded_entities([me]);
+    spatial.cast_shape(&Collider::sphere(CAMERA_RADIUS), pivot, Quat::IDENTITY, dir, &config, &filter).map_or(len, |hit| hit.distance.max(0.2))
 }
 
 pub struct CameraPlugin;
@@ -37,7 +64,7 @@ pub fn spawn_camera(mut commands: Commands, mut images: ResMut<Assets<Image>>, l
     let ncr = layout.style == shared::map::MapStyle::Ncr;
     // Ambient occlusion and anti-aliasing are the quality level's (crate::quality).
     let mut cam = commands.spawn((
-        MainCamera { distance: CAMERA_DISTANCE, drop: 0.0 },
+        MainCamera { distance: CAMERA_DISTANCE, eye: EYE_OFFSET, boom: CAMERA_DISTANCE, lag: 0.0, lag_speed: 0.0, body_y: 0.0, falling: 0.0 },
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection { fov: 70f32.to_radians(), near: 0.05, ..default() }),
         look(ncr, false),
@@ -137,7 +164,7 @@ fn grading() -> bevy::render::view::ColorGrading {
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn follow(
-    local: Query<(Entity, &PlayerIntent, &Kinematic, &Inventory, Option<&Stance>), With<LocalPlayer>>,
+    local: Query<(Entity, &PlayerIntent, &Kinematic, &Inventory), With<LocalPlayer>>,
     visuals: Query<(&WarriorVisual, &Transform), Without<MainCamera>>,
     mut cam: Query<(&mut Transform, &mut Projection, &mut MainCamera)>,
     db: Res<ItemDb>,
@@ -149,15 +176,15 @@ fn follow(
     scope: Res<crate::scope::Scope>,
 ) {
     let Ok((mut ct, mut proj, mut mc)) = cam.single_mut() else { return };
-    let Ok((me, intent, kin, inv, stance)) = local.single() else { return };
+    let Ok((me, intent, kin, inv)) = local.single() else { return };
     let Some(body) = visuals.iter().find(|(v, _)| v.sim == me).map(|(_, t)| t.translation) else { return };
     let rot = intent.aim_rotation();
     // A raised guard keeps the wide view: a fight needs it.
     let guard = inv.current().is_some_and(|s| matches!(db.get(&s.id).kind, ItemKind::Melee { .. }));
     let aiming = intent.held(btn::AIM) && kin.mode == MoveMode::Ground && !guard;
     let dt = time.delta_secs();
-    mc.drop += (stance.map_or(0.0, Stance::drop) - mc.drop) * (1.0 - (-dt * 12.0).exp());
-    let eye = body + Vec3::Y * (EYE_OFFSET - mc.drop);
+    mc.eye += (shared::sim::eye_offset(intent) - mc.eye) * (1.0 - (-dt * 10.0).exp());
+    let eye = body + Vec3::Y * mc.eye;
 
     let (pivot, want_dist, shoulder, fov): (Vec3, f32, f32, f32) = match kin.mode {
         // The auto's fans stand 14 m over its floor: framed from farther back and higher.
@@ -166,7 +193,7 @@ fn follow(
         MoveMode::Freefall | MoveMode::Gliding => (body + Vec3::Y * EYE_OFFSET, 7.5, 0.0, 78.0),
         MoveMode::Ground if scope.active() => (eye, 0.0, 0.0, scope.fov()),
         MoveMode::Ground if aiming => (eye, ADS_DISTANCE, CAMERA_SHOULDER, 48.0),
-        MoveMode::Ground => (eye, CAMERA_DISTANCE, CAMERA_SHOULDER, 70.0),
+        MoveMode::Ground => (eye, camera_distance(&spatial, eye, me), CAMERA_SHOULDER, 70.0),
         MoveMode::Riding => (body + Vec3::Y * 1.0, 5.4, 0.0, 72.0),
     };
     // Smooth zoom in/out.
@@ -174,8 +201,40 @@ fn follow(
     if scope.active() {
         mc.distance = 0.0;
     }
-    // In front of walls, the same spot the sim fires from.
-    let pos = camera_spot(&spatial, pivot, rot * Vec3::new(shoulder, 0.0, mc.distance), me);
+    // The height on a spring, on foot and not aiming: the shot's line wants it true then. A landing
+    // gives it a push down.
+    let on_foot = kin.mode == MoveMode::Ground;
+    if on_foot && !kin.grounded {
+        mc.falling = mc.falling.max(-kin.velocity.y);
+    } else {
+        let fell = std::mem::take(&mut mc.falling);
+        if fell > 3.0 {
+            mc.lag_speed -= (fell * DIP).min(MOST_DIP);
+        }
+    }
+    let rise = body.y - std::mem::replace(&mut mc.body_y, body.y);
+    if on_foot && !aiming && !scope.active() {
+        let step = dt.min(1.0 / 30.0);
+        let (lag, trailing) = (mc.lag - rise, mc.lag_speed);
+        mc.lag_speed += (-lag * SPRING * SPRING - trailing * 2.0 * SPRING) * step;
+        mc.lag = (lag + mc.lag_speed * step).clamp(-MOST_LAG, MOST_LAG);
+    } else {
+        mc.lag = 0.0;
+        mc.lag_speed = 0.0;
+    }
+    let pivot = pivot + Vec3::Y * mc.lag;
+    // Out from the eye along the boom: in at once in front of a wall, easing back out, so a pillar
+    // going by doesn't pop the view in and out.
+    let offset = rot * Vec3::new(shoulder, 0.0, mc.distance);
+    let pos = match Dir3::new_and_length(offset) {
+        Ok((dir, len)) => {
+            let room = boom_room(&spatial, pivot, dir, len, me);
+            let out = if on_foot { BOOM_OUT } else { len };
+            mc.boom = if room < mc.boom { room } else { (mc.boom + out * dt).min(room) };
+            pivot + dir * mc.boom
+        }
+        Err(_) => pivot,
+    };
     // Punches (crate::fx): bow kick tips the view up, hits shake it, a charging bow zooms in.
     let t = time.elapsed_secs();
     // Organic shake: sum of multiple prime-frequency sines for a non-repetitive feel.
@@ -185,17 +244,8 @@ fn follow(
         (t * 13.0).sin() * 0.2,
     ) * punch.shake;
 
-    // Head bob: periodic vertical offset based on movement speed.
     let speed = kin.velocity.length();
-    let bob = if speed > 0.1 && kin.mode != MoveMode::Riding {
-        let bob_freq = 10.0; // steps per second
-        let bob_amp = 0.05 * (speed / 7.4).min(1.0);
-        Vec3::Y * (t * bob_freq).sin() * bob_amp
-    } else {
-        Vec3::ZERO
-    };
-
-    ct.translation = pos + rot * (shake + bob);
+    ct.translation = pos + rot * shake;
     ct.rotation = rot * Quat::from_rotation_x(punch.kick);
     if let Projection::Perspective(p) = proj.as_mut() {
         // Dynamic FOV: scale the base FOV by velocity to increase sensation of speed.

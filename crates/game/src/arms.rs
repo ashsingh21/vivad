@@ -36,6 +36,7 @@ impl Plugin for ArmsPlugin {
         let specs: HashMap<String, BowSpec> =
             ron::from_str(include_str!("../../../assets/data/bows.ron")).expect("assets/data/bows.ron");
         app.insert_resource(BowSpecs(specs))
+            .init_resource::<GunCheck>()
             .add_systems(Update, (rig_bows, start_flinches))
             .add_systems(
                 PostUpdate,
@@ -91,7 +92,22 @@ pub struct Body {
     pub hand_l: Entity,
     /// Where the left hand pinches the string, in its bone's frame.
     pub pinch_l: Vec3,
+    /// The left hand's middle knuckle and the way out of its palm, in its bone's frame.
+    pub knuckle_l: Vec3,
+    pub palm_l: Vec3,
+    /// The left fingers' bones, each finger knuckle to tip.
+    pub fingers_l: Vec<Entity>,
+    /// For the gun check: the right shoulder and the head.
+    pub shoulder_r: Option<Entity>,
+    pub head: Option<Entity>,
+    /// The bone a long gun rides (tools/blender/characters/skeleton.py), if the rig has one.
+    pub weapon_r: Option<Entity>,
 }
+
+/// The local player's long-gun hold by the numbers, this frame (the armoury logs it with each
+/// shot): see `gun_check`.
+#[derive(Resource, Default)]
+pub struct GunCheck(pub Option<String>, pub Option<Vec3>);
 
 /// A hit's recoil on the torso: lean along `dir` (model space), decaying over a fraction of a second.
 #[derive(Component)]
@@ -166,41 +182,296 @@ fn segment(a: Vec3, b: Vec3) -> Transform {
 }
 
 /// Stand raised bows upright with their backs to the aim, blending from the plain grip by the draw
-/// clip's weight. Runs after transform propagation and rewrites the bow's and its socket's global
+/// clip's weight; point guns the way they're held whatever the wrist does: raised, along the aim;
+/// carried, a long gun from the right hand toward the left (both hands on it), a pistol along
+/// the forearm. Runs after transform propagation and rewrites the weapon's and its socket's global
 /// transforms for this frame (their local transforms keep the grip).
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn orient_bows(
     rigs: Query<(Entity, &BowRig)>,
     parents: Query<&ChildOf>,
-    vis: Query<(&WarriorVisual, &WarriorAnim)>,
+    kids: Query<&Children>,
+    local: Query<(), With<shared::sim::LocalPlayer>>,
+    mut check: ResMut<GunCheck>,
+    vis: Query<(&WarriorVisual, &WarriorAnim, &Body)>,
     intents: Query<&PlayerIntent>,
+    riders: Query<(), With<shared::sim::vehicle::Riding>>,
     mut tf: Query<(&Transform, &mut GlobalTransform)>,
 ) {
     for (e, rig) in &rigs {
-        let Some((wv, anim)) = parents.iter_ancestors(e).find_map(|a| vis.get(a).ok()) else { continue };
+        let Some((wv, anim, body)) = parents.iter_ancestors(e).find_map(|a| vis.get(a).ok()) else { continue };
+        // A driver's weapon is put away and his hands are on the bars (crate::vehicles).
+        if riders.contains(wv.sim) {
+            continue;
+        }
         let w = anim.bow_weight.clamp(0.0, 1.0);
+        let gun = crate::visuals::shot_kind(&rig.model) == crate::visuals::Shot::Bullet;
+        let long = crate::visuals::long_gun(&rig.model);
         let (Ok(intent), Ok(socket), Ok(hand)) = (intents.get(wv.sim), parents.get(e).map(|p| p.parent()), parents.get(e).and_then(|p| parents.get(p.parent())).map(|p| p.parent())) else {
             continue;
         };
-        if w < 1e-3 {
+        if w < 1e-3 && !gun {
             continue;
         }
         let (Ok((_, hand_g)), Ok((grip, _)), Ok((bow_local, _))) = (tf.get(hand), tf.get(socket), tf.get(e)) else { continue };
-        let (hand_g, grip, bow_local) = (*hand_g, *grip, *bow_local);
+        let (mut hand_g, grip, bow_local) = (*hand_g, *grip, *bow_local);
+        let aim = intent.aim_dir();
+        // Ahead: the way the body faces (running off to the side or toward the camera it turns
+        // from the aim), swinging to the aim as the gun comes up.
+        let aim_flat = aim.with_y(0.0).normalize_or(Vec3::NEG_Z);
+        let facing = tf.get(body.root).map(|(_, g)| (g.rotation() * Vec3::Z).with_y(0.0).normalize_or(aim_flat)).unwrap_or(aim_flat);
+        let ahead = facing.lerp(aim_flat, w).normalize_or(aim_flat);
+        // Carried, a long gun is held as the rifle pack's clips hold it (in the right hand, along the
+        // line to the left). Aimed, it's shouldered here (the aim clip's arms ride hips the legs
+        // layer tilts its own way): the butt in the shoulder's pocket, the barrel along the aim,
+        // the right hand brought to the grip. Either way the left hand (below) takes the fore-end.
+        let mut long_f = None;
+        if SHOULDER_IN_GAME && gun && long && w > 1e-3 {
+            let chain = parents.get(hand).map(|p| p.parent()).ok().and_then(|l| parents.get(l).ok().map(|u| (u.parent(), l)));
+            if let (Some(sh), Some((upper, lower))) = (body.shoulder_r.and_then(|s| tf.get(s).ok()).map(|(_, g)| g.translation()), chain) {
+                let right = ahead.cross(Vec3::Y);
+                let up = Vec3::Y.reject_from(aim).normalize_or(Vec3::Y);
+                let rot = Quat::from_mat3(&Mat3::from_cols(up.cross(-aim), up, -aim));
+                let (fwd, inward, high) = SHOULDER_POCKET;
+                let socket_at = sh + ahead * fwd - right * inward + Vec3::Y * high + aim * BUTT;
+                let (hs, hr, ht) = hand_g.to_scale_rotation_translation();
+                let want_rot = rot * grip.rotation.inverse();
+                let want_at = socket_at - want_rot * (grip.translation * hs);
+                reach(upper, lower, hand, ht.lerp(want_at, w), Vec3::NEG_Y + right * 0.8, hr.slerp(want_rot, w), &kids, &mut tf);
+                long_f = (w > 0.999).then_some(aim);
+                if let Ok((_, g)) = tf.get(hand) {
+                    hand_g = *g;
+                }
+            }
+        }
         let held = hand_g.mul_transform(grip);
-        let f = intent.aim_dir();
-        // A shouldered long gun stays level; a bow (or a pistol) is canted a little.
-        let cant = if crate::visuals::long_gun(&rig.model) { 0.0 } else { CANT };
+        // Carried: a long gun along the hands (right toward left), a pistol along the forearm
+        // (elbow to wrist, the way a held pistol points), eased toward ahead as that line swings
+        // round to the side, never back past it. Eased, not cut over: the rifle run's left hand
+        // swings from behind the right to ahead of it every step, and a cut-over snapped the gun
+        // (and the left arm reaching for it) between the two twice a stride.
+        let along = |other: Entity, sign: f32| {
+            tf.get(other)
+                .map(|(_, g)| {
+                    let d = ((g.translation() - hand_g.translation()) * sign).normalize_or(ahead);
+                    let t = ((0.55 - d.dot(ahead)) / 0.5).clamp(0.0, 1.0);
+                    d.lerp(ahead, t * t * (3.0 - 2.0 * t)).normalize_or(ahead)
+                })
+                .unwrap_or(ahead)
+        };
+        let carry = if long {
+            along(body.hand_l, 1.0)
+        } else {
+            parents.get(hand).map(|p| along(p.parent(), -1.0)).unwrap_or(ahead)
+        };
+        let f = match long_f {
+            Some(f) => f,
+            None if gun => carry.lerp(aim, w).normalize_or(aim),
+            None => aim,
+        };
+        let (raise, cant) = if gun { (1.0, if long { 0.0 } else { CANT * w }) } else { (w, CANT) };
         let up = Quat::from_axis_angle(f, cant) * Vec3::Y.reject_from(f).normalize_or(Vec3::Y);
-        // Bow frame: -Z (its back) along the aim, +Y (upper limb) up.
+        // Weapon frame: -Z (a bow's back, a barrel's line) along f, +Y up.
         let raised = Quat::from_mat3(&Mat3::from_cols(up.cross(-f), up, -f));
         let (scale, rot, pos) = held.to_scale_rotation_translation();
-        let socket_g = GlobalTransform::from(Transform { translation: pos, rotation: rot.slerp(raised, w), scale });
+        // A long gun rides the weapon bone, where the rifle pack's clips hold theirs (the guns are
+        // the pack's own, origin at the grip): carried exactly as captured, its barrel swung onto
+        // the aim as it comes up. Else as placed above.
+        let captured = if gun && long && long_f.is_none() { body.weapon_r.and_then(|b| tf.get(b).ok()).map(|(_, g)| *g) } else { None };
+        let socket_g = match captured {
+            Some(wg) => {
+                let (scale, rot, pos) = wg.to_scale_rotation_translation();
+                let onto = Quat::IDENTITY.slerp(Quat::from_rotation_arc(rot * Vec3::NEG_Z, aim), w);
+                // Reloading: the gun comes up in front of the chest, muzzle high, rolled toward the
+                // left hand.
+                let tip = anim.reload.map_or(0.0, |p| (p * PI).sin().powf(0.5));
+                let high = (ahead + Vec3::Y * RELOAD_LIFT).normalize();
+                let up = Quat::IDENTITY.slerp(Quat::from_rotation_arc(rot * Vec3::NEG_Z, high), tip);
+                let tilt = Quat::from_axis_angle(high, RELOAD_ROLL * tip) * up;
+                GlobalTransform::from(Transform { translation: pos, rotation: tilt * onto * rot, scale })
+            }
+            None => GlobalTransform::from(Transform { translation: pos, rotation: rot.slerp(raised, raise), scale }),
+        };
+        // A shot kicks the gun back along the barrel and the muzzle up.
+        let socket_g = if gun && anim.kick > 0.0 {
+            let (scale, rot, pos) = socket_g.to_scale_rotation_translation();
+            let k = anim.kick * anim.kick;
+            let translation = pos + rot * Vec3::Z * KICK_BACK * k;
+            GlobalTransform::from(Transform { translation, rotation: Quat::from_axis_angle(rot * Vec3::X, KICK_UP * k) * rot, scale })
+        } else {
+            socket_g
+        };
         if let Ok((_, mut g)) = tf.get_mut(socket) {
             *g = socket_g;
         }
         if let Ok((_, mut g)) = tf.get_mut(e) {
             *g = socket_g.mul_transform(bow_local);
+        }
+        // A long gun's fore-end in the left hand, wherever the clip left that hand: the palm under
+        // the barrel a fore-end's length ahead of the grip, fingers wrapping round its far side.
+        // Up close only: it's most of the cost of an armed warrior, and past 40 m the clip's own
+        // left hand is near enough.
+        if gun && long && anim.near {
+            let (_, rot, _) = socket_g.to_scale_rotation_translation();
+            let (along, up, right) = (rot * Vec3::NEG_Z, rot * Vec3::Y, rot * Vec3::X);
+            // Under the fore-end, the palm up against the wood, the hand angled across the barrel
+            // from the left so the fingers come up round its far side.
+            let fore = forend(&rig.model);
+            let on_wood = socket_g.transform_point(fore);
+            let belt = tf.get(body.spine[0]).map_or(on_wood, |(_, g)| g.translation() - ahead.cross(Vec3::Y) * 0.2 + ahead * 0.06 - Vec3::Y * 0.1);
+            let contact = anim.reload.map_or(on_wood, |p| reload_hand(p, on_wood, socket_g.transform_point(MAGAZINE), belt));
+            let fingers = (along * 0.55 + right * 0.85).normalize();
+            let palm = (up - fingers * up.dot(fingers)).normalize();
+            // The hand's own frame (knuckle direction, palm) onto those.
+            let (k, n) = (body.knuckle_l.normalize(), (body.palm_l - body.knuckle_l.normalize() * body.palm_l.dot(body.knuckle_l.normalize())).normalize());
+            let want = Mat3::from_cols(fingers, palm, fingers.cross(palm)) * Mat3::from_cols(k, n, k.cross(n)).transpose();
+            let want = Quat::from_mat3(&want);
+            let (Ok(lower), hand) = (parents.get(body.hand_l).map(|p| p.parent()), body.hand_l) else { continue };
+            let Ok(upper) = parents.get(lower).map(|p| p.parent()) else { continue };
+            // Twice: the second pass moves the wrist by however far the palm (in the hand's own
+            // scale) landed off the wood.
+            let palm_at = |tf: &Query<(&Transform, &mut GlobalTransform)>| {
+                tf.get(hand).map(|(_, g)| g.transform_point(body.knuckle_l * 0.55 + body.palm_l * 0.022)).unwrap_or(contact)
+            };
+            let mut wrist = tf.get(hand).map(|(_, g)| g.translation()).unwrap_or(contact);
+            // VIVAD_RAW_HANDS: the clip's own left hand, uncorrected (the armoury's [guncheck] then
+            // says how far off the captured hold lands).
+            let raw = std::env::var_os("VIVAD_RAW_HANDS").is_some();
+            for _ in 0..(if raw { 0 } else { 2 }) {
+                reach(upper, lower, hand, wrist, Vec3::NEG_Y - right * 0.7, want, &kids, &mut tf);
+                wrist += contact - palm_at(&tf);
+            }
+            if !raw {
+                reach(upper, lower, hand, wrist, Vec3::NEG_Y - right * 0.7, want, &kids, &mut tf);
+            }
+            if local.contains(wv.sim) {
+                check.1 = Some(contact);
+                check.0 = Some(gun_check(body, &socket_g, fore, ahead, palm_at(&tf), hand_g.translation(), &tf));
+            }
+            // Close the fingers round it: each joint curled toward the palm.
+            for &f in body.fingers_l.iter().filter(|_| !raw) {
+                let Ok((_, g)) = tf.get(f) else { continue };
+                let (at, axis) = (g.translation(), fingers.cross(palm));
+                turn_subtree(f, at, Quat::from_axis_angle(axis, GRIP_CURL), &kids, &mut tf);
+            }
+        }
+    }
+}
+
+/// A reload by the left hand, `p` being how far through it: off the fore-end to the magazine, down
+/// to the belt with the old one, a moment there, back up with the new one, and onto the wood.
+fn reload_hand(p: f32, wood: Vec3, magazine: Vec3, belt: Vec3) -> Vec3 {
+    let ease = |from: f32, to: f32| {
+        let t = ((p - from) / (to - from)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    match p {
+        p if p < 0.18 => wood.lerp(magazine, ease(0.0, 0.18)),
+        p if p < 0.62 => magazine.lerp(belt, ease(0.2, 0.42)),
+        p if p < 0.86 => belt.lerp(magazine, ease(0.62, 0.84)),
+        _ => magazine.lerp(wood, ease(0.86, 1.0)),
+    }
+}
+
+/// Where the left hand takes a long gun's magazine, in the gun's frame.
+const MAGAZINE: Vec3 = Vec3::new(0.0, -0.09, -0.15);
+/// How far a shot throws a gun back (m) and its muzzle up (radians), and the shoulders (radians).
+const KICK_BACK: f32 = 0.035;
+const KICK_UP: f32 = 0.045;
+const KICK_LEAN: f32 = 0.03;
+/// A reloaded gun's barrel: this much up for each of ahead. And how far it rolls toward the left
+/// hand (radians).
+const RELOAD_LIFT: f32 = 0.7;
+const RELOAD_ROLL: f32 = -0.5;
+
+/// Where the left palm meets a long gun, in the gun's frame (its origin the grip, barrel -Z, up
+/// +Y): under the fore-end where the captured left hand closes, 26 cm ahead of the grip, against
+/// its underside (each model sliced there: the bandook's handguard bottoms out 7.1 cm above the
+/// grip, the dunali's wooden fore-end 1.3 cm), or 29 cm ahead on the guns whose magazine starts at
+/// 22 cm, so the hand clears it.
+fn forend(model: &str) -> Vec3 {
+    let (under, ahead) = match model {
+        "bandook" => (0.071, 0.26),
+        "vajra9" => (0.049, 0.26),
+        "trishul_carbine" => (0.037, 0.29),
+        "saintalis" => (0.028, 0.29),
+        "thaana_slr" => (0.079, 0.26),
+        "thri_not_thri" => (-0.007, 0.26),
+        "toradar" => (0.007, 0.26),
+        _ => (0.013, 0.26),
+    };
+    Vec3::new(0.0, under, -ahead)
+}
+
+/// A long gun's hold in numbers: the left palm against the gun (its gap below the fore-end's
+/// underside, its offsets across and along from where the hand closes: all near 0 when it holds
+/// it), the butt from the right shoulder in the body's frame (shouldered: about level with it and
+/// a few cm ahead), the barrel's pitch, and how far below the eye it runs.
+#[allow(clippy::too_many_arguments)]
+fn gun_check(body: &Body, socket: &GlobalTransform, fore: Vec3, ahead: Vec3, palm: Vec3, hand_r: Vec3, tf: &Query<(&Transform, &mut GlobalTransform)>) -> String {
+    let inv = socket.affine().inverse();
+    let p = inv.transform_point3(palm) - fore;
+    let butt = socket.transform_point(Vec3::Z * BUTT);
+    let (_, rot, at) = socket.to_scale_rotation_translation();
+    let along = rot * Vec3::NEG_Z;
+    let right = ahead.cross(Vec3::Y);
+    let pos = |e: Option<Entity>| e.and_then(|e| tf.get(e).ok()).map(|(_, g)| g.translation());
+    let b = pos(body.shoulder_r).map(|s| butt - s).unwrap_or(Vec3::NAN);
+    let h = pos(body.shoulder_r).map(|s| hand_r - s).unwrap_or(Vec3::NAN);
+    let eye = pos(body.head).map(|h| h.y + 0.08 - at.y).unwrap_or(f32::NAN);
+    format!(
+        "right hand from shoulder (fwd {:+.2} up {:+.2}) | left palm off the fore-end (across {:+.3} below {:+.3} along {:+.3}) | butt from right shoulder (fwd {:+.2} up {:+.2} right {:+.2}) | pitch {:+.0} deg | barrel {:.2} below eye",
+        h.dot(ahead), h.y, p.x, -p.y, -p.z, b.dot(ahead), b.y, b.dot(right), along.y.asin().to_degrees(), eye
+    )
+}
+
+/// Shoulder a long gun here when aiming (for aim clips whose arms don't sit on their hips: the
+/// Mixamo pack's); off with MoCap Online's rifle pack, whose aim holds the gun as captured.
+const SHOULDER_IN_GAME: bool = false;
+/// Where a shouldered butt sits from the right shoulder joint (m): ahead, in toward the chest, up.
+const SHOULDER_POCKET: (f32, f32, f32) = (0.07, 0.04, -0.02);
+
+/// A long gun's butt plate behind the grip (m, the model's +Z extent; BUTT in
+/// tools/blender/weapons/desi.py, sized to the rifle the animations were captured with, and every
+/// other long gun fitted to it by tools/blender/weapons/fit_stocks.py).
+const BUTT: f32 = 0.21;
+
+/// How far each finger joint closes round a fore-end (radians).
+const GRIP_CURL: f32 = 0.55;
+
+/// Two-bone IK on already-propagated global transforms: bend the arm `upper` - `lower` - `hand` so
+/// the wrist lands on `wrist`, the elbow toward `pole` (a direction), then turn the hand to the
+/// global rotation `hand_rot`. Everything under each bone (forearm, hand, fingers) turns with it.
+#[allow(clippy::too_many_arguments)]
+fn reach(upper: Entity, lower: Entity, hand: Entity, wrist: Vec3, pole: Vec3, hand_rot: Quat, kids: &Query<&Children>,
+         tf: &mut Query<(&Transform, &mut GlobalTransform)>) {
+    let pos = |tf: &Query<(&Transform, &mut GlobalTransform)>, e: Entity| tf.get(e).map(|(_, g)| g.translation()).ok();
+    let (Some(s), Some(e0), Some(w0)) = (pos(tf, upper), pos(tf, lower), pos(tf, hand)) else { return };
+    let (l1, l2) = ((e0 - s).length(), (w0 - e0).length());
+    let v = wrist - s;
+    let Some(u) = v.try_normalize() else { return };
+    let d = v.length().clamp((l1 - l2).abs() + 0.01, (l1 + l2) * 0.999);
+    let a = ((l1 * l1 + d * d - l2 * l2) / (2.0 * l1 * d)).clamp(-1.0, 1.0).acos();
+    let w = (pole - u * pole.dot(u)).normalize_or(Vec3::NEG_Y);
+    let elbow = s + u * (l1 * a.cos()) + w * (l1 * a.sin());
+    turn_subtree(upper, s, Quat::from_rotation_arc((e0 - s).normalize(), (elbow - s).normalize()), kids, tf);
+    let Some(w1) = pos(tf, hand) else { return };
+    turn_subtree(lower, elbow, Quat::from_rotation_arc((w1 - elbow).normalize(), (s + u * d - elbow).normalize()), kids, tf);
+    let Ok((_, g)) = tf.get(hand) else { return };
+    let (_, cur, at) = g.to_scale_rotation_translation();
+    turn_subtree(hand, at, hand_rot * cur.inverse(), kids, tf);
+}
+
+/// Turn `e` and everything under it by `q` about `pivot`, in their (already propagated) global
+/// transforms.
+fn turn_subtree(e: Entity, pivot: Vec3, q: Quat, kids: &Query<&Children>, tf: &mut Query<(&Transform, &mut GlobalTransform)>) {
+    if let Ok((_, mut g)) = tf.get_mut(e) {
+        let (scale, rot, t) = g.to_scale_rotation_translation();
+        *g = GlobalTransform::from(Transform { translation: pivot + q * (t - pivot), rotation: q * rot, scale });
+    }
+    if let Ok(c) = kids.get(e) {
+        for k in c.iter() {
+            turn_subtree(k, pivot, q, kids, tf);
         }
     }
 }
@@ -326,7 +597,7 @@ fn pose_torso(
                 lean = Quat::from_axis_angle(axis, amp);
             }
         }
-        let pitch = if dead || kin.mode != MoveMode::Ground { 0.0 } else { intent.pitch.clamp(-1.1, 1.1) * anim.aim_share };
+        let pitch = if dead || kin.mode != MoveMode::Ground { 0.0 } else { intent.pitch.clamp(-1.1, 1.1) * anim.aim_share + KICK_LEAN * anim.kick };
         if pitch.abs() < 1e-3 && lean == Quat::IDENTITY {
             continue;
         }

@@ -17,6 +17,7 @@ pub enum Act {
     Interact,
     Sprint,
     Crouch,
+    Walk,
     NextSlot,
     PrevSlot,
     /// The big button on a menu (crate::front).
@@ -55,6 +56,8 @@ impl Default for Bindings {
                 (Act::Interact, vec![Key(KeyCode::KeyE), Key(KeyCode::KeyF), Pad(GamepadButton::West)]),
                 (Act::Sprint, vec![Key(KeyCode::ShiftLeft), Pad(GamepadButton::LeftThumb)]),
                 (Act::Crouch, vec![Key(KeyCode::KeyC), Pad(GamepadButton::East)]),
+                // On a pad the stick walks by how far it's pushed.
+                (Act::Walk, vec![Key(KeyCode::AltLeft)]),
                 (Act::NextSlot, vec![Pad(GamepadButton::RightTrigger)]),
                 (Act::PrevSlot, vec![Pad(GamepadButton::LeftTrigger)]),
                 (Act::Restart, vec![Key(KeyCode::Enter), Pad(GamepadButton::Start)]),
@@ -109,7 +112,7 @@ impl Plugin for InputPlugin {
             .init_resource::<crate::scope::Scope>()
             .init_resource::<ShowPerf>()
             .init_resource::<crate::wheel::WheelOpen>()
-            .add_systems(PreUpdate, (resolve_actions, write_intent, grab_cursor, meta_actions, vote).chain()
+            .add_systems(PreUpdate, (give_item, scripted_keys, resolve_actions, write_intent, grab_cursor, meta_actions, vote).chain()
                 .in_set(LocalInput).after(bevy::input::InputSystems));
     }
 }
@@ -166,7 +169,10 @@ fn write_intent(
     time: Res<Time>,
     scope: Res<crate::scope::Scope>,
     mut q: Query<(&mut PlayerIntent, &Kinematic), With<LocalPlayer>>,
+    // The crouch toggle (the system's own: a thread-local flickered as the system ran on one
+    // worker thread or another).
     mut crouching: Local<bool>,
+    mut walking: Local<bool>,
 ) {
     let Ok((mut intent, kin)) = q.single_mut() else { return };
     let grabbed = cursor.grab_mode != CursorGrabMode::None;
@@ -221,15 +227,29 @@ fn write_intent(
             intent.pressed |= bit;
         }
     }
-    // Crouch stays on until pressed again; jumping or breaking into a sprint stands up.
+    // Crouch toggles (a press down, a press up), as in most shooters; jumping or sprinting stands
+    // you up, and so does a fall or a drop, but not a ride. A press while running fast slides (the
+    // sim's movement::SLIDE_*).
     if state.just_pressed(Act::Crouch) {
         *crouching = !*crouching;
+        intent.pressed |= btn::CROUCH;
+    } else if state.just_pressed(Act::Jump) || state.just_pressed(Act::Sprint) {
+        *crouching = false;
     }
-    if state.just_pressed(Act::Jump) || state.just_pressed(Act::Sprint) || kin.mode != MoveMode::Ground {
+    if !matches!(kin.mode, MoveMode::Ground | MoveMode::Riding) {
         *crouching = false;
     }
     if *crouching {
         held |= btn::CROUCH;
+    }
+    // Walk toggles too (Left Alt, Option on a Mac); sprinting or jumping goes back to running.
+    if state.just_pressed(Act::Walk) {
+        *walking = !*walking;
+    } else if state.just_pressed(Act::Sprint) || state.just_pressed(Act::Jump) {
+        *walking = false;
+    }
+    if *walking {
+        held |= btn::WALK;
     }
     intent.released |= before & !held;
     intent.held = held;
@@ -301,4 +321,83 @@ fn meta_actions(state: Res<ActionState>, mut perf: ResMut<ShowPerf>) {
     if state.just_pressed(Act::TogglePerf) {
         perf.0 = !perf.0;
     }
+}
+
+/// For testing the player's own controls (not the autopilot's): VIVAD_KEYS="t:+Key,t:-Key,..."
+/// presses (+) and releases (-) keys at those match times (seconds), through the same bindings and
+/// intent as a person's keyboard. Key names as Bevy's KeyCode (KeyW, ShiftLeft, AltLeft, Space),
+/// or MouseRight / MouseLeft.
+fn scripted_keys(
+    m: Option<Res<Match>>,
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    mut mouse: ResMut<ButtonInput<MouseButton>>,
+    mut next: Local<usize>,
+    mut script: Local<Option<Vec<(f32, bool, Result<KeyCode, MouseButton>)>>>,
+) {
+    let script = script.get_or_insert_with(|| {
+        std::env::var("VIVAD_KEYS")
+            .unwrap_or_default()
+            .split(',')
+            .filter_map(|e| {
+                let (t, k) = e.split_once(':')?;
+                let (down, name) = (k.starts_with('+'), &k[1..]);
+                let code = match name {
+                    "MouseRight" => return Some((t.trim().parse().ok()?, down, Err(MouseButton::Right))),
+                    "MouseLeft" => return Some((t.trim().parse().ok()?, down, Err(MouseButton::Left))),
+                    "KeyW" => KeyCode::KeyW,
+                    "KeyA" => KeyCode::KeyA,
+                    "KeyS" => KeyCode::KeyS,
+                    "KeyD" => KeyCode::KeyD,
+                    "KeyC" => KeyCode::KeyC,
+                    "ShiftLeft" => KeyCode::ShiftLeft,
+                    "ControlLeft" => KeyCode::ControlLeft,
+                    "AltLeft" => KeyCode::AltLeft,
+                    "Space" => KeyCode::Space,
+                    "KeyR" => KeyCode::KeyR,
+                    "Digit1" => KeyCode::Digit1,
+                    "Digit2" => KeyCode::Digit2,
+                    "Digit3" => KeyCode::Digit3,
+                    "Digit4" => KeyCode::Digit4,
+                    _ => return None,
+                };
+                Some((t.trim().parse().ok()?, down, Ok(code)))
+            })
+            .collect()
+    });
+    let Some(m) = m else { return };
+    while let Some(&(t, down, code)) = script.get(*next) {
+        if m.elapsed < t {
+            break;
+        }
+        match (code, down) {
+            (Ok(k), true) => keys.press(k),
+            (Ok(k), false) => keys.release(k),
+            (Err(b), true) => mouse.press(b),
+            (Err(b), false) => mouse.release(b),
+        }
+        *next += 1;
+    }
+}
+
+/// For testing with items in hand: VIVAD_GIVE=<id>[,<id>...] puts them (loaded, with spare rounds)
+/// in the local player's first slots and selects the first, once they're in the match.
+fn give_item(mut q: Query<&mut shared::sim::Inventory, With<LocalPlayer>>, db: Res<shared::items::ItemDb>, mut done: Local<bool>) {
+    if *done {
+        return;
+    }
+    let Ok(ids) = std::env::var("VIVAD_GIVE") else {
+        *done = true;
+        return;
+    };
+    let Ok(mut inv) = q.single_mut() else { return };
+    for (slot, id) in ids.split(',').take(shared::sim::INVENTORY_SLOTS).enumerate() {
+        let count = match db.get(id).kind {
+            shared::items::ItemKind::Bow { magazine, .. } => magazine,
+            _ => 1,
+        };
+        inv.slots[slot] = Some(shared::items::ItemStack { id: id.into(), rarity: shared::items::Rarity::Rare, count });
+    }
+    inv.arrows = 300;
+    inv.selected = 1;
+    *done = true;
 }

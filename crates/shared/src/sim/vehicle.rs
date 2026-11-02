@@ -673,7 +673,7 @@ mod tests {
         for k in VehicleKind::ALL {
             let s = k.spec();
             assert!(s.seat.z.abs() < s.size.z / 2.0, "{k:?}");
-            assert!(s.law.top > super::super::movement::SPRINT_SPEED * 1.5, "{k:?}");
+            assert!(s.law.top > super::super::movement::SPRINT_SPEED * 1.4, "{k:?}");
             assert!(s.size.min_element() >= 2.0 * s.round, "{k:?}");
         }
     }

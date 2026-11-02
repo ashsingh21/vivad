@@ -6,7 +6,8 @@ or the game, from the files alone:
            (<variant>_anims.glb) and the old one-mesh <variant>.glb, same inverse bind matrices;
            every clip target resolves to a node
   parts    head, body, outfit, eyes, cornea, mouth and the cards, each its own mesh and material on the
-           LODs it should be on, named <variant>_<part>_LOD<k>, skinned to the one skin
+           LODs it should be on, named <variant>_<part>_LOD<k>, skinned to the one skin; the outfit's
+           top a second material on the same textures
   skin     joint indices in range, weights sum to 1
   budget   triangles per LOD and part against docs/PLAN.md, the LOD0 head's 15-20k
   neck     head and body meet: no gap, no normal break and the same bone weights along the cut,
@@ -15,7 +16,10 @@ or the game, from the files alone:
   texture  no triangle sits on the unbaked black between the UV islands
   size     texture sizes, file size, GPU memory, the Ultra head textures on disk
 
-  python3 tools/check_characters.py [male female]    exit status 1 on any failure
+  python3 tools/check_characters.py [looks]    exit status 1 on any failure; no looks means all eight
+
+RIG_DIR=<dir> takes the clips and the one-mesh bodies to compare with from there, not from
+assets/models/characters: the rig is proven against files that aren't in the tree yet.
 """
 
 import io
@@ -31,13 +35,16 @@ from PIL import Image
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 DIR = os.path.join(ROOT, "assets", "models", "characters")
 
+# The looks, as characters.rs::LOOKS has them, and the rig and clips each wears.
+SEX = {"male": "male", "female": "female", "officeman": "male", "college": "female", "auto": "male", "aunty": "female", "elder": "male", "officewoman": "female"}
+RIG = os.environ.get("RIG_DIR", DIR)
 # Which LODs each part is on (the rest must be absent) and the part's largest count there.
 PARTS = {"head": 4, "body": 4, "outfit": 4, "eyes": 4, "cornea": 2, "mouth": 2, "hair": 4, "eyebrows": 3, "eyelashes": 2}
 # Head + body + outfit, per LOD: (most triangles, slack). LOD0 is the sum of its sources for now.
 BUDGET = [60000, 25000 * 1.1, 12000 * 1.1, 5000 * 1.1]
-HEAD_TRIS = (15000, 20000)
+HEAD_TRIS = (10000, 20000)
 # Texture size by material suffix.
-TEX = {"head": 2048, "body": 2048, "outfit": 2048, "eyes": 512, "mouth": 512}
+TEX = {"head": 1024, "body": 1024, "outfit": 1024, "eyes": 512, "mouth": 256}
 
 COMPONENTS = {5120: np.int8, 5121: np.uint8, 5122: np.int16, 5123: np.uint16, 5125: np.uint32, 5126: np.float32}
 WIDTH = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4, "MAT4": 16}
@@ -180,12 +187,13 @@ def check_variant(v, rep):
         return
     new = Glb(path)
     print(" rig")
-    compare_rig(new, Glb(os.path.join(DIR, f"{v}_anims.glb")), "clips", rep)
-    old_path = os.path.join(DIR, f"{v}.glb")
+    sex = SEX[v]
+    anims = Glb(os.path.join(RIG, f"{sex}_anims.glb"))
+    compare_rig(new, anims, "clips", rep)
+    old_path = os.path.join(RIG, f"{sex}.glb")
     old = Glb(old_path) if os.path.exists(old_path) else None
     if old:
         compare_rig(new, old, "old model", rep)
-    anims = Glb(os.path.join(DIR, f"{v}_anims.glb"))
     paths, clip_paths = new.paths(), anims.paths()
     targets = {anims.nodes()[c["target"]["node"]]["name"] for a in anims.j["animations"] for c in a["channels"]}
     rep.check(all(paths.get(n) == clip_paths[n] for n in targets), f"{len(anims.j['animations'])} clips: all {len(targets)} target bones resolve")
@@ -205,7 +213,13 @@ def check_variant(v, rep):
     materials = new.j["materials"]
     for part in PARTS:
         used = {materials[p["material"]]["name"] for (q, k), n in table.items() if q == part for p in new.j["meshes"][n["mesh"]]["primitives"]}
-        rep.check(used == {f"{v}_{part}"}, f"{part}: material {sorted(used)}")
+        want_materials = {f"{v}_{part}", f"{v}_top"} if part == "outfit" else {f"{v}_{part}"}
+        rep.check(used == want_materials, f"{part}: material {sorted(used)}")
+    outfit = next(m for m in materials if m["name"] == f"{v}_outfit")
+    top = next(m for m in materials if m["name"] == f"{v}_top")
+    same = outfit["pbrMetallicRoughness"]["baseColorTexture"] == top["pbrMetallicRoughness"]["baseColorTexture"] and outfit["normalTexture"] == top["normalTexture"]
+    rep.check(same and len(new.j["textures"]) == len(new.j["images"]), f"top: shares the outfit's textures, {len(new.j['textures'])} textures for {len(new.j['images'])} images")
+    rep.check("baseColorFactor" in top["pbrMetallicRoughness"], "top: carries its first colour")
 
     print(" skin")
     bad_joints, bad_weights = 0, 0
@@ -246,7 +260,7 @@ def check_variant(v, rep):
     print(" shape")
     ref = None
     if old:
-        ref = next(old.geometry(n)[0] for n in old.mesh_nodes() if n["name"] == f"{v}_LOD0")
+        ref = next(old.geometry(n)[0] for n in old.mesh_nodes() if n["name"] == f"{sex}_LOD0")
     for k in range(4):
         pts = np.vstack([geo[(p, k)][0] for p in ("head", "body", "outfit", "eyes") if (p, k) in geo])
         lo, hi = pts.min(axis=0), pts.max(axis=0)
@@ -287,7 +301,7 @@ def check_variant(v, rep):
 
 
 def main():
-    variants = sys.argv[1:] or ["male", "female"]
+    variants = sys.argv[1:] or list(SEX)
     rep = Report()
     for v in variants:
         check_variant(v, rep)

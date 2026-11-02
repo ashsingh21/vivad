@@ -5,3 +5,15 @@ color  ../../build/textures/male/male_head_basecolor.png ../../assets/textures/c
 normal ../../build/textures/male/male_head_normal.png ../../assets/textures/characters/male_head_4k_normal.ktx2
 color  ../../build/textures/female/female_head_basecolor.png ../../assets/textures/characters/female_head_4k_basecolor.ktx2
 normal ../../build/textures/female/female_head_normal.png ../../assets/textures/characters/female_head_4k_normal.ktx2
+color  ../../build/textures/officeman/officeman_head_basecolor.png ../../assets/textures/characters/officeman_head_4k_basecolor.ktx2
+normal ../../build/textures/officeman/officeman_head_normal.png ../../assets/textures/characters/officeman_head_4k_normal.ktx2
+color  ../../build/textures/college/college_head_basecolor.png ../../assets/textures/characters/college_head_4k_basecolor.ktx2
+normal ../../build/textures/college/college_head_normal.png ../../assets/textures/characters/college_head_4k_normal.ktx2
+color  ../../build/textures/auto/auto_head_basecolor.png ../../assets/textures/characters/auto_head_4k_basecolor.ktx2
+normal ../../build/textures/auto/auto_head_normal.png ../../assets/textures/characters/auto_head_4k_normal.ktx2
+color  ../../build/textures/aunty/aunty_head_basecolor.png ../../assets/textures/characters/aunty_head_4k_basecolor.ktx2
+normal ../../build/textures/aunty/aunty_head_normal.png ../../assets/textures/characters/aunty_head_4k_normal.ktx2
+color  ../../build/textures/elder/elder_head_basecolor.png ../../assets/textures/characters/elder_head_4k_basecolor.ktx2
+normal ../../build/textures/elder/elder_head_normal.png ../../assets/textures/characters/elder_head_4k_normal.ktx2
+color  ../../build/textures/officewoman/officewoman_head_basecolor.png ../../assets/textures/characters/officewoman_head_4k_basecolor.ktx2
+normal ../../build/textures/officewoman/officewoman_head_normal.png ../../assets/textures/characters/officewoman_head_4k_normal.ktx2

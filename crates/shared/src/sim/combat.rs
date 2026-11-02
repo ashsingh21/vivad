@@ -6,8 +6,8 @@ use rand::RngExt;
 
 use super::melee::{BrokeMsg, Fights, Stroke, Swing, SwingPhase};
 use super::{
-    Action, DamageCause, DamageMsg, Door, EYE_OFFSET, Eliminated, HEADSHOT_HEIGHT, Health, HitMsg, Inventory,
-    Kinematic, MoveMode, PlayerIntent, SimSet, Warrior, aim_origin, aim_ray, btn, hit_mask,
+    Action, DamageCause, DamageMsg, Door, Eliminated, HEADSHOT_HEIGHT, Health, HitMsg, Inventory,
+    Kinematic, MoveMode, PlayerIntent, SimSet, Warrior, aim_origin, aim_ray, btn, eye_offset, hit_mask,
 };
 use crate::items::{AstraEffect, ItemDb, ItemKind, ItemStack};
 use crate::sim::net::{NetId, NetMsg, Outbox, Remote, Shot, drop_loot};
@@ -145,9 +145,10 @@ fn use_items(
         let Some(stack) = inv.current().cloned() else { continue };
         let def = db.get(&stack.id);
         let scale = stack.rarity.damage_scale();
-        // A crouch brings the eye and the hands down with it.
+        // A crouch brings the hands down with it (muzzle and melee). The eye is `eye_offset`'s,
+        // from the Transform: it comes down less.
         let body = tf.translation - Vec3::Y * intent.drop();
-        let (_, aim) = aim_ray(body, intent);
+        let (_, aim) = aim_ray(tf.translation, intent);
         let muzzle = body + Vec3::Y * 0.5 + intent.body_rotation() * Vec3::new(0.3, 0.0, -0.4);
 
         match &def.kind {
@@ -249,18 +250,17 @@ fn use_items(
                 // turn the shot round.
                 // Through a scope the eye is on the line of the shot, which leaves just ahead of it.
                 let filter = SpatialQueryFilter::from_mask(hit_mask()).with_excluded_entities([entity]);
-                let ads = intent.held(btn::AIM);
-                let scoped = ads && *scope > 1.0;
-                let at_eye = body + Vec3::Y * EYE_OFFSET;
+                let scoped = intent.held(btn::AIM) && *scope > 1.0;
+                let at_eye = tf.translation + Vec3::Y * eye_offset(intent);
                 let muzzle = if scoped { at_eye + aim * 0.2 } else { muzzle };
-                let eye = if scoped { at_eye } else { aim_origin(&spatial, body, intent, entity) };
+                let eye = if scoped { at_eye } else { aim_origin(&spatial, tf.translation, intent, entity) };
                 let eye = eye + aim * (muzzle - eye).dot(aim).max(0.0);
                 let target = spatial
                     .cast_ray(eye, Dir3::new(aim).unwrap_or(Dir3::NEG_Z), 600.0, true, &filter)
                     .map(|h| eye + aim * h.distance)
                     .unwrap_or(eye + aim * 600.0);
                 let base = (target - muzzle).normalize_or(aim);
-                let spread = if scoped { (spread_deg + act.bloom).to_radians() } else { (spread_deg + hip_spread + act.bloom).to_radians() * if ads { 0.6 } else { 1.0 } };
+                let spread = shot_spread(*spread_deg, *hip_spread, act.bloom, *scope, intent, kin);
                 act.bloom = (act.bloom + bloom).min(*bloom_max);
                 for _ in 0..*pellets {
                     let yaw_off = rng.random_range(-1.0f32..1.0) * spread;
@@ -349,6 +349,36 @@ fn use_items(
             ItemKind::Arrows { .. } => {}
         }
     }
+}
+
+/// Aiming down the sights tightens a shot by this much.
+const ADS_SPREAD: f32 = 0.45;
+
+/// Stance and motion, as a multiple of a shot's spread: tighter crouched, wider on the move, sliding
+/// or in the air.
+fn motion_spread(kin: &Kinematic) -> f32 {
+    if !kin.grounded {
+        return 1.8;
+    }
+    if kin.sliding {
+        return 1.4;
+    }
+    let speed = kin.velocity.with_y(0.0).length();
+    (if kin.crouched { 0.7 } else { 1.0 }) * (1.0 + 0.45 * (speed / super::movement::WALK_SPEED).min(1.5))
+}
+
+/// A shot's spread in radians: the gun's own, its hip spread and its bloom (degrees, `items.ron`),
+/// then aim, stance and motion. The crosshair opens and closes with this (crate::hud in the game).
+/// Through a scope (`scope` above 1) there is no hip spread, and the gun's numbers already are its
+/// aimed ones, so only stance and motion count.
+pub fn shot_spread(spread_deg: f32, hip_spread: f32, bloom: f32, scope: f32, intent: &PlayerIntent, kin: &Kinematic) -> f32 {
+    let ads = intent.held(btn::AIM);
+    let deg = if ads && scope > 1.0 {
+        spread_deg + bloom
+    } else {
+        (spread_deg + hip_spread + bloom) * if ads { ADS_SPREAD } else { 1.0 }
+    };
+    deg.to_radians() * motion_spread(kin)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -704,16 +734,37 @@ mod tests {
     use super::*;
     use crate::sim::Layer;
 
+    #[test]
+    fn spread_opens_with_motion_and_closes_with_aim() {
+        let body = |speed: f32, grounded, crouched, sliding| Kinematic { velocity: Vec3::X * speed, grounded, crouched, sliding, ..default() };
+        let held = |bits| PlayerIntent { held: bits, ..default() };
+        // Gun 2, hip 1, bloom 1: 4 degrees from the hip, standing still.
+        let shot = |scope, intent: &PlayerIntent, kin: &Kinematic| shot_spread(2.0, 1.0, 1.0, scope, intent, kin).to_degrees();
+        let near = |a: f32, b: f32| assert!((a - b).abs() < 1e-3, "{a} against {b}");
+        let still = body(0.0, true, false, false);
+        near(shot(1.0, &held(0), &still), 4.0);
+        near(shot(1.0, &held(btn::AIM), &still), 4.0 * 0.45);
+        near(shot(1.0, &held(0), &body(0.0, true, true, false)), 4.0 * 0.7);
+        near(shot(1.0, &held(0), &body(super::super::movement::WALK_SPEED, true, false, false)), 4.0 * 1.45);
+        near(shot(1.0, &held(0), &body(super::super::movement::SPRINT_SPEED, true, false, false)), 4.0 * 1.675);
+        near(shot(1.0, &held(0), &body(10.0, true, true, true)), 4.0 * 1.4);
+        near(shot(1.0, &held(0), &body(5.0, false, false, false)), 4.0 * 1.8);
+        // A scope: no hip spread, and its numbers are already the aimed ones.
+        near(shot(4.0, &held(btn::AIM), &still), 3.0);
+        near(shot(4.0, &held(btn::AIM), &body(0.0, false, false, false)), 3.0 * 1.8);
+    }
+
     /// The aim ray starts at the camera: 3.4 m back in the open, in front of a wall at the back.
     #[test]
     fn a_wall_behind_the_shooter_stays_behind_the_aim_ray() {
-        let origin_with = |wall: bool| {
+        // A block of this size, there.
+        let origin_with = |block: Option<(Vec3, Vec3)>| {
             let mut app = App::new();
             app.add_plugins((MinimalPlugins, TransformPlugin, AssetPlugin::default(), bevy::mesh::MeshPlugin))
                 .add_plugins(PhysicsPlugins::default())
                 .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)));
-            if wall {
-                app.world_mut().spawn((RigidBody::Static, Collider::cuboid(20.0, 20.0, 0.4), Transform::from_xyz(0.0, 0.0, 1.5), CollisionLayers::new(Layer::World, LayerMask::ALL)));
+            if let Some((size, at)) = block {
+                app.world_mut().spawn((RigidBody::Static, Collider::cuboid(size.x, size.y, size.z), Transform::from_translation(at), CollisionLayers::new(Layer::World, LayerMask::ALL)));
             }
             app.finish();
             app.cleanup();
@@ -723,8 +774,12 @@ mod tests {
             let me = app.world_mut().spawn_empty().id();
             app.world_mut().run_system_once(move |spatial: SpatialQuery| aim_origin(&spatial, Vec3::ZERO, &PlayerIntent::default(), me)).unwrap()
         };
-        assert!((origin_with(false).z - crate::sim::CAMERA_DISTANCE).abs() < 1e-3);
-        let pulled_in = origin_with(true);
+        assert!((origin_with(None).z - crate::sim::CAMERA_DISTANCE).abs() < 1e-3);
+        let pulled_in = origin_with(Some((Vec3::new(20.0, 20.0, 0.4), Vec3::new(0.0, 0.0, 1.5))));
         assert!(pulled_in.z < 1.3, "the aim ray starts behind the wall, at {pulled_in}");
+        // Under a roof the camera comes in along the shot's own line, so the crosshair stays true.
+        let indoors = origin_with(Some((Vec3::new(20.0, 0.3, 20.0), Vec3::Y * 3.0)));
+        assert!((indoors.z - crate::sim::INDOOR_DISTANCE).abs() < 1e-3, "{indoors}");
+        assert!((indoors.x - crate::sim::CAMERA_SHOULDER).abs() < 1e-3, "{indoors}");
     }
 }

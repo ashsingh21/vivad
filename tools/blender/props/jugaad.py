@@ -21,22 +21,26 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "lib"))
+sys.path.insert(0, HERE)
 
 import bmesh  # noqa: E402
 import bpy  # noqa: E402
 from mathutils import Matrix, Vector  # noqa: E402
 
+import auto as auto_body  # noqa: E402
+import bikes  # noqa: E402
 import export  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 OUT = os.path.join(ROOT, "assets", "models", "props")
+TEX = os.path.join(ROOT, "build", "jugaad_tex")
 S = 7.0
 DECK = 0.45  # the passenger floor's height on a real auto
 
 MATS = {}
 
 
-def mat(name, rgb, rough=0.6, metal=0.0, glow=0.0):
+def mat(name, rgb, rough=0.6, metal=0.0, glow=0.0, alpha=1.0):
     m = bpy.data.materials.new(name)
     m.use_nodes = True
     p = m.node_tree.nodes["Principled BSDF"]
@@ -47,6 +51,10 @@ def mat(name, rgb, rough=0.6, metal=0.0, glow=0.0):
     if glow:
         p.inputs["Emission Color"].default_value = (*lin, 1.0)
         p.inputs["Emission Strength"].default_value = glow
+    if alpha < 1.0:
+        # See-through (exported as glTF BLEND): the flame's outer layer shows its core.
+        p.inputs["Alpha"].default_value = alpha
+        m.surface_render_method = "BLENDED"
     MATS[name] = m
     return m
 
@@ -141,55 +149,64 @@ def text(name, s, at, size, material, rot=(math.pi / 2, 0, 0), depth=0.01):
 
 # ------------------------------------------------------------------ the auto
 
+class Part:
+    """A bmesh for the smooth-body helpers in bikes.py (loft, cushion, torus, arc_band), which
+    paint by face tag; here each part takes a material instead (`link`)."""
+
+    def __init__(self):
+        self.bm = bmesh.new()
+
+    def paint(self, colour, round=False):
+        for f in self.bm.faces:
+            f.tag = True
+
+
+def smooth(name, material, build):
+    """One part built by `build(part)` from the smooth helpers, linked with its material."""
+    part = Part()
+    build(part)
+    return link(name, part.bm, material)
+
+
 def auto():
-    parts = []
+    """The auto underneath: the street auto itself (tools/blender/props/auto.py: arched canopy,
+    baked texture), with the Udta Auto's lettering on its sides and back."""
+    parts = [auto_body.build(TEX, "jugaad_auto")]
     add = parts.append
-    # The tub: a rounded rear body and a nose that narrows to the front wheel.
-    add(hull("tub", [Vector((x, y, z)) for x in (-0.68, 0.68) for y in (-1.22, 0.25) for z in (0.32, 0.98)], "green", 0.09))
-    add(hull("nose", [Vector((x * w, y, z)) for (y, w, z0, z1) in ((0.2, 0.62, 0.32, 1.0), (0.9, 0.42, 0.36, 1.02), (1.32, 0.26, 0.5, 0.98))
-                      for x in (-1, 1) for z in (z0, z1)], "green", 0.08))
-    add(box("floor", (-0.64, -1.18, DECK - 0.04), (0.64, 0.6, DECK), "dark", 0.01))
-    # A chrome strip and a yellow band round the tub.
-    add(box("band", (-0.70, -1.24, 0.60), (0.70, 0.22, 0.68), "yellow", 0.02))
-    add(box("skirt", (-0.71, -1.25, 0.30), (0.71, 0.24, 0.36), "chrome", 0.015))
-    # The canopy: a yellow roof, rounded, and its black canvas back.
-    roof = [Vector((x, y, z)) for x in (-0.70, 0.70) for y in (-1.28, 0.62) for z in (1.62, 1.70)]
-    roof += [Vector((x, y, 1.80)) for x in (-0.5, 0.5) for y in (-1.15, 0.45)]
-    add(hull("roof", roof, "yellow", 0.06))
-    add(box("canvas", (-0.68, -1.24, 0.95), (0.68, -1.16, 1.64), "dark", 0.02))
-    for x in (-0.66, 0.66):
-        add(cyl(f"pillar_f{x}", (x, 0.55, 0.98), (x, 0.55, 1.64), 0.025, "dark", 8))
-        add(cyl(f"pillar_m{x}", (x, -0.3, 0.98), (x, -0.3, 1.64), 0.025, "dark", 8))
-    # Windscreen in a black frame, the handlebar behind it, a single headlight on the nose.
-    add(hull("screen", [Vector((x, y, z)) for x in (-0.55, 0.55) for (y, z) in ((0.70, 1.02), (0.74, 1.02), (0.60, 1.58), (0.64, 1.58))], "glass", 0.0))
-    add(box("screen_top", (-0.60, 0.58, 1.56), (0.60, 0.66, 1.63), "dark", 0.01))
-    add(cyl("bar", (-0.32, 0.55, 1.10), (0.32, 0.55, 1.10), 0.02, "chrome", 8))
-    add(cyl("headlight_shell", (0, 1.28, 0.98), (0, 1.40, 0.98), 0.11, "chrome", 16, 0.01))
-    add(cyl("headlight", (0, 1.40, 0.98), (0, 1.41, 0.98), 0.09, "lamp", 16))
-    add(box("seat", (-0.62, -1.14, DECK), (0.62, -0.62, 0.72), "seat", 0.05))
-    add(box("seat_back", (-0.62, -1.15, 0.72), (0.62, -1.02, 1.12), "seat", 0.05))
-    add(box("driver_seat", (-0.25, 0.05, DECK), (0.25, 0.45, 0.75), "seat", 0.05))
-    # Wheels: one at the front under a mudguard, two at the back.
-    for name, (x, y) in (("wheel_f", (0.0, 1.08)), ("wheel_l", (-0.66, -0.78)), ("wheel_r", (0.66, -0.78))):
-        add(cyl(name, (x - 0.06, y, 0.22), (x + 0.06, y, 0.22), 0.22, "tyre", 20, 0.02))
-        add(cyl(name + "_hub", (x - 0.075, y, 0.22), (x + 0.075, y, 0.22), 0.09, "chrome", 12))
-    add(hull("mudguard", [Vector((x, y, z)) for x in (-0.1, 0.1) for (y, z) in ((0.84, 0.36), (1.08, 0.50), (1.30, 0.40))], "green", 0.02))
-    # The back in truck art: bands of colour, tail lights, HORN OK PLEASE.
-    for k, (c, z) in enumerate((("red", 0.36), ("yellow", 0.46), ("blue", 0.56), ("pink", 0.66), ("green_lt", 0.76))):
-        add(box(f"stripe_{k}", (-0.6, -1.26, z), (0.6, -1.23, z + 0.08), c, 0.0))
-    for x in (-0.5, 0.5):
-        add(cyl(f"tail{x}", (x, -1.24, 0.88), (x, -1.29, 0.88), 0.06, "tail", 12))
-    add(text("horn", "HORN OK PLEASE", (0, -1.27, 1.32), 0.17, "white"))
-    add(text("sign_l", "UDTA AUTO", (-0.715, -0.5, 0.82), 0.16, "white", rot=(math.pi / 2, 0, -math.pi / 2)))
-    add(text("sign_r", "UDTA AUTO", (0.715, -0.5, 0.82), 0.16, "white", rot=(math.pi / 2, 0, math.pi / 2)))
+    add(text("horn", "HORN OK PLEASE", (0, -1.285, 1.28), 0.15, "white"))
+    add(text("sign_l", "UDTA AUTO", (-0.705, -0.5, 0.80), 0.16, "white", rot=(math.pi / 2, 0, -math.pi / 2)))
+    add(text("sign_r", "UDTA AUTO", (0.705, -0.5, 0.80), 0.16, "white", rot=(math.pi / 2, 0, math.pi / 2)))
     return parts
+
+
+def flame(name, nozzle, length, radius, material):
+    """A stylised flame out of a nozzle, aft (-Y): a teardrop that swells then tapers to a point,
+    its rim rippling in three lobes that twist along it. Origin at the nozzle, which the game
+    flickers it about (crate::visuals::run_jugaad)."""
+    bm = bmesh.new()
+    rings, n, seg = [], 12, 18
+    for i in range(n + 1):
+        t = i / n
+        r = radius * (1.0 + 0.6 * math.sin(math.pi * min(t / 0.7, 1.0) * 0.5)) * (1 - t) ** 0.75
+        ring = []
+        for j in range(seg):
+            a = 2 * math.pi * j / seg
+            rr = max(r * (1 + 0.16 * math.sin(3 * a + 7 * t)), 0.002)
+            ring.append(bm.verts.new((rr * math.cos(a), -length * t, rr * math.sin(a))))
+        rings.append(ring)
+    for i in range(n):
+        for j in range(seg):
+            bm.faces.new((rings[i][j], rings[i][(j + 1) % seg], rings[i + 1][(j + 1) % seg], rings[i + 1][j]))
+    bm.faces.new(rings[0])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    return link(name, bm, material, origin=nozzle)
 
 
 def jugaad():
     """The flying rig: bamboo across the roof, fans up on poles, cylinders for rockets."""
     parts, movers = [], []
     add = parts.append
-    zr = 1.80
+    zr = 1.73
     for y in (0.35, -0.95):
         add(cyl(f"cross_{y}", (-2.15, y, zr + 0.04), (2.15, y, zr + 0.04), 0.045, "bamboo", 10))
     for x in (-1.9, 1.9):
@@ -223,23 +240,25 @@ def jugaad():
         for y in (-1.05, -1.55):
             add(cyl(f"strap_{i}_{y}", (x, y - 0.02, z), (x, y + 0.02, z), 0.17, "dark", 20))
         nozzle = Vector((x, y1 - 0.14, z))
-        movers.append(cone(f"flame_{i}", nozzle, nozzle + Vector((0, -0.75, 0)), 0.10, 0.0, "flame", 12, origin=nozzle))
+        # The flame: an orange teardrop with a hot yellow-white core (each flickers on its own).
+        movers.append(flame(f"flame_{i}", nozzle, 1.05, 0.11, "flame"))
+        movers.append(flame(f"flame_{i + 2}", nozzle, 0.62, 0.065, "flame_core"))
     return parts, movers
 
 
 def garlands():
     """Marigolds slung under the canopy's edge on all four sides, and a nimbu-mirchi off the front."""
     parts = []
-    corners = [(-0.70, 0.62), (0.70, 0.62), (0.70, -1.28), (-0.70, -1.28)]
+    corners = [(-0.74, 0.64), (0.74, 0.64), (0.74, -1.27), (-0.74, -1.27)]
     for (ax, ay), (bx, by) in zip(corners, corners[1:] + corners[:1]):
         length = math.hypot(bx - ax, by - ay)
         n = int(length / 0.07)
         for k in range(n + 1):
             t = k / n
-            z = 1.60 - 0.16 * math.sin(math.pi * t)
+            z = 1.40 - 0.12 * math.sin(math.pi * t)
             colour = "marigold" if k % 2 == 0 else "marigold2"
             parts.append(ball(f"m_{ax}_{ay}_{k}", (ax + (bx - ax) * t, ay + (by - ay) * t, z), 0.04, colour))
-    top = Vector((0, 0.64, 1.62))
+    top = Vector((0, 0.64, 1.48))
     parts.append(cyl("totka_string", top, top - Vector((0, 0, 0.42)), 0.006, "dark", 6))
     parts.append(ball("nimbu", top - Vector((0, 0, 0.1)), 0.05, "lemon", 2))
     for k in range(5):
@@ -281,7 +300,9 @@ def main():
     mat("bamboo", (0.80, 0.64, 0.36), 0.6)
     mat("rope", (0.72, 0.60, 0.42), 0.9)
     mat("fan", (0.92, 0.90, 0.85), 0.4)
-    mat("flame", (1.0, 0.55, 0.10), 0.5, glow=12.0)
+    # Stylised fire in layers: a deep orange, half see-through outer flame round a hot yellow core.
+    mat("flame", (1.0, 0.38, 0.05), 0.5, glow=3.0, alpha=0.55)
+    mat("flame_core", (1.0, 0.86, 0.35), 0.5, glow=6.0)
     mat("marigold", (0.99, 0.52, 0.04), 0.7)
     mat("marigold2", (0.99, 0.76, 0.08), 0.7)
     mat("lemon", (0.95, 0.88, 0.20), 0.5)
