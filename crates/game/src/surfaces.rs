@@ -70,6 +70,8 @@ pub enum Surface {
     Marble,
     /// The upper storeys' generated facade.
     Facade,
+    /// The same bays in bare brick. Its colour is its own: nothing tints it.
+    Brick,
     /// The ground storey's generated shopfronts.
     Shop,
     /// Plate glass: near mirror-smooth, and all its colour from what it reflects.
@@ -113,6 +115,7 @@ struct Textures {
     plaster: Set,
     marble: Set,
     facade: Set,
+    brick: Set,
     shop: Set,
     asphalt: Set,
     pavers: Set,
@@ -125,7 +128,7 @@ struct Textures {
 
 impl Textures {
     fn images(&self) -> impl Iterator<Item = &Handle<Image>> {
-        [&self.plaster, &self.marble, &self.facade, &self.shop, &self.asphalt, &self.pavers, &self.dry, &self.turf].into_iter().flat_map(Set::images).chain([&self.water])
+        [&self.plaster, &self.marble, &self.facade, &self.brick, &self.shop, &self.asphalt, &self.pavers, &self.dry, &self.turf].into_iter().flat_map(Set::images).chain([&self.water])
     }
 
     fn load(assets: &AssetServer, images: &mut Assets<Image>) -> Self {
@@ -147,6 +150,7 @@ impl Textures {
             plaster: set("plaster", false),
             marble: set("marble", false),
             facade: set("facade", true),
+            brick: set("brick", true),
             shop: set("shop", true),
             asphalt: set("asphalt", false),
             pavers: set("pavers", false),
@@ -245,9 +249,16 @@ impl UltraSurfaces {
                 t.marble.dress(m);
                 m.uv_transform = Affine2::from_scale(Vec2::splat(TILE / MARBLE_TILE));
             }
-            Surface::Facade | Surface::Shop => {
-                let set = if surface == Surface::Facade { &t.facade } else { &t.shop };
+            Surface::Facade | Surface::Brick | Surface::Shop => {
+                let set = match surface {
+                    Surface::Facade => &t.facade,
+                    Surface::Brick => &t.brick,
+                    _ => &t.shop,
+                };
                 set.dress(m);
+                if surface == Surface::Brick {
+                    m.base_color = Color::WHITE;
+                }
                 m.depth_map = None;
                 if self.relief {
                     m.depth_map = set.depth.clone();
@@ -298,7 +309,7 @@ fn sync(quality: Res<Quality>, assets: Res<AssetServer>, mut images: ResMut<Asse
     let mut entries = std::mem::take(&mut state.entries);
     for e in &mut entries {
         let shown = e.plain.is_some();
-        let walls = matches!(e.surface, Surface::Facade | Surface::Shop);
+        let walls = matches!(e.surface, Surface::Facade | Surface::Brick | Surface::Shop);
         if shown == want && !(want && redress && walls) {
             continue;
         }

@@ -999,8 +999,8 @@ fn build_footprints(
                 // Brick and stone facades wait for the other maps (docs/PLAN.md, phase 2).
                 if shop {
                     ultra.add(handle.clone(), Surface::Shop);
-                } else if !bare {
-                    ultra.add(handle.clone(), Surface::Facade);
+                } else {
+                    ultra.add(handle.clone(), if mat == Mat::Brick { Surface::Brick } else { Surface::Facade });
                 }
                 handle
             })

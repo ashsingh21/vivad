@@ -24,6 +24,10 @@ color  ../../build/ultra_src/facade_basecolor.png ../../assets/textures/ultra/fa
 normal ../../build/ultra_src/facade_normal.png ../../assets/textures/ultra/facade_normal.ktx2
 data   ../../build/ultra_src/facade_orm.png ../../assets/textures/ultra/facade_orm.ktx2
 height ../../build/ultra_src/facade_depth.png ../../assets/textures/ultra/facade_depth.ktx2
+color  ../../build/ultra_src/brick_basecolor.png ../../assets/textures/ultra/brick_basecolor.ktx2
+normal ../../build/ultra_src/brick_normal.png ../../assets/textures/ultra/brick_normal.ktx2
+data   ../../build/ultra_src/brick_orm.png ../../assets/textures/ultra/brick_orm.ktx2
+height ../../build/ultra_src/brick_depth.png ../../assets/textures/ultra/brick_depth.ktx2
 color  ../../build/ultra_src/shop_basecolor.png ../../assets/textures/ultra/shop_basecolor.ktx2
 normal ../../build/ultra_src/shop_normal.png ../../assets/textures/ultra/shop_normal.ktx2
 data   ../../build/ultra_src/shop_orm.png ../../assets/textures/ultra/shop_orm.ktx2

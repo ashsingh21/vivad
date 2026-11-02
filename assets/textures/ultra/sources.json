@@ -6,7 +6,7 @@
   "scans": {
     "painted_plaster_wall": {
       "source": "https://polyhaven.com/a/painted_plaster_wall",
-      "used_in": ["plaster", "facade", "shop"]
+      "used_in": ["plaster", "facade", "brick", "shop"]
     },
     "asphalt_02": {
       "source": "https://polyhaven.com/a/asphalt_02",
@@ -23,6 +23,14 @@
     "sparse_grass": {
       "source": "https://polyhaven.com/a/sparse_grass",
       "used_in": ["turf"]
+    },
+    "brick_wall_02": {
+      "source": "https://polyhaven.com/a/brick_wall_02",
+      "used_in": ["brick"]
+    },
+    "dirty_concrete": {
+      "source": "https://polyhaven.com/a/dirty_concrete",
+      "used_in": ["facade"]
     }
   },
   "local_copies": "assets/models/samples/delhi_street/textures/vendor (sources.json there has URLs and hashes)",
