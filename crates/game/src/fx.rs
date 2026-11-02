@@ -14,7 +14,7 @@ use shared::items::{ItemDb, ItemKind};
 use shared::lines::{Lines, with};
 use shared::sim::combat::Projectile;
 use shared::sim::melee::{BrokeMsg, GuardMsg};
-use shared::sim::{Action, Eliminated, FeedMsg, HitMsg, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, Warrior, btn};
+use shared::sim::{Action, Eliminated, FeedMsg, HitMsg, Inventory, Kinematic, LocalPlayer, MatchConfig, MoveMode, PlayerIntent, Warrior, btn};
 
 use crate::animation::WarriorAnim;
 use crate::visuals::{Shot, shot_kind};
@@ -26,19 +26,28 @@ impl Plugin for FxPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraPunch>()
             .add_systems(Startup, setup)
-            .add_systems(Update, (add_streaks, muzzle_flash, misfire_smoke, blast_shake, hit_sparks, guard_sparks, broke_splinters, arrow_dust, landing_dust, fly_sparks, scope_glints, punch_camera, hit_stop))
+            .add_systems(Update, (add_streaks, muzzle_flash, misfire_smoke, blast_shake, hit_sparks, guard_sparks, broke_splinters, arrow_dust, landing_dust, fly_sparks, scope_glints, punch_camera, climb, hit_stop))
             .add_systems(PostUpdate, (update_streaks, swing_ribbons).after(TransformSystems::Propagate));
     }
 }
 
 /// Camera offsets the follow camera adds on top of the aim: a pitch kick (radians), a shake
 /// amplitude (metres) and a field-of-view change (radians). Kick and shake decay by themselves.
+/// `kick` chases `kick_target`, which each shot pushes up and which falls back on its own
+/// (`punch_camera`).
 #[derive(Resource, Default)]
 pub struct CameraPunch {
     pub kick: f32,
+    pub kick_target: f32,
     pub shake: f32,
     pub fov: f32,
 }
+
+/// How fast the view chases a shot's kick, how fast the kick falls back, and the most it adds up
+/// to: a shot rises over a few frames and settles, where it used to jump and fade.
+const KICK_RISE: f32 = 42.0;
+const KICK_FALL: f32 = 8.0;
+const KICK_MOST: f32 = 0.09;
 
 #[derive(Resource)]
 struct FxAssets {
@@ -536,6 +545,67 @@ fn fly_sparks(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &mu
     }
 }
 
+// ------------------------------------------------------------------ the Saintalis's climb
+
+/// How a held-down Saintalis walks off the target, shot by shot: (up, sideways) in radians. The
+/// first few stay close, then it climbs and swings. The Saintalis's lore says it: stop and start, or
+/// the bullets go to the sky. The pattern's idea is bevy_fps_game's `spray_pattern` (MIT, see
+/// docs/references.md); the numbers are ours. Past its end it keeps on with the last rows.
+const CLIMB: [(f32, f32); 14] = [
+    (0.003, 0.000), (0.004, 0.001), (0.007, -0.002), (0.010, -0.003), (0.012, 0.002), (0.013, 0.005), (0.013, 0.006),
+    (0.012, 0.002), (0.011, -0.004), (0.010, -0.007), (0.009, -0.005), (0.008, 0.001), (0.008, 0.005), (0.008, 0.002),
+];
+/// Seconds without a shot that end a burst: it starts low again.
+const BURST_GAP: f32 = 0.36;
+/// The share of the climb that settles back once the trigger is let go, and how fast.
+const CLIMB_BACK: f32 = 0.55;
+const SETTLE: f32 = 7.0;
+
+#[derive(Default)]
+struct Climbing {
+    shot: usize,
+    last_shot: f32,
+    /// What is still to settle back.
+    owed: f32,
+    /// The pitch as this left it, to see the player pulling down against it.
+    pitch: f32,
+}
+
+/// The local aim itself climbs, so where the shots go moves with the view, and the player pulls
+/// down against it with the mouse. This is the player's own aim, sent as any other: nothing here
+/// goes through the sim, and the other peers see where the shots really went.
+fn climb(mut local: Query<(Entity, &mut PlayerIntent), With<LocalPlayer>>, shots: Query<&Projectile, Added<Projectile>>, time: Res<Time>, config: Res<MatchConfig>, mut c: Local<Climbing>) {
+    let Ok((me, mut intent)) = local.single_mut() else { return };
+    if config.autopilot {
+        return;
+    }
+    let (now, dt) = (time.elapsed_secs(), time.delta_secs());
+    // Pulling down has paid off what would have settled back.
+    c.owed = (c.owed - (c.pitch - intent.pitch).max(0.0)).max(0.0);
+    let mut fired = false;
+    for p in &shots {
+        if p.owner == me && p.item == "saintalis" {
+            if now - c.last_shot > BURST_GAP {
+                c.shot = 0;
+            }
+            let k = if c.shot < CLIMB.len() { c.shot } else { CLIMB.len() - 3 + (c.shot - CLIMB.len()) % 3 };
+            let (up, side) = CLIMB[k];
+            intent.pitch += up;
+            intent.yaw += side;
+            c.owed += up * CLIMB_BACK;
+            c.shot += 1;
+            c.last_shot = now;
+            fired = true;
+        }
+    }
+    if !fired && now - c.last_shot > BURST_GAP * 0.5 {
+        let back = c.owed * (1.0 - (-dt * SETTLE).exp());
+        intent.pitch -= back;
+        c.owed -= back;
+    }
+    c.pitch = intent.pitch;
+}
+
 // ------------------------------------------------------------------ hit-stop and camera
 
 /// A sword hit holds the attacker's swing for a few frames, so the blow lands with weight.
@@ -561,7 +631,9 @@ fn punch_camera(
     db: Res<ItemDb>,
 ) {
     let dt = time.delta_secs();
-    punch.kick *= (-dt * 14.0).exp();
+    punch.kick_target *= (-dt * KICK_FALL).exp();
+    let chase = (punch.kick_target - punch.kick) * (1.0 - (-dt * KICK_RISE).exp());
+    punch.kick += chase;
     punch.shake *= (-dt * 16.0).exp();
     let Ok((me, inv, act, intent)) = local.single() else { return };
     let held = inv.current().map(|s| &db.get(&s.id).kind);
@@ -582,7 +654,7 @@ fn punch_camera(
                 "toradar" => (0.07, 0.03),
                 _ => (0.012, 0.0),
             };
-            punch.kick = punch.kick.max(kick);
+            punch.kick_target = (punch.kick_target + kick).min(KICK_MOST.max(kick));
             punch.shake = punch.shake.max(rattle);
         }
     }
