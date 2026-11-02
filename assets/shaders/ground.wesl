@@ -39,13 +39,19 @@ const REACH: f32 = 6.0;
 
 // Each surface's own colour, linear: on a big map the base colour is only a tint of these
 // (crate::surfaces::surface_mean has them in sRGB; here they can be tuned without a rebuild).
-const ASPHALT_MEAN: vec3<f32> = vec3<f32>(0.0890, 0.0862, 0.0862);
+const ASPHALT_MEAN: vec3<f32> = vec3<f32>(0.0783, 0.0757, 0.0757);
 const PAVERS_MEAN: vec3<f32> = vec3<f32>(0.2429, 0.2187, 0.1831);
 const DRY_MEAN: vec3<f32> = vec3<f32>(0.2530, 0.1960, 0.1128);
 const TURF_MEAN: vec3<f32> = vec3<f32>(0.0783, 0.1065, 0.0301);
 const BARE_MEAN: vec3<f32> = vec3<f32>(0.2429, 0.2049, 0.1473);
 const KERB_MEAN: vec3<f32> = vec3<f32>(0.3185, 0.3013, 0.2633);
 const DUST_MEAN: vec3<f32> = vec3<f32>(0.2140, 0.1789, 0.1329);
+
+// How much each surface reflects, Bevy's 0 to 1 (0.5 is 4 %). Grass and dry earth hardly do: at the
+// default a low sun laid a milky sheen over the land.
+const ASPHALT_SHINE: f32 = 0.38;
+const PAVERS_SHINE: f32 = 0.42;
+const LAND_SHINE: f32 = 0.16;
 
 // Across a kerb from the road, metres: its face, then its top.
 const KERB_FACE: f32 = 0.09;
@@ -161,6 +167,7 @@ fn fragment(vertex_output: VertexOutput, @builtin(front_facing) is_front: bool) 
     let base = pbr_input.material.base_color;
     pbr_input.material.base_color = vec4<f32>(base.rgb * mix(1.0, 2.0, own) * sum.color * 2.0, base.a);
     pbr_input.material.perceptual_roughness = sum.roughness;
+    pbr_input.material.reflectance = vec3<f32>(w.x * ASPHALT_SHINE + w.y * PAVERS_SHINE + w.z * LAND_SHINE);
     pbr_input.diffuse_occlusion *= sum.occlusion;
 
     let up = pbr_input.world_normal;

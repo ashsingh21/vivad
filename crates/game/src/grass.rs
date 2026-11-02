@@ -95,8 +95,8 @@ pub fn paint_city(x: f32, z: f32, class: u8) -> (LinearRgba, f32) {
     let mix = |a: LinearRgba, b: LinearRgba, t: f32| a.mix(&b, t.clamp(0.0, 1.0));
     let n = fbm(x / 3.0, z / 3.0, 2, 5);
     let (c, cover) = match class {
-        ground::ROAD => (mix(lin([0.30, 0.30, 0.31]), lin([0.36, 0.35, 0.34]), fbm(x / 9.0, z / 9.0, 2, 71) * 1.4 - 0.2), 0.0),
-        ground::PARKING => (lin([0.36, 0.355, 0.36]), 0.0),
+        ground::ROAD => (mix(lin([0.28, 0.28, 0.29]), lin([0.33, 0.325, 0.32]), fbm(x / 9.0, z / 9.0, 2, 71) * 1.4 - 0.2), 0.0),
+        ground::PARKING => (lin([0.33, 0.325, 0.33]), 0.0),
         ground::PLAZA => (mix(lin([0.54, 0.50, 0.44]), lin([0.48, 0.40, 0.35]), fbm(x / 4.0, z / 4.0, 2, 73)), 0.0),
         ground::PARK => (mix(lin([0.33, 0.40, 0.20]), lin([0.28, 0.35, 0.17]), fbm(x / 22.0, z / 22.0, 3, 91) * 1.6 - 0.3), 1.0),
         // Under the water: silt (seen through the surface).
@@ -452,7 +452,7 @@ fn build_chunk(k: (i32, i32), t: &Terrain, blockers: &Blockers, keep: f32, fine:
             continue;
         }
         let (blades, spread) = if is_clump { (BLADES.0 + (rng.f() * (BLADES.1 - BLADES.0 + 1) as f32) as u32, 0.13) } else { (1, 0.0) };
-        let tall = (0.6 + 0.5 * lush) * (0.7 + 0.3 * cover) * if is_clump { 1.0 } else { 0.45 };
+        let tall = (0.6 + 0.5 * lush) * (0.7 + 0.3 * cover) * if is_clump { 1.0 } else { 0.62 };
         // Each clump its own shade: some deep and bluish, some yellower in the sun. None on dry
         // ground, whose blades are the colour of the land.
         let green = ((ground.green / ground.red.max(0.01) - 0.95) / 0.35).clamp(0.0, 1.0);

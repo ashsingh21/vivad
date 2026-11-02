@@ -419,7 +419,7 @@ pub(crate) fn surface_mean(class: u8, cover: f32) -> LinearRgba {
     }
 }
 
-const ASPHALT_MEAN: [f32; 3] = [0.33, 0.325, 0.325];
+const ASPHALT_MEAN: [f32; 3] = [0.31, 0.305, 0.305];
 const PAVERS_MEAN: [f32; 3] = [0.53, 0.505, 0.465];
 const DRY_MEAN: [f32; 3] = [0.54, 0.48, 0.37];
 const TURF_MEAN: [f32; 3] = [0.31, 0.36, 0.19];
