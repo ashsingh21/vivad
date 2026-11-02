@@ -44,7 +44,7 @@ impl Plugin for SkyPlugin {
 const RADIUS: f32 = 900.0;
 /// The photograph is an 8-bit image: its values times this, in linear light, are what's drawn. Any
 /// less and the tone mapper leaves the brightest cloud grey.
-const PHOTO_GAIN: f32 = 1.6;
+const PHOTO_GAIN: f32 = 2.3;
 /// Sky colours (sRGB, over 1 where the sky is brighter than paper): the haze at the horizon, the
 /// blue above it, and overhead. The distance fog is HORIZON too, and tools/textures/sky.py bakes it
 /// into the photograph's last row: keep its number in step.

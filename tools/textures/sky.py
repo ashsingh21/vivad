@@ -29,7 +29,7 @@ OUT = os.path.join(ROOT, "build", "sky_src")
 
 # crate::sky::HORIZON and PHOTO_GAIN.
 HORIZON = (0.90, 0.875, 0.83)
-PHOTO_GAIN = 1.6
+PHOTO_GAIN = 2.3
 
 
 @njit(cache=False)
