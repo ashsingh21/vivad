@@ -501,7 +501,13 @@ fn populate(
     for k in (1..spots.len()).rev() {
         spots.swap(k, (dice.next() * (k + 1) as f32) as usize);
     }
-    spots.sort_by_key(|id| ahead(market.stalls[*id as usize].pos.xz()) < 0.4);
+    // Those in view first, and of those the stalls on the road itself: a crowd in the lane behind
+    // a row is a crowd nobody on the street can see.
+    let kerbside = |s: &Stall| layout.terrain.ground_at(s.pos.x + local(s.yaw, Vec3::NEG_Z * 2.4).x, s.pos.z + local(s.yaw, Vec3::NEG_Z * 2.4).z) == Some(ground::ROAD);
+    spots.sort_by_key(|id| {
+        let s = &market.stalls[*id as usize];
+        (ahead(s.pos.xz()) < 0.4, !kerbside(s))
+    });
     let strollers = room / 3;
     for id in spots {
         if room <= strollers {
