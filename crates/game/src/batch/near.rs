@@ -28,8 +28,8 @@ const LEAD: f32 = 12.0;
 const LINGER: f32 = 12.0;
 
 /// How far a big map's floor loot and chests are drawn. A dropped gun is a whole model of up to 6,300
-/// triangles with a shadow, a pool of light and a beam, 2 cm of it to a pixel past this, and there
-/// are 1,600 on the floor: left to the frustum they were most of the triangles in every street view.
+/// triangles with a shadow, a pool of light and a beam, and past this it is under ten pixels long.
+/// There are 1,600 on the floor: left to the frustum, they were most of the triangles in a street view.
 const LOOT_REACH: f32 = 110.0;
 const CHEST_REACH: f32 = 180.0;
 /// Seconds between looks: at a car's 20 m/s, 5 m.

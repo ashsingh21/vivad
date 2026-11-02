@@ -1040,8 +1040,10 @@ fn build_footprints(
         for s in [-1.0, 1.0] {
             let out = side * s;
             let reach = (2..DROP_REACH).find(|&d| occupied((pole + out * d as f32).xz())).map(|d| d as f32 - 0.6);
-            if let Some(d) = reach {
-                let (a, b) = (pole + Vec3::Y * DROP_FROM, pole + out * d + Vec3::Y * (DROP_FROM - 2.0).min(roof_at((pole + out * (d + 1.0)).xz()) - 0.6));
+            // Only a wall that stands high enough to carry a line over people's heads.
+            let wall = reach.map_or(0.0, |d| roof_at((pole + out * (d + 1.0)).xz()) - pole.y);
+            if let Some(d) = reach.filter(|_| wall > DROP_FROM - 3.0) {
+                let (a, b) = (pole + Vec3::Y * DROP_FROM, pole + out * d + Vec3::Y * (DROP_FROM - 2.0).min(wall - 0.6));
                 for k in 0..2 {
                     let shift = along * (k as f32 * 0.14);
                     wire(l, a + shift, b + shift, 0.2 + 0.03 * d);
