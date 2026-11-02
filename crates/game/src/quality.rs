@@ -103,7 +103,7 @@ impl Quality {
 
     /// The far plane from the air on a big map, where the haze can thin out and the city shows.
     fn far_plane_aloft(self) -> f32 {
-        if self == Quality::Low { 2600.0 } else { 4000.0 }
+        if self == Quality::Low { 2600.0 } else { 4600.0 }
     }
 
     /// TAA needs the depth and motion prepass; Low does without it and uses FXAA.
@@ -540,13 +540,17 @@ fn haze_by_height(q: Res<Quality>, layout: Res<shared::map::MapLayout>, mut cam:
     let Ok((at, mut projection, fog)) = cam.single_mut() else { return };
     let Projection::Perspective(p) = projection.as_mut() else { return };
     let t = ((at.translation().y - THINS.0) / (THINS.1 - THINS.0)).clamp(0.0, 1.0);
-    let far = q.far_plane(true).lerp(q.far_plane_aloft(), t * t * (3.0 - 2.0 * t));
+    let s = t * t * (3.0 - 2.0 * t);
+    let far = q.far_plane(true).lerp(q.far_plane_aloft(), s);
     if (far - p.far).abs() < 0.5 {
         return;
     }
     p.far = far;
     if let Some(mut fog) = fog {
+        // From the drop the city should read to the horizon: the haze is what lies under you, not
+        // a wall a kilometre off. It still closes just past the far plane, so no line shows.
         *fog = crate::camera::big_map_fog(far);
+        fog.falloff = bevy::pbr::FogFalloff::from_visibility_squared(far * (0.87 + 0.26 * s));
     }
     if let Some(rig) = painted.iter().next().map(|c| c.parent())
         && let Ok(mut t) = transforms.get_mut(rig)
