@@ -25,12 +25,21 @@ pub struct Saved {
     pub volume: f32,
     /// Times the usual mouse speed.
     pub mouse: f32,
+    /// The best place today: (the day, the place).
+    pub best: Option<(u64, u32)>,
 }
 
 impl Default for Saved {
     fn default() -> Self {
-        Self { volume: 1.0, mouse: 1.0 }
+        Self { volume: 1.0, mouse: 1.0, best: None }
     }
+}
+
+/// Today, as a count of days. The day turns at midnight in Delhi.
+pub fn today() -> u64 {
+    const IST: u64 = 19_800;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    (now + IST) / 86_400
 }
 
 /// VIVAD_SAVE=<file>, else `.panga.ron` in the home folder.
@@ -54,7 +63,16 @@ impl Saved {
         path().and_then(|p| std::fs::read_to_string(p).ok()).map_or_else(Saved::default, |t| Saved::read(&t))
     }
 
-    fn save(&self) {
+    /// A match's place, against today's best so far: that best if there was one.
+    pub fn record(&mut self, day: u64, place: u32) -> Option<u32> {
+        let before = self.best.filter(|b| b.0 == day).map(|b| b.1);
+        if before.is_none_or(|b| place < b) {
+            self.best = Some((day, place));
+        }
+        before
+    }
+
+    pub fn save(&self) {
         let (Some(p), Ok(text)) = (path(), ron::ser::to_string_pretty(self, default())) else { return };
         if let Err(e) = std::fs::write(&p, text) {
             warn!("couldn't save {}: {e}", p.display());
@@ -198,14 +216,25 @@ mod tests {
 
     #[test]
     fn a_saved_file_comes_back_the_same() {
-        let s = Saved { volume: 0.35, mouse: 1.7 };
+        let s = Saved { volume: 0.35, mouse: 1.7, best: Some((20_000, 7)) };
         assert_eq!(Saved::read(&ron::ser::to_string_pretty(&s, default()).unwrap()), s);
     }
 
     #[test]
     fn a_bad_or_old_file_does_no_harm() {
         assert_eq!(Saved::read("not a settings file"), Saved::default());
-        assert_eq!(Saved::read("(volume: 0.5)"), Saved { volume: 0.5, mouse: 1.0 });
-        assert_eq!(Saved::read("(volume: 9.0, mouse: 0.0)"), Saved { volume: 1.0, mouse: MOUSE_RANGE.0 });
+        assert_eq!(Saved::read("(volume: 0.5)"), Saved { volume: 0.5, ..default() });
+        assert_eq!(Saved::read("(volume: 9.0, mouse: 0.0)"), Saved { volume: 1.0, mouse: MOUSE_RANGE.0, best: None });
+    }
+
+    #[test]
+    fn best_today_keeps_the_best_and_starts_over_tomorrow() {
+        let mut s = Saved::default();
+        assert_eq!(s.record(10, 20), None);
+        assert_eq!(s.record(10, 7), Some(20));
+        assert_eq!(s.record(10, 12), Some(7));
+        assert_eq!(s.best, Some((10, 7)));
+        assert_eq!(s.record(11, 30), None, "a new day");
+        assert_eq!(s.best, Some((11, 30)));
     }
 }

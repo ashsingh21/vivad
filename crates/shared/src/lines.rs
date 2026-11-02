@@ -226,7 +226,7 @@ mod tests {
             ("left", VICTIM), ("moment.first", KILL), ("moment.double", KILL), ("moment.triple", KILL), ("moment.last2", &[]), ("moment.leader", KILL),
             ("moment.trade", &[]), ("you.head", &[]), ("you.long", &[]), ("you.kill", &[]),
             ("elim.killer", &["k"]), ("elim.aandhi", &[]), ("elim.fall", &[]), ("elim.self", &[]), ("elim.place.2", &[]), ("elim.place.top5", &[]),
-            ("elim.place.low", &[]), ("next.again", &[]), ("next.wait", &[]), ("win.title", &[]), ("win.sub", &[]), ("win.feed.you", &[]), ("win.feed", &["k"]),
+            ("elim.place.low", &[]), ("elim.near", &["top", "n"]), ("best.today", &["p"]), ("best.new", &["p"]), ("next.again", &[]), ("next.wait", &[]), ("win.title", &[]), ("win.sub", &[]), ("win.feed.you", &[]), ("win.feed", &["k"]),
             ("drop.far", &["map"]), ("drop.jump", &[]), ("drop.end", &[]), ("drop.ride", &[]), ("drop.open", &[]), ("drop.ground", &[]), ("match.start", &["n", "map"]),
             ("alert.next", &["place"]), ("alert.soon", &["t"]), ("alert.doors", &[]), ("alert.moving", &["place"]), ("alert.outside", &[]), ("alert.first", &[]),
             ("alert.last", &[]), ("alert.tiny", &[]), ("alert.loot", &[]), ("alert.thanks", &[]),

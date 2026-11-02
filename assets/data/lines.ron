@@ -137,6 +137,9 @@
         // elim-place
         (id: "place.2", at: ["elim.place.2"], ok: false, check: Read, text: "Itne paas! Dilli abhi door hai", mean: "So close! Delhi is still far.", note: "Second place. Old saying."),
         (id: "place.top5", at: ["elim.place.top5"], ok: false, check: Plain, text: "Achha panga tha", mean: "That was a good fight.", note: "Places 3 to 5."),
+        (id: "place.near", at: ["elim.near"], ok: false, check: Read, text: "Top {top} se bas {n} kadam door", mean: "Just {n} steps short of the top {top}.", note: "Under the result, when a place misses the top 5 or top 10 by little."),
+        (id: "best.today", at: ["best.today"], ok: false, check: Plain, text: "Aaj ka best: #{p}", mean: "Today's best: number {p}."),
+        (id: "best.new", at: ["best.new"], ok: false, check: Plain, text: "Aaj ka naya best: #{p}!", mean: "A new best today: number {p}!"),
         (id: "place.low", at: ["elim.place.low"], ok: false, check: Plain, text: "Itni jaldi? Chai bhi thandi nahi hui", mean: "So soon? The tea has not even gone cold.", note: "Early exit."),
 
         // elim-next
