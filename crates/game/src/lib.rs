@@ -12,6 +12,7 @@ pub mod characters;
 pub mod hud;
 pub mod input;
 pub mod lamps;
+pub mod life;
 pub mod quality;
 pub mod rim;
 pub mod sky;

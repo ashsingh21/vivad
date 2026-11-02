@@ -77,7 +77,7 @@ fn main() {
         .add_plugins((QualityPlugin, game::batch::BatchPlugin, game::skyline::SkylinePlugin,
             game::sky::SkyPlugin,
             game::rim::RimPlugin,
-            game::street::StreetPlugin, game::ambient::AmbientPlugin))
+            game::street::StreetPlugin, game::ambient::AmbientPlugin, game::life::LifePlugin))
         .add_plugins(bevy::diagnostic::LogDiagnosticsPlugin {
             wait_duration: std::time::Duration::from_secs(10),
             filter: std::env::var("VIVAD_PERF_ALL").is_ok().then(|| None).unwrap_or_else(|| std::env::var("VIVAD_PERF_LOG").is_ok().then(|| {
