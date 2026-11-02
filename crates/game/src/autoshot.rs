@@ -26,8 +26,8 @@
 //!   VIVAD_SHOTS_AT=a,b   at these match times (seconds) instead.
 //!   VIVAD_SHOTS_MATCHES=n then start the next match (on the same map) and shoot it too, n
 //!                        matches in all.
-//!   VIVAD_SHOTS_KEYS=m:40,n:44 press these letter keys at these match times, to shoot what they
-//!                        open, such as the whole map (M) and its zoom (N).
+//!   VIVAD_SHOTS_KEYS=m:40,n:44 press these keys at these match times, to shoot what they open,
+//!                        such as the whole map (M) and its zoom (N), or a quality level (f4).
 //!   VIVAD_HUD_IMAGE=1    draw the HUD and the 3D view to an image instead of the window and shoot
 //!                        that: the HUD's shots then work with the window hidden, though the window
 //!                        itself stays empty.
@@ -418,6 +418,7 @@ fn letter_key(letter: &str) -> Option<KeyCode> {
     match letter {
         "m" => Some(KeyCode::KeyM),
         "n" => Some(KeyCode::KeyN),
+        "f4" => Some(KeyCode::F4),
         _ => None,
     }
 }
