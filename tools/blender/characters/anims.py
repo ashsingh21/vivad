@@ -33,6 +33,8 @@ sys.path.insert(0, HERE)
 from skeleton import MIXAMO_BONES, MOTUS_BONES  # noqa: E402
 
 FPS = 30
+# How high the hip joints sit off the ground in the slide (sat on the folded leg's hip).
+SLIDE_SEAT = 0.2
 
 WALK, RUN, SPRINT, CROUCH = 1.8, 5.6, 8.6, 1.4
 
@@ -442,9 +444,6 @@ MIXAMO_CLIPS = [
     # drop off a ledge for the fall, both hips-at-rest so the legs move under the body.
     ("jump", "Jumping Up", 0.0, {"window": (33, 51), "air": True}),
     ("fall", "Jumping", 0.0, {"window": (61, 79), "pingpong": True, "air": True}),
-    # Sliding: the slide's feet-first stretch, the lead leg out ahead, the other tucked, sat up with
-    # the head level (you can shoot from it); held there and back. (Later it lies back on an arm.)
-    ("slide", "Running Slide", 0.0, {"window": (16, 24), "pingpong": True}),
 ]
 
 
@@ -946,7 +945,6 @@ POSTURE = [
     ("idle", 4, 8, False), ("walk_f", 6, 10, False),
     *[(f"run_{d}", 12, 18, False) for d in "flr"], ("run_b", 12, 6, False), ("sprint_f", 16, 18, False),
     ("crouch_idle", 22, 0, False), *[(f"crouch_{d}", 24, 0, False) for d in "fblr"],
-    ("slide", 10, 0, True),
 ]
 
 
@@ -1211,6 +1209,70 @@ def death_pose(rig, t):
         rig.aim(f"upperarm_{s}", (sx * (0.3 + 0.9 * f), 0.2 * f, -1 + 1.2 * f))
         rig.aim(f"lowerarm_{s}", (sx * (0.2 + 0.9 * f), 0.4 * f, -1 + 1.3 * f))
     rig.rotate("head", UP, 0.5 * f)
+
+
+def slide_pose(rig, t):
+    """A baseball slide, sat up: on the ground on the right hip, the left leg out ahead (knee soft,
+    heel down, toes up), the right folded under it (knee out to the side, shin flat, foot tucked
+    under the left knee), the back upright leaning a little back, the head level, the arms out
+    for balance clear of the ground. A small judder over the ground."""
+    look = rig.world_rot("head")
+    b = math.sin(2 * math.pi * t)
+    j = math.sin(4 * math.pi * t)
+    ground = min(rig.ankle_z.values()) - 0.07
+    rig.move("pelvis", (0, 0, ground + SLIDE_SEAT - rig.pelvis_rest.z + 0.006 * j))
+    # Tipped back at the hips, the spine bringing the chest nearly upright again, rolled a little
+    # onto the folded leg.
+    rig.rotate("pelvis", LEFT, -0.55)
+    rig.rotate("pelvis", FWD, -0.12)
+    rig.rotate("spine_01", LEFT, 0.2)
+    rig.rotate("spine_02", LEFT, 0.12 + 0.01 * b)
+    rig.rotate("spine_03", LEFT, 0.06)
+    rig.rotate("spine_02", FWD, 0.08)
+    hl, hr = rig.head("thigh_l"), rig.head("thigh_r")
+    lead = rig.thigh["l"] + rig.shin["l"]
+    rig.leg_ik("l", (hl.x + 0.04, hl.y - lead * 0.97, rig.ankle_z["l"] + ground + 0.02), UP + LEFT * 0.2)
+    rig.foot_pitch("l", 0.35, yaw=0.15)
+    rig.leg_ik("r", (hl.x - 0.02, hl.y - lead * 0.42, ground + 0.09), Vector((-1, -0.3, 0.15)))
+    rig.foot_pitch("r", -0.9, yaw=-1.2)
+    arm_swing(rig, "l", 1.15 + 0.04 * b, 0.45, out=0.6)
+    arm_swing(rig, "r", -0.35 - 0.04 * b, 0.3, out=1.1)
+    for s in "lr":
+        relax_fingers(rig, s, 0.4)
+    rig.set_world_rot("head", look)
+
+
+def level_gun(rig, name, ref):
+    """Turn `name`'s chest so the long gun points where `ref` points it (its first frame), the head
+    kept level: arms carried over onto another torso (the slide's, leaning back) aim the gun with it."""
+    sc = bpy.context.scene
+    rig.obj.animation_data.action = bpy.data.actions[ref]
+    sc.frame_set(int(bpy.data.actions[ref].frame_range[0]))
+    w = rig.world_rot("weapon_r").to_matrix()
+    # The barrel: the weapon bone's axis nearest straight ahead in the aim.
+    axis = max((Vector(a) * k for a in ((1, 0, 0), (0, 1, 0), (0, 0, 1)) for k in (1, -1)), key=lambda a: (w @ a).dot(FWD))
+    want = w @ axis
+    act = bpy.data.actions[name]
+    rig.obj.animation_data.action = act
+    f0, f1 = map(int, act.frame_range)
+    poses = []
+    for f in range(f0, f1 + 1):
+        sc.frame_set(f)
+        poses.append({pb.name: pb.matrix_basis.copy() for pb in rig.pb})
+    new_action(rig, name)
+    off = []
+    for i, pose in enumerate(poses):
+        for pb in rig.pb:
+            pb.matrix_basis = pose[pb.name]
+        bpy.context.view_layer.update()
+        look = rig.world_rot("head")
+        have = rig.world_rot("weapon_r").to_matrix() @ axis
+        off.append(math.degrees(have.angle(want)))
+        q = have.rotation_difference(want)
+        rig._apply("spine_03", q.to_matrix().to_4x4(), rig.head("spine_03"))
+        rig.set_world_rot("head", look)
+        rig.key(i + 1)
+    print(f"[anims] {name}: gun turned {max(off):.0f} deg at most onto {ref}'s aim")
 
 
 # ------------------------------------------------------------------ upper body (masked in game)
@@ -1522,13 +1584,8 @@ def main():
     for run, arms in HIGH_READY:
         if run in bpy.data.actions and arms in bpy.data.actions:
             arms_from(rig, run, arms)
-    if not os.path.exists(os.path.join(MIXAMO, "Running Slide.fbx")):
-        src, objs, acts = load_mocap("ual2")
-        bpy.context.view_layer.objects.active = arm
-        bpy.ops.object.mode_set(mode="POSE")
-        # Sitting up in the slide, head level, as you can shoot from it (the clip lies far back).
-        mocap(rig, src, acts, "slide", "Slide_Loop", 0.0, keep={"pelvis": 0.45, "spine_01": 0.3, "spine_02": 0.25, "spine_03": 0.25, "neck_01": 0.15, "head": 0.0})
-        drop_mocap(objs, acts, arm)
+    # The slide is our own pose (no library clip sits up in it: they lie back, curl, put a hand down).
+    hold_pose(rig, "slide", 30, slide_pose)
     for name, lean, tuck, face in POSTURE:
         if name in bpy.data.actions:
             if face:
@@ -1539,6 +1596,7 @@ def main():
     # (the game plays it whole, no aim laid over).
     if "slide" in bpy.data.actions and "rifleaim_idle" in bpy.data.actions:
         arms_from(rig, "slide", "rifleaim_idle", "rifle_slide")
+        level_gun(rig, "rifle_slide", "rifleaim_idle")
     # Last, over everything moving: the head looking ahead.
     for act in list(bpy.data.actions):
         if not act.name.startswith(LOOK_FREE):
