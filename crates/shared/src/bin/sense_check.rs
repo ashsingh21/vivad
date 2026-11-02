@@ -314,6 +314,130 @@ fn cover(stage: &mut Stage, check: &mut Check) {
     }
 }
 
+/// The market's tables, on a map that has them: from before and behind each, at 15 m, on the bearings
+/// where a warrior stepped out from the row is in plain sight, a warrior hard up behind it.
+fn table_cover(stage: &mut Stage, check: &mut Check) {
+    let (bearings, crouched, standing, tables) = stage
+        .app
+        .world_mut()
+        .run_system_once(|layout: Res<MapLayout>, spatial: SpatialQuery| {
+            let (mut bearings, mut crouched, mut standing) = (0, 0, 0);
+            for s in layout.stalls.tables().step_by(5) {
+                let c = s.pos.xz();
+                let body = |p: Vec2| Vec3::new(p.x, s.pos.y + HALF_HEIGHT, p.y);
+                for side in [1.0, -1.0] {
+                    for turn in [-0.6f32, -0.3, 0.0, 0.3, 0.6] {
+                        let d = Vec2::from_angle(turn).rotate(s.facing() * side);
+                        let eye = body(c + d * 15.0) + Vec3::Y * EYE_OFFSET;
+                        // Past the row's end the same line of sight proves the way is open.
+                        if !in_sight(&spatial, eye, body(c + d * 0.5 + d.perp() * 3.0), 0.0) {
+                            continue;
+                        }
+                        let hid = body(c - s.facing() * side * (s.half().y + 0.42));
+                        bearings += 1;
+                        crouched += !in_sight(&spatial, eye, hid, CROUCH_DROP) as u32;
+                        standing += !in_sight(&spatial, eye, hid, 0.0) as u32;
+                    }
+                }
+            }
+            (bearings, crouched, standing, layout.stalls.tables().count())
+        })
+        .unwrap();
+    if tables == 0 {
+        return;
+    }
+    let pct = |n: u32| 100.0 * n as f32 / (bearings as f32).max(1.0);
+    println!("  {:<12} {tables:>6} {bearings:>8} {:>15.0}% {:>15.0}%", "table", pct(crouched), pct(standing));
+    check.that(bearings > 1000 && pct(crouched) >= 90.0, "a market table hides a crouched warrior");
+    check.that(pct(standing) < 10.0, "and not one standing");
+}
+
+/// The real thing: a warrior behind a market table and a rifle firing at him from 15 m, with the
+/// rifleman's brain out of the way. Crouched, every shot stops in the table. Standing, the same aim
+/// a little higher finds him. Last of all: the bot is no use for anything else after this.
+fn table_shots(stage: &mut Stage, check: &mut Check) {
+    println!("a market table under fire");
+    let (player, bot) = (stage.player, stage.bot);
+    let found = stage
+        .app
+        .world_mut()
+        .run_system_once(|layout: Res<MapLayout>, floor: Res<StreetFloor>, zone: Res<Zone>, spatial: SpatialQuery| {
+            layout.stalls.tables().filter(|s| ring_calm(&zone, s.pos.xz())).find_map(|s| {
+                let c = s.pos.xz();
+                let f = s.facing();
+                let body = |p: Vec2| Vec3::new(p.x, layout.terrain.height(p.x, p.y) + HALF_HEIGHT, p.y);
+                let (front, behind) = (c + f * 15.0, c - f * (s.half().y + 0.42));
+                let eye = body(front) + Vec3::Y * EYE_OFFSET;
+                // Nothing else between them, on open street.
+                let beside = body(c + f * 0.8 + f.perp() * 2.2);
+                let clear = floor.reachable(front) && in_sight(&spatial, eye, beside, 0.0) && (0..4).all(|k| layout.stalls.tables().all(|o| !o.covers(behind + f.perp() * k as f32 * 0.25)));
+                clear.then_some((s.pos, f, front, behind))
+            })
+        })
+        .unwrap();
+    let Some((table, f, front, behind)) = found else {
+        check.that(false, "a table with open street in front of it");
+        return;
+    };
+    println!("  table at {:.1}, rifle 15 m off at {:.1}", table, front);
+    stage.app.world_mut().entity_mut(bot).remove::<BotBrain>();
+    let feet = |s: &Stage, p: Vec2| Vec3::new(p.x, s.ground(p), p.y);
+    let (at, from) = (feet(stage, behind), feet(stage, front));
+    let life = |s: &Stage| s.app.world().get::<Health>(player).map_or(0.0, |h| h.hp + h.shield);
+    // `aim` above the target's feet; `crouch`: how he holds himself.
+    let volley = |stage: &mut Stage, crouch: bool, aim: f32| {
+        stage.intent(player).held = if crouch { btn::CROUCH } else { 0 };
+        stage.intent(player).move_axis = Vec2::ZERO;
+        {
+            let world = stage.app.world_mut();
+            let mut h = world.get_mut::<Health>(player).unwrap();
+            h.hp = h.max_hp;
+            h.shield = h.max_shield;
+            let mut inv = world.get_mut::<Inventory>(bot).unwrap();
+            inv.slots[0] = Some(ItemStack { id: "saintalis".into(), rarity: Rarity::Rare, count: 30 });
+            inv.selected = 1;
+            inv.arrows = 90;
+        }
+        let target = at + Vec3::Y * aim;
+        let (mut hits, mut stopped, mut fired) = (0, 0, 0);
+        for k in 0..240 {
+            stage.put(player, at);
+            stage.put(bot, from);
+            let gun = stage.pos(bot);
+            let mut yaw_pitch = (0.0, 0.0);
+            let mut origin = gun + Vec3::Y * EYE_OFFSET;
+            for _ in 0..3 {
+                let d = target - origin;
+                yaw_pitch = ((-d.x).atan2(-d.z), d.y.atan2(d.xz().length()));
+                let probe = PlayerIntent { yaw: yaw_pitch.0, pitch: yaw_pitch.1, held: btn::AIM, ..default() };
+                origin = shared::sim::aim_ray(gun, &probe).0 + (Quat::from_euler(EulerRot::YXZ, yaw_pitch.0, yaw_pitch.1, 0.0) * Vec3::NEG_Z) * (CAMERA_DISTANCE - ADS_DISTANCE);
+            }
+            let before = life(stage);
+            let mut i = stage.intent(bot);
+            (i.yaw, i.pitch) = yaw_pitch;
+            i.held = if k > 60 && k % 12 == 0 { btn::AIM | btn::FIRE } else { btn::AIM };
+            fired += (k > 60 && k % 12 == 0) as u32;
+            stage.tick(1);
+            hits += (life(stage) < before) as u32;
+        }
+        stage.intent(bot).held = 0;
+        stage.tick(30);
+        let world = stage.app.world_mut();
+        stopped += world.query::<(&Transform, &Projectile)>().iter(world).filter(|(t, p)| p.owner == bot && p.stuck && t.translation.xz().distance(table.xz()) < 1.8).count();
+        let spent: Vec<Entity> = world.query::<(Entity, &Projectile)>().iter(world).filter(|(_, p)| p.owner == bot).map(|(e, _)| e).collect();
+        for e in spent {
+            world.despawn(e);
+        }
+        println!("  crouched {crouch}, aiming {aim:.2} m over his feet: {fired} fired, {hits} hit him, {stopped} stuck in the table");
+        (hits, stopped)
+    };
+    let (hits, stopped) = volley(stage, true, 0.6);
+    check.that(hits == 0 && stopped >= 3, "crouched behind it, a rifle's shots stop in the table");
+    let (hits, _) = volley(stage, false, 1.5);
+    check.that(hits >= 3, "standing behind it, his head and shoulders are a target");
+    let _ = f;
+}
+
 /// Leaves on the NCR: a bush hides a crouch from 15 m and not from 4 m, a thicket hides anyone.
 fn leaves(stage: &mut Stage, check: &mut Check) {
     let rows = stage
@@ -804,6 +928,7 @@ fn main() {
     crouching(&mut stage, &mut check);
     shutter(&mut stage, &mut check);
     cover(&mut stage, &mut check);
+    table_cover(&mut stage, &mut check);
     leaves(&mut stage, &mut check);
     flocks(&mut stage, &mut check);
     stage.intent(stage.player).held = 0;
@@ -812,6 +937,9 @@ fn main() {
     senses_of_a_bot(&mut stage, &mut check);
     running_away(&mut stage, &mut check);
     long_shots(&mut stage, &mut check);
+    if !stage.app.world().resource::<MapLayout>().stalls.stalls.is_empty() {
+        table_shots(&mut stage, &mut check);
+    }
     println!("{}", if check.failed == 0 { "all good".to_string() } else { format!("{} failed", check.failed) });
     std::process::exit((check.failed > 0) as i32);
 }

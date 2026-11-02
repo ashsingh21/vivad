@@ -763,6 +763,77 @@ fn main() {
             }
         }
 
+        // The market's tables stop what is driven at them, and leave a bay's vehicle its way out.
+        let table = {
+            let layout = app.world().resource::<MapLayout>();
+            let open = |p: Vec2| layout.terrain.ground_at(p.x, p.y) == Some(ground::ROAD);
+            layout.stalls.tables().filter(|s| s.first).map(|s| (s.pos, s.facing())).find(|(p, f)| (2..=22).all(|k| open(p.xz() + *f * k as f32) && layout.stalls.tables().all(|o| !o.covers(p.xz() + *f * k as f32))))
+        };
+        if let Some((at, f)) = table {
+            for kind in [VehicleKind::Commuter, VehicleKind::Car] {
+                let spec = kind.spec();
+                let from = at.xz() + f * 22.0;
+                let foot = Vec3::new(from.x, app.world().resource::<MapLayout>().terrain.height(from.x, from.y), from.y);
+                let v = spawn(&mut app, kind, foot, yaw_along(-f));
+                put(&mut app, me, foot + Vec3::new(-f.y, 0.0, f.x) * (spec.size.x / 2.0 + 0.9));
+                app.update();
+                press(&mut app, me);
+                app.world_mut().get_mut::<PlayerIntent>(me).unwrap().move_axis = Vec2::Y;
+                let (mut peak, mut nearest) = (0.0f32, f32::MAX);
+                for _ in 0..60 * 5 {
+                    app.world_mut().get_mut::<Health>(me).unwrap().hp = 100.0;
+                    app.update();
+                    let t = app.world().get::<Transform>(v).unwrap().translation;
+                    peak = peak.max(app.world().get::<Vehicle>(v).unwrap().speed);
+                    nearest = nearest.min((t.xz() - at.xz()).dot(f));
+                }
+                let vehicle = app.world().get::<Vehicle>(v).unwrap();
+                let (speed, hp) = (vehicle.speed, vehicle.hp);
+                check(&format!("a market table stops a {kind:?}"), nearest > 0.55 + spec.size.z / 2.0 - 0.1 && speed.abs() < 3.0, format!("peak {peak:.1} m/s, its nose {:.2} m off the table, then {speed:.1} m/s, health {hp:.0}/{:.0}", nearest - 0.55 - spec.size.z / 2.0, spec.hp));
+                app.world_mut().get_mut::<PlayerIntent>(me).unwrap().move_axis = Vec2::ZERO;
+                press(&mut app, me);
+                app.world_mut().entity_mut(v).despawn();
+                app.update();
+            }
+        } else {
+            check("a market table stops a vehicle", false, "no table with a run-up".into());
+        }
+        // Every bay with a row near it where a car fits: a clear way out, and driven.
+        let boxes = VehicleKind::Car.spec();
+        let (ways, shut): (Vec<Vec<Vec2>>, Vec<Vec2>) = app
+            .world_mut()
+            .run_system_once(move |spatial: SpatialQuery, layout: Res<MapLayout>| {
+                let filter = SpatialQueryFilter::from_mask(solid_mask());
+                let shape = boxes.collider();
+                let tables: Vec<_> = layout.stalls.tables().collect();
+                let (mut ways, mut shut) = (vec![], vec![]);
+                for b in layout.parking.iter().filter(|b| tables.iter().any(|s| s.pos.xz().distance_squared(b.pos.xz()) < 400.0)) {
+                    let at = b.pos + Vec3::Y * boxes.centre();
+                    let yaw = Quat::from_rotation_y(b.yaw);
+                    if !spatial.shape_intersections(&shape, at, yaw, &filter).is_empty() {
+                        continue;
+                    }
+                    let config = ShapeCastConfig { max_distance: 14.0, ..default() };
+                    let clear = (0..16).map(|k| Vec2::from_angle(k as f32 / 16.0 * std::f32::consts::TAU)).find(|d| {
+                        let turn = Quat::from_rotation_y(yaw_along(*d));
+                        let dir = Dir3::new(Vec3::new(d.x, 0.0, d.y)).unwrap();
+                        spatial.shape_intersections(&shape, at, turn, &filter).is_empty() && spatial.cast_shape(&shape, at, turn, dir, &config, &filter).is_none()
+                    });
+                    match clear {
+                        Some(d) => ways.push(vec![b.pos.xz(), b.pos.xz() + d * 14.0]),
+                        None => shut.push(b.pos.xz()),
+                    }
+                }
+                (ways, shut)
+            })
+            .unwrap();
+        let mut drove = 0;
+        for way in ways.iter().step_by(4) {
+            let run = pilot(&mut app, me, VehicleKind::Car, way, 10.0);
+            drove += (run.end.distance(way[0]) > 6.0) as usize;
+        }
+        check("a car has a clear way out of every bay by a row", shut.is_empty() && !ways.is_empty() && drove == ways.len().div_ceil(4), format!("{} bays with a table within 20 m where a car fits, {} shut in {shut:.0?}, {drove} of {} driven out", ways.len() + shut.len(), shut.len(), ways.len().div_ceil(4)));
+
         // All eight bridges, both ways, by car and by bike, down the middle of the road.
         for (s, name) in compose::SPANS.iter().zip(compose::BRIDGES) {
             // From the foot of one ramp to the foot of the other: past them the road may turn away.

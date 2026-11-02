@@ -341,7 +341,7 @@ fn listen_ring(zone: Res<Zone>, walkers: Query<&Walker>, mut alarms: ResMut<Alar
     }
 }
 
-/// Whether a person may walk here: the row stalls have no collider, but nobody walks through one.
+/// Whether a person may walk here: a handcart has no collider, but nobody walks through one.
 fn walkable(layout: &MapLayout, floor: &StreetFloor, market: &Market, p: Vec2) -> bool {
     floor.walkable(p) && !market.stall_at(p) && !matches!(layout.terrain.ground_at(p.x, p.y), Some(ground::WATER)) && !layout.is_holy(p)
 }
@@ -490,7 +490,9 @@ fn populate(
         let placed = stall_people(&stall, &mut dice);
         let mut any = false;
         for (role, spot, yaw) in placed.into_iter().take(room) {
-            if !free(spot) {
+            // A table's keeper stands closer in than the street grid lets a warrior.
+            let fits = if stall.kind == StallKind::Row { hidden(spot) && inside(spot) && !scares.scared(spot, now) } else { free(spot) };
+            if !fits {
                 continue;
             }
             spawn_walker(&mut commands, &books, &mut dice, role, Some(id), true, spot, yaw, layout.terrain.height(spot.x, spot.y), now);
@@ -654,7 +656,7 @@ fn in_front(s: &Stall, dice: &mut Dice) -> (Vec2, f32) {
     let (x, z) = match s.kind {
         StallKind::Thela | StallKind::Cart => (if dice.next() < 0.5 { 1.2 } else { -1.2 }, dice.range(-0.8, 0.8)),
         StallKind::Chai => (dice.range(-0.8, 0.8), -1.7),
-        StallKind::Row => (dice.range(-1.0, 1.0), -1.15),
+        StallKind::Row => (dice.range(-1.0, 1.0), -1.3),
         _ => (dice.range(-0.9, 0.9), dice.range(-1.2, -1.0)),
     };
     let spot = s.pos.xz() + local(s.yaw, Vec3::new(x, 0.0, z)).xz();

@@ -14,7 +14,7 @@ use super::{Action, BotSkill,
 use super::movement::{FALL_DAMAGE, GLIDE_FALL, GLIDE_HORIZ, GRAVITY, OPEN_GLIDE_HEIGHT, RIFLE_SPRINT, SAFE_LANDING, SPRINT_SPEED, WALK_SPEED, dive_reach, long_gun};
 use super::nav::{NavGrid, NoPath, StreetFloor, on_bridge};
 use super::senses::{self, Senses};
-use super::stance::Stance;
+use super::stance::{CROUCH_DROP, Stance};
 use crate::items::{AstraEffect, ItemDb, ItemKind};
 use crate::map::MapLayout;
 
@@ -153,6 +153,8 @@ pub struct BotBrain {
     pub landed: Option<f32>,
     /// Seconds left running from a fight that was going badly.
     pub flee: f32,
+    /// The place it is running to hides it only crouched: a market table, a low wall.
+    pub low_cover: bool,
     /// We have arrived at the goal and taken our rest for it: no second helping.
     pub arrived: bool,
     /// What we have seen, heard and remember (`senses`).
@@ -204,6 +206,7 @@ impl BotBrain {
             way_out: None,
             landed: None,
             flee: 0.0,
+            low_cover: false,
             arrived: false,
             senses: Senses::staggered(rng),
         }
@@ -884,7 +887,9 @@ pub(crate) fn drive_bots(
             // Out of its sight if there is such a place near; a long way off if not.
             let threat = senses::eye(from, 0.0);
             let hidden = mapped.then(|| senses::hiding_spot(&spatial, &walkable, &layout, threat, pos.xz(), 24.0, 0.0)).flatten();
-            let spot = hidden.unwrap_or(spot);
+            // Nothing to stand behind: something to get down behind will do.
+            let low = (mapped && hidden.is_none()).then(|| senses::hiding_spot(&spatial, &walkable, &layout, threat, pos.xz(), 24.0, CROUCH_DROP)).flatten();
+            let spot = hidden.or(low).unwrap_or(spot);
             // A short dash from a far rifle may leave the coming ring; a longer fall-back may not.
             let coming = losing.is_none() || zone.target_center.distance(spot) < zone.target_radius * 0.9;
             if coming && zone.center.distance(spot) < zone.radius * 0.9 {
@@ -893,8 +898,10 @@ pub(crate) fn drive_bots(
                 brain.target = None;
                 brain.rest = 0.0;
                 brain.flee = rng.random_range(6.0..10.0);
+                brain.low_cover = low.is_some();
                 brain.senses.tally.flights += 1;
                 brain.senses.tally.hid += hidden.is_some() as u32;
+                brain.senses.tally.low += low.is_some() as u32;
             }
         }
         let target = target.filter(|_| brain.flee <= 0.0);
@@ -1034,6 +1041,10 @@ pub(crate) fn drive_bots(
             intent.pitch = 0.0;
             intent.move_axis = if near { Vec2::ZERO } else { Vec2::Y };
             brain.walking = !near;
+            // Down behind it, for as long as the running lasts.
+            if near && brain.flee > 0.0 && brain.low_cover {
+                intent.held |= btn::CROUCH;
+            }
             if near && brain.calm && !brain.arrived {
                 // Arrived: a moment at a chest, none over a find on the ground, and a while
                 // standing about wherever we wandered to. Once per arrival: set again every

@@ -3,11 +3,12 @@
 //! pavement, parked scooters and handcarts, banners over the road, wires strung from pole to pole,
 //! steam off the chai.
 //!
-//! None of it is on the map: it has no collider, the street grid never hears of it, and bullets
-//! pass through it, so what stands in the open stops below a warrior's eyes or hangs above them.
-//! It is worked out from the map's kit and footprints only for the patches of street near the
-//! camera, and each patch is three meshes with one material (`Level`), merged on a worker. A
-//! market is a handful of draws, and with nothing near the player nothing exists at all.
+//! The tables in the rows are the map's, and solid (`shared::map::stalls`): what is drawn here stands
+//! on them. The rest is not on the map: it has no collider, the street grid never hears of it, and
+//! bullets pass through it, so what stands in the open stops below a warrior's eyes or hangs above
+//! them. It is worked out from the map's kit and footprints only for the patches of street near the
+//! camera, and each patch is three meshes with one material (`Level`), merged on a worker. A market
+//! is a handful of draws, and with nothing near the player nothing exists at all.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,6 +18,7 @@ use bevy::camera::visibility::{NoAutoAabb, VisibilityRange};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
+use shared::map::stalls::hash;
 use shared::map::terrain::ground;
 use shared::map::{MapLayout, Mat};
 use shared::sim::OfMap;
@@ -274,14 +276,6 @@ fn read_pieces() -> Result<(HashMap<String, Piece>, Image), String> {
     Ok((out, atlas))
 }
 
-pub(super) fn hash(a: u32, b: u32, c: u32) -> f32 {
-    let mut h = a.wrapping_mul(0x9e37_79b1) ^ b.wrapping_mul(0x85eb_ca77) ^ c.wrapping_mul(0xc2b2_ae3d);
-    h ^= h >> 15;
-    h = h.wrapping_mul(0x2c1b_3c6d);
-    h ^= h >> 12;
-    (h & 0xffff) as f32 / 65535.0
-}
-
 fn pick<'a>(from: &[&'a str], roll: f32) -> &'a str {
     from[((roll * from.len() as f32) as usize).min(from.len() - 1)]
 }
@@ -317,8 +311,8 @@ fn dress(layout: &MapLayout, market: &Market, key: (i32, i32), parked: &[Vec2], 
         if !inside(at) {
             continue;
         }
-        // A match's parked vehicle has the spot: its colliders can't give way to a table.
-        if s.kind != super::StallKind::Thela && parked.iter().any(|p| p.distance_squared(at) < PARKED_CLEAR * PARKED_CLEAR) {
+        // A match's parked vehicle has the spot. A table is solid, and the map keeps it off the bays.
+        if !matches!(s.kind, super::StallKind::Thela | super::StallKind::Row) && parked.iter().any(|p| p.distance_squared(at) < PARKED_CLEAR * PARKED_CLEAR) {
             continue;
         }
         let (a, b) = (at.x.to_bits(), at.y.to_bits());

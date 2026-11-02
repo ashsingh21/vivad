@@ -560,13 +560,14 @@ fn main() {
                         found: a.found + t.found,
                         flights: a.flights + t.flights,
                         hid: a.hid + t.hid,
+                        low: a.low + t.low,
                     }
                 });
                 let flocks = world.query::<&Flock>().iter(world).count();
                 let noises = world.resource::<Noises>();
                 println!(
-                    "senses: {} sightings; {} searches, {} reached, {} found someone; {} flights, {} to a hiding place; {} shots heard of, {} flocks of {flocks} put up",
-                    tally.noticed, tally.searches, tally.arrived, tally.found, tally.flights, tally.hid, noises.shots, noises.flocks
+                    "senses: {} sightings; {} searches, {} reached, {} found someone; {} flights, {} to a hiding place, {} to low cover; {} shots heard of, {} flocks of {flocks} put up",
+                    tally.noticed, tally.searches, tally.arrived, tally.found, tally.flights, tally.hid, tally.low, noises.shots, noises.flocks
                 );
                 let burnt = world.resource::<Burnt>();
                 println!(

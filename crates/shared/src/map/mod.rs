@@ -14,6 +14,7 @@ pub mod ncr;
 mod ncr_art;
 pub mod place;
 pub mod parking;
+pub mod stalls;
 pub mod terrain;
 pub mod thickets;
 
@@ -268,6 +269,8 @@ pub struct MapLayout {
     pub kit: Vec<kit::KitPiece>,
     /// Where vehicles may stand on the NCR (crate::map::parking); none on a small map.
     pub parking: Vec<parking::Bay>,
+    /// The market's rows on the NCR (crate::map::stalls); none on a small map.
+    pub stalls: stalls::Rows,
     /// The river across the map, if it has one.
     pub river: River,
     /// Which family of map this is: what the client paints it with and how bots find their way.

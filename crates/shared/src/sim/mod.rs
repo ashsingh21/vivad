@@ -593,6 +593,16 @@ fn spawn_map(mut commands: Commands, layout: Res<MapLayout>) {
             CollisionLayers::new(Layer::World, LayerMask::ALL),
         ));
     }
+    // The market's tables, a collider to each patch of street: they are thousands.
+    for tables in layout.stalls.patches() {
+        commands.spawn((
+            OfMap,
+            Transform::default(),
+            RigidBody::Static,
+            Collider::compound(tables.iter().map(|b| (b.pos, b.rot, collider_for(b))).collect::<Vec<_>>()),
+            CollisionLayers::new(Layer::World, LayerMask::ALL),
+        ));
+    }
     for (index, door) in layout.doors.iter().enumerate() {
         commands.spawn((
             MapBlock(door.clone()),
