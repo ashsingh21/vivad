@@ -75,6 +75,14 @@ Render switches for comparisons: `VIVAD_EV=9.7` (camera exposure, default 12), `
 `VIVAD_PERF_LOG=1` the game logs FPS every 10 s; `VIVAD_NO_VSYNC=1` uncaps the frame rate so
 the numbers mean something (with vsync they stop at the display's 60).
 
+**Vehicles.** `just vehicle-check` drives all eight bridges both ways, a Ring Road lap and the Ridge
+by car and bike with a player's inputs, and proves parking, rivers and bots at the wheel. The real
+game: `VIVAD_ROAD=<kind>,<seconds>` drives the Ring Road and logs the frames, then stands still 25 s
+and logs those too, so the road's cost is read against the same run. `VIVAD_FLEET=<dir>` takes each
+kind where the match parked it, a drivable auto beside a tarped one, and bots at the wheel from the
+roadside. `VIVAD_SKIP_HOME=1` with either. `VIVAD_BOTS_DRIVE=0` keeps bots on foot, and `just sim`
+reports each match's rides, stuck rides and kilometres.
+
 **Frame rate per view.** `just perf` holds every tour view for 400 frames uncapped and prints
 its frame rate (`[tour-fps]`); compare runs before and after a change. `VIVAD_PERF_ALL=1` logs
 every diagnostic, including the GPU time of each render pass: the shadow pass is the largest.

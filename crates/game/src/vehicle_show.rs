@@ -374,7 +374,8 @@ fn fleet(
     bots: Query<(), With<BotBrain>>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    if m.elapsed < 8.0 {
+    // Once the drop's own camera has let go.
+    if m.elapsed < 16.0 {
         return;
     }
     let Ok((mut tf, mut kin, mut hp)) = me.single_mut() else { return };
@@ -423,7 +424,7 @@ fn fleet(
         let Some((e, vt, v)) = driven else { return };
         let dir = vt.rotation * Vec3::NEG_Z;
         let eye = vt.translation + dir * v.speed * SETTLE * 1.45 + Vec3::new(-dir.z, 0.0, dir.x) * 6.0 + Vec3::Y * 0.6;
-        stand(&mut tf, &mut kin, eye - dir * 2.0, 0.0);
+        stand(&mut tf, &mut kin, eye.with_y(vt.translation.y - v.kind.spec().centre()) + dir * 6.0, 0.0);
         fleet.eye = Some((eye, vt.translation));
         fleet.watching = Some(e);
         info!("[fleet] a bot driving a {} at {:.1} m/s, at {:.0},{:.0}", v.kind.spec().name, v.speed, vt.translation.x, vt.translation.z);

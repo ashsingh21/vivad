@@ -53,7 +53,7 @@ const SMOULDER: f32 = 40.0;
 const SEEN_TO: f32 = 450.0;
 /// Dust: the speed that raises it, the puffs a second flat out, and how far off it is worth a card.
 const DUST_SPEED: f32 = 5.0;
-const DUST_RATE: f32 = 16.0;
+const DUST_RATE: f32 = 24.0;
 const DUST_SEEN: f32 = 150.0;
 /// How far off another's engine is heard, metres, how many at a time, and how loud at its nearest.
 const HEARD_TO: f32 = 160.0;
@@ -153,7 +153,8 @@ fn setup(mut commands: Commands, assets: Res<AssetServer>, mut meshes: ResMut<As
             .collect()
     };
     let (grey, black, flame) = (fade((0.62, 0.61, 0.6), 0.5, false), fade((0.07, 0.065, 0.06), 0.8, false), fade((1.0, 0.45, 0.1), 0.95, true));
-    let dust = fade((0.66, 0.56, 0.42), 0.34, false);
+    // Paler than the ground it rises from: the colour of the sand itself doesn't show against it.
+    let dust = fade((0.90, 0.84, 0.72), 0.5, false);
     commands.insert_resource(Kit {
         engines: ["engine_auto", "engine_bike", "engine_thump"].map(|n| assets.load(format!("audio/{n}.ogg"))),
         horns: ["horn_auto", "horn_bike", "horn_car"].map(|n| assets.load(format!("audio/{n}.ogg"))),
@@ -326,7 +327,7 @@ fn pose_of(kind: VehicleKind) -> (f32, f32, f32, f32, f32) {
         VehicleKind::Car | VehicleKind::Sarkari => (1.5, 1.35, 0.8, 0.7, -0.05),
         VehicleKind::Khuli => (1.4, 1.3, 0.8, 0.65, 0.0),
         VehicleKind::ChhotaTruck => (1.35, 1.3, 0.8, 0.7, 0.0),
-        VehicleKind::Tractor => (1.15, 1.2, 0.75, 0.5, 0.1),
+        VehicleKind::Tractor => (1.15, 1.2, 0.75, 0.5, 0.22),
     }
 }
 
@@ -607,7 +608,7 @@ fn smoke(
                 let side = rng.random_range(-0.5..0.5) * spec.size.x;
                 let at = foot + t.rotation * Vec3::new(side, 0.2, spec.size.z * 0.42);
                 let vel = t.rotation * Vec3::Z * v.speed * 0.12 + Vec3::new(rng.random_range(-0.4..0.4), rng.random_range(0.3..0.9), rng.random_range(-0.4..0.4));
-                puff(&mut commands, &kit, 3, at, vel, rng.random_range(1.2..2.2), 0.55, 1.5);
+                puff(&mut commands, &kit, 3, at, vel, rng.random_range(1.4..2.6), 0.8, 2.2);
             }
         }
         let at = t.translation + t.rotation * (spec.engine - Vec3::Y * spec.centre());

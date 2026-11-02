@@ -340,6 +340,7 @@ itself: keep the ODbL notice with it, and publish the files. Ask a lawyer before
 
 The drivable vehicles (`crates/shared/src/sim/vehicle.rs`). Models come from `research/vehicles/models` through
 `tools/blender/props/vehicles.py`; every one is CC-BY, so its line below must also go on the game's credits screen.
+The line on the auto's hood (`tools/blender/props/hood_line.png`) is our own text set in Mukta Bold, OFL, from `assets/fonts`.
 
 | Item | Source | Licence | Use |
 |---|---|---|---|

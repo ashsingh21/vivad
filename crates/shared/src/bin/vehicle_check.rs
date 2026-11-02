@@ -566,12 +566,10 @@ fn main() {
         let (from, to) = (at(6), at(40));
         let height = |app: &App, p: Vec2| app.world().resource::<MapLayout>().terrain.height(p.x, p.y);
         let foot = Vec3::new(from.x, height(&app, from), from.y);
-        let car = spawn(&mut app, VehicleKind::Car, foot, yaw_along(at(7) - from));
         let beside = foot + Vec3::new(1.0, 0.0, 0.0) * 9.0;
         let goal = Vec3::new(to.x, height(&app, to), to.y);
-        put(&mut app, driver, beside);
-        let (mut rode, mut far, mut ticks, mut top) = (false, 0.0f32, 0, 0.0f32);
-        for _ in 0..60 * 120 {
+        // Nobody else matters here, and the match must go on.
+        let tick = |app: &mut App| {
             {
                 let mut b = app.world_mut().get_mut::<BotBrain>(driver).unwrap();
                 b.goal = Some(goal);
@@ -579,53 +577,56 @@ fn main() {
                 b.provoked = None;
                 b.think = 5.0;
             }
-            app.world_mut().get_mut::<Health>(driver).unwrap().hp = 100.0;
-            app.update();
-            ticks += 1;
-            let riding = app.world().get::<Riding>(driver).is_some();
-            if riding {
-                rode = true;
-                let t = app.world().get::<Transform>(car).unwrap().translation;
-                far = far.max(t.xz().distance(from));
-                top = top.max(app.world().get::<Vehicle>(car).unwrap().speed);
-            } else if rode {
-                break;
+            for who in [driver, me] {
+                app.world_mut().get_mut::<Health>(who).unwrap().hp = 100.0;
             }
-        }
-        let t = app.world().get::<Transform>(driver).unwrap().translation;
-        let short = t.xz().distance(to.xy());
-        let (rides, driving) = (app.world().resource::<Hitches>().rides, app.world().resource::<Hitches>().driving());
-        check("a bot drives a long way and gets out", rode && far > 300.0 && short < 60.0 && driving == 0, format!("{rides} ride, {far:.0} m from where it set out, top {top:.1} m/s, on foot {short:.0} m from its goal after {:.0} s", ticks as f32 / 60.0));
-        app.world_mut().entity_mut(car).despawn();
-        app.update();
-        // Blocked: its wheels turn and it goes nowhere. It won't take another for a while after that ride.
+        };
+        // Blocked: its wheels turn and it goes nowhere.
         let car = spawn(&mut app, VehicleKind::Car, foot, yaw_along(at(7) - from));
         put(&mut app, driver, beside);
         let (mut in_at, mut out_at) = (None, None);
-        for tick in 0..60 * 40 {
-            {
-                let mut b = app.world_mut().get_mut::<BotBrain>(driver).unwrap();
-                b.goal = Some(goal);
-                b.target = None;
-                b.provoked = None;
-                b.think = 5.0;
-            }
-            app.world_mut().get_mut::<Health>(driver).unwrap().hp = 100.0;
+        for n in 0..60 * 20 {
+            tick(&mut app);
             if in_at.is_some() {
                 app.world_mut().get_mut::<Vehicle>(car).unwrap().speed = 0.0;
             }
             app.update();
             let riding = app.world().get::<Riding>(driver).is_some();
             if riding && in_at.is_none() {
-                in_at = Some(tick);
+                in_at = Some(n);
             }
             if !riding && in_at.is_some() {
-                out_at = Some(tick);
+                out_at = Some(n);
                 break;
             }
         }
         let stuck = app.world().resource::<Hitches>().stuck;
         check("a stuck driver gets out", out_at.is_some() && stuck == 1, format!("in at tick {in_at:?}, out at tick {out_at:?}: {stuck} ride ended stuck"));
+        app.world_mut().entity_mut(car).despawn();
+        app.update();
+        // A long way to go. It won't take another for a while after that one.
+        let car = spawn(&mut app, VehicleKind::Car, foot, yaw_along(at(7) - from));
+        put(&mut app, driver, beside);
+        let (mut rode, mut far, mut ticks, mut top) = (false, 0.0f32, 0, 0.0f32);
+        for _ in 0..60 * 140 {
+            tick(&mut app);
+            app.update();
+            ticks += 1;
+            if app.world().get::<Riding>(driver).is_some() {
+                rode = true;
+                let t = app.world().get::<Transform>(car).unwrap().translation;
+                far = far.max(t.xz().distance(from));
+                top = top.max(app.world().get::<Vehicle>(car).unwrap().speed);
+            } else if rode {
+                break;
+            } else if ticks % 120 == 0 {
+                put(&mut app, driver, beside);
+            }
+        }
+        let t = app.world().get::<Transform>(driver).unwrap().translation;
+        let short = t.xz().distance(to);
+        let (rides, driving) = (app.world().resource::<Hitches>().rides, app.world().resource::<Hitches>().driving());
+        check("a bot drives a long way and gets out", rode && far > 300.0 && short < 60.0 && driving == 0, format!("{rides} rides, {far:.0} m from where it set out, top {top:.1} m/s, on foot {short:.0} m from its goal after {:.0} s", ticks as f32 / 60.0));
         app.world_mut().entity_mut(car).despawn();
         app.update();
     }

@@ -210,6 +210,8 @@ def road_dust(a, at, mask, colour=(0.47, 0.42, 0.35), high=0.7, amount=0.8):
 # from behind, in metres, under the rear window, and the red of the paint.
 HOOD_LINE = os.path.join(os.path.dirname(__file__), "hood_line.png")
 HOOD_BOX = ((-0.40, 0.40), (1.07, 1.25))
+# The back of the hood lies behind this. In front of it is the cloth's inside, seen through the rear glass.
+HOOD_BACK = -1.0
 HOOD_RED = np.array((0.56, 0.02, 0.02))
 
 
@@ -242,7 +244,7 @@ def hood_line(img, material):
             b = np.linalg.solve(m, np.stack([xs + 0.5 - st[0, 0], ys + 0.5 - st[0, 1]]))
             p = co[0] + np.outer(b[0], co[1] - co[0]) + np.outer(b[1], co[2] - co[0])
             s, r = (p[:, 0] - x0) / (x1 - x0), (p[:, 2] - z0) / (z1 - z0)
-            on = (b[0] >= -0.02) & (b[1] >= -0.02) & (b[0] + b[1] <= 1.02) & (s >= 0) & (s < 1) & (r >= 0) & (r < 1)
+            on = (b[0] >= -0.02) & (b[1] >= -0.02) & (b[0] + b[1] <= 1.02) & (s >= 0) & (s < 1) & (r >= 0) & (r < 1) & (p[:, 1] < HOOD_BACK)
             if not on.any():
                 continue
             col, row = np.mod(xs[on], w), np.mod(ys[on], h)
