@@ -313,6 +313,8 @@ fn drive(
             match kin.mode {
                 // Riding the vimana (hidden): stand still, no steps.
                 MoveMode::Vimana => want.push(("idle", false, 1.0, clock % dur("idle"))),
+                // Bent to the seat by crate::vehicles.
+                MoveMode::Riding => want.push(("idle", false, 1.0, clock % dur("idle"))),
                 MoveMode::Freefall => want.push(("freefall", false, 1.0, clock % dur("freefall"))),
                 MoveMode::Gliding => want.push(("glide", false, 1.0, clock % dur("glide"))),
                 MoveMode::Ground if !kin.grounded => {

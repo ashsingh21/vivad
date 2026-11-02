@@ -650,7 +650,7 @@ pub(crate) fn drive_bots(
                 }
                 continue;
             }
-            MoveMode::Ground => {}
+            MoveMode::Ground | MoveMode::Riding => {}
         }
         // Off a roof's edge with nothing near below: the glider, where the map has that.
         if rules.roof_rescue && !kin.grounded && kin.velocity.y < -8.0 {

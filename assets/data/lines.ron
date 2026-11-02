@@ -80,7 +80,7 @@
         (id: "rifle.1", at: ["kill.long"], ok: false, check: Working, text: "Wo kata! {k_ne} {v_ki} patang kaat di", mean: "Cut! {k} cut {v}'s kite.", note: "Working text. A native picks Wo kata or Ayi bo. Also for any long kill."),
         (id: "rifle.2", at: ["kill.long"], ok: false, check: Decide, text: "Ayi bo! {k_ne} {v_ki} patang kaat di", mean: "The other Delhi kite cry, same line.", note: "Second choice for the native to compare."),
         (id: "rifle.3", at: ["kill.long"], ok: false, check: Read, text: "Door se hi namaste: {k_ne} {v_ko} gira diya", mean: "Greetings from afar: {k} dropped {v}."),
-        (id: "ram.1", at: ["later"], ok: false, check: Read, text: "{k_ka} meter {v_par} chal gaya", mean: "{k}'s meter ran on {v}.", note: "For a vehicle ram, once vehicles exist."),
+        (id: "ram.1", at: ["down.ram.by"], ok: false, check: Read, text: "{k_ka} meter {v_par} chal gaya", mean: "{k}'s meter ran on {v}.", note: "For a vehicle ram, once vehicles exist."),
         (id: "chappal.1", at: ["later"], ok: false, check: Read, text: "{k_ne} {v_ko} chappal se nipta diya", mean: "{k} finished {v} with a slipper.", note: "For the thrown chappal idea."),
 
         // cause-aandhi
@@ -93,6 +93,10 @@
         (id: "fall.1", at: ["down.fall"], ok: false, check: Plain, text: "{v_ka} panga zameen se ho gaya", mean: "{v} picked a fight with the ground.", note: "In the game today. Very good. Keep."),
         (id: "fall.2", at: ["down.fall"], ok: false, check: Plain, text: "Zameen ne {v_ko} gale laga liya", mean: "The ground gave {v} a hug."),
         (id: "fall.3", at: ["down.fall"], ok: false, check: Read, text: "{v_ko} gravity se panga mehenga pada", mean: "The fight with gravity cost {v} dearly."),
+
+        // cause-ram
+        (id: "ram.2", at: ["down.ram"], ok: false, check: Read, text: "Gaadi ne {v_ko} thok diya", mean: "A vehicle slammed {v}.", note: "From the vehicles branch. A vehicle with no one to blame, or the driver's own."),
+        (id: "ram.3", at: ["down.ram.by"], ok: false, check: Read, text: "{k_ne} {v_ko} thok diya", mean: "{k} slammed {v}.", note: "From the vehicles branch."),
 
         // cause-self
         (id: "self.1", at: ["down.self"], ok: false, check: Read, text: "{w} ne {v_ko} hi tapka diya!", mean: "The {w} dropped {v} instead!", note: "In the game today."),
@@ -129,6 +133,9 @@
         // elim-fall
         (id: "elim.f1", at: ["elim.fall"], ok: false, check: Plain, text: "Tapak gaye", mean: "You fell.", note: "In the game today. Fits a fall best."),
         (id: "elim.f2", at: ["elim.fall"], ok: false, check: Plain, text: "Zameen se panga mehenga pada", mean: "The fight with the ground cost you dearly."),
+
+        // elim-ram
+        (id: "elim.r1", at: ["elim.ram"], ok: false, check: Read, text: "Gaadi ne thok diya", mean: "A vehicle slammed you."),
 
         // elim-self
         (id: "elim.s1", at: ["elim.self"], ok: false, check: Plain, text: "Apne hi haathon panga khatam", mean: "The fight ended by your own hand."),

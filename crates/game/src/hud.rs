@@ -384,6 +384,7 @@ fn prompts(
     db: Res<ItemDb>,
     lines: Res<Lines>,
     m: Res<Match>,
+    vehicle: Res<crate::vehicles::BoardPrompt>,
     mut prompt: Query<&mut Text, (With<Prompt>, Without<PromptLore>)>,
     mut prompt_lore: Query<&mut Text, (With<PromptLore>, Without<Prompt>)>,
     mut bar: Query<&mut Visibility, With<ProgressBar>>,
@@ -419,6 +420,8 @@ fn prompts(
     } else if matches!(kin.mode, MoveMode::Freefall | MoveMode::Gliding) {
         let low = me.y - layout.terrain.height(me.x, me.z) < 40.0;
         s = if low { lines.text("drop.ground") } else if kin.mode == MoveMode::Freefall { lines.text("drop.open") } else { "" }.into();
+    } else if kin.mode == MoveMode::Riding {
+        s = crate::vehicles::GET_OUT.into();
     } else if let Some((_, c)) = chests.iter().filter(|(t, c)| !c.opened && t.translation.distance(me) < INTERACT_RANGE).next() {
         s = lines.text(match c.kind {
             ChestKind::Peti => "prompt.peti",
@@ -432,6 +435,8 @@ fn prompts(
         let item = db.get(&p.stack.id);
         s = with(lines.text("prompt.pickup"), &[("item", &item.name), ("rarity", lines.rarity(p.stack.rarity))]);
         lore = item.lore.clone();
+    } else if let Some(p) = &vehicle.0 {
+        s = p.clone();
     } else if let Some((st, ItemKind::Bow { magazine, .. })) = inv.current().map(|s| (s, &db.get(&s.id).kind)) {
         if act.reload_left <= 0.0 && st.count == 0 && inv.arrows == 0 {
             s = lines.text("prompt.empty").into();

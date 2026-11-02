@@ -180,11 +180,12 @@ fn listen(
     };
     let p = tf.translation;
     let up = p.y - HALF_HEIGHT - layout.terrain.height(p.x, p.z);
-    let high = if kin.mode == MoveMode::Ground { ((up - 3.0) / 9.0).clamp(0.0, 1.0) } else { 1.0 };
+    let on_street = matches!(kin.mode, MoveMode::Ground | MoveMode::Riding);
+    let high = if on_street { ((up - 3.0) / 9.0).clamp(0.0, 1.0) } else { 1.0 };
     let here = street_here(&layout, p);
     let park = if here < 1.0 { 1.0 } else { 0.0 };
     let filter = SpatialQueryFilter::from_mask(solid_mask()).with_excluded_entities([e]);
-    let covered = kin.mode == MoveMode::Ground && spatial.cast_ray(p, Dir3::Y, 12.0, true, &filter).is_some();
+    let covered = on_street && spatial.cast_ray(p, Dir3::Y, 12.0, true, &filter).is_some();
     let stall = nearest(&stalls.any, p).map_or(0.0, |s| (1.0 - s.distance(p) / STALL_REACH).clamp(0.0, 1.0));
     let (traffic, crowd) = (by_hour(&TRAFFIC, hour), by_hour(&CROWD, hour));
     *amb = Ambience {

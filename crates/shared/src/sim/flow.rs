@@ -9,6 +9,7 @@ use super::net::{Inbox, LastUpdate, NetId, NetMsg, NetPose, Outbox, Owner, Peers
 use super::combat::{Burst, FireZone, Projectile};
 use super::loot::{Chest, Pickup, spawn_loot};
 use super::stance::{Stance, standing_capsule};
+use super::vehicle::Vehicle;
 use super::zone::Zone;
 use super::{
     match_rng, stream, Action, Eliminated, FeedMsg, Health, Inventory, Kinematic, Layer, LocalPlayer,
@@ -52,12 +53,14 @@ pub struct Rules {
     pub chest_sight: f32,
     /// How near a find on the ground must be for a bot with no bow to take it before a chest.
     pub find_sight: f32,
+    /// Vehicles standing about at the start of a match.
+    pub parked: usize,
 }
 
 impl Rules {
     pub fn of(style: MapStyle) -> Self {
         match style {
-            MapStyle::City => Self { vimana_height: VIMANA_HEIGHT, vimana_speed: VIMANA_SPEED, wade_speed: None, roof_rescue: false, dive_first: false, glide_reach: 110.0, chest_sight: 120.0, find_sight: 14.0 },
+            MapStyle::City => Self { vimana_height: VIMANA_HEIGHT, vimana_speed: VIMANA_SPEED, wade_speed: None, roof_rescue: false, dive_first: false, glide_reach: 110.0, chest_sight: 120.0, find_sight: 14.0, parked: 24 },
             MapStyle::Ncr => Self {
                 vimana_height: NCR_VIMANA_HEIGHT,
                 vimana_speed: NCR_VIMANA_SPEED,
@@ -68,6 +71,8 @@ impl Rules {
                 chest_sight: 250.0,
                 // Chests are a few hundred metres apart here: anything in sight comes first.
                 find_sight: 45.0,
+                // About one every 200 m.
+                parked: 96,
             },
         }
     }
@@ -243,13 +248,13 @@ pub fn next_match_open<'a>(m: &Match, mut standing: impl Iterator<Item = &'a War
     m.state == MatchState::Ended || !standing.any(|w| !w.is_bot)
 }
 
-/// Sweeps the match away: warriors, loot and whatever is in the air. The map stays.
+/// Sweeps the match away: warriors, vehicles, loot and whatever is in the air. The map stays.
 fn clear_match(world: &mut World) {
     world.resource_mut::<MapVotes>().0.clear();
     world.resource_mut::<super::loot::Claims>().0.clear();
     world.resource_mut::<super::loot::Gone>().0.clear();
     let mut doomed: Vec<Entity> = vec![];
-    for e in world.query_filtered::<Entity, Or<(With<Warrior>, With<Chest>, With<Pickup>, With<Projectile>, With<FireZone>, With<Burst>, With<Vimana>)>>().iter(world) {
+    for e in world.query_filtered::<Entity, Or<(With<Warrior>, With<Chest>, With<Pickup>, With<Projectile>, With<FireZone>, With<Burst>, With<Vimana>, With<Vehicle>)>>().iter(world) {
         doomed.push(e);
     }
     for e in doomed {

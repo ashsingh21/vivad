@@ -102,8 +102,8 @@ impl Swing {
         }
     }
 
-    /// Moves the blade on to this tick and returns who it newly struck: warriors and doors, not
-    /// through a wall. It sweeps right to left across the aim, its first tick a thrust out from
+    /// Moves the blade on to this tick and returns who it newly struck: warriors, doors and
+    /// vehicles, not through a wall. It sweeps right to left across the aim, its first tick a thrust out from
     /// the body, and a sphere swept from the last tick's blade to this one's leaves no gaps.
     /// `body` is the swinger's centre with any crouch taken off, so a crouched swing starts low.
     pub fn sweep(&mut self, me: Entity, body: Vec3, aim: Vec3, s: &Stroke, spatial: &SpatialQuery) -> Vec<Entity> {
@@ -113,7 +113,7 @@ impl Swing {
         let now = [centre + dir * s.reach, centre + dir * s.reach * 0.5];
         let from = self.prev.unwrap_or([centre; 2]);
         self.prev = Some(now);
-        let filter = SpatialQueryFilter::from_mask(LayerMask::from([Layer::Character, Layer::Door])).with_excluded_entities([me]);
+        let filter = SpatialQueryFilter::from_mask(LayerMask::from([Layer::Character, Layer::Door, Layer::Vehicle])).with_excluded_entities([me]);
         let walls = SpatialQueryFilter::from_mask(LayerMask::from(Layer::World));
         let mut new = vec![];
         for (a, b) in from.into_iter().zip(now) {

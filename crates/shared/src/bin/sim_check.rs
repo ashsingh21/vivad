@@ -262,6 +262,7 @@ fn main() {
                         kills_by_weapon += 1;
                         *kills_by_item.entry(item.clone()).or_default() += 1;
                     }
+                    DamageCause::Ram => kills_other += 1,
                     DamageCause::Fall => {
                         kills_other += 1;
                         let t = tracks.get(&f.victim);
