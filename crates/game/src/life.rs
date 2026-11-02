@@ -304,28 +304,36 @@ impl Market {
         }
     }
 
-    /// Whether a stall can stand here: open paved ground, no kit or tree, no building against it.
-    fn room_for(&self, layout: &MapLayout, floor: &StreetFloor, p: Vec2, along: Vec2, reach: f32) -> bool {
+    /// Whether a stall can stand here: open paved ground, or the edge of a wide road if `spilt`, no
+    /// kit or tree, no building against it.
+    fn room_for(&self, layout: &MapLayout, floor: &StreetFloor, p: Vec2, along: Vec2, reach: f32, spilt: bool) -> bool {
         let t = &layout.terrain;
         [0.0, reach, -reach].iter().all(|k| {
             let q = p + along * *k;
             let deep = along.perp() * 0.7;
-            floor.walkable(q) && !matches!(t.ground_at(q.x, q.y), Some(ground::ROAD | ground::WATER | ground::OPEN | ground::SAND)) && !self.built(layout, q + along.perp() * 1.5) && !self.built(layout, q - along.perp() * 1.5) && !self.on_lane(q) && !self.on_lane(q + deep) && !self.on_lane(q - deep)
+            floor.walkable(q) && (spilt || !road_at(t, q)) && !matches!(t.ground_at(q.x, q.y), Some(ground::WATER | ground::OPEN | ground::SAND)) && !self.built(layout, q + along.perp() * 1.5) && !self.built(layout, q - along.perp() * 1.5) && !self.on_lane(q) && !self.on_lane(q + deep) && !self.on_lane(q - deep)
         }) && !layout.is_holy(p) && !self.over_loot(p)
     }
 
     /// Stall rows along both kerbs of the roads of a busy place: a wall of goods and tarps either
-    /// side of the road, with a second row behind the first where the place is busier still and a
-    /// lane between them, so the wide streets of the map read as bazaars. Handcarts and parked
-    /// scooters stand along the kerb in front, and banners go over the road.
+    /// side of the road, and a second row back to back with the first where the place is busier
+    /// still, facing the shops, with a keeper's gap between them. The map's roads are far wider than
+    /// a market leaves them, so on a wide road the rows step out onto it the way stalls do, up to
+    /// `SPILL`, and the road narrows to about `CARRIAGEWAY` of open tarmac: what the eye reads from
+    /// the road is a lane, and the pavement behind is a way along the shop fronts, clear of every
+    /// table. Handcarts and parked scooters stand along the row's front, and banners go over the road.
     fn lay_rows(&mut self, layout: &MapLayout, floor: &StreetFloor) {
         const ROW_BUSY: f32 = 0.3;
         const SECOND_BUSY: f32 = 0.5;
         const SPACING: f32 = 2.75;
         /// A way through a row, every so far along it.
         const THROUGH: f32 = 15.0;
-        const BACK_ROW: f32 = 5.6;
+        /// From the first row's middle to the second's, back to back.
+        const BACK_ROW: f32 = 2.5;
         const LOOK: isize = 6;
+        /// The open road left between the rows of a wide road, and how far a row steps out onto it.
+        const CARRIAGEWAY: f32 = 10.0;
+        const SPILL: f32 = 4.5;
         let t = &layout.terrain;
         let n = t.n as isize;
         let road = |i: isize, j: isize| i >= 0 && j >= 0 && i < n && j < n && t.ground[(i * n + j) as usize] == ground::ROAD;
@@ -353,6 +361,17 @@ impl Market {
                 }
             }
         }
+        // The road's width from each sample to the far kerb, a junction no wider than a wide road.
+        let widths: Vec<f32> = kerb
+            .iter()
+            .map(|(p, to)| {
+                let mut wide = 2.0;
+                while wide < 28.0 && road_at(t, *p + *to * wide) {
+                    wide += 1.0;
+                }
+                wide
+            })
+            .collect();
         // Smoothed: the grid makes a kerb a staircase, a row should stand in a line.
         let mut cells: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
         for (k, (p, _)) in kerb.iter().enumerate() {
@@ -369,15 +388,24 @@ impl Market {
             let busy = busy_at(self, p);
             // The same side's kerb round here, averaged.
             let (ci, cj) = ((p.x / 8.0).floor() as i32, (p.y / 8.0).floor() as i32);
-            let (mut sum_n, mut sum_off, mut count) = (Vec2::ZERO, 0.0, 0.0);
-            for u in -1..=1 {
-                for v in -1..=1 {
+            let (mut sum_n, mut sum_off, mut sum_wide, mut count, mut far) = (Vec2::ZERO, 0.0, 0.0, 0.0, 0.0);
+            for u in -2..=2 {
+                for v in -2..=2 {
                     for q in cells.get(&(ci + u, cj + v)).into_iter().flatten() {
                         let (qp, qn) = kerb[*q as usize];
-                        if qp.distance_squared(p) < 64.0 && qn.dot(to) > 0.8 {
+                        if qn.dot(to) <= 0.8 {
+                            continue;
+                        }
+                        let d = qp.distance_squared(p);
+                        if d < 64.0 {
                             sum_n += qn;
                             sum_off += (qp - p).dot(to);
                             count += 1.0;
+                        }
+                        // The road's width goes by a longer stretch: a row keeps its line along it.
+                        if d < 400.0 {
+                            sum_wide += widths[*q as usize];
+                            far += 1.0;
                         }
                     }
                 }
@@ -392,20 +420,27 @@ impl Market {
             let through = (run / THROUGH).rem_euclid(1.0) < 3.2 / THROUGH;
             let yaw = (-normal.x).atan2(-normal.y);
             let y = |q: Vec2| t.height(q.x, q.y);
-            // The first row, its front at the kerb.
-            let first = edge - normal * 1.0;
-            if !through && !close(&taken, first, SPACING) && goods::hash(a, b, 31) < busy * 1.9 && self.room_for(layout, floor, first, along, 1.1) {
+            // How far the row steps out onto the road, only along a straight run of kerb: stepping
+            // out at a corner would close the junction.
+            let straight = [-7.0, 7.0].iter().all(|k| !road_at(t, edge - normal * 1.5 + along * *k) && road_at(t, edge + normal * 2.5 + along * *k));
+            let spill = if straight { ((sum_wide / far - CARRIAGEWAY) * 0.5).clamp(0.0, SPILL) } else { 0.0 };
+            // The first row, its front at the kerb or out on the road.
+            let first = edge + normal * (spill - 1.0);
+            // A row leaves a way along the shop fronts behind it: where the pavement is too thin for
+            // that, a warrior would have to run through the tables, so there's no row.
+            let way_behind = |market: &Self, p: Vec2| !market.built(layout, p - normal * 3.2);
+            if !through && !close(&taken, first, SPACING) && goods::hash(a, b, 31) < busy * 1.9 && (spill > 1.2 || way_behind(self, first)) && self.room_for(layout, floor, first, along, 1.1, spill > 0.0) {
                 mark(&mut taken, first);
                 self.add_solid(StallKind::Row, Vec3::new(first.x, y(first), first.y), yaw, Vec2::new(1.25, 0.55));
             }
-            // The second, behind it across a lane.
-            let second = edge - normal * (1.0 + BACK_ROW);
-            if !through && busy >= SECOND_BUSY && !close(&taken, second, SPACING) && goods::hash(a, b, 32) < busy * 1.5 && self.room_for(layout, floor, second, along, 1.1) {
+            // The second, back to back with it, facing the shops.
+            let second = first - normal * BACK_ROW;
+            if !through && busy >= SECOND_BUSY && !close(&taken, second, SPACING) && goods::hash(a, b, 32) < busy * 1.5 && way_behind(self, second) && self.room_for(layout, floor, second, along, 1.1, spill > 0.0) {
                 mark(&mut taken, second);
-                self.add_solid(StallKind::Row, Vec3::new(second.x, y(second), second.y), yaw, Vec2::new(1.25, 0.55));
+                self.add_solid(StallKind::Row, Vec3::new(second.x, y(second), second.y), yaw + std::f32::consts::PI, Vec2::new(1.25, 0.55));
             }
-            // Parked at the road's edge, on the road: bunches of scooters, handcarts.
-            let verge = edge + normal * 1.3;
+            // Parked along the row's front, on the road: bunches of scooters, handcarts.
+            let verge = edge + normal * (spill + 1.3);
             if road_at(t, verge) && !close(&taken, verge, 5.0) && floor.walkable(verge) && !self.on_lane(verge) && !layout.is_holy(verge) && goods::hash(a, b, 33) < 0.16 + busy * 0.26 {
                 mark(&mut taken, verge);
                 if goods::hash(a, b, 34) < 0.3 {
@@ -610,7 +645,11 @@ mod tests {
         let on_road = |p: Vec2| layout.terrain.ground_at(p.x, p.y) == Some(ground::ROAD);
         let rows: Vec<&Stall> = market.stalls.iter().filter(|s| s.kind == StallKind::Row).collect();
         assert!(rows.len() > 5000, "{}", rows.len());
-        assert!(rows.iter().all(|s| !on_road(s.pos.xz())));
+        // A row on the road stands at its edge: the kerb is a few steps off, whichever way it runs.
+        for s in rows.iter().filter(|s| on_road(s.pos.xz())) {
+            let kerb = (0..16).any(|k| !on_road(s.pos.xz() + Vec2::from_angle(k as f32 / 16.0 * std::f32::consts::TAU) * 5.0));
+            assert!(kerb, "a stall in the middle of the road at {}", s.pos);
+        }
         // Every door has its way out.
         for door in layout.rooms.iter().flat_map(|r| &r.doors) {
             let foot = door.pos.xz() + door.out * 1.2;
