@@ -115,6 +115,10 @@ fn fragment(vertex_output: VertexOutput, @builtin(front_facing) is_front: bool) 
     }
     if (w.y > 0.004) {
         add_surface(&sum, w.y, mix(vec3<f32>(1.0), PAVERS_MEAN, own), 1.0, pavers_color, pavers_normal, tiled(pavers_orm, p, dx, dy, PAVERS_TILE), p, dx, dy, PAVERS_TILE);
+        // Nobody sweeps a whole plaza: dust lies on it in long drifts, broken by the slabs' own grain.
+        let drift = tiled(dry_orm, p.yx + vec2<f32>(3.1, 7.7), dy.yx, dx.yx, 23.0).b;
+        let lying = smoothstep(0.5, 0.82, drift + (sum.color.g / max(mix(1.0, PAVERS_MEAN.g, own), 0.01) - 0.5) * 0.4);
+        sum.color = mix(sum.color, mix(sum.color, 0.5 * DUST_MEAN * w.y, own), lying * 0.62);
     }
     if (w.z > 0.004) {
         // The mask's alpha says how green the land is. Noise at two sizes breaks the line (the dry

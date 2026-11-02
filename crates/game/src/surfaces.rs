@@ -203,6 +203,8 @@ pub struct UltraSurfaces {
     relief: bool,
     /// Frames left of asking every mesh to look up its material again (`sync`).
     refresh: u32,
+    /// Which of the `SWEEP` shares of the meshes is looking its material up this frame.
+    sweep: usize,
 }
 
 impl Default for UltraSurfaces {
@@ -218,6 +220,7 @@ impl Default for UltraSurfaces {
             parallax: std::env::var("VIVAD_NO_PARALLAX").is_err(),
             relief: false,
             refresh: 0,
+            sweep: 0,
         }
     }
 }
@@ -288,6 +291,9 @@ impl UltraSurfaces {
 /// Frames a change of surfaces keeps meshes looking up their materials: a material can take a few
 /// frames to be ready on the GPU, once its images are.
 const REFRESH_FRAMES: u32 = 30;
+/// One mesh in this many looks up its material each frame all the time, so that a mesh that missed
+/// the moment heals itself in a few seconds rather than staying wrong for the match.
+const SWEEP: usize = 240;
 
 /// Starts the textures loading the first time a level wants them, and flips the materials once
 /// they have all arrived; a change of level dresses them again, for the parallax. If one can't be
@@ -297,7 +303,8 @@ const REFRESH_FRAMES: u32 = 30;
 /// itself changes. New textures can move a material to another slab, when its slab is full, and then
 /// a mesh that stood still goes on drawing with whatever took its place: walls with another
 /// material's textures, differently each run. So after a flip every mesh is marked as changed for
-/// a moment, by its visibility: the cheapest thing that makes the renderer read a mesh again.
+/// a moment, by its visibility: the cheapest thing that makes the renderer read a mesh again, and
+/// a few at a time after that.
 #[allow(clippy::too_many_arguments)]
 fn sync(
     quality: Res<Quality>,
@@ -346,9 +353,11 @@ fn sync(
         }
     }
     state.entries = entries;
-    if state.refresh > 0 {
-        state.refresh -= 1;
-        for mut visibility in &mut drawn {
+    let every = state.refresh > 0;
+    state.refresh = state.refresh.saturating_sub(1);
+    state.sweep = (state.sweep + 1) % SWEEP;
+    for (k, mut visibility) in drawn.iter_mut().enumerate() {
+        if every || k % SWEEP == state.sweep {
             visibility.set_changed();
         }
     }
@@ -493,29 +502,50 @@ fn surface_edges(t: &Terrain) -> Vec<[f32; 3]> {
             }
         }
     }
-    let edges = blurred(&near, n);
-    along_edges(&edges, &blurred(&blurred(&edges, n), n), n)
+    along_edges(&blurred(&near, n), n)
 }
 
 /// What's left of the grid's stairs is a slow ripple along an edge, on a road a few degrees off the
-/// grid, too long for a blur. So each sample walks along the edge it is near, by the slope of
-/// `guide`, a smoother copy of `field`, and takes the mean of what it meets: an edge's ripple
-/// averages out, and a curve is followed round. The walks run 20 m each way on a big map.
-fn along_edges(field: &[[f32; 3]], guide: &[[f32; 3]], n: usize) -> Vec<[f32; 3]> {
-    const STEPS: usize = 10;
-    // Distances of interest: a kerb's and a gutter's widths are well inside this, in metres.
+/// grid, too long for a blur. So each sample near an edge walks along it and takes the mean of what
+/// it meets. The walk can't follow the field it reads, or it would ride the ripple and read one
+/// value all the way: it goes by the edges' direction over tens of metres, the main axis of the
+/// field's slopes on a coarse grid, which the stairs don't reach and a curve still bends. A walk
+/// that leaves its edge stops, so a junction keeps its corners.
+fn along_edges(field: &[[f32; 3]], n: usize) -> Vec<[f32; 3]> {
+    /// Samples to a cell of the direction grid, and the blurs over it: about 12 samples of reach.
+    const CELL: usize = 4;
+    const WIDEN: usize = 9;
+    /// Steps of one sample each way, and the spread of their weights.
+    const STEPS: usize = 14;
+    const SPREAD: f32 = 6.0;
+    /// Metres from an edge that are worth the walk, and how far from where it started a walk's
+    /// reading may stray.
     const NEAR: f32 = 2.4;
+    const LOST: f32 = 1.6;
+    let m = n / CELL + 1;
+    let mut slopes = vec![[0.0f32; 3]; m * m];
+    for j in 1..n - 1 {
+        for i in 1..n - 1 {
+            let k = j * n + i;
+            for s in 0..3 {
+                if field[k][s].abs() < NEAR {
+                    let (gx, gz) = (field[k + 1][s] - field[k - 1][s], field[k + n][s] - field[k - n][s]);
+                    let cell = &mut slopes[(j / CELL) * m + i / CELL];
+                    *cell = [cell[0] + gx * gx, cell[1] + gx * gz, cell[2] + gz * gz];
+                }
+            }
+        }
+    }
+    for _ in 0..WIDEN {
+        slopes = blurred(&slopes, m);
+    }
+    let direction: Vec<Vec2> = slopes.iter().map(|t| Vec2::from_angle(0.5 * (2.0 * t[1]).atan2(t[0] - t[2])).perp()).collect();
     let inside = |p: Vec2| p.x >= 1.0 && p.y >= 1.0 && p.x + 2.0 < n as f32 && p.y + 2.0 < n as f32;
-    let at = |f: &[[f32; 3]], i: usize, j: usize, s: usize| f[j * n + i][s];
-    let slope = |p: Vec2, s: usize| {
-        let (i, j) = (p.x.round() as usize, p.y.round() as usize);
-        Vec2::new(at(guide, i + 1, j, s) - at(guide, i - 1, j, s), at(guide, i, j + 1, s) - at(guide, i, j - 1, s)).normalize_or_zero()
-    };
     let sample = |p: Vec2, s: usize| {
         let (i, j) = (p.x as usize, p.y as usize);
         let (fx, fz) = (p.x.fract(), p.y.fract());
-        let near = at(field, i, j, s) * (1.0 - fx) + at(field, i + 1, j, s) * fx;
-        let far = at(field, i, j + 1, s) * (1.0 - fx) + at(field, i + 1, j + 1, s) * fx;
+        let near = field[j * n + i][s] * (1.0 - fx) + field[j * n + i + 1][s] * fx;
+        let far = field[(j + 1) * n + i][s] * (1.0 - fx) + field[(j + 1) * n + i + 1][s] * fx;
         near * (1.0 - fz) + far * fz
     };
     let mut out = field.to_vec();
@@ -526,24 +556,27 @@ fn along_edges(field: &[[f32; 3]], guide: &[[f32; 3]], n: usize) -> Vec<[f32; 3]
                 continue;
             }
             for s in 0..3 {
-                if field[j * n + i][s].abs() > NEAR {
+                let own = field[j * n + i][s];
+                if own.abs() > NEAR {
                     continue;
                 }
-                let (mut sum, mut total) = (field[j * n + i][s], 1.0);
+                let (mut sum, mut total) = (own, 1.0);
                 for way in [1.0, -1.0] {
-                    let (mut p, mut last) = (start, Vec2::ZERO);
+                    let mut p = start;
+                    let mut last = direction[(j / CELL) * m + i / CELL] * way;
                     for k in 1..=STEPS {
-                        let mut along = slope(p, s).perp() * way;
-                        if along.dot(last) < 0.0 {
-                            along = -along;
-                        }
-                        p += along;
-                        last = along;
-                        if along == Vec2::ZERO || !inside(p) {
+                        let along = direction[(p.y as usize / CELL) * m + p.x as usize / CELL];
+                        last = if along.dot(last) < 0.0 { -along } else { along };
+                        p += last;
+                        if !inside(p) {
                             break;
                         }
-                        let w = (-2.0 * (k as f32 / STEPS as f32).powi(2)).exp();
-                        sum += sample(p, s) * w;
+                        let v = sample(p, s);
+                        if (v - own).abs() > LOST {
+                            break;
+                        }
+                        let w = (-0.5 * (k as f32 / SPREAD).powi(2)).exp();
+                        sum += v * w;
                         total += w;
                     }
                 }
@@ -642,6 +675,7 @@ fn sync_ground(
                 let Ok(plain) = tiles.get(tile) else { continue };
                 if state.ground.is_none() {
                     let (Some(t), Some(base)) = (state.textures.as_ref(), standard.get(&plain.0)) else { continue };
+                    let started = bevy::platform::time::Instant::now();
                     let mut base = base.clone();
                     // A big map's colour, as a tint (crate::visuals::ground: it has this sampler's
                     // settings). Otherwise the image's only use is the sampler: see `GroundSurfaces`.
@@ -664,6 +698,7 @@ fn sync_ground(
                     };
                     let ground = grounds.add(ExtendedMaterial { base, extension });
                     state.ground = Some((plain.0.clone(), ground));
+                    info!("ground surfaces: mask and tint in {:.2}s", started.elapsed().as_secs_f32());
                 }
                 if let Some((_, ground)) = &state.ground {
                     commands.entity(tile).remove::<MeshMaterial3d<StandardMaterial>>().insert(MeshMaterial3d(ground.clone()));
@@ -672,5 +707,67 @@ fn sync_ground(
                 commands.entity(tile).remove::<MeshMaterial3d<GroundMaterial>>().insert(MeshMaterial3d(plain.clone()));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::tasks::TaskPool;
+
+    /// How far a road's edge in the mask strays from the straight line it was drawn from, either
+    /// way, in metres, for a road `angle` degrees off a two-metre grid.
+    fn straying(angle: f32) -> f32 {
+        ComputeTaskPool::get_or_init(TaskPool::default);
+        let (n, step, half_width) = (129, 2.0, 5.0);
+        let (sin, cos) = angle.to_radians().sin_cos();
+        let across = |x: f32, z: f32| z * cos - x * sin;
+        let mut t = Terrain { n, size: (n - 1) as f32 * step, h: vec![0.0; n * n], road_d: vec![], ground: vec![ground::PAVEMENT; n * n] };
+        for i in 0..n {
+            for j in 0..n {
+                if across(t.coord(i), t.coord(j)).abs() < half_width {
+                    t.ground[i * n + j] = ground::ROAD;
+                }
+            }
+        }
+        let edges = surface_edges(&t);
+        // Up each column in the middle of the map, to where the road's far edge crosses it.
+        let mut off = vec![];
+        for i in 34..95 {
+            for j in 1..n - 1 {
+                let (inside, outside) = (edges[j * n + i][0], edges[(j + 1) * n + i][0]);
+                if inside > 0.0 && outside <= 0.0 {
+                    off.push(across(t.coord(i), t.coord(j) + step * inside / (inside - outside)));
+                }
+            }
+        }
+        assert!(off.len() > 40, "the edge was found in {} columns", off.len());
+        let mean = off.iter().sum::<f32>() / off.len() as f32;
+        off.iter().map(|o| (o - mean).abs()).fold(0.0, f32::max)
+    }
+
+    #[test]
+    fn a_kerb_runs_straight_off_the_grid() {
+        // Near 1 in 2 the grid beats with the line over hundreds of metres, too slowly to see.
+        for (angle, limit) in [(3.0, 0.12), (5.0, 0.12), (11.0, 0.12), (27.0, 0.35), (45.0, 0.01)] {
+            let worst = straying(angle);
+            assert!(worst < limit, "{angle} degrees: strays {worst} m");
+        }
+    }
+
+    #[test]
+    fn every_class_is_one_surface_and_turf_needs_cover() {
+        for class in [ground::ROAD, ground::PARKING] {
+            assert_eq!(surface(class), 0);
+        }
+        for class in [ground::PAVEMENT, ground::PLAZA] {
+            assert_eq!(surface(class), 1);
+        }
+        for class in [ground::PARK, ground::PATH, ground::WATER, ground::OPEN, ground::SAND] {
+            assert_eq!(surface(class), 2);
+        }
+        assert_eq!(land_cover(ground::SAND, 1.0), 0.0);
+        assert_eq!(land_cover(ground::OPEN, 0.0), 0.5);
+        assert_eq!(land_cover(ground::PARK, 1.0), 1.0);
     }
 }
