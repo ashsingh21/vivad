@@ -33,7 +33,7 @@ pub struct LifePlugin;
 
 impl Plugin for LifePlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<Scattered>().init_resource::<Market>();
+        app.add_message::<Scattered>().init_resource::<Market>().add_systems(Update, spent::report);
         if std::env::var("VIVAD_NO_LIFE").is_ok() {
             return;
         }
@@ -118,6 +118,8 @@ pub struct Market {
     solid: HashSet<(i32, i32)>,
     /// Banners over the road, kerb to kerb.
     pub(crate) banners: Vec<(Vec3, Vec3)>,
+    /// Whether this map has the street grid all of this leans on: the NCR's.
+    pub(crate) ready: bool,
 }
 
 impl Market {
@@ -157,7 +159,7 @@ impl Market {
     fn build(layout: &MapLayout, floor: &StreetFloor) -> Self {
         let half = layout.half_extent;
         let side = (2.0 * half / SQUARE).ceil() as usize;
-        let mut market = Market { half, side, busy: vec![0.0; side * side], ..default() };
+        let mut market = Market { half, side, busy: vec![0.0; side * side], ready: floor.ready(), ..default() };
         for (i, f) in layout.footprints.iter().enumerate() {
             let (lo, hi) = f.pts.iter().fold((Vec2::MAX, Vec2::MIN), |(a, b), p| (a.min(*p), b.max(*p)));
             for j in (lo.y / SQUARE).floor() as i32..=(hi.y / SQUARE).floor() as i32 {
@@ -217,8 +219,10 @@ impl Market {
                 market.busy[j * side + i] = place * (0.6 + 0.4 * (round / FULL_SQUARE).min(1.0)) * street;
             }
         }
-        market.lay_rows(layout, floor);
-        market.lay_spreads(layout, floor);
+        if market.ready {
+            market.lay_rows(layout, floor);
+            market.lay_spreads(layout, floor);
+        }
         market
     }
 
@@ -228,6 +232,7 @@ impl Market {
         self.stalls.push(Stall { kind, pos, yaw });
         let at = pos.xz();
         self.near.entry(((at.x / SQUARE).floor() as i32, (at.y / SQUARE).floor() as i32)).or_default().push(id);
+        self.solid.insert((at.x.floor() as i32, at.y.floor() as i32));
         let turn = Vec2::from_angle(-yaw);
         let reach = half.length().ceil() as i32 + 1;
         for j in -reach..=reach {
@@ -433,36 +438,6 @@ fn index_market(mut market: ResMut<Market>, layout: Res<MapLayout>, floor: Res<S
     let start = bevy::platform::time::Instant::now();
     *market = Market::build(&layout, &floor);
     info!("market: {} stalls in {} ms", market.stalls.len(), start.elapsed().as_millis());
-    if let Ok(spec) = std::env::var("VIVAD_LIFE_MAP") {
-        // The ground round a spot as letters, for working out a street: x,z,half.
-        let n: Vec<f32> = spec.split(',').filter_map(|v| v.trim().parse().ok()).collect();
-        if let [x, z, half] = n[..] {
-            let t = &layout.terrain;
-            info!("road_d samples: {}", t.road_d.len());
-            let mut k = -half;
-            while k <= half {
-                let mut row = String::new();
-                let mut i = -half;
-                while i <= half {
-                    let p = Vec2::new(x + i, z + k);
-                    row.push(if market.built(&layout, p) { '#' } else { match t.ground_at(p.x, p.y) {
-                        Some(ground::ROAD) => 'R',
-                        Some(ground::PAVEMENT) => '.',
-                        Some(ground::PLAZA) => ':',
-                        Some(ground::PATH) => ',',
-                        Some(ground::PARKING) => 'P',
-                        Some(ground::PARK) => 'g',
-                        Some(ground::OPEN) => '~',
-                        Some(ground::WATER) => 'w',
-                        _ => '?',
-                    } });
-                    i += 2.0;
-                }
-                info!("map {row}");
-                k += 4.0;
-            }
-        }
-    }
     if std::env::var("VIVAD_LIFE_LOG").is_ok() {
         // The busiest spot in each place, to go and look at.
         for p in &layout.pois {
@@ -486,6 +461,55 @@ fn index_market(mut market: ResMut<Market>, layout: Res<MapLayout>, floor: Res<S
 /// says what it is.
 pub fn busy_at(market: &Market, p: Vec2) -> f32 {
     market.square(p).map_or(0.0, |k| market.busy[k])
+}
+
+/// Time spent here, for VIVAD_LIFE_LOG=1: the frame budget is about a millisecond in a busy market.
+pub(crate) mod spent {
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use bevy::platform::time::Instant;
+    use bevy::prelude::*;
+
+    pub static PEOPLE: AtomicU64 = AtomicU64::new(0);
+    pub static GOODS: AtomicU64 = AtomicU64::new(0);
+
+    fn on() -> bool {
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| std::env::var("VIVAD_LIFE_LOG").is_ok())
+    }
+
+    /// Adds the time until it is dropped to `into`, if anyone is counting.
+    pub struct Timed(Option<(Instant, &'static AtomicU64)>);
+
+    impl Timed {
+        pub fn start(into: &'static AtomicU64) -> Self {
+            Self(on().then(|| (Instant::now(), into)))
+        }
+    }
+
+    impl Drop for Timed {
+        fn drop(&mut self) {
+            if let Some((t, into)) = self.0 {
+                into.fetch_add(t.elapsed().as_micros() as u64, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Every 600 frames: the time spent here, and the frame's median and slow end.
+    pub fn report(time: Res<Time<Real>>, mut frames: Local<Vec<f32>>) {
+        if !on() {
+            return;
+        }
+        frames.push(time.delta_secs() * 1000.0);
+        if frames.len() >= 600 {
+            let n = frames.len() as f32;
+            let per = |c: &AtomicU64| c.swap(0, Ordering::Relaxed) as f32 / n;
+            frames.sort_by(f32::total_cmp);
+            info!("life spent: people {:.0} us, goods {:.0} us a frame; frame median {:.2} ms, 1% slowest from {:.2} ms", per(&PEOPLE), per(&GOODS), frames[frames.len() / 2], frames[frames.len() * 99 / 100]);
+            frames.clear();
+        }
+    }
 }
 
 /// A small steady random stream, for what no peer has to agree on. Nothing here may touch the
@@ -523,6 +547,19 @@ mod tests {
         assert!(market.stalls.len() > 1000, "{}", market.stalls.len());
         assert!(market.stalls.iter().all(|s| !layout.is_holy(s.pos.xz())));
         assert!(market.banners.iter().all(|(a, b)| !layout.is_holy(a.xz()) && !layout.is_holy(b.xz())));
+        // The rows line the roads, on the roads' edges: a street is left between them, and every
+        // row has its ways through.
+        let on_road = |p: Vec2| layout.terrain.ground_at(p.x, p.y) == Some(ground::ROAD);
+        let rows: Vec<&Stall> = market.stalls.iter().filter(|s| s.kind == StallKind::Row).collect();
+        assert!(rows.len() > 5000, "{}", rows.len());
+        assert!(rows.iter().all(|s| !on_road(s.pos.xz())));
+        let solid = rows.iter().filter(|s| market.stall_at(s.pos.xz())).count();
+        assert_eq!(solid, rows.len(), "people walk round every stall");
+        for name in ["Chandni Chowk", "Karol Bagh", "Lajpat Nagar", "Connaught Place"] {
+            let p = layout.pois.iter().find(|p| p.name == name).expect("place");
+            let inside = rows.iter().filter(|s| (s.pos.xz() - p.center.xz()).abs().max_element() < p.radius).count();
+            assert!(inside >= 50, "{name} has {inside} row stalls");
+        }
         let around = |name: &str| {
             let p = layout.pois.iter().find(|p| p.name == name).unwrap_or_else(|| panic!("{name}"));
             let c = p.center.xz();

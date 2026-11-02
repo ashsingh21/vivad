@@ -55,7 +55,7 @@ const SEEN_FROM: f32 = 40.0;
 /// When the bakes start.
 const BAKE_AFTER: f32 = 9.0;
 /// How far off someone still casts a shadow: a blob of a figure past this won't be missed.
-const SHADOW_TO: f32 = 28.0;
+const SHADOW_TO: f32 = 20.0;
 /// The most people moved round to the front of the view each look.
 const MOVED_UP: usize = 2;
 /// How close the player gets before someone starts to move off.
@@ -255,7 +255,7 @@ impl Role {
         match self {
             Role::Dog => (1.2, 7.0),
             Role::Cow => (1.0, 5.0),
-            _ => (1.6, 5.2),
+            _ => (2.2, 5.2),
         }
     }
 }
@@ -401,6 +401,7 @@ fn populate(
     camera: Query<&GlobalTransform, With<MainCamera>>,
     walkers: Query<(Entity, &Walker)>,
 ) {
+    let _spent = super::spent::Timed::start(&super::spent::PEOPLE);
     *every -= time.delta_secs();
     if *every > 0.0 {
         return;
@@ -434,9 +435,6 @@ fn populate(
     let spots = [Vec2::ZERO, Vec2::X, Vec2::NEG_X, Vec2::Y, Vec2::NEG_Y].map(|d| busy_at(&market, at + d * 36.0));
     let busy = spots.iter().sum::<f32>() / spots.len() as f32;
     let want = (busy * PEOPLE as f32 * 1.25).round().min(PEOPLE as f32) as usize;
-    if std::env::var("VIVAD_LIFE_LOG").is_ok() {
-        info!("life at {at:.0}: busy {busy:.2} want {want} have {have}");
-    }
     if *seed == 0 {
         *seed = 0x51ed_270b;
     }
@@ -478,7 +476,7 @@ fn populate(
         p.distance(at) * if ahead(p) > 0.4 { 0.55 } else { 1.3 }
     };
     near.sort_by(|a, b| rank(a).total_cmp(&rank(b)));
-    let keepers = (want * 2 / 5).max(1);
+    let keepers = (want * 3 / 10).max(1);
     let mut kept = walkers.iter().filter(|(_, w)| !w.role.animal() && w.role != Role::Shopper).count();
     for id in near {
         if room == 0 || kept >= keepers {
@@ -697,6 +695,7 @@ fn walk(
     spatial: avian3d::prelude::SpatialQuery,
     mut q: Query<(Entity, &mut Walker, &mut Transform, &mut Mesh3d)>,
 ) {
+    let _spent = super::spent::Timed::start(&super::spent::PEOPLE);
     if q.is_empty() {
         return;
     }
@@ -892,14 +891,14 @@ fn next_step(layout: &MapLayout, floor: &StreetFloor, market: &Market, w: &mut W
                     let (to, yaw) = in_front(&stall, &mut dice);
                     w.dice = dice;
                     if to.distance(w.pos) > 3.0 && line_clear(layout, floor, market, w.pos, to) {
-                        return Doing::Go { to, speed: w.dice.range(1.15, 1.6), then: w.dice.range(4.0, 14.0), yaw: Some(yaw) };
+                        return Doing::Go { to, speed: w.dice.range(1.25, 1.7), then: w.dice.range(4.0, 14.0), yaw: Some(yaw) };
                     }
                 }
             }
             for _ in 0..8 {
                 let to = w.pos + Vec2::from_angle(w.dice.range(0.0, TAU)) * w.dice.range(8.0, 34.0);
                 if line_clear(layout, floor, market, w.pos, to) {
-                    return Doing::Go { to, speed: w.dice.range(1.15, 1.6), then: w.dice.range(2.0, 9.0), yaw: None };
+                    return Doing::Go { to, speed: w.dice.range(1.25, 1.7), then: w.dice.range(2.0, 9.0), yaw: None };
                 }
             }
             Doing::Stay { until: now + w.dice.range(2.0, 6.0), yaw: w.yaw }

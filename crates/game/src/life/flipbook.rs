@@ -383,9 +383,11 @@ fn pieces(doc: &gltf::Document, blob: &[u8]) -> Result<Vec<Piece>, String> {
 /// back, where it is only more shirt. Model space: +Z is forward, feet at y = 0.
 fn flatten_pack(piece: &mut Piece) {
     const BACK: f32 = -0.1;
-    for (p, pack) in piece.pos.iter_mut().zip(&mut piece.pack) {
+    for ((p, n), pack) in piece.pos.iter_mut().zip(&mut piece.nrm).zip(&mut piece.pack) {
         if p.y > 0.8 && p.z < BACK {
-            p.z = BACK + (p.z - BACK) * 0.12;
+            p.z = BACK + (p.z - BACK) * 0.1;
+            // Lit as the flat back it now is: its old sides would still draw its outline.
+            *n = (*n * 0.15 + Vec3::NEG_Z).normalize();
             *pack = true;
         }
     }

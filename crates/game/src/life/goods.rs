@@ -1,12 +1,13 @@
-//! The goods: what makes a stall a stall and a shop front a shop. Heaps on the thelas, sacks and
-//! crates at the feet of the walls, cloth on rails over head height, tarps out over the pavement,
-//! wires strung from pole to pole, steam off the chai.
+//! The goods: what makes a stall a stall and a shop front a shop. Rows of trestle stalls along the
+//! kerbs, heaps on the thelas, stocked shelves and awnings on the shop fronts, spreads on the
+//! pavement, parked scooters and handcarts, banners over the road, wires strung from pole to pole,
+//! steam off the chai.
 //!
 //! None of it is on the map: it has no collider, the street grid never hears of it, and bullets
-//! pass through it. It is worked out from the map's kit and footprints only for the patches of
-//! street near the camera, and each patch is one mesh with one material (the colours are in the
-//! vertices, as in the street kit), merged on a worker. A market is a handful of draws, and with
-//! nothing near the player nothing exists at all.
+//! pass through it, so what stands in the open stops below a warrior's eyes or hangs above them.
+//! It is worked out from the map's kit and footprints only for the patches of street near the
+//! camera, and each patch is three meshes with one material (`Level`), merged on a worker. A
+//! market is a handful of draws, and with nothing near the player nothing exists at all.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -281,6 +282,12 @@ fn on_street(layout: &MapLayout, p: Vec2) -> bool {
     matches!(layout.terrain.ground_at(p.x, p.y), Some(ground::ROAD | ground::PAVEMENT | ground::PATH | ground::PLAZA | ground::PARKING))
 }
 
+/// What a row stall sells: it goes by where the stall stands, so it is the same every time.
+fn row_goods(s: &super::Stall) -> &'static str {
+    const STALLS: [&str; 13] = ["stall_fruit", "stall_tropic", "stall_veg", "stall_green", "stall_cloth", "stall_cloth2", "stall_bags", "stall_shoes", "stall_steel", "stall_spice", "stall_grain", "stall_toys", "stall_snack"];
+    pick(&STALLS, hash(s.pos.x.to_bits(), s.pos.z.to_bits(), 1))
+}
+
 /// Everything in a patch of street, from the map.
 fn dress(layout: &MapLayout, market: &Market, key: (i32, i32), out: &mut Vec<(&'static str, Vec3, f32)>, wires: &mut Vec<Wire>, banners: &mut Vec<Banner>) {
     let inside = |p: Vec2| patch_at(p) == key;
@@ -316,8 +323,7 @@ fn dress(layout: &MapLayout, market: &Market, key: (i32, i32), out: &mut Vec<(&'
                 }
             }
             super::StallKind::Row => {
-                const STALLS: [&str; 13] = ["stall_fruit", "stall_tropic", "stall_veg", "stall_green", "stall_cloth", "stall_cloth2", "stall_bags", "stall_shoes", "stall_steel", "stall_spice", "stall_grain", "stall_toys", "stall_snack"];
-                out.push((pick(&STALLS, hash(a, b, 1)), s.pos, s.yaw));
+                out.push((row_goods(&s), s.pos, s.yaw));
                 out.push((pick(&["roof_blue", "roof_orange", "roof_white", "roof_green", "roof_red", "roof_blue", "roof_white"], hash(a, b, 2)), s.pos, s.yaw));
             }
             super::StallKind::Cart => {
@@ -436,8 +442,8 @@ fn dress(layout: &MapLayout, market: &Market, key: (i32, i32), out: &mut Vec<(&'
         let mut near: Vec<&super::Stall> = market.poles.iter().filter(|q| { let d = q.pos.xz().distance(at); d > 8.0 && d < 46.0 }).collect();
         near.sort_by(|a, b| a.pos.xz().distance_squared(at).total_cmp(&b.pos.xz().distance_squared(at)));
         for (n, other) in near.iter().take(2).enumerate() {
-            // Each span once.
-            if other.pos.x + other.pos.z < pole.pos.x + pole.pos.z {
+            // Each span once, and none across a holy site.
+            if other.pos.x + other.pos.z < pole.pos.x + pole.pos.z || layout.is_holy(pole.pos.lerp(other.pos, 0.5).xz()) {
                 continue;
             }
             let other_rot = Quat::from_rotation_y(other.yaw);
@@ -471,7 +477,7 @@ fn dress(layout: &MapLayout, market: &Market, key: (i32, i32), out: &mut Vec<(&'
                 }
             }
         }
-        if let Some((_, wall)) = best {
+        if let Some((_, wall)) = best.filter(|b| !layout.is_holy(b.1)) {
             for w in 0..(1.0 + busy * 3.5) as u32 {
                 let h = 4.2 + hash(k as u32, w, 6) * 2.2;
                 let shift = Vec3::new(hash(k as u32, w, 7) - 0.5, 0.0, hash(k as u32, w, 8) - 0.5);
@@ -604,6 +610,7 @@ fn stream(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    let _spent = super::spent::Timed::start(&super::spent::GOODS);
     let goods = &mut *goods;
     if let Some(task) = &mut goods.reading
         && let Some(done) = block_on(poll_once(task))
@@ -632,6 +639,9 @@ fn stream(
         return;
     }
     *every = 0.05;
+    if !market.ready {
+        return;
+    }
     let Ok(camera) = camera.single() else { return };
     let eye = camera.translation();
     let at = eye.xz();
@@ -769,6 +779,7 @@ fn steam(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    let _spent = super::spent::Timed::start(&super::spent::GOODS);
     let dt = time.delta_secs();
     let state = &mut *state;
     let Ok(camera) = camera.single() else { return };
@@ -779,11 +790,17 @@ fn steam(
         state.kettles.clear();
         for id in market.stalls_near(eye.xz(), NEAR_KETTLE) {
             let s = market.stalls[id as usize];
-            if s.kind == super::StallKind::Chai && s.pos.distance(eye) < NEAR_KETTLE {
+            if s.pos.distance(eye) >= NEAR_KETTLE {
+                continue;
+            }
+            // A kettle, or a fry stall's pan.
+            if s.kind == super::StallKind::Chai {
                 state.kettles.push(s.pos + Quat::from_rotation_y(s.yaw) * Vec3::new(-0.4, 1.44, 0.0));
+            } else if s.kind == super::StallKind::Row && row_goods(&s) == "stall_snack" {
+                state.kettles.push(s.pos + Quat::from_rotation_y(s.yaw) * Vec3::new(-0.72, 1.12, 0.0));
             }
         }
-        state.kettles.truncate(3);
+        state.kettles.truncate(4);
     }
     if !state.kettles.is_empty() {
         if state.mesh.is_none() {
@@ -832,6 +849,56 @@ fn steam(
         let fade = ((k * FADES as f32) as usize).min(FADES - 1);
         if mat.0 != state.fades[fade] {
             mat.0 = state.fades[fade].clone();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use shared::map::{MapId, generate};
+    use shared::sim::nav::StreetFloor;
+
+    use super::*;
+
+    /// Every piece the dressing asks for is in the files, in every patch of the busiest streets:
+    /// a name that isn't would just leave a hole in a market.
+    #[test]
+    fn every_piece_asked_for_exists_and_merges() {
+        let (pieces, _) = read_pieces().expect("the goods");
+        let layout = generate(MapId::Ncr, 7);
+        let market = Market::build(&layout, &StreetFloor::new(&layout));
+        let mut seen = std::collections::HashSet::new();
+        for centre in [Vec2::new(-1472.0, -1176.0), Vec2::new(-353.0, -1263.0), Vec2::new(-865.0, -762.0), Vec2::new(-604.0, 334.0)] {
+            let key = patch_at(centre);
+            for dj in -3..=3 {
+                for di in -3..=3 {
+                    let k = (key.0 + di, key.1 + dj);
+                    let mut c = Content::default();
+                    dress(&layout, &market, k, &mut c.placed, &mut c.wires, &mut c.banners);
+                    for (name, ..) in &c.placed {
+                        assert!(pieces.contains_key(*name), "{name} isn't in the files");
+                        seen.insert(*name);
+                        if let Some(far) = far_piece(name, 0.0) {
+                            assert!(pieces.contains_key(far), "{far} isn't in the files");
+                        }
+                    }
+                    let origin = Vec3::ZERO;
+                    if !c.placed.is_empty() {
+                        assert!(merge(&pieces, &c.placed, &c.wires, &c.banners, origin).is_some());
+                    }
+                }
+            }
+        }
+        assert!(seen.len() > 30, "only {} kinds of goods out", seen.len());
+    }
+
+    #[test]
+    fn what_hangs_overhead_clears_a_warriors_head() {
+        let (pieces, _) = read_pieces().expect("the goods");
+        for (name, p) in pieces.iter().filter(|(n, _)| overhead(n)) {
+            // Its cloth: the poles run to the ground, thin enough to walk past.
+            let lowest_cloth = p.pos.iter().filter(|v| v.xz().length() > 0.0).map(|v| v.y).filter(|y| *y > 1.0).fold(f32::MAX, f32::min);
+            assert!(lowest_cloth >= 1.9 || name.starts_with("bamboo"), "{name} hangs to {lowest_cloth}");
         }
     }
 }
