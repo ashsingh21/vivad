@@ -31,7 +31,7 @@ use bevy::prelude::*;
 use shared::map::{Block, Footprint, MapLayout, Mat, Shape, footprint};
 use shared::sim::OfMap;
 
-use super::{BAY, MeshBuf, PARAPET, Paint, STOREY, TRIM, bare, bare_tint, is_static_visual, lin};
+use super::{BAY, BLUE_TINT, MARBLE_TINT, MeshBuf, OCHRE_TINT, PARAPET, PLASTER_TINT, Paint, STOREY, TRIM, bare, bare_tint, is_static_visual, lin, roof_shade};
 use crate::batch::batched;
 use crate::batch::probe::{Tagged, reading_meshes};
 use crate::characters::LodRange;
@@ -171,12 +171,16 @@ fn flat_colour(mat: Mat) -> [f32; 4] {
         let t = lin(tint);
         [tex[0] * t[0], tex[1] * t[1], tex[2] * t[2], 1.0]
     };
+    let plastered = |tint: Color| {
+        let t = tint.to_linear();
+        [PLASTER[0] * t.red, PLASTER[1] * t.green, PLASTER[2] * t.blue, 1.0]
+    };
     let raw = |c: [f32; 3]| [c[0], c[1], c[2], 1.0];
     match mat {
-        Mat::Plaster => times(PLASTER, [0.97, 0.95, 0.90]),
-        Mat::PlasterOchre => times(PLASTER, [0.95, 0.74, 0.44]),
-        Mat::PlasterBlue => times(PLASTER, [0.55, 0.72, 0.95]),
-        Mat::Marble => times(PLASTER, [1.0, 0.99, 0.97]),
+        Mat::Plaster => plastered(PLASTER_TINT),
+        Mat::PlasterOchre => plastered(OCHRE_TINT),
+        Mat::PlasterBlue => plastered(BLUE_TINT),
+        Mat::Marble => plastered(MARBLE_TINT),
         Mat::Sandstone => raw(SANDSTONE),
         Mat::RedSandstone => times(SANDSTONE, [0.86, 0.50, 0.40]),
         Mat::Dirt => times(SANDSTONE, [0.75, 0.62, 0.48]),
@@ -194,9 +198,9 @@ fn flat_colour(mat: Mat) -> [f32; 4] {
         Mat::MetroSign => raw([0.053, 0.104, 0.16]),
         Mat::ContainerRed => lin([0.55, 0.16, 0.10]),
         Mat::Rubber => lin([0.035, 0.04, 0.045]),
-        Mat::PaintWhite => lin([0.78, 0.81, 0.79]),
-        Mat::TransitBlue => lin([0.08, 0.55, 0.8]),
-        Mat::TransitYellow => lin([0.95, 0.7, 0.15]),
+        Mat::PaintWhite => lin([0.74, 0.76, 0.74]),
+        Mat::TransitBlue => lin([0.14, 0.38, 0.52]),
+        Mat::TransitYellow => lin([0.76, 0.60, 0.20]),
         Mat::Gold => lin([1.0, 0.76, 0.34]),
         Mat::Cloth => lin([0.85, 0.22, 0.32]),
         Mat::Foliage => lin([0.26, 0.42, 0.18]),
@@ -326,7 +330,7 @@ fn add_shell(s: &mut Shell, fp: &Footprint, paint: &Paint) {
         let out = Vec3::new(out2.x, 0.0, out2.y);
         let (u0, u1) = (along / (2.0 * BAY), (along + len) / (2.0 * BAY));
         let (a3, b3) = (Vec3::new(a.x, 0.0, a.y), Vec3::new(b.x, 0.0, b.y));
-        for (lo, hi, (s0, s1)) in [(fp.base, split, (0.66, 0.84)), (split, fp.top, (0.9, 1.06))] {
+        for (lo, hi, (s0, s1)) in [(fp.base, split, (0.66, 0.84)), (split, fp.top, (0.86, 1.0))] {
             if hi - lo < 0.05 {
                 continue;
             }
@@ -337,7 +341,7 @@ fn add_shell(s: &mut Shell, fp: &Footprint, paint: &Paint) {
             s.walls.quad_facing([a3.with_y(lo), b3.with_y(lo), b3.with_y(hi), a3.with_y(hi)], out, uv, [c0, c0, c1, c1]);
         }
         // The parapet: its outside, its coping and its inside.
-        let (c, t) = (wall_at(1.06), paint.trim);
+        let (c, t) = (wall_at(1.0), paint.trim);
         let (a_in, b_in) = (a3 - out * 0.4, b3 - out * 0.4);
         let no_uv = [Vec2::ZERO; 4];
         s.plain.quad_facing([a3.with_y(fp.top), b3.with_y(fp.top), b3.with_y(top), a3.with_y(top)], out, no_uv, [c; 4]);
@@ -345,9 +349,8 @@ fn add_shell(s: &mut Shell, fp: &Footprint, paint: &Paint) {
         s.plain.quad_facing([a_in.with_y(fp.top), b_in.with_y(fp.top), b_in.with_y(top), a_in.with_y(top)], -out, no_uv, [c; 4]);
         along += len;
     }
-    let g = 0.84 + 0.1 * paint.r(6);
     let plaster = flat_colour(Mat::Plaster);
-    let shade = lin([g, g * 0.97, g * 0.92]);
+    let shade = roof_shade(paint.r(6));
     let roof = [plaster[0] * shade[0], plaster[1] * shade[1], plaster[2] * shade[2], 1.0];
     for [i, j, k] in footprint::triangulate(&fp.pts) {
         let p = [fp.pts[i as usize], fp.pts[j as usize], fp.pts[k as usize]].map(|q| Vec3::new(q.x, fp.top, q.y));
