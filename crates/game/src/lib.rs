@@ -17,6 +17,7 @@ pub mod lamps;
 pub mod quality;
 pub mod rim;
 pub mod say;
+pub mod scope;
 pub mod sky;
 pub mod stage;
 pub mod street;

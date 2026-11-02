@@ -15,15 +15,16 @@ use avian3d::prelude::*;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
-use shared::items::{ItemStack, Rarity};
+use shared::items::{ItemDb, ItemKind, ItemStack, Rarity};
 use shared::map::{MapId, MapLayout};
 use shared::sim::birds::Flock;
 use shared::sim::bots::BotBrain;
+use shared::sim::combat::Projectile;
 use shared::sim::nav::{NavGrid, StreetFloor};
 use shared::sim::senses::{self, NoiseMsg, in_sight};
 use shared::sim::stance::{CROUCH_DROP, CROUCH_SPEED, Stance};
 use shared::sim::zone::Zone;
-use shared::sim::{EYE_OFFSET, HALF_HEIGHT, Health, Inventory, Kinematic, Layer, MatchConfig, MoveMode, PlayerIntent, SimPlugin, Warrior, btn, hit_mask};
+use shared::sim::{EYE_OFFSET, HALF_HEIGHT, Health, Inventory, Kinematic, Layer, MatchConfig, MoveMode, PlayerIntent, SimPlugin, Warrior, btn, hit_mask, solid_mask};
 
 const COVER: [&str; 11] = ["chai", "thela", "crates", "cooler", "drum", "scooter", "auto", "mumty", "tanki", "gumti", "clothesline"];
 
@@ -536,6 +537,132 @@ fn running_away(stage: &mut Stage, check: &mut Check) {
     println!("  out of sight {:.0} m from where it started", stage.pos(bot).xz().distance(at.xz()));
 }
 
+/// Rifle shots as a player fires them through a scope, real bullets across open ground and off a
+/// roof: past what a bot takes in, the blow alone tells it. Nearer than the answer range (120 m) it
+/// turns on the shooter it can see and goes looking for one it can't; past that it runs for cover.
+fn long_shots(stage: &mut Stage, check: &mut Check) {
+    println!("long shots");
+    const NEAR: f32 = 100.0;
+    const FAR: f32 = 150.0;
+    /// `Projectile::ttl` as a bullet leaves.
+    const BULLET_LIFE: f32 = 4.0;
+    let (player, bot) = (stage.player, stage.bot);
+    let (speed, gravity) = match stage.app.world().resource::<ItemDb>().get("thri_not_thri").kind {
+        ItemKind::Bow { speed, gravity, .. } => (speed, gravity),
+        _ => panic!("the rifle is a gun"),
+    };
+    let (ground, roof) = stage
+        .app
+        .world_mut()
+        .run_system_once(|spatial: SpatialQuery, nav: Res<NavGrid>, floor: Res<StreetFloor>, layout: Res<MapLayout>, zone: Res<Zone>| {
+            let walkable = |p: Vec2| open(&nav, &floor, p);
+            let feet = |p: Vec2| Vec3::new(p.x, layout.terrain.height(p.x, p.y), p.y);
+            let eye = |feet: Vec3| feet + Vec3::Y * (HALF_HEIGHT + EYE_OFFSET);
+            let body = |feet: Vec3| feet + Vec3::Y * HALF_HEIGHT;
+            let bearings = || (0..16).map(|k| Vec2::from_angle(k as f32 * TAU / 16.0));
+            let around = |p: Vec2, r: f32| (0..8).map(move |i| p + Vec2::from_angle(i as f32 * TAU / 8.0) * r);
+            // Open ground, the shooter in plain sight from both ranges.
+            let on_ground = layout.kit.iter().filter(|k| ring_calm(&zone, k.pos.xz())).flat_map(|k| around(k.pos.xz(), 6.0)).filter(|at| walkable(*at)).find_map(|at| {
+                let clear = |dir: Vec2, d: f32| walkable(at + dir * d) && in_sight(&spatial, eye(feet(at + dir * d)), body(feet(at)), 0.0);
+                bearings().find(|dir| clear(*dir, NEAR) && clear(*dir, FAR)).map(|dir| (feet(at), dir))
+            });
+            // Beside something standing on a roof, with a street in sight far below.
+            let filter = SpatialQueryFilter::from_mask(solid_mask());
+            let on_roof = layout.kit.iter().filter(|k| k.pos.y > layout.terrain.height(k.pos.x, k.pos.z) + 5.0).flat_map(|k| around(k.pos.xz(), 2.5).map(move |p| (k.pos.y, p))).find_map(|(y, p)| {
+                let from = Vec3::new(p.x, y + 3.0, p.y);
+                let top = from.y - spatial.cast_ray(from, Dir3::NEG_Y, 6.0, true, &filter)?.distance;
+                let stand = Vec3::new(p.x, top, p.y);
+                let seen = |dir: &Vec2| walkable(p + *dir * FAR) && in_sight(&spatial, eye(stand), body(feet(p + *dir * FAR)), 0.0);
+                ((top - y).abs() < 0.3).then(|| bearings().find(seen).map(|dir| (stand, feet(p + dir * FAR)))).flatten()
+            });
+            (on_ground, on_roof)
+        })
+        .unwrap();
+    // Fires from `from` at a bot held at `at`, both feet. True when the bullet told.
+    let shoot = |stage: &mut Stage, from: Vec3, at: Vec3, facing: f32| {
+        {
+            let world = stage.app.world_mut();
+            let mut brain = world.get_mut::<BotBrain>(bot).unwrap();
+            brain.senses = default();
+            brain.target = None;
+            brain.goal = None;
+            brain.flee = 0.0;
+            brain.provoked = None;
+            let mut inv = world.get_mut::<Inventory>(player).unwrap();
+            inv.slots[0] = Some(ItemStack { id: "thri_not_thri".into(), rarity: Rarity::Rare, count: 5 });
+            inv.selected = 1;
+            inv.arrows = 40;
+            for who in [player, bot] {
+                let mut h = world.get_mut::<Health>(who).unwrap();
+                h.hp = h.max_hp;
+                // A rifle's one hit would otherwise leave it losing, and running for that reason.
+                h.shield = 100.0;
+            }
+        }
+        let (eye, chest) = (from + Vec3::Y * (HALF_HEIGHT + 0.03 + EYE_OFFSET), at + Vec3::Y * (HALF_HEIGHT + 0.03 + 0.3));
+        let flight = eye.distance(chest) / speed;
+        let d = chest + Vec3::Y * (0.5 * gravity * flight * flight) - eye;
+        let (yaw, pitch) = (yaw_to(eye, eye + d), d.y.atan2(d.xz().length()));
+        let shooter = |s: &mut Stage, held: u16| {
+            s.put(player, from);
+            let mut intent = s.intent(player);
+            (intent.yaw, intent.pitch, intent.held) = (yaw, pitch, held);
+        };
+        stage.watch(45, at, facing, |s| shooter(s, btn::AIM));
+        stage.watch(1, at, facing, |s| shooter(s, btn::AIM | btn::FIRE));
+        let life = |s: &Stage| s.app.world().get::<Health>(bot).map_or(0.0, |h| h.hp + h.shield);
+        let before = life(stage);
+        stage.watch((flight * 60.0) as u32 + 40, at, facing, |s| shooter(s, 0));
+        life(stage) < before
+    };
+    if let Some((at, dir)) = ground {
+        let foe = |d: f32| Vec3::new(at.x + dir.x * d, stage.ground(at.xz() + dir * d), at.z + dir.y * d);
+        let (near, far) = (foe(NEAR), foe(FAR));
+        let hit = shoot(stage, near, at, yaw_to(at, near));
+        check.that(hit && stage.brain().target == Some(player), "hit from 100 m across open ground, it shoots back at the man it sees");
+        let hit = shoot(stage, near, at, yaw_to(near, at));
+        let search = stage.brain().senses.search.map(|s| s.spot);
+        check.that(hit && search.is_some_and(|s| s.xz().distance(near.xz()) < 26.0) && stage.brain().flee <= 0.0, "hit from 100 m in the back, it goes to the place the shot came from");
+        let before = stage.brain().senses.tally.flights;
+        let hit = shoot(stage, far, at, yaw_to(at, far));
+        check.that(hit && stage.brain().flee > 0.0 && stage.brain().target.is_none(), "hit from 150 m, it runs for cover");
+        check.that(stage.brain().senses.tally.flights == before + 1, "just the one flight");
+    } else {
+        println!("  no line that long in the middle of this map");
+    }
+    if let Some((from, at)) = roof {
+        let hit = shoot(stage, from, at, 0.0);
+        check.that(hit, &format!("a shot from a roof {:.0} m up lands {:.0} m off", from.y - at.y, from.xz().distance(at.xz())));
+    } else {
+        println!("  no roof with a long view on this map");
+    }
+    // The height a shot leaves at, through the scope and from the hip, standing and crouched: up at
+    // the sky, with nothing to stop it short, and worked back along its flight, as spread tilts it.
+    let spot = ground.map_or(open_spot(stage, 6.0), |g| g.0.xz());
+    let feet = spot.extend(stage.ground(spot)).xzy();
+    let shot_at = |stage: &mut Stage, crouch: u16, aim: u16| {
+        let world = stage.app.world_mut();
+        world.get_mut::<Inventory>(player).unwrap().slots[0] = Some(ItemStack { id: "thri_not_thri".into(), rarity: Rarity::Rare, count: 5 });
+        for _ in 0..100 {
+            stage.put(player, feet);
+            let mut intent = stage.intent(player);
+            (intent.pitch, intent.held) = (0.5, crouch | aim);
+            stage.tick(1);
+        }
+        stage.intent(player).held = crouch | aim | btn::FIRE;
+        stage.tick(1);
+        stage.intent(player).held = crouch;
+        let world = stage.app.world_mut();
+        world.query::<(&Transform, &Projectile)>().iter(world).filter(|(_, p)| p.owner == player).max_by(|a, b| a.1.ttl.total_cmp(&b.1.ttl)).map_or(0.0, |(t, p)| t.translation.y - p.velocity.y * (BULLET_LIFE - p.ttl))
+    };
+    let dropped = |standing: f32, down: f32| (standing - down - CROUCH_DROP).abs() < 0.03;
+    let (eye, low_eye) = (shot_at(stage, 0, btn::AIM), shot_at(stage, btn::CROUCH, btn::AIM));
+    let (hip, low_hip) = (shot_at(stage, 0, 0), shot_at(stage, btn::CROUCH, 0));
+    check.that(dropped(eye, low_eye), &format!("crouched, a scoped shot leaves {:.2} m lower", eye - low_eye));
+    check.that(dropped(hip, low_hip), &format!("crouched, a shot from the hip leaves {:.2} m lower", hip - low_hip));
+    stage.intent(player).held = 0;
+}
+
 fn flocks(stage: &mut Stage, check: &mut Check) {
     println!("birds");
     let player = stage.player;
@@ -583,6 +710,7 @@ fn main() {
     stage.tick(4);
     senses_of_a_bot(&mut stage, &mut check);
     running_away(&mut stage, &mut check);
+    long_shots(&mut stage, &mut check);
     println!("{}", if check.failed == 0 { "all good".to_string() } else { format!("{} failed", check.failed) });
     std::process::exit((check.failed > 0) as i32);
 }

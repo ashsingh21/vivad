@@ -46,7 +46,9 @@ pixels only when the numbers point somewhere.
    the whole sim running, and prints from how many bearings each piece of the street kit hides a
    warrior, crouched and standing; add a line to its cover list for every new piece. `just sense
    ncr` does the same on the NCR, where the bots go by the street floor and not the small maps'
-   grid. `just ncr-sim` ends with a `senses:` line, what the senses made the bots do in a whole
+   grid. Its last stage fires real rifle shots through the scope, across open ground and off a roof:
+   a bot hit from 100 m answers or goes to look, one hit from 150 m runs for cover, and a crouched
+   shot leaves from a crouched body. `just ncr-sim` ends with a `senses:` line, what the senses made the bots do in a whole
    match (searches, hiding places, flocks put up), and `just ncr-map-check` counts the gumti,
    tanks and flocks and any hidden collider out of step with the kit. `just stage`
    films the same in the real game (`previews/hiding-senses`, the window can stay hidden), and

@@ -40,6 +40,9 @@
 //!   VIVAD_ARMOURY_ONLY=a,b only the poses whose names contain one of these. The range poses
 //!   freeze the one bot (VIVAD_BOTS=1) in front as a target and shoot or cut at it.
 //!   VIVAD_ARMOURY_SPOT=x,z stand there instead (the middle of Connaught Place's park is 30,40).
+//!   VIVAD_ARMOURY_OPEN=1 stand out in the open, for long looks through a scope.
+//!   VIVAD_ARMOURY_LONGSHOT=<fps>  only one pose, a rifle shot through the scope at a live bot
+//!   150 m off, then watch it for a few seconds: frames for tools/clip.py.
 
 use bevy::camera::{ImageRenderTarget, RenderTarget};
 use bevy::prelude::*;
@@ -119,6 +122,10 @@ enum Use {
     Hold,
     /// One press of fire, shot mid-swing.
     Strike,
+    /// Aiming through the scope, then one press of fire.
+    Snipe,
+    /// Held to the shoulder as just after a shot, not looking through any scope.
+    Shoulder,
 }
 
 #[derive(Clone, Copy)]
@@ -145,6 +152,11 @@ pub struct Armoury {
     /// Fire has been pressed for this pose (drinking and swinging start on a press).
     pressed: bool,
     spot: Option<Vec3>,
+    /// Frames a second of a clip of the pose (VIVAD_ARMOURY_LONGSHOT), the count so far, and when
+    /// the next is due.
+    frames: Option<f32>,
+    frame: u32,
+    next: f32,
 }
 
 impl Armoury {
@@ -154,6 +166,8 @@ impl Armoury {
             Use::Aim => "aim",
             Use::Hold => "hold",
             Use::Strike => "strike",
+            Use::Snipe => "snipe",
+            Use::Shoulder => "shoulder",
         };
         let view = match p.view {
             View::Front => "front",
@@ -171,6 +185,11 @@ impl Armoury {
 
 /// Settle time before each armoury shot; a strike is pressed STRIKE_AT seconds in.
 const POSE_TIME: f32 = 1.3;
+/// Seconds after the shot that a bullet reaches the long shot's target, which stands still till then.
+const LANDS: f32 = 0.5;
+/// Where to stand for a long look across the open: the park's south side, off its fountain.
+const OPEN_X: f32 = 34.0;
+const OPEN_Z: f32 = 72.0;
 const STRIKE_AT: f32 = 1.1;
 
 pub struct AutoshotPlugin;
@@ -266,6 +285,7 @@ impl Plugin for AutoshotPlugin {
         if let Ok(dir) = std::env::var("VIVAD_ARMOURY") {
             let p = |item, state, view, pitch| Pose { item, state, view, pitch, target: None, after: 0.17 };
             let range = |item, view, dist, after| Pose { item, state: Use::Strike, view, pitch: 0.0, target: Some(dist), after };
+            let snipe = |item, dist, after| Pose { item, state: if after > 0.0 { Use::Snipe } else { Use::Aim }, view: View::Player, pitch: 0.0, target: Some(dist), after };
             let mut poses = vec![
                 p("bat", Use::Carry, View::Face, 0.0),
                 p("bat", Use::Carry, View::Front, 0.0),
@@ -283,6 +303,23 @@ impl Plugin for AutoshotPlugin {
                 p("dunali", Use::Aim, View::Side, 0.0),
                 p("gulel", Use::Hold, View::Side, 0.0),
                 p("gulel", Use::Hold, View::Front, -0.4),
+                p("vajra9", Use::Carry, View::Side, 0.0),
+                p("vajra9", Use::Aim, View::Side, 0.0),
+                p("trishul_carbine", Use::Aim, View::Side, 0.0),
+                p("saintalis", Use::Carry, View::Side, 0.0),
+                p("saintalis", Use::Aim, View::Side, 0.0),
+                p("thaana_slr", Use::Shoulder, View::Side, 0.0),
+                p("thri_not_thri", Use::Carry, View::Side, 0.0),
+                p("thri_not_thri", Use::Shoulder, View::Side, 0.0),
+                p("toradar", Use::Shoulder, View::Side, 0.0),
+                p("thri_not_thri", Use::Shoulder, View::Back, 0.0),
+                p("toradar", Use::Shoulder, View::Back, 0.0),
+                // Through each scope, at a warrior 80 m off.
+                snipe("thaana_slr", 80.0, 0.0),
+                snipe("thri_not_thri", 80.0, 0.0),
+                snipe("toradar", 80.0, 0.0),
+                // The long shot: a hit at 150 m through the 4x, as the bullet lands.
+                snipe("thri_not_thri", 150.0, 0.45),
                 p("agneyastra", Use::Carry, View::Front, 0.0),
                 p("vayavyastra", Use::Carry, View::Side, 0.0),
                 p("sanjeevani", Use::Carry, View::Front, 0.0),
@@ -311,7 +348,11 @@ impl Plugin for AutoshotPlugin {
                 let keys: Vec<String> = only.split(',').map(str::to_owned).collect();
                 poses.retain(|q| keys.iter().any(|k| q.item.contains(k.as_str())));
             }
-            app.insert_resource(Armoury { dir, poses, index: 0, t: -3.0, shot: false, pressed: false, spot: None })
+            let frames = std::env::var("VIVAD_ARMOURY_LONGSHOT").ok().and_then(|s| s.parse().ok());
+            if frames.is_some() {
+                poses = vec![snipe("thri_not_thri", 150.0, 4.5)];
+            }
+            app.insert_resource(Armoury { dir, poses, index: 0, t: -3.0, shot: false, pressed: false, spot: None, frames, frame: 0, next: 0.0 })
                 .add_systems(PreUpdate, armoury_actor.after(crate::input::LocalInput))
                 .add_systems(PostUpdate, armoury_camera.after(crate::camera::CameraSystems).before(TransformSystems::Propagate));
         }
@@ -752,16 +793,19 @@ fn armoury_actor(
     db: Res<ItemDb>,
     layout: Res<MapLayout>,
     mut q: Query<(&mut Transform, &mut Kinematic, &mut Inventory, &mut PlayerIntent, &mut Health, &mut Action), With<LocalPlayer>>,
-    mut bots: Query<(Entity, &mut Transform, &mut Kinematic, &mut Health, &mut PlayerIntent), (With<Warrior>, Without<LocalPlayer>)>,
+    mut bots: Query<(Entity, &mut Transform, &mut Kinematic, &mut Health, &mut PlayerIntent, &mut Inventory), (With<Warrior>, Without<LocalPlayer>)>,
+    mut told: Local<bool>,
+    brains: Query<&shared::sim::bots::BotBrain>,
 ) {
     let Ok((mut tf, mut kin, mut inv, mut intent, mut health, mut act)) = q.single_mut() else { return };
+    let open = std::env::var("VIVAD_ARMOURY_OPEN").is_ok() || arm.frames.is_some();
     let spot = *arm.spot.get_or_insert_with(|| {
         let parse = |s: &str| s.trim().parse::<f32>().ok();
         let spot = std::env::var("VIVAD_ARMOURY_SPOT").ok().and_then(|s| {
             let (x, z) = s.split_once(',')?;
             Some((parse(x)?, parse(z)?))
         });
-        let (x, z) = spot.unwrap_or((38.0, 104.0));
+        let (x, z) = spot.unwrap_or(if open { (OPEN_X, OPEN_Z) } else { (38.0, 104.0) });
         Vec3::new(x, layout.terrain.height(x, z) + HALF_HEIGHT + 0.05, z)
     });
     tf.translation = spot;
@@ -790,9 +834,24 @@ fn armoury_actor(
     intent.yaw = 0.0;
     intent.pitch = pose.pitch;
     // The range target: the bot, frozen ahead, healed every tick; aim the crosshair ray at its chest.
-    if let Some((bot, mut btf, mut bkin, mut bhp, mut bint)) = bots.iter_mut().next() {
-        commands.entity(bot).remove::<shared::sim::bots::BotBrain>();
+    if let Some((bot, mut btf, mut bkin, mut bhp, mut bint, mut binv)) = bots.iter_mut().next() {
+        // A long-shot clip leaves the bot its wits, and it is on its own once hit.
+        let live = arm.frames.is_some();
+        if !live {
+            commands.entity(bot).remove::<shared::sim::bots::BotBrain>();
+        }
         let ahead = pose.target.unwrap_or(40.0);
+        if live && t >= STRIKE_AT + LANDS {
+            if t >= STRIKE_AT + pose.after - 0.3 && !*told {
+                *told = true;
+                println!("[longshot] {:.0} m after the hit, {:.0} m from the shooter, {:.0} health left", btf.translation.distance(Vec3::new(spot.x, btf.translation.y, spot.z - ahead)), btf.translation.distance(spot), bhp.hp);
+                if let Ok(b) = brains.get(bot) {
+                    println!("[longshot] still running from the shot for {:.1} s", b.flee.max(0.0));
+                }
+            }
+            return_aim(&mut intent, pose, t, &mut arm);
+            return;
+        }
         btf.translation = Vec3::new(spot.x, layout.terrain.height(spot.x, spot.z - ahead) + HALF_HEIGHT + 0.05, spot.z - ahead);
         btf.rotation = Quat::from_rotation_y(std::f32::consts::PI);
         bkin.mode = MoveMode::Ground;
@@ -800,6 +859,14 @@ fn armoury_actor(
         bhp.hp = 100.0;
         bhp.shield = if pose.item == "dunali" { 50.0 } else { 0.0 };
         *bint = PlayerIntent::default();
+        // The player's far shot is answered at once, for the sound of a rifle heard from far off.
+        if pose.state == Use::Snipe && (STRIKE_AT..STRIKE_AT + 0.25).contains(&t) {
+            binv.slots[0] = Some(ItemStack { id: "thri_not_thri".into(), rarity: Rarity::Rare, count: 5 });
+            binv.selected = 1;
+            let d = spot - btf.translation;
+            bint.yaw = (-d.x).atan2(-d.z);
+            bint.held = btn::FIRE;
+        }
         if pose.target.is_some() {
             let aim_at = btf.translation + Vec3::Y * 0.3;
             for _ in 0..3 {
@@ -808,17 +875,35 @@ fn armoury_actor(
                 intent.yaw = (-d.x).atan2(-d.z);
                 intent.pitch = d.y.atan2(d.xz().length());
             }
+            // Through a scope the line is from the eye, held over for the bullet's drop.
+            if let (Some(_), ItemKind::Bow { speed, gravity, .. }) = (def.kind.scope(), &def.kind) {
+                let eye = spot + Vec3::Y * shared::sim::EYE_OFFSET;
+                let flight = ahead / speed;
+                let d = aim_at + Vec3::Y * (0.5 * gravity * flight * flight) - eye;
+                intent.yaw = (-d.x).atan2(-d.z);
+                intent.pitch = d.y.atan2(d.xz().length());
+            }
         }
     }
+    return_aim(&mut intent, pose, t, &mut arm);
+    if pose.state == Use::Shoulder {
+        act.since_attack = 0.5;
+    }
+}
+
+/// The pose's buttons, the last thing the actor does each frame.
+fn return_aim(intent: &mut PlayerIntent, pose: Pose, t: f32, arm: &mut Armoury) {
     intent.move_axis = Vec2::ZERO;
     intent.select = None;
     intent.held = match pose.state {
-        Use::Carry => 0,
+        Use::Carry | Use::Shoulder => 0,
         Use::Aim => btn::AIM,
         Use::Hold => btn::FIRE | btn::AIM,
         Use::Strike => if t >= STRIKE_AT { btn::FIRE } else { 0 },
+        // One shot, and no second when the bolt is back: the clip watches what it did.
+        Use::Snipe => btn::AIM | if (STRIKE_AT..STRIKE_AT + 0.4).contains(&t) { btn::FIRE } else { 0 },
     };
-    let press_at = if pose.state == Use::Strike { STRIKE_AT } else { 0.2 };
+    let press_at = if matches!(pose.state, Use::Strike | Use::Snipe) { STRIKE_AT } else { 0.2 };
     if intent.held(btn::FIRE) && t >= press_at && !arm.pressed {
         intent.pressed |= btn::FIRE;
         arm.pressed = true;
@@ -858,7 +943,13 @@ fn armoury_camera(
     if let Some((eye, look)) = view {
         *ct = Transform::from_translation(eye).looking_at(look, Vec3::Y);
     }
-    let at = if pose.state == Use::Strike { STRIKE_AT + pose.after } else { POSE_TIME };
+    let at = if matches!(pose.state, Use::Strike | Use::Snipe) { STRIKE_AT + pose.after } else { POSE_TIME };
+    if let Some(fps) = arm.frames.filter(|_| arm.t >= STRIKE_AT - 0.5 && arm.t >= arm.next) {
+        let path = format!("{}/frame_{:05}.png", arm.dir, arm.frame);
+        commands.spawn(Screenshot::primary_window()).observe(save_small(path));
+        arm.frame += 1;
+        arm.next = arm.t + 1.0 / fps;
+    }
     if arm.t >= at && !arm.shot {
         let path = format!("{}/{}.png", arm.dir, arm.name(&pose));
         shoot(&mut commands, path);

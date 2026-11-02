@@ -404,7 +404,7 @@ fn muzzle_flash(mut commands: Commands, q: Query<(&Projectile, &Transform), Adde
         fired.push(p.owner);
         let ahead = p.velocity.normalize_or(Vec3::NEG_Z);
         let at = t.translation + ahead * 0.15;
-        let size = if p.item == "dunali" { 0.2 } else { 0.13 };
+        let size = if matches!(p.item.as_str(), "dunali" | "thri_not_thri" | "toradar") { 0.2 } else { 0.13 };
         commands.spawn((
             Spark { vel: Vec3::ZERO, life: 0.06, max: 0.06, size, gravity: 0.0 },
             Mesh3d(fx.sphere.clone()),
@@ -414,6 +414,10 @@ fn muzzle_flash(mut commands: Commands, q: Query<(&Projectile, &Transform), Adde
             PointLight { color: Color::srgb(1.0, 0.75, 0.4), intensity: 150_000.0, range: 7.0, shadow_maps_enabled: false, ..default() },
         ));
         burst(&mut commands, &fx, &fx.gold_spark, at, ahead, 5, 7.0, 0.01, 4.0);
+        // Black powder: the big white puff that gives a Toradar's shooter away.
+        if p.item == "toradar" {
+            billow(&mut commands, &fx, &fx.smoke, at + ahead * 0.5, ahead, 22, 2.4, 0.2);
+        }
     }
 }
 
@@ -465,7 +469,7 @@ fn punch_camera(
     for p in &shots {
         if p.owner == me && p.astra.is_none() {
             // Each bow's own kick (radians of pitch) and rattle (metres), once per volley: the
-            // katta and the dunali wrench the view, the Vajra-9 chatters, the tamancha taps.
+            // katta and the dunali wrench the view, the Ladi-9 chatters, the tamancha taps.
             let (kick, rattle) = match p.item.as_str() {
                 "katta" => (0.040, 0.02),
                 "dunali" => (0.045, 0.025),
@@ -473,6 +477,10 @@ fn punch_camera(
                 "tamancha" => (0.016, 0.004),
                 "vajra9" => (0.011, 0.012),
                 "trishul_carbine" => (0.022, 0.008),
+                "saintalis" => (0.018, 0.012),
+                "thaana_slr" => (0.03, 0.012),
+                "thri_not_thri" => (0.05, 0.02),
+                "toradar" => (0.07, 0.03),
                 _ => (0.012, 0.0),
             };
             punch.kick = punch.kick.max(kick);

@@ -91,10 +91,26 @@ upper limb toward the thumb, edge or bow's back along the hand); see `crates/gam
 
 ---
 
+## Street guns
+
+Built by `tools/blender/weapons/street_guns.py` (`just street-guns`) from the free models in the
+licence table, read from `research/sniper-guns/models`; the guns are baked to one 1K texture set with
+two LODs like the rest of the armoury. The game's names are made up and the models carry no maker's
+marks. No free matchlock was on disk, so the Toradar is lofted in that script from general references
+to Mughal matchlocks: a long eight-sided barrel in brass bands, a slim lacquered stock. The scopes are
+lofted too, and taped on as a joke. Their rings are `tools/textures/scope.py`.
+
 ## Third-party assets and licences
 
 | Asset | Source | Licence | Used for |
 |---|---|---|---|
+| Flat Guns East and West, by Pichuliru | [East](https://opengameart.org/content/cc0-flat-guns-east), [West](https://opengameart.org/content/cc0-flat-guns-west) | CC0 | Ladi-9, Teen Tigada and Thaana SLR shapes (`tools/blender/weapons/street_guns.py`) |
+| Bolt action Rifle: Lee Enfield, by Lucian Pavel | [OpenGameArt](https://opengameart.org/content/bolt-action-rifle-lee-enfield) | CC0 | Thri-Not-Thri shape and textures |
+| AK, by loafbrr_1 | [OpenGameArt](https://opengameart.org/content/ak) | CC0 | Saintalis shape and textures |
+| The Free Firearm Sound Library (prepared set), Still North Media | [OpenGameArt](https://opengameart.org/content/the-free-firearm-sound-library) | CC0 | `gun_rifle_far`, `gun_auto_far`, `gun_thaana_slr`, `gun_saintalis` (`tools/audio/rifles.py`) |
+| EnfieldRifle.wav, by SuperPhat | [Freesound](https://freesound.org/people/SuperPhat/sounds/410442/) | CC0 | The shot in `gun_thri_not_thri` |
+| Mosin Nagant Bolt (fast), by rammbostein | [Freesound](https://freesound.org/people/rammbostein/sounds/267895/) | CC0 | The bolt in `gun_thri_not_thri` |
+| Bullet Crack.wav, by morganpurkis | [Freesound](https://freesound.org/people/morganpurkis/sounds/386854/) | CC0 | `bullet_crack` |
 | studio_small_08 HDRI (2k) | [Poly Haven](https://polyhaven.com/a/studio_small_08) | CC0 | Preview renders only |
 | studio_small_09 HDRI (2k) | [Poly Haven](https://polyhaven.com/a/studio_small_09) | CC0 | Preview renders (alternative) |
 
@@ -189,7 +205,8 @@ simulation state, with weapon actions layered on the torso by bone masks.
 
 ## Sound
 
-All synthesized in `tools/audio/sfx.py` (noise, filters, modal resonators, Karplus-Strong
+The rifles are free recordings, cut by `tools/audio/rifles.py` (see the licence table). All else is
+synthesized in `tools/audio/sfx.py` (noise, filters, modal resonators, Karplus-Strong
 strings), no recordings: footsteps on dirt, stone, wood, grass and water; sword whooshes and
 hits; bow twang and draw, arrow impacts; flesh and shield hits; hit markers; jump, land, glider;
 chest creak with coins, and a temple bell (ghanta) for the golden kalash; drinking, reloading;

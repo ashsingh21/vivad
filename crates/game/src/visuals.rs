@@ -57,6 +57,7 @@ impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DropRide>()
             .init_resource::<TimeOfDay>()
+            .init_resource::<crate::scope::Scope>()
             .add_systems(Startup, (setup_assets, setup_sky).chain())
             .add_systems(
                 Update,
@@ -87,12 +88,9 @@ impl Plugin for VisualsPlugin {
 }
 
 /// Baked models in assets/models/weapons, one per item (the arrow-quiver pickup shows the tarkash).
-pub const WEAPON_MODELS: [&str; 16] = [
+pub const WEAPON_MODELS: [&str; 20] = [
     "bat", "katta", "tamancha", "dunali", "gulel", "chakra", "brahmastra", "arrow", "tarkash", "agneyastra", "vayavyastra", "sanjeevani",
-    "soma", "amrita",
-    // The NCR arsenal borrows the Bharat bows' models (`model_for`): the Vajra-9 the Gandiva's,
-    // the Trishul Carbine the Sharanga's.
-    "gandiva", "sharanga",
+    "soma", "amrita", "vajra9", "trishul_carbine", "saintalis", "thaana_slr", "thri_not_thri", "toradar",
 ];
 
 /// The chakra model's radius (tools/blender/weapons/desi.py CHAKRA_R): its origin is the rim.
@@ -782,10 +780,14 @@ fn pose_warriors(
     mut gliders: Query<&mut Visibility, (With<Glider>, Without<WarriorVisual>)>,
     palette: Res<Palette>,
     db: Res<ItemDb>,
+    scope: Res<crate::scope::Scope>,
+    local: Query<(), With<shared::sim::LocalPlayer>>,
 ) {
     for (v, socket, mut visibility, children, mut vt) in &mut vis {
         let Ok((kin, inv, dead)) = sims.get(v.sim) else { continue };
-        *visibility = if kin.mode == MoveMode::Vimana { Visibility::Hidden } else { Visibility::Inherited };
+        // At a scope the eye is inside the head.
+        let hidden = kin.mode == MoveMode::Vimana || (scope.active() && local.contains(v.sim));
+        *visibility = if hidden { Visibility::Hidden } else { Visibility::Inherited };
         // Death and the skydiving arch are in the animation clips.
         if !dead && matches!(kin.mode, MoveMode::Gliding) {
             vt.rotation *= Quat::from_rotation_x(-0.25);
@@ -813,8 +815,6 @@ fn pose_warriors(
 pub fn model_for(id: &str) -> &str {
     match id {
         "arrows" => "tarkash",
-        "vajra9" => "gandiva",
-        "trishul_carbine" => "sharanga",
         "brahmastra_mk2" => "agneyastra",
         _ => id,
     }
@@ -940,12 +940,13 @@ pub enum Shot {
 
 /// Guns held to the shoulder (the `rifle_aim` clip) rather than out in the hand.
 pub fn long_gun(item: &str) -> bool {
-    item == "dunali"
+    matches!(item, "dunali" | "vajra9" | "trishul_carbine" | "saintalis" | "thaana_slr" | "thri_not_thri" | "toradar")
 }
 
 pub fn shot_kind(item: &str) -> Shot {
     match item {
-        "tamancha" | "dunali" | "katta" => Shot::Bullet,
+        "tamancha" | "katta" => Shot::Bullet,
+        id if long_gun(id) => Shot::Bullet,
         "gulel" => Shot::Pebble,
         _ => Shot::Arrow,
     }

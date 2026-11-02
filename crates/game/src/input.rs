@@ -106,6 +106,7 @@ impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Bindings>()
             .init_resource::<ActionState>()
+            .init_resource::<crate::scope::Scope>()
             .init_resource::<ShowPerf>()
             .init_resource::<crate::wheel::WheelOpen>()
             .add_systems(PreUpdate, (resolve_actions, write_intent, grab_cursor, meta_actions, vote).chain()
@@ -163,6 +164,7 @@ fn write_intent(
     cursor: Single<&CursorOptions>,
     line_wheel: Res<crate::wheel::WheelOpen>,
     time: Res<Time>,
+    scope: Res<crate::scope::Scope>,
     mut q: Query<(&mut PlayerIntent, &Kinematic), With<LocalPlayer>>,
     mut crouching: Local<bool>,
 ) {
@@ -187,7 +189,7 @@ fn write_intent(
 
     // Look.
     let ads = state.held(Act::Aim);
-    let sens = if ads { bindings.ads_sensitivity_scale } else { 1.0 };
+    let sens = if ads { bindings.ads_sensitivity_scale } else { 1.0 } / scope.0.max(1.0);
     if grabbed && !line_wheel.0 {
         intent.yaw -= motion.delta.x * bindings.mouse_sensitivity * sens;
         intent.pitch -= motion.delta.y * bindings.mouse_sensitivity * sens;

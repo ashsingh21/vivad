@@ -33,7 +33,7 @@
         "gulel": (
             name: "Gulel",
             lore: "Bachpan wali gulel. Poora kheencho, phir dekho kamaal.",
-            kind: Bow(damage: 95.0, interval: 1.2, speed: 170.0, gravity: 2.0, pellets: 1, spread_deg: 0.0,
+            kind: Bow(damage: 62.0, interval: 1.2, speed: 170.0, gravity: 2.0, pellets: 1, spread_deg: 0.0,
                       magazine: 1, reload: 2.2, charge: 0.9, headshot: 2.0),
             drops: [(Rare, 3.0), (Epic, 2.5), (Legendary, 1.2)],
         ),
@@ -50,6 +50,34 @@
             kind: Bow(damage: 19.0, interval: 0.48, speed: 105.0, gravity: 3.0, pellets: 3, spread_deg: 3.5,
                       magazine: 9, reload: 2.0, charge: 0.0, headshot: 1.45, bloom: 0.7, bloom_max: 2.4),
             drops: [(Rare, 4.0), (Epic, 1.5)],
+        ),
+        "saintalis": (
+            name: "Saintalis",
+            lore: "Har gali ka jaana pehchana naam. Rok rok ke chalao, warna goli aasman mein.",
+            kind: Bow(damage: 22.0, interval: 0.18, speed: 220.0, gravity: 4.0, pellets: 1, spread_deg: 0.7,
+                      magazine: 30, reload: 2.4, charge: 0.0, headshot: 1.6, bloom: 0.55, bloom_max: 3.2),
+            drops: [(Rare, 3.0), (Epic, 2.0), (Legendary, 1.0)],
+        ),
+        "thaana_slr": (
+            name: "Thaana SLR",
+            lore: "Thaane ke godown se nikli. Chashma laga hai, door tak dekhti hai.",
+            kind: Bow(damage: 34.0, interval: 0.45, speed: 280.0, gravity: 5.0, pellets: 1, spread_deg: 0.1,
+                      magazine: 10, reload: 2.6, charge: 0.0, headshot: 1.6, bloom: 0.25, bloom_max: 1.5, scope: 2.0, hip_spread: 2.0),
+            drops: [(Rare, 2.5), (Epic, 1.5)],
+        ),
+        "thri_not_thri": (
+            name: "Thri-Not-Thri",
+            lore: "Angrezon ke zamane ki rifle, upar tape se doorbeen. Ek goli, ek kahani.",
+            kind: Bow(damage: 70.0, interval: 1.4, speed: 400.0, gravity: 6.0, pellets: 1, spread_deg: 0.03,
+                      magazine: 5, reload: 3.0, charge: 0.0, headshot: 2.0, scope: 4.0, hip_spread: 3.0, ammo_cost: 2),
+            drops: [(Rare, 2.0), (Epic, 1.5), (Legendary, 0.8)],
+        ),
+        "toradar": (
+            name: "Toradar",
+            lore: "Mughal zamane ki toradar, upar videshi doorbeen. Dhuan bata dega tum kahan ho.",
+            kind: Bow(damage: 75.0, interval: 1.0, speed: 300.0, gravity: 9.0, pellets: 1, spread_deg: 0.02,
+                      magazine: 1, reload: 4.0, charge: 0.0, headshot: 2.0, scope: 6.0, hip_spread: 3.0, ammo_cost: 5),
+            drops: [(Divya, 0.6)],
         ),
         "brahmastra_mk2": (
             name: "Hazaari",

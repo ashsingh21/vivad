@@ -24,7 +24,7 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use rand::RngExt;
 
-use super::bots::BotBrain;
+use super::bots::{ANSWER_RANGE, BotBrain};
 use super::combat::Projectile;
 use super::movement::WALK_SPEED;
 use super::stance::Stance;
@@ -44,8 +44,9 @@ const NOTICE_NEAR: f32 = 0.12;
 const FORGET_SIGHT: f32 = 2.0;
 /// What a bot watching somebody keeps in view past its range.
 const KEEP: f32 = 1.3;
-/// How far a grudge sees, and the grudge time left (of 6 s) while the blow still gives its maker away.
-const GRUDGE_SIGHT: f32 = 70.0;
+/// How far a grudge sees, as far as a bot answers (past that it runs for cover), and the grudge time
+/// left (of 6 s) while the blow still gives its maker away.
+const GRUDGE_SIGHT: f32 = ANSWER_RANGE;
 const GRUDGE_FRESH: f32 = 5.5;
 /// Seconds a place stays known once nothing new has come from it.
 pub const MEMORY: f32 = 8.0;

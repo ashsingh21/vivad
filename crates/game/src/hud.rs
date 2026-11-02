@@ -45,7 +45,7 @@ impl Plugin for HudPlugin {
             .add_systems(PreUpdate, map_keys.in_set(MapKeys).after(bevy::input::InputSystems).before(crate::input::LocalInput).run_if(in_state(Screen::Match)))
             .add_systems(PreUpdate, map_cursor.after(crate::input::LocalInput).run_if(in_state(Screen::Match)))
             .add_systems(OnExit(Screen::Match), shut_big_map)
-            .add_systems(Update, (vitals, hotbar, prompts, feed, reticle, hit_marker, top_right, minimap, map_names, place_banner, perf))
+            .add_systems(Update, (vitals, hotbar, prompts, feed, reticle, crosshair_at_scope, hit_marker, top_right, minimap, map_names, place_banner, perf))
             // The first frame and each map swap; not each match, which only borrows the layout.
             .add_systems(Update, refresh_map.run_if(resource_changed::<shared::sim::MapSwaps>))
             .add_systems(PostUpdate, (damage_numbers, hurt_markers).after(crate::camera::CameraSystems));
@@ -82,6 +82,7 @@ const MAP_CREDIT: &str = "Map data © OpenStreetMap contributors";
 #[derive(Component)] struct ReticleBar(Vec2);
 /// One diagonal tick of the hit marker.
 #[derive(Component)] struct HitTick;
+#[derive(Component)] struct Crosshair;
 #[derive(Component)] struct TopRight;
 /// The sheet the map is drawn on: the picture, which zooms by its size and scrolls by a transform
 /// (no layout, no pixel snapping). The names and rings sit in percent of it, and the moving marks
@@ -220,8 +221,8 @@ fn build_hud(mut commands: Commands, fonts: Res<UiFonts>) {
         });
     // Crosshair.
     commands
-        .spawn(Node { position_type: PositionType::Absolute, width: percent(100.0), height: percent(100.0),
-                      justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() })
+        .spawn((Crosshair, Node { position_type: PositionType::Absolute, width: percent(100.0), height: percent(100.0),
+                                  justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() }))
         .with_children(|p| {
             // A zero-size anchor at the screen centre; the reticle's pieces hang off it.
             p.spawn(Node { width: px(0.0), height: px(0.0), ..default() }).with_children(|c| {
@@ -512,8 +513,8 @@ fn reticle(
     let Ok((inv, act, intent)) = q.single() else { return };
     let h = windows.iter().next().map(|w| w.height()).unwrap_or(900.0);
     let mut gap = BASE_GAP;
-    if let Some(ItemKind::Bow { spread_deg, .. }) = inv.current().map(|s| &db.get(&s.id).kind) {
-        let spread = (spread_deg + act.bloom).to_radians() * if intent.held(btn::AIM) { 0.6 } else { 1.0 };
+    if let Some(ItemKind::Bow { spread_deg, hip_spread, .. }) = inv.current().map(|s| &db.get(&s.id).kind) {
+        let spread = (spread_deg + hip_spread + act.bloom).to_radians() * if intent.held(btn::AIM) { 0.6 } else { 1.0 };
         // Camera vertical field of view 70 degrees (camera.rs).
         gap += spread.tan() / 35f32.to_radians().tan() * h / 2.0;
     }
@@ -526,6 +527,15 @@ fn reticle(
         n.top = px(c.y - l / 2.0);
         n.width = px(w);
         n.height = px(l);
+    }
+}
+
+/// A scope has its own reticle (crate::scope).
+fn crosshair_at_scope(scope: Res<crate::scope::Scope>, mut q: Query<&mut Visibility, With<Crosshair>>) {
+    if scope.is_changed() {
+        for mut v in &mut q {
+            *v = if scope.active() { Visibility::Hidden } else { Visibility::Inherited };
+        }
     }
 }
 

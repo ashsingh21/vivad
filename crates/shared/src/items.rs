@@ -67,6 +67,15 @@ pub enum ItemKind {
         bloom: f32,
         #[serde(default)]
         bloom_max: f32,
+        /// Magnification of a fixed scope, looked through while aiming; none below 1.
+        #[serde(default)]
+        scope: f32,
+        /// Extra degrees of spread when not looking through the scope: rifles are poor from the hip.
+        #[serde(default)]
+        hip_spread: f32,
+        /// Goli spent per round loaded (0 counts as 1): the big rifles ration the one shared pool.
+        #[serde(default)]
+        ammo_cost: u32,
     },
     /// Thrown astra that bursts into an area effect on impact.
     Astra { effect: AstraEffect, speed: f32, count: u32 },
@@ -74,6 +83,24 @@ pub enum ItemKind {
     Consumable { heal: f32, heal_cap: f32, shield: f32, use_time: f32, stack: u32 },
     /// Reserve arrows.
     Arrows { amount: u32 },
+}
+
+impl ItemKind {
+    /// The magnification of this weapon's fixed scope, if it has one.
+    pub fn scope(&self) -> Option<f32> {
+        match self {
+            ItemKind::Bow { scope, .. } if *scope > 1.0 => Some(*scope),
+            _ => None,
+        }
+    }
+
+    /// The goli it takes to load one round.
+    pub fn round_cost(&self) -> u32 {
+        match self {
+            ItemKind::Bow { ammo_cost, .. } => (*ammo_cost).max(1),
+            _ => 1,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

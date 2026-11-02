@@ -5,8 +5,8 @@ use bevy::prelude::*;
 use rand::RngExt;
 
 use super::{
-    Action, DamageCause, DamageMsg, Door, Eliminated, HEADSHOT_HEIGHT, Health, HitMsg, Inventory,
-    Kinematic, MoveMode, PlayerIntent, SimSet, Warrior, aim_ray, btn, hit_mask,
+    Action, DamageCause, DamageMsg, Door, EYE_OFFSET, Eliminated, HEADSHOT_HEIGHT, Health, HitMsg, Inventory,
+    Kinematic, MoveMode, PlayerIntent, SimSet, Warrior, aim_origin, aim_ray, btn, hit_mask,
 };
 use crate::items::{AstraEffect, ItemDb, ItemKind, ItemStack};
 use crate::sim::net::{NetId, NetMsg, Outbox, Remote, Shot, drop_loot};
@@ -139,7 +139,7 @@ fn use_items(
         let scale = stack.rarity.damage_scale();
         // A crouch brings the eye and the hands down with it.
         let body = tf.translation - Vec3::Y * intent.drop();
-        let (eye_origin, aim) = aim_ray(body, intent);
+        let (_, aim) = aim_ray(body, intent);
         let muzzle = body + Vec3::Y * 0.5 + intent.body_rotation() * Vec3::new(0.3, 0.0, -0.4);
 
         match &def.kind {
@@ -175,8 +175,9 @@ fn use_items(
                     act.since_attack = 0.0;
                 }
             }
-            ItemKind::Bow { damage: dmg, interval, speed, gravity, pellets, spread_deg, magazine, reload, charge, headshot, misfire, backfire, bloom, bloom_max } => {
+            ItemKind::Bow { damage: dmg, interval, speed, gravity, pellets, spread_deg, magazine, reload, charge, headshot, misfire, backfire, bloom, bloom_max, scope, hip_spread, .. } => {
                 let slot = inv.selected;
+                let cost = def.kind.round_cost();
                 act.bloom = (act.bloom - BLOOM_RECOVERY * dt).max(0.0);
                 // Reloading.
                 if act.reload_left > 0.0 {
@@ -184,8 +185,8 @@ fn use_items(
                     if act.reload_left <= 0.0 {
                         act.reload_left = 0.0;
                         let have = inv.slots[slot - 1].as_ref().map(|s| s.count).unwrap_or(0);
-                        let take = (magazine - have).min(inv.arrows);
-                        inv.arrows -= take;
+                        let take = (magazine - have).min(inv.arrows / cost);
+                        inv.arrows -= take * cost;
                         if let Some(s) = inv.slots[slot - 1].as_mut() {
                             s.count += take;
                         }
@@ -194,7 +195,7 @@ fn use_items(
                 }
                 let loaded = stack.count;
                 let wants_reload = intent.pressed(btn::RELOAD) && loaded < *magazine;
-                if (loaded == 0 || wants_reload) && inv.arrows > 0 {
+                if (loaded == 0 || wants_reload) && inv.arrows >= cost {
                     act.reload_left = *reload;
                     act.charge = 0.0;
                     continue;
@@ -234,15 +235,23 @@ fn use_items(
                     act.since_attack = 0.0;
                     continue;
                 }
-                // Aim at whatever the crosshair ray hits, fire from the bow.
+                // Aim at whatever the crosshair ray hits, fire from the bow. Only what is past the
+                // shooter counts: picked from behind them, a wall or a warrior at their back would
+                // turn the shot round.
+                // Through a scope the eye is on the line of the shot, which leaves just ahead of it.
                 let filter = SpatialQueryFilter::from_mask(hit_mask()).with_excluded_entities([entity]);
-                let target = spatial
-                    .cast_ray(eye_origin, Dir3::new(aim).unwrap_or(Dir3::NEG_Z), 600.0, true, &filter)
-                    .map(|h| eye_origin + aim * h.distance)
-                    .unwrap_or(eye_origin + aim * 600.0);
-                let base = (target - muzzle).normalize_or(aim);
                 let ads = intent.held(btn::AIM);
-                let spread = (spread_deg + act.bloom).to_radians() * if ads { 0.6 } else { 1.0 };
+                let scoped = ads && *scope > 1.0;
+                let at_eye = body + Vec3::Y * EYE_OFFSET;
+                let muzzle = if scoped { at_eye + aim * 0.2 } else { muzzle };
+                let eye = if scoped { at_eye } else { aim_origin(&spatial, body, intent, entity) };
+                let eye = eye + aim * (muzzle - eye).dot(aim).max(0.0);
+                let target = spatial
+                    .cast_ray(eye, Dir3::new(aim).unwrap_or(Dir3::NEG_Z), 600.0, true, &filter)
+                    .map(|h| eye + aim * h.distance)
+                    .unwrap_or(eye + aim * 600.0);
+                let base = (target - muzzle).normalize_or(aim);
+                let spread = if scoped { (spread_deg + act.bloom).to_radians() } else { (spread_deg + hip_spread + act.bloom).to_radians() * if ads { 0.6 } else { 1.0 } };
                 act.bloom = (act.bloom + bloom).min(*bloom_max);
                 for _ in 0..*pellets {
                     let yaw_off = rng.random_range(-1.0f32..1.0) * spread;
@@ -671,5 +680,40 @@ fn count_kills(mut msgs: MessageReader<KillMsg>, mut warriors: Query<&mut Warrio
         if let Ok(mut w) = warriors.get_mut(m.killer) {
             w.kills += 1;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use bevy::ecs::system::RunSystemOnce;
+    use bevy::time::TimeUpdateStrategy;
+
+    use super::*;
+    use crate::sim::Layer;
+
+    /// The aim ray starts at the camera: 3.4 m back in the open, in front of a wall at the back.
+    #[test]
+    fn a_wall_behind_the_shooter_stays_behind_the_aim_ray() {
+        let origin_with = |wall: bool| {
+            let mut app = App::new();
+            app.add_plugins((MinimalPlugins, TransformPlugin, AssetPlugin::default(), bevy::mesh::MeshPlugin))
+                .add_plugins(PhysicsPlugins::default())
+                .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)));
+            if wall {
+                app.world_mut().spawn((RigidBody::Static, Collider::cuboid(20.0, 20.0, 0.4), Transform::from_xyz(0.0, 0.0, 1.5), CollisionLayers::new(Layer::World, LayerMask::ALL)));
+            }
+            app.finish();
+            app.cleanup();
+            for _ in 0..5 {
+                app.update();
+            }
+            let me = app.world_mut().spawn_empty().id();
+            app.world_mut().run_system_once(move |spatial: SpatialQuery| aim_origin(&spatial, Vec3::ZERO, &PlayerIntent::default(), me)).unwrap()
+        };
+        assert!((origin_with(false).z - crate::sim::CAMERA_DISTANCE).abs() < 1e-3);
+        let pulled_in = origin_with(true);
+        assert!(pulled_in.z < 1.3, "the aim ray starts behind the wall, at {pulled_in}");
     }
 }

@@ -34,6 +34,8 @@ pub const EYE_OFFSET: f32 = 0.72;
 /// Over-the-shoulder camera, shared so server-side aim matches the client crosshair.
 pub const CAMERA_DISTANCE: f32 = 3.4;
 pub const CAMERA_SHOULDER: f32 = 0.65;
+/// How far behind the body the camera sits while aiming, on the same line as CAMERA_DISTANCE.
+pub const ADS_DISTANCE: f32 = 1.9;
 pub const HEADSHOT_HEIGHT: f32 = 0.5;
 
 #[derive(PhysicsLayer, Clone, Copy, Debug, Default)]
@@ -632,4 +634,21 @@ pub fn aim_ray(center: Vec3, intent: &PlayerIntent) -> (Vec3, Vec3) {
     let pivot = center + Vec3::Y * EYE_OFFSET;
     let origin = pivot + rot * Vec3::new(CAMERA_SHOULDER, 0.0, CAMERA_DISTANCE);
     (origin, rot * Vec3::NEG_Z)
+}
+
+/// `offset` from `pivot`, the follow camera's place, pulled in front of any wall between the two.
+pub fn camera_spot(spatial: &SpatialQuery, pivot: Vec3, offset: Vec3, me: Entity) -> Vec3 {
+    let Ok((dir, len)) = Dir3::new_and_length(offset) else { return pivot + offset };
+    let filter = SpatialQueryFilter::from_mask(solid_mask()).with_excluded_entities([me]);
+    match spatial.cast_ray(pivot, dir, len, true, &filter) {
+        Some(hit) => pivot + dir * (hit.distance - 0.25).max(0.2),
+        None => pivot + offset,
+    }
+}
+
+/// Where the crosshair's ray really starts for a warrior at `center`: at the camera, aiming or
+/// not, in front of a wall at their back. (`aim_ray` is the same line with nothing in the way.)
+pub fn aim_origin(spatial: &SpatialQuery, center: Vec3, intent: &PlayerIntent, me: Entity) -> Vec3 {
+    let behind = if intent.held(btn::AIM) { ADS_DISTANCE } else { CAMERA_DISTANCE };
+    camera_spot(spatial, center + Vec3::Y * EYE_OFFSET, intent.aim_rotation() * Vec3::new(CAMERA_SHOULDER, 0.0, behind), me)
 }

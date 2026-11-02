@@ -75,6 +75,8 @@ const DOOR_TRIES: f32 = 8.0;
 /// How far off a bot with no bow makes for one on the NCR, metres: chests are hundreds of metres
 /// apart there, and a bot that landed between them had nothing else to look for.
 const GUN_SIGHT: f32 = 220.0;
+/// A bot shoots back at whoever hit it out to here; from farther off it runs for cover instead.
+pub(super) const ANSWER_RANGE: f32 = 120.0;
 
 #[derive(Component, Clone, Debug)]
 pub struct BotBrain {
@@ -541,7 +543,7 @@ pub(crate) fn drive_bots(
         }
         let is_bow = |id: &str| matches!(db.get(id).kind, ItemKind::Bow { .. });
         let holds_bow = inv.slots.iter().flatten().any(|s| is_bow(&s.id));
-        let has_ranged = inv.slots.iter().flatten().any(|s| is_bow(&s.id) && (s.count > 0 || inv.arrows > 0));
+        let has_ranged = inv.slots.iter().flatten().any(|s| is_bow(&s.id) && (s.count > 0 || inv.arrows >= db.get(&s.id).kind.round_cost()));
         if kin.mode == MoveMode::Ground && brain.landed.is_none() {
             brain.landed = Some(m.elapsed);
         }
@@ -661,7 +663,7 @@ pub(crate) fn drive_bots(
                 }
                 let d = ot.translation.distance(pos);
                 let grudge = brain.provoked.is_some_and(|p| p.0 == oe);
-                if (d > engage_range && !(grudge && d < 70.0)) || best.is_some_and(|b| b.1 < d) {
+                if (d > engage_range && !(grudge && d < ANSWER_RANGE)) || best.is_some_and(|b| b.1 < d) {
                     continue;
                 }
                 if brain.senses.sees(oe) {
@@ -851,23 +853,30 @@ pub(crate) fn drive_bots(
         // Deep in the Aandhi with the fight out of reach, running beats shooting.
         let burning = zone.outside(pos) && pos.xz().distance(zone.center) > zone.radius + 8.0;
         let target = target.filter(|(_, t, _)| !(burning && t.translation.distance(pos) > 14.0));
-        // Losing: break off and run for the far side of a block, then drink and think again.
+        // Losing, or shot from too far to answer: break off and run for the far side of a block,
+        // then drink and think again.
         // Not out of the ring, and not at all once the ring is too small to run anywhere.
         if zone.outside(pos) {
             brain.flee = 0.0;
         }
-        if let Some((_, ttf, _)) = target.filter(|_| health.hp < FLEE_HP && !brain.pressed && brain.flee <= 0.0 && zone.radius > 60.0) {
-            let away = (pos - ttf.translation).xz().normalize_or(Vec2::X);
+        let losing = target.filter(|_| health.hp < FLEE_HP).map(|(_, t, _)| t.translation);
+        // The blow gave its maker's place away (`senses`): that is all a far rifle leaves to go on.
+        let sniper = brain.provoked.and_then(|(who, _)| brain.senses.known.iter().find(|k| k.who == who)).map(|k| k.pos).filter(|at| at.distance(pos) >= ANSWER_RANGE);
+        if let Some(from) = losing.or(sniper).filter(|_| !brain.pressed && brain.flee <= 0.0 && zone.radius > 60.0) {
+            let away = (pos - from).xz().normalize_or(Vec2::X);
             let spot = pos.xz() + Vec2::from_angle(rng.random_range(-0.6..0.6)).rotate(away) * 45.0;
             let spot = snap(spot).unwrap_or(spot);
             // Out of its sight if there is such a place near; a long way off if not.
-            let threat = senses::eye(ttf.translation, 0.0);
+            let threat = senses::eye(from, 0.0);
             let hidden = mapped.then(|| senses::hiding_spot(&spatial, &walkable, &layout, threat, pos.xz(), 24.0, 0.0)).flatten();
             let spot = hidden.unwrap_or(spot);
-            if zone.target_center.distance(spot) < zone.target_radius * 0.9 && zone.center.distance(spot) < zone.radius * 0.9 {
+            // A short dash from a far rifle may leave the coming ring; a longer fall-back may not.
+            let coming = losing.is_none() || zone.target_center.distance(spot) < zone.target_radius * 0.9;
+            if coming && zone.center.distance(spot) < zone.radius * 0.9 {
                 brain.goal = Some(Vec3::new(spot.x, 0.0, spot.y));
                 brain.goal_time = 0.0;
                 brain.target = None;
+                brain.rest = 0.0;
                 brain.flee = rng.random_range(6.0..10.0);
                 brain.senses.tally.flights += 1;
                 brain.senses.tally.hid += hidden.is_some() as u32;
@@ -1036,9 +1045,10 @@ fn choose_weapon(inv: &Inventory, db: &ItemDb, dist: f32) -> usize {
     let mut best = (0usize, if dist < 3.0 { 10.0 } else { 0.0 });
     for (i, s) in inv.slots.iter().enumerate() {
         let Some(s) = s else { continue };
-        let score = match &db.get(&s.id).kind {
+        let kind = &db.get(&s.id).kind;
+        let score = match kind {
             ItemKind::Bow { pellets, charge, .. } => {
-                let usable = s.count > 0 || inv.arrows > 0;
+                let usable = s.count > 0 || inv.arrows >= kind.round_cost();
                 if !usable {
                     0.0
                 } else if *pellets > 1 {

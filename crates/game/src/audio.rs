@@ -1,7 +1,8 @@
 //! Sound: positional one-shots for what happens in the world, looping beds for where the local
 //! warrior is (vimana, freefall, glide, zone wall, river, the day around them).
 //!
-//! Every sound is synthesized by tools/audio/sfx.py. Events come from the simulation's messages
+//! Sounds are synthesized by tools/audio/sfx.py, the rifles cut from free recordings by
+//! tools/audio/rifles.py. Events come from the simulation's messages
 //! and from state changes noticed here (a swing starting, landing, a chest lid going up), so the
 //! sim stays free of presentation. Distance attenuation is rodio's 1/d, scaled by
 //! `SPATIAL_SCALE` so full volume reaches out to ~6 m; beyond `cull` metres a sound isn't played.
@@ -30,7 +31,7 @@ impl Plugin for SoundPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Played>()
             .add_systems(Startup, load)
-            .add_systems(Update, (listener, footsteps, warrior_events, combat_events, world_events, beds, log_counts));
+            .add_systems(Update, (listener, footsteps, warrior_events, combat_events, world_events, beds, log_counts, late_sounds));
         // Automated runs (autoplay, tours) shouldn't sound through the speakers.
         if std::env::var("VIVAD_MUTE").is_ok() {
             app.insert_resource(GlobalVolume::new(Volume::Linear(0.0)));
@@ -46,7 +47,13 @@ const UI: f32 = 0.5;
 const ITEM: f32 = 0.6;
 const BED: f32 = 0.45;
 
-const NAMES: [&str; 67] = [
+/// Rifles carry across the map. Past `FAR_FROM` a rifle's far take plays instead of its near one.
+const RIFLE_REACH: f32 = 500.0;
+const FAR_FROM: f32 = 90.0;
+/// Metres a second: a far shot is heard late.
+const SOUND_SPEED: f32 = 343.0;
+
+const NAMES: [&str; 73] = [
     "step_dirt_0", "step_dirt_1", "step_dirt_2", "step_dirt_3", "step_stone_0", "step_stone_1", "step_stone_2", "step_stone_3",
     "step_wood_0", "step_wood_1", "step_wood_2", "step_wood_3", "step_grass_0", "step_grass_1", "step_grass_2", "step_grass_3",
     "step_water_0", "step_water_1", "step_water_2", "step_water_3", "sword_whoosh_0", "sword_whoosh_1", "sword_whoosh_2",
@@ -55,6 +62,7 @@ const NAMES: [&str; 67] = [
     "bullet_impact_wood", "katta_click", "katta_backfire", "chakra_throw", "brahmastra_blast", "hit_flesh", "hit_shield", "hitmarker", "hitmarker_head", "hurt", "jump", "land", "glider_open",
     "glide_loop", "freefall_loop", "vimana_loop", "chest_open", "kalash_open", "pickup", "drink", "reload", "fire_ignite",
     "fire_loop", "wind_gust", "throw", "zone_warn", "zone_loop", "kill", "eliminated", "victory", "amb_day", "amb_river",
+    "gun_thri_not_thri", "gun_thaana_slr", "gun_saintalis", "gun_rifle_far", "gun_auto_far", "bullet_crack",
 ];
 
 #[derive(Resource)]
@@ -92,6 +100,42 @@ fn log_counts(time: Res<Time>, played: Res<Played>, mut next: Local<f32>) {
     let mut v: Vec<_> = played.0.iter().collect();
     v.sort();
     info!("sounds played: {v:?}");
+}
+
+/// A rifle's far take, and at what pitch.
+fn far_take(item: &str) -> Option<(&'static str, f32)> {
+    match item {
+        "thri_not_thri" => Some(("gun_rifle_far", 1.0)),
+        "thaana_slr" => Some(("gun_rifle_far", 1.12)),
+        "toradar" => Some(("gun_rifle_far", 0.75)),
+        "saintalis" | "trishul_carbine" => Some(("gun_auto_far", 1.0)),
+        _ => None,
+    }
+}
+
+/// A far shot on its way through the air.
+#[derive(Component)]
+struct LateSound {
+    wait: f32,
+    sound: Handle<AudioSource>,
+    volume: f32,
+    speed: f32,
+}
+
+fn late_sounds(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &mut LateSound)>) {
+    for (e, mut s) in &mut q {
+        s.wait -= time.delta_secs();
+        if s.wait <= 0.0 {
+            commands.entity(e).remove::<LateSound>().insert((
+                AudioPlayer(s.sound.clone()),
+                PlaybackSettings::DESPAWN
+                    .with_spatial(true)
+                    .with_spatial_scale(SpatialScale::new(SPATIAL_SCALE))
+                    .with_volume(Volume::Linear(s.volume))
+                    .with_speed(s.speed),
+            ));
+        }
+    }
 }
 
 fn listener(mut commands: Commands, cam: Query<Entity, (With<MainCamera>, Without<SpatialListener>)>) {
@@ -132,6 +176,26 @@ impl Player<'_, '_> {
                 .with_volume(Volume::Linear(volume))
                 .with_speed(speed),
             Transform::from_translation(pos),
+        ));
+    }
+
+    fn distance(&self, pos: Vec3) -> f32 {
+        self.ear.iter().next().map_or(0.0, |t| t.translation().distance(pos))
+    }
+
+    /// A shot from far off: distance falloff would lose the near take, so the far take plays close
+    /// by the ear from the shot's direction, quieter with distance and late by the speed of sound.
+    fn far(&mut self, name: &str, pos: Vec3, volume: f32, reach: f32, pitch: f32) {
+        let ear = self.ear.iter().next().map(|t| t.translation()).unwrap_or(pos);
+        let d = ear.distance(pos);
+        let Some(h) = self.sfx.0.get(name) else { return };
+        if d > reach {
+            return;
+        }
+        *self.played.0.entry(name.to_owned()).or_default() += 1;
+        self.commands.spawn((
+            LateSound { wait: d / SOUND_SPEED, sound: h.clone(), volume: volume * (1.0 - d / (reach * 1.15)), speed: pitch },
+            Transform::from_translation(ear + (pos - ear).normalize_or(Vec3::NEG_Z) * 5.0),
         ));
     }
 
@@ -293,6 +357,8 @@ fn combat_events(
     terrain: Query<(), With<MapTerrain>>,
     layout: Res<MapLayout>,
     mut stuck: Local<HashSet<Entity>>,
+    mut cracked: Local<HashSet<Entity>>,
+    time: Res<Time>,
 ) {
     let me = local.iter().next();
     // One report per shot, however many pellets it fires.
@@ -305,19 +371,27 @@ fn combat_events(
         match p.astra {
             None => {
                 let heavy = matches!(db.get(&p.item).kind, ItemKind::Bow { charge, .. } if charge > 0.0);
-                // (sample, reach, pitch, volume): the Vajra-9 is the tamancha's shot pitched up
-                // and clipped short, the Trishul Carbine's burst the same shot pitched down.
+                // (sample, reach, pitch, volume): the Ladi-9 is the tamancha's shot pitched up
+                // and clipped short.
                 let (sound, reach, pitch, vol) = match p.item.as_str() {
                     "tamancha" => ("gun_tamancha", 200.0, 1.0, 1.0),
                     "dunali" => ("gun_dunali", 220.0, 1.0, 1.0),
                     "katta" => ("gun_katta", 220.0, 1.0, 1.0),
                     "gulel" => ("gulel_release", 60.0, 1.0, 1.0),
                     "vajra9" => ("gun_tamancha", 180.0, 1.45, 0.75),
-                    "trishul_carbine" => ("gun_tamancha", 210.0, 0.8, 1.1),
+                    "trishul_carbine" => ("gun_saintalis", RIFLE_REACH, 1.15, 0.9),
+                    "saintalis" => ("gun_saintalis", RIFLE_REACH, 1.0, 1.0),
+                    "thaana_slr" => ("gun_thaana_slr", RIFLE_REACH, 1.0, 1.0),
+                    "thri_not_thri" => ("gun_thri_not_thri", RIFLE_REACH, 1.0, 1.1),
+                    // Black powder: the dunali's boom, deeper.
+                    "toradar" => ("gun_dunali", RIFLE_REACH, 0.72, 1.2),
                     _ if heavy => ("bow_release_heavy", 120.0, 1.0, 1.0),
                     _ => ("bow_release", 120.0, 1.0, 1.0),
                 };
-                play.at_pitched(sound, tf.translation, WEAPON * vol, reach, pitch);
+                match far_take(&p.item) {
+                    Some((far, tone)) if play.distance(tf.translation) > FAR_FROM => play.far(far, tf.translation, WEAPON * vol, reach, tone),
+                    _ => play.at_pitched(sound, tf.translation, WEAPON * vol, reach, pitch),
+                }
             }
             Some(_) if p.item == "chakra" => play.at("chakra_throw", tf.translation, WEAPON, 80.0),
             Some(_) => play.at("throw", tf.translation, WEAPON, 60.0),
@@ -326,6 +400,21 @@ fn combat_events(
     // Arrows that just stuck into the world.
     let live: HashSet<Entity> = arrows.iter().map(|(e, ..)| e).collect();
     stuck.retain(|e| live.contains(e));
+    cracked.retain(|e| live.contains(e));
+    // A rifle bullet going past the ear.
+    for (e, p, tf) in &arrows {
+        let step = p.velocity * time.delta_secs();
+        if p.stuck || Some(p.owner) == me || cracked.contains(&e) || p.velocity.length() < 200.0 {
+            continue;
+        }
+        let from = tf.translation - step;
+        let along = |at: f32| from + step * at;
+        let nearest = (0..=4).map(|k| along(k as f32 / 4.0)).min_by(|a, b| play.distance(*a).total_cmp(&play.distance(*b)));
+        if let Some(at) = nearest.filter(|at| play.distance(*at) < 5.0) {
+            cracked.insert(e);
+            play.at("bullet_crack", at, IMPACT, 8.0);
+        }
+    }
     for (e, p, tf) in &arrows {
         if p.stuck && stuck.insert(e) {
             let soft = matches!(surface(&spatial, &blocks, &terrain, &layout, tf.translation), "wood" | "grass" | "dirt" | "sand");

@@ -85,6 +85,14 @@ anims:
 sfx:
     python3 tools/audio/sfx.py --report
 
+# The rifles' sounds, cut from free recordings (research/sniper-guns/sounds).
+rifle-sfx:
+    {{blender}} -b --factory-startup -P tools/audio/rifles.py 2>&1 | grep -E '^\[|Error|Traceback' || true
+
+# The long guns, from free models (research/sniper-guns/models) and a few lofted parts.
+street-guns:
+    {{blender}} -b --factory-startup -P tools/blender/weapons/street_guns.py 2>&1 | grep -E '^\[|Error|Traceback' || true
+
 # Trees and bushes
 nature:
     {{blender}} -b --factory-startup -P tools/blender/nature/trees.py 2>&1 | grep -E '^\[|Error|Traceback' || true
