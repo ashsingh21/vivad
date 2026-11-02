@@ -201,6 +201,8 @@ pub struct UltraSurfaces {
     parallax: bool,
     /// Whether the facades are dressed with their depth (a level with `Quality::is_ultra`).
     relief: bool,
+    /// Frames left of asking every mesh to look up its material again (`sync`).
+    refresh: u32,
 }
 
 impl Default for UltraSurfaces {
@@ -215,6 +217,7 @@ impl Default for UltraSurfaces {
             allowed: std::env::var("VIVAD_NO_SURFACES").is_err(),
             parallax: std::env::var("VIVAD_NO_PARALLAX").is_err(),
             relief: false,
+            refresh: 0,
         }
     }
 }
@@ -282,10 +285,28 @@ impl UltraSurfaces {
     }
 }
 
+/// Frames a change of surfaces keeps meshes looking up their materials: a material can take a few
+/// frames to be ready on the GPU, once its images are.
+const REFRESH_FRAMES: u32 = 30;
+
 /// Starts the textures loading the first time a level wants them, and flips the materials once
 /// they have all arrived; a change of level dresses them again, for the parallax. If one can't be
 /// read (a GPU without BC formats, say), the level keeps the plain surfaces and says so once.
-fn sync(quality: Res<Quality>, assets: Res<AssetServer>, mut images: ResMut<Assets<Image>>, mut state: ResMut<UltraSurfaces>, mut materials: ResMut<Assets<StandardMaterial>>) {
+///
+/// Bevy keeps a material's place in its bindless slabs on the mesh, and takes it only when the mesh
+/// itself changes. New textures can move a material to another slab, when its slab is full, and then
+/// a mesh that stood still goes on drawing with whatever took its place: walls with another
+/// material's textures, differently each run. So after a flip every mesh is marked as changed for
+/// a moment, by its visibility: the cheapest thing that makes the renderer read a mesh again.
+#[allow(clippy::too_many_arguments)]
+fn sync(
+    quality: Res<Quality>,
+    assets: Res<AssetServer>,
+    mut images: ResMut<Assets<Image>>,
+    mut state: ResMut<UltraSurfaces>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut drawn: Query<&mut ViewVisibility, With<Mesh3d>>,
+) {
     let want = quality.surfaces() && state.allowed;
     if want && state.textures.is_none() {
         state.textures = Some(Textures::load(&assets, &mut images));
@@ -314,6 +335,7 @@ fn sync(quality: Res<Quality>, assets: Res<AssetServer>, mut images: ResMut<Asse
             continue;
         }
         let Some(mut m) = materials.get_mut(&e.handle) else { continue };
+        state.refresh = REFRESH_FRAMES;
         if want {
             if !shown {
                 e.plain = Some(m.clone());
@@ -324,6 +346,12 @@ fn sync(quality: Res<Quality>, assets: Res<AssetServer>, mut images: ResMut<Asse
         }
     }
     state.entries = entries;
+    if state.refresh > 0 {
+        state.refresh -= 1;
+        for mut visibility in &mut drawn {
+            visibility.set_changed();
+        }
+    }
 }
 
 /// The ground on a city map is one mesh under several surfaces, so its detail is chosen per pixel
@@ -602,6 +630,9 @@ fn sync_ground(
     let want = state.on && !layout.terrain.ground.is_empty();
     let flipped = want != state.ground_on;
     state.ground_on = want;
+    if flipped {
+        state.refresh = REFRESH_FRAMES;
+    }
     for children in &terrain {
         if !flipped && !children.is_changed() {
             continue;
