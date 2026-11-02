@@ -8,7 +8,7 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::combat::{KillMsg, Projectile, feed_line};
+use super::combat::{KillMsg, Projectile};
 use super::flow::Match;
 use super::loot::{Chest, Claims, Gone, Pickup, PickupId, open_chest, revoke, spawn_pickup};
 use super::{
@@ -26,7 +26,7 @@ pub type PeerId = u64;
 pub struct Peers {
     pub local: PeerId,
     pub all: Vec<PeerId>,
-    /// The players' chosen names (a peer without one plays as "Warrior N").
+    /// The players' chosen names (a peer without one plays as "Khiladi N").
     pub names: std::collections::BTreeMap<PeerId, String>,
 }
 
@@ -81,7 +81,7 @@ pub enum NetMsg {
     /// The attacker's peer saw its hit land on a warrior owned by the receiver, who applies it.
     Hit { target: NetId, by: NetId, amount: f32, headshot: bool, item: String },
     /// A warrior fell on its owner's peer: everyone marks it, credits the kill and drops its loot.
-    Down { id: NetId, by: Option<NetId>, placement: u32, at: Vec3, drops: Vec<ItemStack>, cause: DamageCause },
+    Down { id: NetId, by: Option<NetId>, placement: u32, at: Vec3, drops: Vec<ItemStack>, cause: DamageCause, headshot: bool },
     /// A door took damage from one of the sender's warriors (index in `MapLayout::doors`).
     DoorHit { index: usize, amount: f32 },
     /// One of the sender's warriors opened a chest (index in `MapLayout::chests`).
@@ -101,6 +101,8 @@ pub enum NetMsg {
     /// The sender, heir to `from`, has taken bot `id` over because `from` went silent (see
     /// `stand_in`).
     TakeOver { id: NetId, from: PeerId },
+    /// One of the sender's warriors said line `line` (an id in `Lines`): a preset, never typed text.
+    Say { id: NetId, line: String, wheel: bool },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -201,10 +203,11 @@ fn apply_inbox(
         (&mut LastUpdate, &mut Transform, &mut Kinematic, &mut PlayerIntent, &mut Health, &mut Inventory, &mut Action, &mut NetPose),
         With<Remote>,
     >,
-    names: Query<&Warrior>,
     mut doors: Query<(Entity, &mut Door)>,
     mut damage: MessageWriter<DamageMsg>,
-    mut feed: MessageWriter<FeedMsg>,
+    mut fell: MessageWriter<super::talk::FellMsg>,
+    mut said: MessageWriter<super::talk::SayMsg>,
+    lines: Res<crate::lines::Lines>,
     mut kills: MessageWriter<KillMsg>,
     mut votes: ResMut<super::flow::MapVotes>,
 ) {
@@ -277,7 +280,7 @@ fn apply_inbox(
                 }
                 damage.write(DamageMsg { target: victim, amount, source: Some(attacker), headshot, cause: DamageCause::Weapon(item) });
             }
-            NetMsg::Down { id, by, placement, at, drops, cause } => {
+            NetMsg::Down { id, by, placement, at, drops, cause, headshot } => {
                 let Some((e, owner, true, false)) = find(id) else { continue };
                 if owner != from {
                     continue;
@@ -285,8 +288,7 @@ fn apply_inbox(
                 let killer = by.and_then(find).map(|(k, ..)| k);
                 commands.entity(e).insert(Eliminated { placement, by: killer }).remove::<Collider>();
                 drop_loot(&mut commands, id, at, drops);
-                let name = |e: Entity| names.get(e).map(|w| w.name.as_str()).unwrap_or_default();
-                feed.write(FeedMsg(feed_line(name(e), &cause, killer.map(name), &db)));
+                fell.write(super::talk::FellMsg { victim: e, by: killer, cause, placement, headshot, at });
                 if let Some(k) = killer.filter(|k| *k != e) {
                     kills.write(KillMsg { killer: k });
                 }
@@ -311,6 +313,12 @@ fn apply_inbox(
             }
             NetMsg::Vote { map } => {
                 votes.0.insert(from, crate::map::MapId::from_index(map));
+            }
+            NetMsg::Say { id, line, wheel } => {
+                let Some((who, owner, true, _)) = find(id) else { continue };
+                if owner == from && super::talk::sayable(&lines, &line) {
+                    said.write(super::talk::SayMsg { who, line, wheel });
+                }
             }
             // Handled by `apply_loot` and `listen`.
             NetMsg::ChestOpened { .. } | NetMsg::Took { .. } | NetMsg::Dropped { .. } | NetMsg::TakeOver { .. } => {}
@@ -465,6 +473,7 @@ fn depart(
     config: Res<MatchConfig>,
     m: Res<Match>,
     mut q: Query<(Entity, &NetId, &mut Owner, &Warrior, Has<Eliminated>)>,
+    lines: Res<crate::lines::Lines>,
     mut feed: MessageWriter<FeedMsg>,
 ) {
     let mut placement = m.alive;
@@ -486,7 +495,8 @@ fn depart(
             } else if !down {
                 commands.entity(e).insert(Eliminated { placement, by: None }).remove::<Collider>();
                 placement = placement.saturating_sub(1);
-                feed.write(FeedMsg(format!("{} left the match", w.name)));
+                let who = crate::lines::Person { name: &w.name, you: false };
+                feed.write(FeedMsg(crate::lines::about(lines.pick("left", m.seed, id.0 as u64), None, Some(who), &[])));
             }
         }
         peers.all.retain(|p| *p != gone);

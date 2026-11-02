@@ -764,7 +764,7 @@ fn infrastructure(b: &mut Builder) {
 }
 pub fn generate(seed: u64) -> MapLayout {
     let mut map = MapLayout {
-        name: "NCR / Kali Yuga".into(),
+        name: "Dilli NCR".into(),
         style: MapStyle::Ncr,
         river: River::Sine { x0: 0.0, amp: 16.0 * WORLD_SCALE, wavelength: 160.0 * WORLD_SCALE, half_width: RIVER_HALF_WIDTH },
         half_extent: HALF,

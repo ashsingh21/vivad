@@ -5,11 +5,12 @@ use bevy::prelude::*;
 use rand::RngExt;
 
 use super::{
-    Action, DamageCause, DamageMsg, Door, Eliminated, FeedMsg, HEADSHOT_HEIGHT, Health, HitMsg, Inventory,
+    Action, DamageCause, DamageMsg, Door, Eliminated, HEADSHOT_HEIGHT, Health, HitMsg, Inventory,
     Kinematic, MoveMode, PlayerIntent, SimSet, Warrior, aim_ray, btn, hit_mask,
 };
 use crate::items::{AstraEffect, ItemDb, ItemKind, ItemStack};
 use crate::sim::net::{NetId, NetMsg, Outbox, Remote, Shot, drop_loot};
+use crate::sim::talk::FellMsg;
 
 pub struct CombatPlugin;
 
@@ -557,16 +558,15 @@ fn apply_damage(
     mut commands: Commands,
     mut msgs: MessageReader<DamageMsg>,
     // Each peer applies damage only to its own warriors (hits on others go to their owners).
-    mut targets: Query<(&mut Health, &Transform, &mut Inventory, &Warrior), (Without<Eliminated>, Without<Remote>)>,
+    mut targets: Query<(&mut Health, &Transform, &mut Inventory), (Without<Eliminated>, Without<Remote>)>,
     remote_targets: Query<(&NetId, &Health, &Transform), (With<Remote>, Without<Eliminated>)>,
     net_ids: Query<&NetId>,
     mut outbox: ResMut<Outbox>,
     mut doors: Query<&mut Door>,
     alive: Query<(), (With<Warrior>, Without<Eliminated>)>,
     db: Res<ItemDb>,
-    mut feed: MessageWriter<FeedMsg>,
+    mut fell: MessageWriter<FellMsg>,
     mut hits: MessageWriter<HitMsg>,
-    names: Query<&Warrior>,
     mut kill_msgs: MessageWriter<KillMsg>,
     mut pause: ResMut<super::SimulationPause>,
 ) {
@@ -597,7 +597,7 @@ fn apply_damage(
             });
             continue;
         }
-        let Ok((mut h, tf, mut inv, w)) = targets.get_mut(msg.target) else { continue };
+        let Ok((mut h, tf, mut inv)) = targets.get_mut(msg.target) else { continue };
         if h.hp <= 0.0 {
             continue;
         }
@@ -634,37 +634,14 @@ fn apply_damage(
             }
             let id = net_ids.get(msg.target).copied().unwrap_or(NetId(u32::MAX));
             let by = msg.source.and_then(|s| net_ids.get(s).ok()).copied();
-            outbox.0.push(NetMsg::Down { id, by, placement, at: tf.translation, drops: drops.clone(), cause: msg.cause.clone() });
+            outbox.0.push(NetMsg::Down { id, by, placement, at: tf.translation, drops: drops.clone(), cause: msg.cause.clone(), headshot: msg.headshot });
             drop_loot(&mut commands, id, tf.translation, drops);
-            let killer = msg.source.and_then(|s| names.get(s).ok()).map(|k| k.name.as_str());
-            feed.write(FeedMsg(feed_line(&w.name, &msg.cause, killer, &db)));
+            fell.write(FellMsg { victim: msg.target, by: msg.source, cause: msg.cause.clone(), placement, headshot: msg.headshot, at: tf.translation });
             if let Some(src) = msg.source {
                 if src != msg.target {
                     kill_msgs.write(KillMsg { killer: src });
                 }
             }
-        }
-    }
-}
-
-/// "Pappu ne Bunty ko tapka diya (Dunali)", in this peer's names. Hinglish built so it never
-/// needs the victim's gender.
-/// The local player is "You": "Tumne ...", "... tumhe ...", "Tumhara ...".
-pub fn feed_line(victim: &str, cause: &DamageCause, killer: Option<&str>, db: &ItemDb) -> String {
-    let whom = if victim == "You" { "tumhe".to_string() } else { format!("{victim} ko") };
-    match cause {
-        DamageCause::Pralaya => format!("Aandhi ne {whom} uda diya"),
-        DamageCause::Fall if victim == "You" => "Tumhara panga zameen se ho gaya".to_string(),
-        DamageCause::Fall => format!("{victim} ka panga zameen se ho gaya"),
-        // A katta that blew back on its owner.
-        DamageCause::Weapon(id) if killer == Some(victim) && victim == "You" => format!("{} ne tumhe hi tapka diya!", db.get(id).name),
-        DamageCause::Weapon(id) if killer == Some(victim) => format!("{} ne {victim} ko hi tapka diya!", db.get(id).name),
-        DamageCause::Weapon(id) => {
-            let who = match killer.unwrap_or_default() {
-                "You" => "Tumne".to_string(),
-                k => format!("{k} ne"),
-            };
-            format!("{who} {whom} tapka diya ({})", db.get(id).name)
         }
     }
 }

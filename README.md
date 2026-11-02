@@ -30,9 +30,7 @@ just autoplay          # a bot plays as you; screenshots the match
 ```
 
 ## Controls
-WASD move, mouse look, Space jump, leap from the Udta Auto, open the patang. LMB attack or draw, RMB aim,
-E or F open chest, pick up. R reload. 1-6 or wheel hotbar, Shift sprint. M whole map, N zoom.
-F3 performance, F4 quality (Low, Medium, High, Ultra). Esc menu. Enter presses the big button.
+WASD move, mouse look, Space jump, leap from the Udta Auto, open the patang. LMB attack or draw, RMB aim or guard, E or F open chest, pick up, get in or out of a vehicle. R reload. C crouch. H horn. Hold T for the line wheel. 1-6 or wheel hotbar, Shift sprint. M whole map, N zoom. F3 performance, F4 quality (Low, Medium, High, Ultra). Esc menu. Enter presses the big button.
 Quality is picked from the GPU at start; `VIVAD_QUALITY=low just play` forces one.
 `VIVAD_NO_POST=1` turns off the bloom and vignette, for comparisons.
 

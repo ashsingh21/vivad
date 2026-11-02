@@ -1,0 +1,402 @@
+// Everything Panga says on screen. One file, so a Delhi reader reads it once.
+//
+// id     names the line (research/delhi-words/draft_lines.tsv has its source).
+// at     the moments it plays in. A moment with many lines picks one by a hash of the match seed
+//        and the players' ids, so every peer shows the same line.
+//        "kill.<item>" beats "kill"; add a moment like "kill.dunali" and no code changes.
+//        "paint", "signs", "items", "web" and "later" are read here but used elsewhere or not yet.
+// ok     false until a Delhi native has read it. EVERY LINE IS A DRAFT TODAY.
+// check  Plain: plain Hindi, a quick read. Read: a native must check it.
+//        Decide: a native must decide if we can use it at all: it stays out of play until ok.
+//        Working: same, but it is the only text for its place, so it plays for now.
+// text   {k} the killer, {v} the victim. {k_ne} {v_ko} {v_ki} {v_ka} {v_par} and so on become
+//        "Bunty ko", or "tumhe" when it is the player, so no line ever needs a player's gender.
+//
+// Rules: no sexual, caste, religious, region, gender or body abuse. Mock the ego, not the person.
+// cargo test -p shared lines -- --nocapture lists what is still unread and fails on a banned word.
+(
+    lines: [
+
+        // weapon-any
+        (id: "any.1", at: ["kill"], ok: false, check: Read, text: "{k_ne} {v_ko} chop kiya ({w})", mean: "{k} chopped {v}.", note: "Main default. Chop is a Delhi taunt with a slicing hand."),
+        (id: "any.2", at: ["kill"], ok: false, check: Read, text: "{k_ne} {v_ko} tapka diya ({w})", mean: "{k} dropped {v}.", note: "In the game today. The notes say it sounds like hit-man talk. Owner taste."),
+        (id: "any.3", at: ["kill"], ok: false, check: Read, text: "{k_ne} {v_ki} band baja di ({w})", mean: "{k} played the band on {v}. It means {k} wrecked {v}.", note: "Wedding band joke."),
+        (id: "any.4", at: ["kill"], ok: false, check: Plain, text: "{k_ne} {v_ka} khel khatam kar diya ({w})", mean: "{k} ended {v}'s game.", note: "Plain Hindi."),
+        (id: "any.5", at: ["kill"], ok: false, check: Plain, text: "{k_ne} {v_ka} panga khatam kar diya ({w})", mean: "{k} ended {v}'s fight.", note: "Uses the game's name."),
+
+        // bat
+        (id: "bat.1", at: ["kill.bat"], ok: false, check: Read, text: "{k_ne} {v_ko} chop kiya (Bat)", mean: "{k} chopped {v}."),
+        (id: "bat.2", at: ["kill.bat"], ok: false, check: Read, text: "{k_ne} {v_ko} seedha sixer maar diya", mean: "{k} hit {v} for a straight six.", note: "Say Sixer, never the Hindi word for six. See the ban list."),
+        (id: "bat.3", at: ["kill.bat"], ok: false, check: Read, text: "{k_ne} {v_ki} dhulai kar di", mean: "{k} gave {v} a good wash. It means a thrashing."),
+        (id: "bat.4", at: ["kill.bat"], ok: false, check: Read, text: "{k_ne} {v_ko} boundary ke paar bhej diya", mean: "{k} sent {v} over the boundary."),
+        (id: "bat.5", at: ["kill.bat"], ok: false, check: Read, text: "One tip, one hand: {v} out!", mean: "Gully rule: caught one-handed after one bounce is out.", note: "Rule from delhi_culture.md."),
+        (id: "bat.6", at: ["kill.bat"], ok: false, check: Read, text: "{v} out! Review bhi nahi bacha", mean: "{v} is out, with no review left.", note: "Cricket joke."),
+
+        // katta
+        (id: "katta.1", at: ["kill.katta"], ok: false, check: Read, text: "Aaj Katta ne saath diya: {k_ne} {v_ko} nipta diya", mean: "The Katta behaved today: {k} finished {v}.", note: "Joke on the gun's misfires."),
+        (id: "katta.2", at: ["kill.katta"], ok: false, check: Read, text: "Ek goli, bada dhamaka: {v} saaf ({k})", mean: "One bullet, big bang: {v} is wiped out.", note: "First half is the item lore."),
+        (id: "katta.3", at: ["kill.katta"], ok: false, check: Read, text: "{k_ne} {v_ko} desi goli chakha di", mean: "{k} gave {v} a taste of a desi bullet."),
+
+        // tamancha
+        (id: "tamancha.1", at: ["kill.tamancha"], ok: false, check: Read, text: "{k_ka} jugaad chal gaya: {v} saaf", mean: "{k}'s jugaad worked: {v} is wiped out."),
+        (id: "tamancha.2", at: ["kill.tamancha"], ok: false, check: Read, text: "Jugaad full speed mein: {k_ne} {v_ko} uda diya", mean: "Jugaad at full speed: {k} blew {v} away.", note: "From the item lore."),
+
+        // dunali
+        (id: "dunali.1", at: ["kill.dunali"], ok: false, check: Read, text: "{k_ki} Dunali: {v_ko} paas aake pata chala", mean: "{k}'s Dunali: {v} came close and found out.", note: "Pays off the item lore."),
+        (id: "dunali.2", at: ["kill.dunali"], ok: false, check: Plain, text: "Do naal, ek dhamaka: {k_ne} {v_ko} uda diya", mean: "Two barrels, one bang: {k} blew {v} away.", note: "From the item lore."),
+        (id: "dunali.3", at: ["kill.dunali"], ok: false, check: Decide, text: "{k_ne} {v_ko} chhalni kar diya", mean: "{k} made a sieve of {v}.", note: "Common Hindi, but close to gore. Native and owner decide."),
+
+        // gulel
+        (id: "gulel.1", at: ["kill.gulel"], ok: false, check: Read, text: "{k_ne} {v_ko} bachpan yaad dila diya", mean: "{k} reminded {v} of childhood."),
+        (id: "gulel.2", at: ["kill.gulel"], ok: false, check: Read, text: "{k_ne} {v_ko} aam ki tarah tod liya", mean: "{k} picked {v} off like a mango.", note: "Children knock mangoes down with a gulel."),
+
+        // ladi-9
+        (id: "ladi.1", at: ["kill.vajra9"], ok: false, check: Read, text: "{k_ne} {v_par} poori ladi phod di", mean: "{k} set off a whole string of crackers on {v}.", note: "For the renamed Vajra-9."),
+        (id: "ladi.2", at: ["kill.vajra9"], ok: false, check: Plain, text: "Tad-tad-tad! {k_ne} {v_ko} saaf kar diya", mean: "Rat-tat-tat! {k} wiped out {v}."),
+
+        // teen-tigada
+        (id: "tigada.1", at: ["kill.trishul_carbine"], ok: false, check: Read, text: "Teen tigada, {v_ka} kaam bigada ({k})", mean: "Three together spoil the job, here {v}'s job.", note: "Twist on a known Hindi saying. For the renamed Trishul Carbine."),
+        (id: "tigada.2", at: ["kill.trishul_carbine"], ok: false, check: Plain, text: "{k_ki} teeno goli {v_ko} lagi", mean: "All three of {k}'s bullets hit {v}."),
+
+        // anaar
+        (id: "anaar.1", at: ["kill.agneyastra"], ok: false, check: Read, text: "{k_ne} {v_ko} bhun diya (Anaar)", mean: "{k} roasted {v}."),
+        (id: "anaar.2", at: ["kill.agneyastra"], ok: false, check: Decide, text: "{v_ki} Diwali jaldi aa gayi ({k})", mean: "{v}'s Diwali came early.", note: "Festival in a kill line. Keep only if a native is fine with it."),
+
+        // sutli
+        (id: "sutli.1", at: ["kill.vayavyastra"], ok: false, check: Plain, text: "{k_ne} {v_ko} hawa mein uda diya (Sutli Bomb)", mean: "{k} blew {v} into the air.", note: "From the item lore."),
+        (id: "sutli.2", at: ["kill.vayavyastra"], ok: false, check: Read, text: "Sutli jali, {v} hawa mein ({k})", mean: "The fuse burned, {v} is in the air."),
+
+        // hazaari
+        (id: "hazaari.1", at: ["kill.brahmastra_mk2"], ok: false, check: Plain, text: "{k_ne} {v_ka} raasta band kar diya", mean: "{k} closed {v}'s road.", note: "For the renamed Brahmastra Mk II."),
+
+        // chakri
+        (id: "chakri.1", at: ["kill.chakra"], ok: false, check: Read, text: "{k_ne} {v_ko} chakkar mein daal diya", mean: "{k} sent {v} into a spin.", note: "For the renamed Sudarshan Chakra."),
+        (id: "chakri.2", at: ["kill.chakra"], ok: false, check: Read, text: "Chakri ghoomi, {v} saaf ({k})", mean: "The spinner spun, {v} is wiped out."),
+
+        // bada-dhamaka
+        (id: "dhamaka.1", at: ["kill.brahmastra"], ok: false, check: Read, text: "Bada Dhamaka! Stock khatam, {v} bhi ({k})", mean: "Big Bang sale! Stock is over, and so is {v}.", note: "Sale-banner joke. For the renamed Brahmastra."),
+
+        // future
+        (id: "rifle.1", at: ["kill.long"], ok: false, check: Working, text: "Wo kata! {k_ne} {v_ki} patang kaat di", mean: "Cut! {k} cut {v}'s kite.", note: "Working text. A native picks Wo kata or Ayi bo. Also for any long kill."),
+        (id: "rifle.2", at: ["kill.long"], ok: false, check: Decide, text: "Ayi bo! {k_ne} {v_ki} patang kaat di", mean: "The other Delhi kite cry, same line.", note: "Second choice for the native to compare."),
+        (id: "rifle.3", at: ["kill.long"], ok: false, check: Read, text: "Door se hi namaste: {k_ne} {v_ko} gira diya", mean: "Greetings from afar: {k} dropped {v}."),
+        (id: "ram.1", at: ["later"], ok: false, check: Read, text: "{k_ka} meter {v_par} chal gaya", mean: "{k}'s meter ran on {v}.", note: "For a vehicle ram, once vehicles exist."),
+        (id: "chappal.1", at: ["later"], ok: false, check: Read, text: "{k_ne} {v_ko} chappal se nipta diya", mean: "{k} finished {v} with a slipper.", note: "For the thrown chappal idea."),
+
+        // cause-aandhi
+        (id: "aandhi.1", at: ["down.aandhi"], ok: false, check: Plain, text: "Aandhi ne {v_ko} uda diya", mean: "The Aandhi blew {v} away.", note: "In the game today."),
+        (id: "aandhi.2", at: ["down.aandhi"], ok: false, check: Read, text: "{v_ki} Metro chhoot gayi", mean: "{v} missed the Metro."),
+        (id: "aandhi.3", at: ["down.aandhi"], ok: false, check: Plain, text: "Aandhi {v_ko} le udi", mean: "The Aandhi carried {v} off."),
+        (id: "aandhi.4", at: ["down.aandhi"], ok: false, check: Read, text: "Aandhi ne {v_ka} challan kaat diya", mean: "The Aandhi wrote {v} a traffic fine."),
+
+        // cause-fall
+        (id: "fall.1", at: ["down.fall"], ok: false, check: Plain, text: "{v_ka} panga zameen se ho gaya", mean: "{v} picked a fight with the ground.", note: "In the game today. Very good. Keep."),
+        (id: "fall.2", at: ["down.fall"], ok: false, check: Plain, text: "Zameen ne {v_ko} gale laga liya", mean: "The ground gave {v} a hug."),
+        (id: "fall.3", at: ["down.fall"], ok: false, check: Read, text: "{v_ko} gravity se panga mehenga pada", mean: "The fight with gravity cost {v} dearly."),
+
+        // cause-self
+        (id: "self.1", at: ["down.self"], ok: false, check: Read, text: "{w} ne {v_ko} hi tapka diya!", mean: "The {w} dropped {v} instead!", note: "In the game today."),
+        (id: "self.2", at: ["down.self.katta"], ok: false, check: Plain, text: "Katta ne {v_ko} hi dhoka de diya!", mean: "The Katta betrayed {v}!", note: "Matches the misfire toast."),
+        (id: "self.3", at: ["down.self.bomb"], ok: false, check: Read, text: "{v_ne} apne hi bomb se panga le liya", mean: "{v} picked a fight with their own bomb."),
+
+        // cause-left
+        (id: "left.1", at: ["left"], ok: false, check: Plain, text: "{v_ne} panga chhod diya", mean: "{v} left the fight.", note: "Replaces the English feed line for a player who leaves."),
+
+        // moment
+        (id: "moment.first", at: ["moment.first"], ok: false, check: Read, text: "{k_ki} bohni ho gayi", mean: "{k} made the first sale of the day.", note: "First kill. Bohni is a bazaar word, heard in a market vlog."),
+        (id: "moment.double", at: ["moment.double"], ok: false, check: Read, text: "Ek pe ek free! ({k})", mean: "Buy one, get one free!", note: "Double kill."),
+        (id: "moment.triple", at: ["moment.triple"], ok: false, check: Read, text: "{k_ki} dukaan chal padi", mean: "{k}'s shop has taken off.", note: "Three kills fast."),
+        (id: "moment.revenge", at: ["later"], ok: false, check: Plain, text: "{k_ne} hisaab barabar kar diya", mean: "{k} settled the account.", note: "Kills the one who killed them, online."),
+        (id: "moment.head", at: ["you.head"], ok: false, check: Read, text: "Seedha khopdi pe!", mean: "Right on the skull!", note: "Headshot."),
+        (id: "moment.long", at: ["you.long"], ok: false, check: Working, text: "Wo kata!", mean: "Cut!", note: "Working text for a long kill."),
+        (id: "moment.last2", at: ["moment.last2"], ok: false, check: Plain, text: "Bas do bache. Asli panga ab", mean: "Only two left. The real fight is now.", note: "Last two alive."),
+        (id: "moment.leader", at: ["moment.leader"], ok: false, check: Read, text: "{v_ki} VIP entry khatam", mean: "{v}'s VIP entry is over.", note: "The player with most kills falls. Mocks swagger."),
+
+        // elim-killer
+        (id: "elim.1", at: ["elim.killer"], ok: false, check: Plain, text: "{k} se panga mehenga pada", mean: "The fight with {k} cost you dearly.", note: "Recommended main line."),
+        (id: "elim.2", at: ["elim.killer"], ok: false, check: Read, text: "{k} ne tapka diya", mean: "{k} dropped you.", note: "In the game today."),
+        (id: "elim.3", at: ["elim.killer"], ok: false, check: Decide, text: "Lag gaye", mean: "We are in trouble.", note: "Never write the form ending in gayi. It can sound vulgar."),
+        (id: "elim.4", at: ["elim.killer"], ok: false, check: Read, text: "Kaand ho gaya", mean: "It has all gone wrong."),
+        (id: "elim.5", at: ["elim.killer"], ok: false, check: Read, text: "Mummy ka phone aa gaya", mean: "Mum is calling.", note: "Soft exit. Owner taste."),
+        (id: "elim.6", at: ["elim.killer"], ok: false, check: Read, text: "Ghar chal, beta", mean: "Come home, child.", note: "Soft exit. Owner taste."),
+        (id: "elim.7", at: ["elim.killer"], ok: false, check: Decide, text: "Jaanta hai main kaun hoon? Nahi. Aur ab koi jaanega bhi nahi", mean: "Do you know who I am? No. And now nobody will.", note: "The verb assumes the listener is a man."),
+
+        // elim-aandhi
+        (id: "elim.a1", at: ["elim.aandhi"], ok: false, check: Plain, text: "Aandhi ne uda diya", mean: "The Aandhi blew you away."),
+        (id: "elim.a2", at: ["elim.aandhi"], ok: false, check: Read, text: "Metro chhoot gayi", mean: "You missed the Metro."),
+        (id: "elim.a3", at: ["elim.aandhi"], ok: false, check: Decide, text: "Aapki yatra mangalmay ho", mean: "May your journey be blessed.", note: "Formal travel line, used as a joke. Mangal has a holy feel. Check."),
+
+        // elim-fall
+        (id: "elim.f1", at: ["elim.fall"], ok: false, check: Plain, text: "Tapak gaye", mean: "You fell.", note: "In the game today. Fits a fall best."),
+        (id: "elim.f2", at: ["elim.fall"], ok: false, check: Plain, text: "Zameen se panga mehenga pada", mean: "The fight with the ground cost you dearly."),
+
+        // elim-self
+        (id: "elim.s1", at: ["elim.self"], ok: false, check: Plain, text: "Apne hi haathon panga khatam", mean: "The fight ended by your own hand."),
+
+        // elim-place
+        (id: "place.2", at: ["elim.place.2"], ok: false, check: Read, text: "Itne paas! Dilli abhi door hai", mean: "So close! Delhi is still far.", note: "Second place. Old saying."),
+        (id: "place.top5", at: ["elim.place.top5"], ok: false, check: Plain, text: "Achha panga tha", mean: "That was a good fight.", note: "Places 3 to 5."),
+        (id: "place.low", at: ["elim.place.low"], ok: false, check: Plain, text: "Itni jaldi? Chai bhi thandi nahi hui", mean: "So soon? The tea has not even gone cold.", note: "Early exit."),
+
+        // elim-next
+        (id: "next.1", at: ["next.again"], ok: false, check: Plain, text: "Enter dabao, phir se panga lo", mean: "Press Enter, fight again.", note: "In the game today. Keep."),
+        (id: "next.2", at: ["next.wait"], ok: false, check: Plain, text: "Panga tumhare bina chalu hai", mean: "The fight goes on without you.", note: "In the game today. Keep."),
+
+        // win
+        (id: "win.1", at: ["win.title"], ok: false, check: Read, text: "PANGA KING!", mean: "Panga King!", note: "In the game today. Says King to every winner. Owner taste."),
+        (id: "win.2", at: ["win.title"], ok: false, check: Plain, text: "DILLI TUMHARI HAI!", mean: "Delhi is yours!", note: "Works for any player."),
+        (id: "win.3", at: ["win.title"], ok: false, check: Read, text: "PANGEBAAZ NO. 1", mean: "Number one fight-picker.", note: "Works for any player."),
+        (id: "win.4", at: ["win.sub"], ok: false, check: Read, text: "Jeet gaye! Aaj ke chole bhature tumhari taraf se", mean: "You won! Today's chole bhature are on you.", note: "In India the winner owes a treat. Our own win line."),
+        (id: "win.5", at: ["win.sub"], ok: false, check: Read, text: "Party toh banti hai", mean: "A party is a must."),
+        (id: "win.6", at: ["win.feed.you"], ok: false, check: Plain, text: "Tumne Panga jeet liya!", mean: "You won the Panga!", note: "Feed line today."),
+        (id: "win.7", at: ["win.feed"], ok: false, check: Plain, text: "{k} ne Panga jeet liya!", mean: "{k} won the Panga!", note: "Feed line today."),
+        (id: "win.8", at: ["win.feed"], ok: false, check: Plain, text: "Aaj Dilli {k} ki", mean: "Today Delhi belongs to {k}.", note: "Feed line."),
+
+        // start
+        (id: "start.1", at: ["drop.far"], ok: false, check: Plain, text: "Udta Auto {map} ki taraf... meter chalu hai", mean: "Flying Auto to {map}... the meter is running.", note: "In the game today, with Dilli. Use the map name."),
+        (id: "start.2", at: ["drop.jump"], ok: false, check: Plain, text: "[Space] Auto se kood jao!", mean: "Press Space, jump out of the auto!", note: "In the game today."),
+        (id: "start.3", at: ["drop.jump"], ok: false, check: Read, text: "[Space] Bhaiya, yahin rok do!", mean: "Press Space, driver, stop right here!", note: "Bhaiya here is the polite word for a driver."),
+        (id: "start.4", at: ["drop.end"], ok: false, check: Read, text: "Auto wale ne mana kar diya. Utar jao!", mean: "The driver refused to go on. Get out!", note: "When the ride ends. Mocks the haggle, not the driver."),
+        (id: "start.5", at: ["match.start"], ok: false, check: Plain, text: "{n} log, ek {map}. Panga shuru!", mean: "{n} people, one {map}. The fight starts!"),
+        (id: "start.6", at: ["drop.open"], ok: false, check: Read, text: "[Space] Patang kholo", mean: "Press Space, open the kite.", note: "Replaces Garuda pankh kholo. The glider is already a patang model."),
+        (id: "start.7", at: ["drop.ground"], ok: false, check: Plain, text: "Zameen paas hai!", mean: "The ground is close!"),
+
+        // alert
+        (id: "alert.1", at: ["alert.next"], ok: false, check: Read, text: "Kripya dhyan dein. Agla safe zone {place} hai", mean: "Please pay attention. The next safe zone is {place}.", note: "New ring shown. Same shape as the Metro's next station line."),
+        (id: "alert.2", at: ["alert.soon"], ok: false, check: Read, text: "Kripya dhyan dein. Aandhi {t} second mein chalegi", mean: "Please pay attention. The Aandhi moves in {t} seconds.", note: "30 and 10 seconds before it moves."),
+        (id: "alert.3", at: ["alert.moving"], ok: false, check: Read, text: "Kripya dhyan dein. Aandhi {place} ki taraf badh rahi hai", mean: "Please pay attention. The Aandhi is moving toward {place}.", note: "Ring starts to close."),
+        (id: "alert.4", at: ["alert.doors"], ok: false, check: Read, text: "Aandhi ke darwaze band ho rahe hain", mean: "The Aandhi's doors are closing.", note: "Last 10 seconds of a wait."),
+        (id: "alert.5", at: ["alert.outside"], ok: false, check: Read, text: "Kripya safe zone ke andar rahein", mean: "Please stay inside the safe zone.", note: "Player is outside. Shape of the yellow line warning."),
+        (id: "alert.6", at: ["alert.moving"], ok: false, check: Read, text: "Yatriyon se anurodh hai, Aandhi se door rahein", mean: "Passengers are requested to keep away from the Aandhi."),
+        (id: "alert.7", at: ["alert.last"], ok: false, check: Read, text: "Yeh is Aandhi ka aakhri station hai. Sabhi khiladi utar jayein", mean: "This is the last station of this Aandhi. All players please get off.", note: "Final ring."),
+        (id: "alert.8", at: ["alert.loot"], ok: false, check: Decide, text: "Laawaris saamaan milne par fauran utha lein", mean: "If you find unclaimed bags, pick them up at once.", note: "Flips a real safety warning. Funny, but check the taste."),
+        (id: "alert.9", at: ["alert.loot"], ok: false, check: Read, text: "Kripya apne saamaan ka dhyan rakhein", mean: "Please take care of your belongings.", note: "After a nearby kill drops loot."),
+        (id: "alert.10", at: ["alert.moving"], ok: false, check: Plain, text: "Kripya dhyan dein. Aandhi aa rahi hai", mean: "Please pay attention. The Aandhi is coming.", note: "Fallback when no place name fits."),
+        (id: "alert.11", at: ["alert.thanks"], ok: false, check: Read, text: "Aandhi Seva mein yatra ke liye dhanyavaad", mean: "Thank you for travelling with Aandhi Service.", note: "Shown after the Aandhi kills you."),
+
+        // hud
+        (id: "hud.1", at: ["hud.vitals"], ok: false, check: Plain, text: "Jaan {hp}   Kavach {sh}", mean: "Life, armour.", note: "In the game today. Keep."),
+        (id: "hud.2", at: ["hud.ammo"], ok: false, check: Plain, text: "Goli {n}", mean: "Bullets.", note: "In the game today. Keep."),
+        (id: "hud.3", at: ["hud.reload"], ok: false, check: Plain, text: "bhar rahe ho", mean: "Reloading.", note: "Replaces the English reloading."),
+        (id: "hud.4", at: ["hud.draw"], ok: false, check: Plain, text: "kheench rahe ho", mean: "Drawing.", note: "Replaces the English drawing."),
+        (id: "hud.5", at: ["hud.counts"], ok: false, check: Plain, text: "Zinda {alive}   Kills {kills}", mean: "Alive, kills.", note: "Replaces the English Alive."),
+        (id: "hud.6", at: ["hud.wait"], ok: false, check: Plain, text: "Aandhi {t} mein", mean: "Aandhi in {t}.", note: "Fixes half-English Aandhi in."),
+        (id: "hud.7", at: ["hud.move"], ok: false, check: Plain, text: "Aandhi chal rahi {t}", mean: "The Aandhi is moving.", note: "In the game today."),
+        (id: "hud.8", at: ["hud.idle"], ok: false, check: Plain, text: "Aandhi aa rahi hai...", mean: "The Aandhi is coming...", note: "In the game today."),
+        (id: "hud.9", at: ["hud.safe.far"], ok: false, check: Plain, text: "Safe zone {d} m door", mean: "Safe zone is {d} m away.", note: "In the game today."),
+        (id: "hud.10", at: ["hud.safe.in"], ok: false, check: Plain, text: "Safe zone mein ho", mean: "You are in the safe zone.", note: "In the game today."),
+        (id: "hud.11", at: ["hud.vote"], ok: false, check: Plain, text: "Agla map? Number dabao", mean: "Next map? Press a number.", note: "In the game today."),
+        (id: "hud.12", at: ["hud.place"], ok: false, check: Plain, text: "#{p} / {n}", mean: "Place out of total.", note: "Replaces the word of."),
+
+        // prompt
+        (id: "prompt.1", at: ["prompt.peti"], ok: false, check: Plain, text: "[E] Peti kholo", mean: "Press E, open the crate.", note: "In the game today."),
+        (id: "prompt.2", at: ["prompt.ghada"], ok: false, check: Read, text: "[E] Sone ka Ghada kholo", mean: "Press E, open the gold pot.", note: "Replaces Sone ka Kalash. A kalash is a holy pot. Owner decides."),
+        (id: "prompt.3", at: ["prompt.pickup"], ok: false, check: Plain, text: "[E] {item} uthao · {rarity}", mean: "Press E, pick up {item}, with its rarity.", note: "Replaces the English rarity."),
+        (id: "prompt.4", at: ["prompt.drink"], ok: false, check: Plain, text: "{item} pee rahe ho...", mean: "Drinking {item}...", note: "In the game today."),
+        (id: "prompt.5", at: ["prompt.backfire"], ok: false, check: Plain, text: "Katta ulta pad gaya!", mean: "The Katta backfired!", note: "In the game today. Keep."),
+        (id: "prompt.6", at: ["prompt.misfire"], ok: false, check: Plain, text: "Katta ne dhoka diya!", mean: "The Katta let you down!", note: "In the game today. Keep."),
+        (id: "prompt.7", at: ["prompt.reload"], ok: false, check: Plain, text: "[R] Goli bharo", mean: "Press R, reload."),
+        (id: "prompt.8", at: ["prompt.empty"], ok: false, check: Plain, text: "Goli khatam!", mean: "Out of bullets!"),
+
+        // rarity
+        (id: "rarity.1", at: ["rarity.common"], ok: false, check: Read, text: "Aam", mean: "Common. Also means mango.", note: "Replaces Common."),
+        (id: "rarity.2", at: ["rarity.rare"], ok: false, check: Plain, text: "Khaas", mean: "Special.", note: "Replaces Rare."),
+        (id: "rarity.3", at: ["rarity.epic"], ok: false, check: Read, text: "Kadak", mean: "Strong, as in strong tea.", note: "Replaces Epic."),
+        (id: "rarity.4", at: ["rarity.legendary"], ok: false, check: Read, text: "Bawaal", mean: "Amazing. Also a commotion.", note: "Replaces Legendary."),
+        (id: "rarity.5", at: ["rarity.divya"], ok: false, check: Working, text: "VIP", mean: "VIP.", note: "Replaces Divya. Aam next to VIP may echo Delhi politics. Check."),
+
+        // lobby
+        (id: "lobby.1", at: ["lobby.error"], ok: false, check: Plain, text: "Online nahi chal paya", mean: "Could not play online."),
+        (id: "lobby.2", at: ["lobby.loading"], ok: false, check: Plain, text: "Sab load ho rahe hain, ruko...", mean: "Everyone is loading, wait..."),
+        (id: "lobby.3", at: ["lobby.host"], ok: false, check: Plain, text: "Room tumhara hai", mean: "The room is yours.", note: "Replaces Hosting a match."),
+        (id: "lobby.4", at: ["lobby.share"], ok: false, check: Plain, text: "Room code dosto ko bhejo", mean: "Send the room code to friends."),
+        (id: "lobby.5", at: ["lobby.going"], ok: false, check: Plain, text: "(online ja rahe hain...)", mean: "(going online...)"),
+        (id: "lobby.6", at: ["lobby.players"], ok: false, check: Plain, text: "Khiladi ({n}): {names}", mean: "Players."),
+        (id: "lobby.7", at: ["lobby.start"], ok: false, check: Plain, text: "Enter dabao, panga shuru", mean: "Press Enter, the fight starts."),
+        (id: "lobby.8", at: ["lobby.join"], ok: false, check: Plain, text: "Room mein ja rahe ho", mean: "Joining the room."),
+        (id: "lobby.9", at: ["lobby.reaching"], ok: false, check: Plain, text: "Host tak pahunch rahe hain...", mean: "Reaching the host..."),
+        (id: "lobby.10", at: ["lobby.waiting"], ok: false, check: Plain, text: "Host ke start karne ka intezaar", mean: "Waiting for the host to start."),
+        (id: "lobby.11", at: ["lobby.nohost"], ok: false, check: Plain, text: "Host nahi mila", mean: "Could not reach the host.", note: "Replaces a raw English error from the net crate."),
+        (id: "lobby.12", at: ["lobby.hostleft"], ok: false, check: Plain, text: "Host ne room chhod diya", mean: "The host left.", note: "Replaces a raw English error."),
+        (id: "lobby.13", at: ["lobby.player"], ok: false, check: Plain, text: "Khiladi {n}", mean: "Player {n}.", note: "Replaces the default name Warrior."),
+
+        // web
+        (id: "web.1", at: ["web"], ok: false, check: Plain, text: "Panga ko WebGPU chahiye: Chrome, Edge ya Safari 26+ kholo", mean: "Panga needs WebGPU: open Chrome, Edge or Safari 26+.", note: "Replaces English on the web page."),
+        (id: "web.2", at: ["web"], ok: false, check: Plain, text: "Panga shuru nahi hua: {e}", mean: "Panga could not start."),
+        (id: "web.3", at: ["web"], ok: false, check: Plain, text: "Dost ke saath: ek room banao, code bolo, baaki join karein. Akele khelo toh bots aayenge", mean: "With friends: one makes a room and reads the code, the rest join. Alone, bots fill the match."),
+
+        // chat-taunt
+        (id: "chat.1", at: ["bark.spot", "wheel.masti"], ok: false, check: Read, text: "Aaja, teri e kami reh rahi thi", mean: "Come on in, you were all we needed.", note: "Sarcastic welcome."),
+        (id: "chat.2", at: ["wheel.masti"], ok: false, check: Decide, text: "Teri baatt dekhun tha", mean: "I was waiting for you.", note: "The verb may show the speaker's gender. Check for women players."),
+        (id: "chat.3", at: ["wheel.masti"], ok: false, check: Read, text: "Ghana matt na bole", mean: "Don't talk so much."),
+        (id: "chat.4", at: ["wheel.masti"], ok: false, check: Decide, text: "Kyukar aaya rai?", mean: "What brings you here?", note: "The verb assumes the listener is a man."),
+        (id: "chat.5", at: ["wheel.panga"], ok: false, check: Read, text: "Thand rakh", mean: "Cool down."),
+        (id: "chat.6", at: ["wheel.panga"], ok: false, check: Read, text: "Side de, bhai", mean: "Give way, bro."),
+        (id: "chat.7", at: ["wheel.panga"], ok: false, check: Plain, text: "Meri jagah hai yeh", mean: "This is my spot.", note: "The parking fight joke."),
+        (id: "chat.8", at: ["wheel.masti"], ok: false, check: Decide, text: "Jaanta hai main kaun hoon?", mean: "Do you know who I am?", note: "Plays best when the speaker then loses. The verb assumes the listener is a man."),
+        (id: "chat.9", at: ["wheel.masti"], ok: false, check: Read, text: "Bhai ko bula", mean: "Call your big brother.", note: "Backup joke. No gang names, ever."),
+        (id: "chat.10", at: ["wheel.masti"], ok: false, check: Read, text: "Bawli booch!", mean: "You fool! (friendly)", note: "Haryanvi."),
+        (id: "chat.11", at: ["wheel.panga"], ok: false, check: Read, text: "Chal nikal", mean: "Get lost."),
+
+        // chat-mood
+        (id: "chat.12", at: ["wheel.dekho"], ok: false, check: Read, text: "Bhai, scene kharab hai", mean: "Bro, this looks bad."),
+        (id: "chat.13", at: ["wheel.masti"], ok: false, check: Read, text: "Chep lag gaya peeche", mean: "A clingy one is on me."),
+        (id: "chat.14", at: ["wheel.haar"], ok: false, check: Read, text: "Kaand ho gaya", mean: "It has all gone wrong."),
+        (id: "chat.15", at: ["wheel.masti"], ok: false, check: Decide, text: "Lag gaye", mean: "We are in trouble.", note: "Never the form ending in gayi."),
+        (id: "chat.16", at: ["you.kill", "bark.win", "wheel.jeet"], ok: false, check: Read, text: "Phod diya, bhai!", mean: "You smashed it, bro!"),
+        (id: "chat.17", at: ["wheel.jeet"], ok: false, check: Plain, text: "Kya scene hai?", mean: "What is going on?"),
+        (id: "chat.18", at: ["wheel.masti"], ok: false, check: Read, text: "Aur bahi, ke chal rahya se?", mean: "And brother, what is going on?", note: "Haryanvi."),
+        (id: "chat.19", at: ["wheel.jeet"], ok: false, check: Plain, text: "Chai peene chalein?", mean: "Shall we go for tea?", note: "The joke truce."),
+        (id: "chat.20", at: ["wheel.haar"], ok: false, check: Read, text: "Mummy bula rahi hai", mean: "Mum is calling me.", note: "Exit joke."),
+
+        // auto
+        (id: "auto.1", at: ["later"], ok: false, check: Read, text: "Meter nahi chalega", mean: "The meter won't run.", note: "Once autos exist. Mock the haggle, not the driver."),
+        (id: "auto.2", at: ["later"], ok: false, check: Read, text: "Night charge bhi lagega", mean: "There is a night charge too."),
+        (id: "auto.3", at: ["later"], ok: false, check: Read, text: "Noida jaoge?", mean: "Will you go to Noida?", note: "The rider's line."),
+        (id: "auto.4", at: ["later"], ok: false, check: Read, text: "Wapsi khaali aana padega", mean: "I would have to come back empty.", note: "The classic excuse."),
+        (id: "auto.5", at: ["later"], ok: false, check: Read, text: "Bhaiya, chhutta nahi hai", mean: "Bhaiya, I have no change."),
+
+        // truck
+        (id: "truck.1", at: ["paint"], ok: false, check: Plain, text: "Horn OK Please", mean: "Honk before you pass.", note: "Use it. No brand.", deva: "हॉर्न ओके प्लीज़"),
+        (id: "truck.2", at: ["paint"], ok: false, check: Plain, text: "Dheere chal Pyaare, Jeevan Anmol hai", mean: "Slow down, dear, life is precious.", deva: "धीरे चल प्यारे, जीवन अनमोल है"),
+        (id: "truck.3", at: ["paint"], ok: false, check: Plain, text: "Dekho magar pyaar se", mean: "Look, but with love.", deva: "देखो मगर प्यार से"),
+        (id: "truck.4", at: ["paint"], ok: false, check: Plain, text: "Phir milenge", mean: "See you again.", deva: "फिर मिलेंगे"),
+        (id: "truck.5", at: ["paint"], ok: false, check: Read, text: "Jinhe jaldi thi, woh chale gaye", mean: "Those in a hurry have left.", note: "Dark joke, and it fits a shooter well.", deva: "जिन्हें जल्दी थी, वो चले गए"),
+        (id: "truck.6", at: ["paint"], ok: false, check: Read, text: "Dum hai toh cross kar, nahi toh bardasht kar", mean: "Pass me if you dare, or put up with it.", deva: "दम है तो क्रॉस कर, नहीं तो बर्दाश्त कर"),
+        (id: "truck.7", at: ["paint"], ok: false, check: Plain, text: "Power Break, Haddi Crack", mean: "Power brake, bone crack.", note: "Painted spelling. Keep Break.", deva: "पावर ब्रेक, हड्डी क्रैक"),
+        (id: "truck.8", at: ["paint"], ok: false, check: Plain, text: "Use Dipper at Night", mean: "Dim your lights at night.", deva: "यूज़ डिपर एट नाइट"),
+        (id: "truck.9", at: ["paint"], ok: false, check: Plain, text: "Maalik ki Gaadi, Driver ka Paseena", mean: "Owner's truck, driver's sweat.", deva: "मालिक की गाड़ी, ड्राइवर का पसीना"),
+        (id: "truck.10", at: ["paint"], ok: false, check: Plain, text: "Maa Ka Aashirwad", mean: "Mother's blessing.", deva: "माँ का आशीर्वाद"),
+        (id: "truck.11", at: ["paint"], ok: false, check: Plain, text: "Life is Drama, Man is Actor", mean: "Life is a drama, man is an actor."),
+        (id: "truck.12", at: ["paint"], ok: false, check: Read, text: "Jal mat, kishton pe aayi hai", mean: "Don't be jealous, it came on instalments.", note: "Drops the word pagli from the real line, to stay clean.", deva: "जल मत, किश्तों पे आई है"),
+        (id: "truck.13", at: ["paint"], ok: false, check: Decide, text: "Buri Nazar Wale Tera Muh Kala", mean: "Evil eye, may your face turn black.", note: "Colour-based curse. Painted text only, if at all.", deva: "बुरी नज़र वाले तेरा मुँह काला"),
+        (id: "truck.14", at: ["paint"], ok: false, check: Plain, text: "Dheere chalega toh baar-baar milenge", mean: "Go slow and we will meet again and again.", note: "We cut the real second half, which names a holy city.", deva: "धीरे चलेगा तो बार-बार मिलेंगे"),
+        (id: "truck.15", at: ["paint"], ok: false, check: Read, text: "Dheere chalega toh Aandhi milegi", mean: "Go slow and the Aandhi will find you.", note: "Our twist, for the game.", deva: "धीरे चलेगा तो आँधी मिलेगी"),
+        (id: "truck.16", at: ["paint"], ok: false, check: Read, text: "Sawari apne saamaan ki khud zimmedar hai", mean: "Passengers look after their own bags.", note: "Common bus line. No web source found. Good loot joke.", deva: "सवारी अपने सामान की ख़ुद ज़िम्मेदार है"),
+        (id: "truck.17", at: ["paint"], ok: false, check: Read, text: "Dilli abhi door hai", mean: "Delhi is still far.", note: "Old saying.", deva: "दिल्ली अभी दूर है"),
+        (id: "truck.18", at: ["paint"], ok: false, check: Plain, text: "Panga mat le", mean: "Don't pick a fight.", note: "Our own.", deva: "पंगा मत ले"),
+        (id: "truck.19", at: ["paint"], ok: false, check: Read, text: "Thand rakh", mean: "Cool down.", note: "Our own.", deva: "ठंड रख"),
+
+        // wall
+        (id: "wall.1", at: ["paint"], ok: false, check: Plain, text: "Gate ke aage gaadi na lagayein", mean: "Do not park in front of the gate.", note: "Parking wars, quietly.", deva: "गेट के आगे गाड़ी न लगाएँ"),
+        (id: "wall.2", at: ["paint"], ok: false, check: Plain, text: "Yahan gaadi khadi karna mana hai", mean: "No parking here.", deva: "यहाँ गाड़ी खड़ी करना मना है"),
+        (id: "wall.3", at: ["paint"], ok: false, check: Read, text: "Gaadi khadi ki toh hawa nikal denge", mean: "Park here and we let your tyres down.", note: "Common threat. No web source found.", deva: "गाड़ी खड़ी की तो हवा निकाल देंगे"),
+        (id: "wall.4", at: ["paint"], ok: false, check: Plain, text: "Yahan thookna mana hai", mean: "No spitting here.", deva: "यहाँ थूकना मना है"),
+        (id: "wall.5", at: ["paint"], ok: false, check: Plain, text: "Kutte se saavdhan", mean: "Beware of the dog.", deva: "कुत्ते से सावधान"),
+        (id: "wall.6", at: ["paint"], ok: false, check: Plain, text: "Jebkatron se saavdhan", mean: "Beware of pickpockets.", note: "A real Metro announcement. Good near loot.", deva: "जेबकतरों से सावधान"),
+        (id: "wall.7", at: ["paint"], ok: false, check: Plain, text: "Aap CCTV ki nigrani mein hain", mean: "You are under CCTV watch.", deva: "आप सीसीटीवी की निगरानी में हैं"),
+        (id: "wall.8", at: ["paint"], ok: false, check: Plain, text: "Aage khatra hai", mean: "Danger ahead.", deva: "आगे ख़तरा है"),
+        (id: "wall.9", at: ["paint"], ok: false, check: Plain, text: "Yahan kachra na daalein", mean: "Do not dump rubbish here.", deva: "यहाँ कचरा न डालें"),
+        (id: "wall.10", at: ["paint"], ok: false, check: Read, text: "Udhaar prem ki kainchi hai", mean: "Credit is the scissors of love.", note: "Classic shop board. No web source found.", deva: "उधार प्रेम की कैंची है"),
+        (id: "wall.11", at: ["paint"], ok: false, check: Read, text: "Aaj nakad, kal udhaar", mean: "Cash today, credit tomorrow.", note: "Classic shop board. No web source found.", deva: "आज नकद, कल उधार"),
+
+        // shop-new
+        (id: "shop.1", at: ["paint"], ok: false, check: Plain, text: "CHOLE BHATURE", mean: "Chole bhature.", note: "Food word. No shop name.", deva: "छोले भटूरे"),
+        (id: "shop.2", at: ["paint"], ok: false, check: Plain, text: "RAJMA CHAWAL", mean: "Rajma rice.", deva: "राजमा चावल"),
+        (id: "shop.3", at: ["paint"], ok: false, check: Plain, text: "KULCHE CHOLE", mean: "Kulche chole.", deva: "कुलचे छोले"),
+        (id: "shop.4", at: ["paint"], ok: false, check: Plain, text: "BHALLA PAPDI", mean: "Bhalla papdi.", deva: "भल्ला पापड़ी"),
+        (id: "shop.5", at: ["paint"], ok: false, check: Read, text: "DAULAT KI CHAAT", mean: "Daulat ki chaat, an Old Delhi winter sweet.", deva: "दौलत की चाट"),
+        (id: "shop.6", at: ["paint"], ok: false, check: Plain, text: "ROLL CORNER", mean: "Roll corner.", deva: "रोल कॉर्नर"),
+        (id: "shop.7", at: ["paint"], ok: false, check: Plain, text: "PHOTOCOPY LAMINATION", mean: "Photocopy, lamination.", deva: "फ़ोटोकॉपी लेमिनेशन"),
+        (id: "shop.8", at: ["paint"], ok: false, check: Plain, text: "MOBILE RECHARGE", mean: "Mobile recharge.", deva: "मोबाइल रिचार्ज"),
+        (id: "shop.9", at: ["paint"], ok: false, check: Plain, text: "CYBER CAFE", mean: "Cyber cafe.", deva: "साइबर कैफ़े"),
+        (id: "shop.10", at: ["paint"], ok: false, check: Plain, text: "TIFFIN SERVICE", mean: "Tiffin service.", deva: "टिफ़िन सर्विस"),
+        (id: "shop.11", at: ["paint"], ok: false, check: Read, text: "SPOKEN ENGLISH 30 DIN MEIN", mean: "Spoken English in 30 days.", note: "Classic Delhi wall ad. Keep it generic.", deva: "स्पोकन इंग्लिश 30 दिन में"),
+        (id: "shop.12", at: ["paint"], ok: false, check: Read, text: "DILLI PROPERTY DEALER", mean: "Delhi property dealer.", deva: "दिल्ली प्रॉपर्टी डीलर"),
+
+        // shop-swap
+        (id: "swap.1", at: ["signs"], ok: false, check: Read, text: "NEW DILLI TENT HOUSE", mean: "Replaces JAI MATA DI TENT HOUSE.", note: "Holy name on a board in a fight zone.", deva: "न्यू दिल्ली टेंट हाउस"),
+        (id: "swap.2", at: ["signs"], ok: false, check: Read, text: "DILLI HARDWARE", mean: "Replaces SHIV SHAKTI HARDWARE.", note: "Holy name.", deva: "दिल्ली हार्डवेयर"),
+        (id: "swap.3", at: ["signs"], ok: false, check: Read, text: "SONA CHANDI JEWELLERS", mean: "Replaces OM SAI JEWELLERS.", note: "Holy name.", deva: "सोना चाँदी ज्वैलर्स"),
+        (id: "swap.4", at: ["signs"], ok: false, check: Read, text: "LUCKY BARTAN BHANDAR", mean: "Replaces LAXMI BARTAN BHANDAR.", note: "Holy name.", deva: "लकी बर्तन भंडार"),
+        (id: "swap.5", at: ["signs"], ok: false, check: Plain, text: "PANGA CHAI STALL", mean: "Replaces PANGA CHAI POINT.", note: "Chai Point is a real chain.", deva: "पंगा चाय स्टॉल"),
+
+        // item-name
+        (id: "item.1", at: ["items"], ok: false, check: Read, text: "Ladi-9", mean: "New name for Vajra-9. A ladi is a string of firecrackers.", note: "Owner decides. Vajra is a sacred weapon.", deva: "लड़ी-9"),
+        (id: "item.2", at: ["items"], ok: false, check: Read, text: "Teen Tigada", mean: "New name for Trishul Carbine. From the saying on three people.", note: "Owner decides. Trishul is a sacred weapon.", deva: "तीन तिगाड़ा"),
+        (id: "item.3", at: ["items"], ok: false, check: Read, text: "Hazaari", mean: "New name for Brahmastra Mk II. A thousand-cracker string.", note: "Owner decides.", deva: "हज़ारी"),
+        (id: "item.4", at: ["items"], ok: false, check: Read, text: "Chakri", mean: "New name for Sudarshan Chakra. A spinning Diwali cracker.", note: "Native also checks charkhi as the spelling.", deva: "चकरी"),
+        (id: "item.5", at: ["items"], ok: false, check: Read, text: "Bada Dhamaka", mean: "New name for Brahmastra. Also what a big sale is called.", note: "Owner decides.", deva: "बड़ा धमाका"),
+        (id: "item.6", at: ["items"], ok: false, check: Read, text: "Kadak Chai", mean: "New name for Cutting Chai, which may be a Mumbai word.", note: "Plain Chai is the safe fallback.", deva: "कड़क चाय"),
+
+        // item-lore
+        (id: "lore.vajra9", at: ["items"], ok: false, check: Plain, text: "Ek baar shuru hui toh rukti nahi", mean: "Once it starts, it does not stop.", note: "Replaces English lore."),
+        (id: "lore.trishul", at: ["items"], ok: false, check: Read, text: "Teen tigada, kaam bigada. Par yahan teeno goli lagti hain", mean: "Three spoil the job. But here all three bullets land.", note: "Replaces English lore."),
+        (id: "lore.mk2", at: ["items"], ok: false, check: Read, text: "Darwaza roko, gali roko. Hazaar wali ladi", mean: "Block the door, block the lane. The thousand-cracker string.", note: "Replaces English lore."),
+        (id: "lore.chakra", at: ["items"], ok: false, check: Read, text: "Diwali ki chakri. Jo raaste mein aaye, kat jaye; phir laut ke haath mein", mean: "A Diwali spinner. It cuts what it meets, then comes back to the hand.", note: "Same line as today, with Vishnu removed."),
+        (id: "lore.brahmastra", at: ["items"], ok: false, check: Plain, text: "Sabse bada dhamaka. Ek baar chalta hai, aur sab kuch badal deta hai", mean: "The biggest bang. It goes once, and changes everything.", note: "Same line as today, without astra. Avoid the word patakha: two filter lists flag it as slang for a woman."),
+        (id: "lore.soma", at: ["items"], ok: false, check: Plain, text: "Ek kadak chai, aur thodi himmat", mean: "One strong tea, and a little courage.", note: "Same line as today, without cutting."),
+
+        // real-spot
+        (id: "spot.1", at: ["bark.spot", "wheel.dekho"], ok: false, check: Read, text: "Oye!", mean: "Hey!", note: "Punjabi-Delhi call. One word, like real Delhi barks."),
+        (id: "spot.2", at: ["bark.spot", "wheel.panga"], ok: false, check: Read, text: "Bhai sun, ek minute", mean: "Bro, listen, one minute.", note: "Heard in a real taxi fight. Funny when said to an enemy."),
+        (id: "spot.3", at: ["bark.spot", "wheel.panga"], ok: false, check: Read, text: "Marna hai kya?", mean: "Do you want to die?", note: "The everyday road scold. Fits a player standing in the open."),
+        (id: "spot.4", at: ["bark.spot"], ok: false, check: Decide, text: "Kya dekh raha hai?", mean: "What are you looking at?", note: "Classic fight opener. Not found in a clip yet. The verb assumes the listener is a man."),
+        (id: "spot.5", at: ["bark.spot", "wheel.panga"], ok: false, check: Read, text: "Zyada hero mat ban", mean: "Do not act the hero.", note: "Mocks ego. Imperative, so it needs no gender. Not found in a clip yet."),
+        (id: "spot.6", at: ["bark.spot"], ok: false, check: Decide, text: "Teri toh...!", mean: "You just wait...!", note: "Delhi reflex in a stand-up bit. The cut-off hides abuse, so a native decides."),
+
+        // real-win
+        (id: "winr.1", at: ["you.kill", "bark.win", "wheel.jeet"], ok: false, check: Read, text: "Maze aa gaye, bhai", mean: "That was fun, bro.", note: "Said after winning a bargain."),
+        (id: "winr.2", at: ["moment.trade", "wheel.jeet"], ok: false, check: Read, text: "Na aapki, na meri", mean: "Not your price, not mine.", note: "Real bargain formula. Use when two players kill each other."),
+        (id: "winr.3", at: ["wheel.panga"], ok: false, check: Read, text: "Arre aa jao, aa jao!", mean: "Oh come back, come back!", note: "Seller calling back a buyer who walks off. Taunt for a fleeing enemy."),
+        (id: "winr.4", at: ["you.kill", "bark.win", "wheel.jeet"], ok: false, check: Plain, text: "Agla!", mean: "Next!", note: "Queue word."),
+        (id: "winr.5", at: ["you.kill", "bark.win", "wheel.jeet"], ok: false, check: Plain, text: "Aur koi?", mean: "Anyone else?", note: "After a kill."),
+        (id: "winr.6", at: ["you.head"], ok: false, check: Read, text: "Tapa-tap!", mean: "Headshot!", note: "Indian PUBG server slang. One source only."),
+
+        // real-hit
+        (id: "hitr.1", at: ["bark.hit", "wheel.masti"], ok: false, check: Read, text: "Arre bhai saab, hadd ho gayi", mean: "Oh sir, this is the limit.", note: "Heard in a real taxi argument."),
+        (id: "hitr.2", at: ["bark.hit", "wheel.haar"], ok: false, check: Plain, text: "Ek minute, ek minute!", mean: "One minute, one minute!", note: "Real plea, said over and over in the clip."),
+        (id: "hitr.3", at: ["bark.hit", "wheel.haar"], ok: false, check: Read, text: "Samjha karo!", mean: "Please understand!", note: "Shopkeeper plea. Works as a joke when losing."),
+        (id: "hitr.4", at: ["bark.hit", "wheel.haar"], ok: false, check: Read, text: "Trial tha, trial!", mean: "That one was a trial!", note: "Gully cricket: the first ball does not count."),
+        (id: "hitr.5", at: ["bark.hit"], ok: false, check: Read, text: "Awaaz neeche!", mean: "Lower your voice!", note: "Heard in a real Metro fight. Funny after gunfire."),
+        (id: "hitr.6", at: ["bark.hit"], ok: false, check: Plain, text: "Kya badtameezi hai?", mean: "What rudeness is this?", note: "Heard in a real Metro fight."),
+        (id: "hitr.7", at: ["bark.hit", "wheel.masti"], ok: false, check: Read, text: "Bana video, bana", mean: "Go on, film it.", note: "Metro fight. Fits a death in front of others."),
+        (id: "hitr.8", at: ["bark.hit", "wheel.haar"], ok: false, check: Plain, text: "Mar gaye!", mean: "We are dead!", note: "Plural form, so it works for any player."),
+
+        // real-run
+        (id: "run.1", at: ["alert.next"], ok: false, check: Read, text: "{place}! {place}! {place}!", mean: "Shouted three times.", note: "Autos and buses call their stop like this. Alert for the safe zone."),
+        (id: "run.2", at: ["alert.tiny"], ok: false, check: Plain, text: "Thoda adjust kar lo", mean: "Squeeze in a little.", note: "Delhi commuter line. Fits the last tiny ring."),
+        (id: "run.3", at: ["alert.first"], ok: false, check: Plain, text: "Light chali gayi", mean: "The power went out.", note: "Delhi storms cut power. Fits the first Aandhi hit."),
+        (id: "run.4", at: ["alert.last"], ok: false, check: Read, text: "Ab jo hoga, dekha jayega", mean: "Whatever happens, we will see.", note: "Last ring mood."),
+        (id: "run.5", at: ["bark.run"], ok: false, check: Read, text: "Side de, side de!", mean: "Give way, give way!", note: "Road call. Not found in a clip yet."),
+        (id: "run.6", at: ["bark.run"], ok: false, check: Decide, text: "Chhat se kapde le aao!", mean: "Bring the clothes in from the roof!", note: "Mother shout before a storm. From general knowledge. Never write kapde utaar lo, which reads as undress."),
+        (id: "run.7", at: ["alert.moving"], ok: false, check: Plain, text: "Kripya Aandhi se doori banaye rakhein", mean: "Please keep a distance from the Aandhi.", note: "Twist on a real railing sign in the photos."),
+
+        // real-drop
+        (id: "drop.1", at: ["drop.ride"], ok: false, check: Plain, text: "Kuch pakad lo!", mean: "Hold on to something!", note: "Auto driver at a speed breaker. Fits the jump."),
+        (id: "drop.2", at: ["drop.end"], ok: false, check: Read, text: "Gas khatam ho rahi hai", mean: "The gas is running out.", note: "Auto excuse. Fits the end of the flight."),
+        (id: "drop.3", at: ["drop.far"], ok: false, check: Read, text: "Woh toh meter batayega", mean: "The meter will tell.", note: "Auto answer to how much."),
+
+        // real-paint
+        (id: "paint.1", at: ["paint"], ok: false, check: Plain, text: "Ghar kab aaoge", mean: "When will you come home?", note: "Red hand paint on a real Delhi auto hood, with the family names.", deva: "घर कब आओगे"),
+        (id: "paint.2", at: ["paint"], ok: false, check: Plain, text: "Shuddh desi", mean: "Pure desi.", note: "From a real sweet-shop board. Fits the Katta and Haldi Doodh.", deva: "शुद्ध देसी"),
+        (id: "paint.3", at: ["paint"], ok: false, check: Plain, text: "National Permit", mean: "National permit.", note: "Painted on nearly every truck front in the photos.", deva: "नेशनल परमिट"),
+        (id: "paint.4", at: ["paint"], ok: false, check: Plain, text: "Goods Carrier", mean: "Goods carrier.", note: "Same.", deva: "गुड्स कैरियर"),
+        (id: "paint.5", at: ["paint"], ok: false, check: Plain, text: "Highly Inflammable", mean: "Highly inflammable.", note: "From a real tanker. Good on drums.", deva: "हाइली इन्फ्लेमेबल"),
+
+        // real-gamer
+        (id: "gamer.1", at: ["wheel.dekho"], ok: false, check: Plain, text: "Banda khule mein hai!", mean: "The guy is out in the open!", note: "Real BGMI voice chat. Banda is the word Indian players use."),
+        (id: "gamer.2", at: ["bark.run", "wheel.dekho"], ok: false, check: Plain, text: "Banda aa raha hai, aa raha hai!", mean: "The guy is coming, coming!", note: "Real BGMI voice chat."),
+        (id: "gamer.3", at: ["wheel.dekho"], ok: false, check: Plain, text: "Peeche se!", mean: "From behind!", note: "Common in BGMI clips."),
+        (id: "gamer.4", at: ["alert.outside", "bark.run", "wheel.dekho"], ok: false, check: Plain, text: "Andar ja, andar ja!", mean: "Get inside, get inside!", note: "Common in BGMI clips. Fits the Aandhi too."),
+        (id: "gamer.5", at: ["bark.run", "wheel.dekho"], ok: false, check: Plain, text: "Bas bas bas!", mean: "Stop stop stop!", note: "Common in BGMI clips."),
+        (id: "gamer.6", at: ["you.kill", "bark.win", "wheel.jeet"], ok: false, check: Plain, text: "Ek aur, ek aur!", mean: "One more, one more!", note: "Real BGMI voice chat."),
+        (id: "gamer.7", at: ["wheel.dekho"], ok: false, check: Plain, text: "Aage khatra hai", mean: "Danger ahead.", note: "Real BGMI voice chat, and a common road sign."),
+        (id: "gamer.8", at: ["bark.hit", "wheel.haar"], ok: false, check: Plain, text: "Goli hi nahi thi, yaar!", mean: "I had no bullets, man!", note: "Real excuse, said about ammo in BGMI voice chat."),
+        (id: "gamer.9", at: ["wheel.haar"], ok: false, check: Read, text: "Hacker hai!", mean: "He is a hacker!", note: "The classic excuse after any death."),
+
+        // real-paint
+        (id: "paint.6", at: ["paint"], ok: false, check: Plain, text: "Nakli se saavdhan", mean: "Beware of fakes.", note: "Old shop habit, heard in a Delhi food stall clip. Fits any shop board.", deva: "नकली से सावधान"),
+        (id: "paint.7", at: ["paint"], ok: false, check: Plain, text: "Pure Desi Ghee", mean: "Pure desi ghee.", note: "From a real Chandni Chowk board. English is normal on Delhi boards.", deva: "शुद्ध देसी घी"),
+        (id: "paint.8", at: ["paint"], ok: false, check: Plain, text: "{map}, Delhi-{pin}", mean: "Place and postal number.", note: "Real shop boards end like this, such as Chandni Chowk, Delhi-6."),
+
+        // the wheel's own words
+        (id: "ui.wheel.hint", at: ["ui.wheel.hint"], ok: false, check: Read, text: "Mouse se chuno, scroll se agla panna, T chhodo toh bolo", mean: "Pick with the mouse, scroll for the next page, let go of T to say it."),
+        (id: "ui.wheel.dekho", at: ["ui.wheel.dekho"], ok: false, check: Read, text: "Dekho", mean: "Look: calls about enemies."),
+        (id: "ui.wheel.panga", at: ["ui.wheel.panga"], ok: false, check: Plain, text: "Panga", mean: "Fight: taunts."),
+        (id: "ui.wheel.jeet", at: ["ui.wheel.jeet"], ok: false, check: Plain, text: "Jeet", mean: "Win: when it goes well."),
+        (id: "ui.wheel.haar", at: ["ui.wheel.haar"], ok: false, check: Plain, text: "Haar", mean: "Loss: when it goes badly."),
+        (id: "ui.wheel.masti", at: ["ui.wheel.masti"], ok: false, check: Plain, text: "Masti", mean: "Fun: the rest."),
+        (id: "ui.you", at: ["ui.you"], ok: false, check: Plain, text: "Tum", mean: "You, in the feed when you speak."),
+    ],
+)

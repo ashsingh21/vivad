@@ -34,7 +34,7 @@
     <h1>Panga</h1>
     <p class="tag">Dilli ki galiyon mein last one standing.</p>
     <label for="name">Tumhara naam</label>
-    <input id="name" maxlength="16" placeholder="Warrior">
+    <input id="name" maxlength="16" placeholder="Khiladi">
     <label for="map">Map</label>
     <select id="map">
       <option value="cp">Connaught Place</option>
@@ -51,7 +51,8 @@
     <input id="code" placeholder="chai-tota-ludo-42" autocapitalize="off" spellcheck="false">
     <div class="row"><button type="submit" id="join">Join karo</button></div>
     <p class="err" id="err"></p>
-    <p class="hint">Online with friends: one makes a room and reads out its code; the rest join with it. Bots fill a solo match.</p>
+    <p class="hint">Dost ke saath: ek room banao, code bolo, baaki join karein. Akele khelo toh bots aayenge.</p>
+    <p class="hint">Map data © <a href="https://www.openstreetmap.org/copyright" style="color:inherit">OpenStreetMap</a> contributors</p>
   </form>
 </div>
 <div id="msg" hidden>Panga load ho raha hai…</div>
@@ -85,7 +86,7 @@
     };
   } else if (!navigator.gpu) {
     msg.hidden = false;
-    msg.textContent = "Panga needs WebGPU: use Chrome or Edge (desktop or Android) or Safari 26+ on iPhone.";
+    msg.textContent = "Panga ko WebGPU chahiye: Chrome, Edge ya Safari 26+ kholo";
   } else {
     msg.hidden = false;
     // Watch for the game's canvas before starting it: once started, `init` never returns.
@@ -94,7 +95,7 @@
     const { default: init } = await import("./game.js");
     try { await init(); } catch (e) {
       // Bevy throws to hand control to the browser's event loop; that's not a failure.
-      if (!String(e).includes("Using exceptions for control flow")) { msg.textContent = "Panga couldn't start: " + e; throw e; }
+      if (!String(e).includes("Using exceptions for control flow")) { msg.textContent = "Panga shuru nahi hua: " + e; throw e; }
     }
   }
 </script>

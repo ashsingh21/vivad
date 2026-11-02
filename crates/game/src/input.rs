@@ -105,6 +105,7 @@ impl Plugin for InputPlugin {
         app.init_resource::<Bindings>()
             .init_resource::<ActionState>()
             .init_resource::<ShowPerf>()
+            .init_resource::<crate::wheel::WheelOpen>()
             .add_systems(PreUpdate, (resolve_actions, write_intent, grab_cursor, meta_actions, vote).chain()
                 .in_set(LocalInput).after(bevy::input::InputSystems));
     }
@@ -158,6 +159,7 @@ fn write_intent(
     scroll: Res<AccumulatedMouseScroll>,
     pads: Query<&Gamepad>,
     cursor: Single<&CursorOptions>,
+    line_wheel: Res<crate::wheel::WheelOpen>,
     time: Res<Time>,
     mut q: Query<&mut PlayerIntent, With<LocalPlayer>>,
 ) {
@@ -183,7 +185,7 @@ fn write_intent(
     // Look.
     let ads = state.held(Act::Aim);
     let sens = if ads { bindings.ads_sensitivity_scale } else { 1.0 };
-    if grabbed {
+    if grabbed && !line_wheel.0 {
         intent.yaw -= motion.delta.x * bindings.mouse_sensitivity * sens;
         intent.pitch -= motion.delta.y * bindings.mouse_sensitivity * sens;
     }
@@ -223,7 +225,7 @@ fn write_intent(
             intent.select = Some(i as u8);
         }
     }
-    let wheel = scroll.delta.y;
+    let wheel = if line_wheel.0 { 0.0 } else { scroll.delta.y };
     let step = if wheel < 0.0 || state.just_pressed(Act::NextSlot) {
         1
     } else if wheel > 0.0 || state.just_pressed(Act::PrevSlot) {

@@ -105,9 +105,9 @@ upper limb toward the thumb, edge or bow's back along the hand); see `crates/gam
 | "Male classic jeans", punkduck, MakeHuman community pack pants02 | [asset packs](https://static.makehumancommunity.org/assets/assetpacks.html) | CC-BY 4.0: credit needed | Man's jeans, recoloured, top cut away under the polo |
 | "Running shoes 01", punkduck, MakeHuman community pack shoes02 | [asset packs](https://static.makehumancommunity.org/assets/assetpacks.html) | CC-BY 3.0: credit needed | Man's shoes, recoloured |
 | Polo shirt, Namuhekam, pack shirts01; flapper dress, AEthelraed_Unraed, pack dress01; harem pants and cloth shoes, MRT (toigo), packs pants01 and shoes01; brows 02 and 05, Mindfront, pack eyebrows01 | [asset packs](https://static.makehumancommunity.org/assets/assetpacks.html) | CC0 | Polo; the dress cut into the woman's kurta; salwar; flat shoes; brow strands baked into the head |
-| Mukta | [Ek Type](https://github.com/EkType/Mukta) | SIL OFL 1.1 (`assets/fonts/OFL-Mukta.txt`) | Front door text |
-| Gajraj One | [Google Fonts](https://fonts.google.com/specimen/Gajraj+One) | SIL OFL 1.1 (`assets/fonts/OFL-GajrajOne.txt`) | Front door titles and buttons |
-| Khand | [Google Fonts](https://fonts.google.com/specimen/Khand) | SIL OFL 1.1 (`assets/fonts/OFL-Khand.txt`) | Front door numbers |
+| Mukta Bold, 2014 Girish Dalvi, Ek Type | [Ek Type](https://github.com/EkType/Mukta), [Google Fonts](https://fonts.google.com/specimen/Mukta) | SIL OFL 1.1 (`assets/fonts/OFL-Mukta.txt`) | All on-screen text, and five shop boards |
+| Gajraj One, 2022 The Gajrajone Project Authors | [Google Fonts](https://fonts.google.com/specimen/Gajraj+One) | SIL OFL 1.1 (`assets/fonts/OFL-GajrajOne.txt`) | Titles and buttons |
+| Khand Bold and SemiBold, 2014 Indian Type Foundry | [Google Fonts](https://fonts.google.com/specimen/Khand) | SIL OFL 1.1 (`assets/fonts/OFL-Khand.txt`) | Numbers |
 | Button click (`assets/audio/ui_click.ogg`) | [bevy_new_2d](https://github.com/TheBevyFlock/bevy_new_2d), by Jaszunio15 | CC0 | Front door buttons |
 | Screen, menu and button patterns in `crates/game/src/front/` | [bevy_new_2d](https://github.com/TheBevyFlock/bevy_new_2d) (CC0, MIT or Apache 2.0), [bevy_game_template](https://github.com/NiklasEi/bevy_game_template) (CC0) | CC0 | Followed by hand, adapted to Bevy 0.20 |
 
@@ -203,7 +203,7 @@ Connaught Place and the head of Janpath, New Delhi, from OpenStreetMap: building
 heights, roads, parks, car parks, trees and place names, converted by `tools/osm/delhi.py` into
 `assets/data/maps/delhi_cp.json`. Map data © OpenStreetMap contributors, available under the Open
 Database License (ODbL 1.0): https://www.openstreetmap.org/copyright. The game must credit this
-wherever the map is shown (credits screen). The inner circle's blocks are generated at the radii
+wherever the map is shown: it stands under the minimap and on the web menu. The inner circle's blocks are generated at the radii
 and radial-road bearings measured from that data (`crates/shared/src/map/delhi.rs`).
 
 ## NCR map data
@@ -269,4 +269,17 @@ itself: keep the ODbL notice with it, and publish the files. Ask a lawyer before
 Bold and Noto Sans Devanagari Bold, by Google and the Noto project, under the SIL Open Font
 License 1.1 (https://openfontlicense.org). The OFL allows text rendered in the fonts to be used in
 any work; the font files themselves aren't shipped. The shop names are made up: no real brands or
-businesses.
+businesses. Five boards (the tent house, hardware, jewellers, chai stall and bartan boards) were
+redrawn in Mukta Bold, with the Hindi set by macOS CoreText, when their names changed.
+
+## On-screen fonts
+
+The three on-screen fonts have their rows in the table above. All are under the SIL Open Font
+License 1.1; each licence sits beside its font in `assets/fonts/`, and the fonts are built into
+the game.
+
+## Delhi words
+
+`assets/data/lines.ron` holds every on-screen line. The words were drafted from public clips and
+photos of daily Delhi speech (`research/delhi-words/`); no text was copied from any game. Every line
+is a draft until a Delhi native has read it (`ok: false`).

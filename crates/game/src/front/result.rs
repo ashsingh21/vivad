@@ -4,9 +4,9 @@
 use bevy::prelude::*;
 use bevy::ui::InteractionDisabled;
 use shared::items::ItemDb;
-use shared::map::MapLayout;
+use shared::lines::{Lines, with};
 use shared::sim::flow::{self, Match, MatchState};
-use shared::sim::net::Peers;
+use shared::sim::net::{NetId, Peers};
 use shared::sim::{DamageCause, DamageMsg, Eliminated, HitMsg, LocalPlayer, MatchConfig, Warrior};
 
 use super::theme::{self, CREAM, Fonts, GHOST, INK, MARIGOLD, MUSTARD, RED, Shortcut, TEAL, u};
@@ -15,29 +15,15 @@ use super::{Press, Screen};
 const AGAIN: &str = "PHIR SE PANGA";
 const HOME: &str = "Ghar";
 const OUT: &str = "TAPAK GAYE";
-const WON: &str = "PANGA KING!";
 const KILLS: &str = "KILLS";
 const DAMAGE: &str = "DAMAGE";
 const TIME: &str = "TIME";
-const GONE_ON: &str = "Panga tumhare bina chalu hai";
-const ZONE_GOT_YOU: &str = "Aandhi ne uda diya";
-const GROUND_GOT_YOU: &str = "Zameen se panga ho gaya";
-const VOTE: &str = "Agla map? Number dabao";
 
-fn you_won(map: &str) -> String {
-    format!("Tumne Panga jeet liya. {map} tumhara.")
-}
-fn got_you(killer: &str) -> String {
-    format!("{killer} ne tapka diya")
-}
 fn with_weapon(weapon: &str) -> String {
     format!("{weapon} se")
 }
 fn own_weapon(weapon: &str) -> String {
     format!("{weapon} ne tumhe hi tapka diya!")
-}
-fn they_won(name: &str) -> String {
-    format!("{name} ne Panga jeet liya")
 }
 fn left_standing(n: u32) -> String {
     format!("Abhi {n} bache hain")
@@ -114,17 +100,19 @@ fn out_of_the_match(m: Res<Match>, local: Query<(Entity, Has<Eliminated>), With<
 fn spawn(
     mut commands: Commands,
     fonts: Res<Fonts>,
+    lines: Res<Lines>,
     m: Res<Match>,
     tally: Res<Tally>,
-    layout: Res<MapLayout>,
     db: Res<ItemDb>,
-    local: Query<(Entity, &Warrior, Option<&Eliminated>), With<LocalPlayer>>,
+    local: Query<(Entity, &Warrior, &NetId, Option<&Eliminated>), With<LocalPlayer>>,
     names: Query<&Warrior>,
     time: Res<Time>,
     mut opened: ResMut<Opened>,
 ) {
     opened.0 = time.elapsed_secs();
-    let Ok((me, w, fell)) = local.single() else { return };
+    let Ok((me, w, id, fell)) = local.single() else { return };
+    let key = id.0 as u64;
+    let pick = |at: &str| lines.pick(at, m.seed, key).to_string();
     let seconds = tally.out_at.unwrap_or(m.elapsed) as u32;
     let numbers = [(w.kills.to_string(), KILLS), ((tally.damage.round() as u32).to_string(), DAMAGE), (format!("{}:{:02}", seconds / 60, seconds % 60), TIME)];
     let won = m.winner == Some(me);
@@ -135,22 +123,29 @@ fn spawn(
         ))
         .with_children(|c| {
             if won {
-                c.spawn(theme::painted(WON, &fonts.title, 100.0, MUSTARD));
-                c.spawn(theme::line(you_won(&layout.name), &fonts.body, 27.0, CREAM));
+                c.spawn(theme::painted(pick("win.title"), &fonts.title, 100.0, MUSTARD));
+                c.spawn(theme::line(pick("win.sub"), &fonts.body, 27.0, CREAM));
                 c.spawn((Node { column_gap: u(52.0), margin: UiRect::top(u(12.0)), ..default() }, Pickable::IGNORE)).with_children(|row| {
                     stats(row, &fonts, &numbers, MUSTARD, CREAM);
                 });
             } else {
                 let place = fell.map_or(m.alive, |e| e.placement);
-                c.spawn((Node { align_items: AlignItems::FlexEnd, column_gap: u(16.0), ..default() }, Pickable::IGNORE)).with_children(|row| {
-                    row.spawn(theme::line(format!("#{place}"), &fonts.number, 104.0, MUSTARD));
-                    row.spawn(theme::line(format!("of {}", m.total), &fonts.body, 26.0, CREAM));
-                });
-                let (title, detail) = who_got_you(me, fell, tally.last_hit.as_ref(), &names, &db);
+                c.spawn(theme::line(with(lines.text("hud.place"), &[("p", &place.to_string()), ("n", &m.total.to_string())]), &fonts.number, 104.0, MUSTARD));
+                let (title, detail) = who_got_you(me, fell, tally.last_hit.as_ref(), &names, &db, &pick);
+                // Near the end, or out among the first quarter to fall: a word on it.
+                let finish = match place {
+                    2 => pick("elim.place.2"),
+                    3..=5 => pick("elim.place.top5"),
+                    p if p * 4 >= m.total * 3 => pick("elim.place.low"),
+                    _ => String::new(),
+                };
                 c.spawn(theme::sign(CREAM, MARIGOLD, UiRect::axes(u(36.0), u(26.0)))).with_children(|s| {
                     s.spawn(theme::line(OUT, &fonts.body, 17.0, INK));
                     s.spawn(theme::line(title, &fonts.title, 42.0, RED));
                     s.spawn(theme::line(detail, &fonts.body, 23.0, INK));
+                    if !finish.is_empty() {
+                        s.spawn(theme::line(finish, &fonts.body, 23.0, INK));
+                    }
                     s.spawn((Node { justify_content: JustifyContent::SpaceBetween, margin: UiRect::top(u(14.0)), ..default() }, Pickable::IGNORE)).with_children(|row| {
                         stats(row, &fonts, &numbers, INK, INK);
                     });
@@ -179,14 +174,24 @@ fn stats(row: &mut ChildSpawnerCommands, fonts: &Fonts, numbers: &[(String, &str
 }
 
 /// The card's title and the line under it.
-fn who_got_you(me: Entity, fell: Option<&Eliminated>, last_hit: Option<&DamageCause>, names: &Query<&Warrior>, db: &ItemDb) -> (String, String) {
+fn who_got_you(me: Entity, fell: Option<&Eliminated>, last_hit: Option<&DamageCause>, names: &Query<&Warrior>, db: &ItemDb, pick: &dyn Fn(&str) -> String) -> (String, String) {
     let killer = fell.and_then(|e| e.by).filter(|by| *by != me).and_then(|by| names.get(by).ok()).map(|w| w.name.as_str());
+    // Some of the killer's lines leave the name out; the card still says who it was.
+    let got_you = |k: &str, how: String| {
+        let title = with(&pick("elim.killer"), &[("k", k)]);
+        let detail = match (title.contains(k), how.is_empty()) {
+            (true, _) => how,
+            (false, true) => k.to_string(),
+            (false, false) => format!("{k}: {how}"),
+        };
+        (title, detail)
+    };
     match (last_hit, killer) {
-        (Some(DamageCause::Pralaya), _) => (ZONE_GOT_YOU.into(), String::new()),
-        (Some(DamageCause::Fall), _) => (GROUND_GOT_YOU.into(), String::new()),
-        (Some(DamageCause::Weapon(id)), Some(k)) => (got_you(k), with_weapon(&db.get(id).name)),
-        (Some(DamageCause::Weapon(id)), None) => (own_weapon(&db.get(id).name), String::new()),
-        (None, Some(k)) => (got_you(k), String::new()),
+        (Some(DamageCause::Pralaya), _) => (pick("elim.aandhi"), pick("alert.thanks")),
+        (Some(DamageCause::Fall), _) => (pick("elim.fall"), String::new()),
+        (Some(DamageCause::Weapon(id)), Some(k)) => got_you(k, with_weapon(&db.get(id).name)),
+        (Some(DamageCause::Weapon(id)), None) => (own_weapon(&db.get(id).name), pick("elim.self")),
+        (None, Some(k)) => got_you(k, String::new()),
         (None, None) => (OUT.into(), String::new()),
     }
 }
@@ -216,6 +221,7 @@ fn unlock(
 
 fn status(
     m: Res<Match>,
+    lines: Res<Lines>,
     config: Res<MatchConfig>,
     peers: Res<Peers>,
     votes: Res<flow::MapVotes>,
@@ -224,8 +230,8 @@ fn status(
 ) {
     let online = config.online || peers.all.len() > 1;
     let mut s = match m.winner.and_then(|e| names.get(e).ok()) {
-        Some(w) if m.state == MatchState::Ended => they_won(&w.name),
-        _ if online => format!("{GONE_ON}\n{}", left_standing(m.alive)),
+        Some(w) if m.state == MatchState::Ended => with(lines.pick("win.feed", m.seed, w.look as u64), &[("k", &w.name)]),
+        _ if online => format!("{}\n{}", lines.pick("next.wait", m.seed, 0), left_standing(m.alive)),
         _ => left_standing(m.alive),
     };
     // The vote for the next map (the number keys, crate::input), and where it stands. With one map
@@ -234,7 +240,7 @@ fn status(
     if config.rotate && pool.len() > 1 {
         let next = flow::next_map(config.map, &votes);
         s.push('\n');
-        s.push_str(VOTE);
+        s.push_str(lines.text("hud.vote"));
         for (k, map) in pool.iter().enumerate() {
             let n = votes.count(*map);
             let count = if n > 0 { format!(" ({n})") } else { String::new() };

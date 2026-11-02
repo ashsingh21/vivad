@@ -17,6 +17,7 @@ use shared::sim::bots::BotBrain;
 use shared::sim::flow::{Match, MatchState};
 use shared::sim::loot::{Chest, Pickup};
 use shared::sim::net::{Departures, Inbox, NetId, Outbox, Owner, PeerId, Peers, Remote};
+use shared::sim::talk::SayMsg;
 use shared::sim::{Eliminated, Inventory, Kinematic, MatchConfig, MoveMode, PlayerIntent, SimPlugin, Warrior, btn};
 
 fn main() {
@@ -188,6 +189,8 @@ fn main() {
     check(outcomes.iter().all(|o| o.1 == *kills), format!("every peer agrees on the kill counts ({total_kills} weapon kills)"));
     check(total_kills > 0, "warriors killed each other across peers".into());
     check(outcomes.iter().all(|o| o.2 == *winner) && winner.is_some(), format!("every peer crowns the same winner ({winner:?})"));
+    let heard: Vec<u32> = apps.iter().map(|a| a.world().resource::<HeardShouts>().0).collect();
+    check(heard.iter().all(|h| *h > 0), format!("what warriors shout reaches the other peers ({heard:?} heard)"));
 
     // The loot, as each peer has it.
     let loot: Vec<(Vec<u64>, Vec<usize>)> = apps
@@ -262,6 +265,14 @@ fn main() {
     std::process::exit(failed as i32);
 }
 
+/// Shouts this peer heard from warriors another peer runs.
+#[derive(Resource, Default)]
+struct HeardShouts(u32);
+
+fn count_shouts(mut said: MessageReader<SayMsg>, remote: Query<(), With<Remote>>, mut heard: ResMut<HeardShouts>) {
+    heard.0 += said.read().filter(|s| remote.contains(s.who)).count() as u32;
+}
+
 fn peer(id: PeerId, ids: &[PeerId], bots: u32, autopilot: bool, items: &str) -> App {
     let mut app = App::new();
     app.insert_resource(MatchConfig { match_seed: Some(99), bots, autopilot, ..default() })
@@ -269,6 +280,8 @@ fn peer(id: PeerId, ids: &[PeerId], bots: u32, autopilot: bool, items: &str) -> 
         .add_plugins((MinimalPlugins, TransformPlugin, AssetPlugin::default(), bevy::mesh::MeshPlugin))
         .add_plugins(PhysicsPlugins::default())
         .add_plugins(SimPlugin { items_ron: items.to_string() })
+        .init_resource::<HeardShouts>()
+        .add_systems(FixedUpdate, count_shouts)
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)));
     app.finish();
     app.cleanup();

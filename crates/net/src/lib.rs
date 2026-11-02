@@ -1,6 +1,6 @@
 //! The iroh transport for host-less play (see `shared::sim::net` for the rules it carries).
 //!
-//! Every peer connects directly to every other on our own protocol, `vivad/0`. Each side of a
+//! Every peer connects directly to every other on our own protocol, `vivad/1`. Each side of a
 //! connection opens one ordered stream for the messages that must arrive (shots, hits, deaths,
 //! loot) and sends warrior state as unreliable datagrams, since a lost one is replaced a tick
 //! later. A match is gathered by a lobby: one player shares a join code and the rest dial it.
@@ -71,7 +71,7 @@ fn shut(rt: &Rt, router: Router) {
     }
 }
 
-pub const ALPN: &[u8] = b"vivad/0";
+pub const ALPN: &[u8] = b"vivad/1";
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
@@ -243,9 +243,9 @@ const WORDS: [&str; 128] = [
     "vada", "poha", "bhel", "chaat", "kachori", "paratha", "naan", "roti", "biryani", "korma", "tikka", "halwa",
     "kheer", "imarti", "peda", "gulab", "mango", "guava", "papaya", "litchi", "chikoo", "jamun", "amla", "nimbu",
     "adrak", "elaichi", "jeera", "haldi", "mirchi", "pudina", "tulsi", "neem", "peepal", "banyan", "gulmohar", "champa",
-    "mogra", "kamal", "tota", "mor", "koel", "maina", "cheetah", "sher", "hathi", "ghoda", "oont", "bandar",
+    "mogra", "kamal", "tota", "mor", "koel", "maina", "cheetah", "sher", "hathi", "ghoda", "oont", "kabootar",
     "bhalu", "hiran", "kachua", "magar", "chidiya", "titli", "gilehri", "khargosh", "machli", "rickshaw", "tanga", "patang",
-    "lattu", "kanche", "gilli", "danda", "kabaddi", "carrom", "ludo", "sixer", "googly", "yorker", "chakka", "dhoom",
+    "lattu", "kanche", "gilli", "danda", "kabaddi", "carrom", "ludo", "sixer", "googly", "yorker", "chauka", "dhoom",
     "masti", "jugaad", "bindaas", "jhakaas", "dhamaal", "filmy", "tadka", "garam", "thanda", "mithai", "namkeen", "achar",
     "papad", "raita", "dhaba", "mela", "holi", "diwali", "lohri", "onam", "pongal", "chowk", "gali", "mohalla",
     "bazaar", "haveli", "ghat", "qila", "mahal", "chhatri", "dilli", "mumbai", "kolkata", "chennai", "jaipur", "lucknow",

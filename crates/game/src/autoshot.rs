@@ -31,6 +31,10 @@
 //!   VIVAD_HUD_IMAGE=1    draw the HUD and the 3D view to an image instead of the window and shoot
 //!                        that: the HUD's shots then work with the window hidden, though the window
 //!                        itself stays empty.
+//! VIVAD_KO=<t>[,aandhi]  the player falls at that match time, to the first bot or to the Aandhi, to
+//!                        capture the result screen.
+//! VIVAD_SPREE=<t>       from that match time the player fells the others, a second apart and each with
+//!                        another weapon, through the real damage path: the kill feed and big calls.
 //! VIVAD_ARMOURY=<dir>   stand the player on open ground and screenshot every item in hand, carried
 //!   and in use (aiming, drawing, swinging, drinking), from the front and the side, then exit.
 //!   VIVAD_ARMOURY_ONLY=a,b only the poses whose names contain one of these. The range poses
@@ -45,7 +49,7 @@ use shared::items::{ItemDb, ItemKind, ItemStack, Rarity};
 use shared::map::terrain::ground;
 use shared::map::{MapLayout, compose};
 use shared::sim::flow::Match;
-use shared::sim::{Action, HALF_HEIGHT, Health, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, Warrior, btn};
+use shared::sim::{Action, DamageCause, DamageMsg, HALF_HEIGHT, Health, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, SimSet, Warrior, btn};
 
 use crate::camera::MainCamera;
 
@@ -320,6 +324,13 @@ impl Plugin for AutoshotPlugin {
             app.insert_resource(Clip { dir: parts[0].to_owned(), from, to, step: 1.0 / fps.max(1.0), next: from, frame: 0, view })
                 .add_systems(Update, clip_frames);
         }
+        if let Ok(spec) = std::env::var("VIVAD_KO") {
+            let at = spec.split(',').next().and_then(|t| t.trim().parse().ok()).unwrap_or(60.0);
+            app.insert_resource(Ko { at, aandhi: spec.contains("aandhi"), done: false }).add_systems(FixedUpdate, knock_out.before(SimSet::Damage));
+        }
+        if let Some(next) = std::env::var("VIVAD_SPREE").ok().and_then(|t| t.trim().parse().ok()) {
+            app.insert_resource(Spree { next, done: 0 }).add_systems(FixedUpdate, spree.before(SimSet::Damage));
+        }
         if let Ok(dir) = std::env::var("VIVAD_SHOTS") {
             let times = std::env::var("VIVAD_SHOTS_AT")
                 .map(|v| v.split(',').filter_map(|t| t.trim().parse().ok()).collect())
@@ -503,6 +514,54 @@ fn shoot(commands: &mut Commands, path: String) {
             save_to_disk(path.clone())(shot);
         }
     });
+}
+
+/// When the player falls for a capture of the result screen (VIVAD_KO).
+#[derive(Resource)]
+struct Ko {
+    at: f32,
+    aandhi: bool,
+    done: bool,
+}
+
+fn knock_out(
+    mut ko: ResMut<Ko>,
+    m: Res<Match>,
+    me: Query<Entity, With<LocalPlayer>>,
+    others: Query<Entity, (With<Warrior>, Without<LocalPlayer>)>,
+    mut damage: MessageWriter<DamageMsg>,
+) {
+    let Ok(me) = me.single() else { return };
+    if ko.done || m.elapsed < ko.at {
+        return;
+    }
+    ko.done = true;
+    let (source, cause) = if ko.aandhi { (None, DamageCause::Pralaya) } else { (others.iter().next(), DamageCause::Weapon("katta".into())) };
+    damage.write(DamageMsg { target: me, amount: 1000.0, source, headshot: false, cause });
+}
+
+/// The next kill of a capture's spree (VIVAD_SPREE).
+#[derive(Resource)]
+struct Spree {
+    next: f32,
+    done: usize,
+}
+
+/// Each kill's weapon, and whether it is a headshot.
+const SPREE: [(&str, bool); 6] = [("bat", false), ("tamancha", true), ("dunali", false), ("katta", false), ("gulel", true), ("agneyastra", false)];
+
+fn spree(
+    mut s: ResMut<Spree>,
+    m: Res<Match>,
+    me: Query<Entity, With<LocalPlayer>>,
+    others: Query<Entity, (With<Warrior>, Without<LocalPlayer>, Without<shared::sim::Eliminated>)>,
+    mut damage: MessageWriter<DamageMsg>,
+) {
+    let (Ok(me), Some(target)) = (me.single(), others.iter().next()) else { return };
+    let Some(&(item, headshot)) = SPREE.get(s.done).filter(|_| m.elapsed >= s.next) else { return };
+    s.done += 1;
+    s.next += 1.0;
+    damage.write(DamageMsg { target, amount: 1000.0, source: Some(me), headshot, cause: DamageCause::Weapon(item.into()) });
 }
 
 fn run_tour(

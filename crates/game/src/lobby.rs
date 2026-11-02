@@ -4,6 +4,7 @@
 
 use bevy::prelude::*;
 use net::Lobby;
+use shared::lines::{Lines, with};
 use shared::sim::net::{Departures, Heard, Inbox, Outbox, Peers};
 use shared::sim::{Hold, MatchConfig};
 
@@ -102,6 +103,7 @@ fn show(
     lobby: Res<Lobby>,
     hold: Res<Hold>,
     keys: Res<ButtonInput<KeyCode>>,
+    lines: Res<Lines>,
     mut screen: Query<&mut Visibility, With<Screen>>,
     mut text: Query<&mut Text, With<ScreenText>>,
     mut retry: Query<&mut Node, With<RetryButton>>,
@@ -115,19 +117,25 @@ fn show(
     if lobby.hosting && !lobby.started && keys.just_pressed(KeyCode::Enter) {
         lobby.start_now();
     }
-    let players = if lobby.players.is_empty() { String::new() } else { format!("Players ({}): {}", lobby.players.len(), lobby.players.join(", ")) };
+    let players = if lobby.players.is_empty() { String::new() } else { with(lines.text("lobby.players"), &[("n", &lobby.players.len().to_string()), ("names", &lobby.players.join(", "))]) };
     let msg = if let Some(e) = &lobby.error {
-        Some(format!("Could not play online\n\n{e}"))
+        // The two a player can act on, in their words; anything else as the network put it.
+        let why = match e.as_str() {
+            "could not reach the host" => lines.text("lobby.nohost"),
+            "the host left" => lines.text("lobby.hostleft"),
+            other => other,
+        };
+        Some(format!("{}\n\n{why}", lines.text("lobby.error")))
     } else if lobby.started {
-        hold.0.then(|| format!("Waiting for everyone to load the match\n\n{players}"))
+        hold.0.then(|| format!("{}\n\n{players}", lines.text("lobby.loading")))
     } else if lobby.hosting {
         // Broken into lines: a LAN code (which carries addresses) is too long for one.
         let code = lobby.code.as_ref().map(|c| c.as_bytes().chunks(50).map(|l| String::from_utf8_lossy(l)).collect::<Vec<_>>().join("\n"));
-        let code = code.as_deref().unwrap_or("(going online...)");
-        Some(format!("Hosting a match\n\nRoom code: share it with your friends\n{code}\n\n{players}\n\nPress Enter to start"))
+        let code = code.as_deref().unwrap_or(lines.text("lobby.going"));
+        Some(format!("{}\n\n{}\n{code}\n\n{players}\n\n{}", lines.text("lobby.host"), lines.text("lobby.share"), lines.text("lobby.start")))
     } else {
-        let waiting = if lobby.players.is_empty() { "Reaching the host..." } else { "Waiting for the host to start" };
-        Some(format!("Joining a match\n\n{players}\n\n{waiting}"))
+        let waiting = lines.text(if lobby.players.is_empty() { "lobby.reaching" } else { "lobby.waiting" });
+        Some(format!("{}\n\n{players}\n\n{waiting}", lines.text("lobby.join")))
     };
     for mut v in &mut screen {
         *v = if msg.is_some() { Visibility::Inherited } else { Visibility::Hidden };

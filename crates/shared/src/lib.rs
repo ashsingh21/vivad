@@ -2,6 +2,7 @@
 //! Must not depend on rendering: no meshes, materials, cameras or UI in here.
 
 pub mod items;
+pub mod lines;
 pub mod map;
 pub mod sim;
 pub mod weapon;

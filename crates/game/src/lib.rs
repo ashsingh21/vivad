@@ -6,6 +6,7 @@ pub mod batch;
 pub mod autoshot;
 pub mod buildings;
 pub mod camera;
+pub mod fonts;
 pub mod front;
 pub mod fx;
 pub mod grass;
@@ -15,6 +16,7 @@ pub mod input;
 pub mod lamps;
 pub mod quality;
 pub mod rim;
+pub mod say;
 pub mod sky;
 pub mod street;
 pub mod skyline;
@@ -24,6 +26,7 @@ pub mod ultra;
 pub mod street_sample;
 pub mod surfaces;
 pub mod visuals;
+pub mod wheel;
 
 /// Repo-level assets/ regardless of how the binary is launched; in the browser, `assets/` beside
 /// the page.

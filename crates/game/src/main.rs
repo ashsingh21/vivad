@@ -78,6 +78,7 @@ fn main() {
             game::sky::SkyPlugin,
             game::rim::RimPlugin,
             game::street::StreetPlugin, game::ambient::AmbientPlugin))
+        .add_plugins((game::fonts::FontsPlugin, game::say::SayPlugin, game::wheel::WheelPlugin))
         .add_plugins(bevy::diagnostic::LogDiagnosticsPlugin {
             wait_duration: std::time::Duration::from_secs(10),
             filter: std::env::var("VIVAD_PERF_ALL").is_ok().then(|| None).unwrap_or_else(|| std::env::var("VIVAD_PERF_LOG").is_ok().then(|| {
@@ -141,7 +142,7 @@ fn online(config: &mut MatchConfig) -> Option<game::lobby::Online> {
     if host.is_none() && join.is_none() {
         return None;
     }
-    let name = setting("name").filter(|n| !n.trim().is_empty()).or_else(|| std::env::var("USER").ok()).unwrap_or_else(|| "Warrior".into());
+    let name = setting("name").filter(|n| !n.trim().is_empty()).or_else(|| std::env::var("USER").ok()).unwrap_or_else(|| "Khiladi".into());
     // The browser can only go through the relays.
     let relay = cfg!(target_arch = "wasm32") || setting("lan").is_none();
     config.online = true;

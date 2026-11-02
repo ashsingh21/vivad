@@ -9,6 +9,7 @@ pub mod loot;
 pub mod movement;
 pub mod nav;
 pub mod net;
+pub mod talk;
 pub mod zone;
 
 use avian3d::prelude::*;
@@ -429,6 +430,7 @@ impl Plugin for SimPlugin {
         // The NCR's route grid (empty elsewhere; the other maps use nav::NavGrid).
         app.insert_resource(nav::StreetFloor::new(&layout));
         app.insert_resource(db)
+            .insert_resource(crate::lines::Lines::builtin())
             .insert_resource(config)
             .insert_resource(layout)
             .insert_resource(Time::<Fixed>::from_hz(TICK_HZ))
@@ -485,6 +487,7 @@ impl Plugin for SimPlugin {
                 bots::BotPlugin,
                 nav::NavPlugin,
                 net::NetPlugin,
+                talk::TalkPlugin,
             ));
     }
 }

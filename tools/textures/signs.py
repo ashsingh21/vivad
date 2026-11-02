@@ -26,13 +26,13 @@ ACCENTS = [(0.98, 0.58, 0.06), (0.90, 0.12, 0.46), (0.04, 0.46, 0.62), (0.18, 0.
 SHOPS = [
     ("SHARMA SWEETS", "शर्मा स्वीट्स"), ("BUNTY MOBILE REPAIR", "बंटी मोबाइल"), ("PAPPU CHAAT BHANDAR", "पप्पू चाट भंडार"),
     ("GUPTA GENERAL STORE", "गुप्ता जनरल स्टोर"), ("RAJU TAILORS", "राजू टेलर्स"), ("DILLI DARBAR DHABA", "दिल्ली दरबार ढाबा"),
-    ("LUCKY PHOTOSTAT", None), ("CHHABRA ELECTRICALS", "छाबड़ा इलेक्ट्रिकल्स"), ("JAI MATA DI TENT HOUSE", "जय माता दी टेंट हाउस"),
-    ("MONU KIRANA STORE", "मोनू किराना स्टोर"), ("SHIV SHAKTI HARDWARE", "शिव शक्ति हार्डवेयर"), ("RAHUL CYCLE WORKS", "राहुल साइकिल वर्क्स"),
-    ("BABLOO PAAN BHANDAR", "बबलू पान भंडार"), ("GARG MEDICOS", "गर्ग मेडिकोज़"), ("OM SAI JEWELLERS", "ओम साईं ज्वैलर्स"),
-    ("PANGA CHAI", "पंगा चाय"), ("KHANNA OPTICALS", None), ("SETHI SAREE CENTRE", "सेठी साड़ी सेंटर"),
+    ("LUCKY PHOTOSTAT", None), ("CHHABRA ELECTRICALS", "छाबड़ा इलेक्ट्रिकल्स"), ("NEW DILLI TENT HOUSE", "न्यू दिल्ली टेंट हाउस"),
+    ("MONU KIRANA STORE", "मोनू किराना स्टोर"), ("DILLI HARDWARE", "दिल्ली हार्डवेयर"), ("RAHUL CYCLE WORKS", "राहुल साइकिल वर्क्स"),
+    ("BABLOO PAAN BHANDAR", "बबलू पान भंडार"), ("GARG MEDICOS", "गर्ग मेडिकोज़"), ("SONA CHANDI JEWELLERS", "सोना चाँदी ज्वैलर्स"),
+    ("PANGA CHAI STALL", "पंगा चाय स्टॉल"), ("KHANNA OPTICALS", None), ("SETHI SAREE CENTRE", "सेठी साड़ी सेंटर"),
     ("PINKY BEAUTY PARLOUR", "पिंकी ब्यूटी पार्लर"), ("GOLU MOMOS", "गोलू मोमोज़"), ("TIWARI DAIRY", "तिवारी डेयरी"),
     ("NEW DILLI SOUND SERVICE", None), ("ARORA BOOK DEPOT", "अरोड़ा बुक डिपो"), ("MEHTA MITHAI WALA", "मेहता मिठाई वाला"),
-    ("SINGH AUTO PARTS", "सिंह ऑटो पार्ट्स"), ("LAXMI BARTAN BHANDAR", "लक्ष्मी बर्तन भंडार"), ("CHOTU KI LASSI", "छोटू की लस्सी"),
+    ("SINGH AUTO PARTS", "सिंह ऑटो पार्ट्स"), ("LUCKY BARTAN BHANDAR", "लकी बर्तन भंडार"), ("CHOTU KI LASSI", "छोटू की लस्सी"),
     ("KUMAR PHOTO STUDIO", "कुमार फोटो स्टूडियो"), ("BITTU JUICE CORNER", "बिट्टू जूस कॉर्नर"), ("VERMA KIRYANA", "वर्मा किरयाना"),
     ("JUGAAD REPAIR CENTRE", "जुगाड़ रिपेयर सेंटर"), ("HORN OK PLEASE MOTORS", None),
 ]

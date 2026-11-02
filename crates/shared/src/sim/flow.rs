@@ -337,7 +337,7 @@ pub fn start_match(world: &mut World) {
         } else if local {
             "You".into()
         } else {
-            peers.names.get(&owner).cloned().unwrap_or_else(|| format!("Warrior {}", i + 1))
+            peers.names.get(&owner).cloned().unwrap_or_else(|| crate::lines::with(world.resource::<crate::lines::Lines>().text("lobby.player"), &[("n", &(i + 1).to_string())]))
         };
         let mut e = world.spawn((
             NetId(i),
@@ -478,7 +478,8 @@ fn check_winner(
     mut m: ResMut<Match>,
     alive: Query<Entity, (With<Warrior>, Without<Eliminated>)>,
     fallen: Query<(Entity, &Eliminated), With<Warrior>>,
-    names: Query<&Warrior>,
+    names: Query<(&Warrior, Has<LocalPlayer>)>,
+    lines: Res<crate::lines::Lines>,
     mut feed: MessageWriter<FeedMsg>,
 ) {
     m.alive = alive.iter().count() as u32;
@@ -487,8 +488,9 @@ fn check_winner(
         // The last two can fall in the same tick, both burning in the ring: the one who fell
         // last (placement 1) stood the longest, and is crowned; every peer has the placements.
         m.winner = alive.iter().next().or_else(|| fallen.iter().find(|(_, e)| e.placement == 1).map(|(e, _)| e));
-        if let Some(w) = m.winner.and_then(|e| names.get(e).ok()) {
-            feed.write(FeedMsg(if w.name == "You" { "Tumne Panga jeet liya!".to_string() } else { format!("{} ne Panga jeet liya!", w.name) }));
+        if let Some((w, you)) = m.winner.and_then(|e| names.get(e).ok()) {
+            let line = if you { lines.text("win.feed.you") } else { lines.pick("win.feed", m.seed, w.look as u64) };
+            feed.write(FeedMsg(crate::lines::with(line, &[("k", &w.name)])));
         }
     }
 }

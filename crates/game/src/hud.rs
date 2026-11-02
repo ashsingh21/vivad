@@ -15,13 +15,16 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::ui::RelativeCursorPosition;
 use bevy::window::{CursorGrabMode, CursorOptions};
 use shared::items::{ItemDb, ItemKind};
+use shared::lines::{Lines, with};
 use shared::map::terrain::ground;
 use shared::map::{ChestKind, MapLayout, MapStyle, Mat, Poi, Shape, compose, footprint};
 use shared::sim::flow::{Match, MatchState};
 use shared::sim::loot::{Chest, INTERACT_RANGE, Pickup};
+use shared::sim::net::NetId;
 use shared::sim::zone::Zone;
 use shared::sim::{Action, Eliminated, FeedMsg, Health, HitMsg, INVENTORY_SLOTS, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, Warrior, btn};
 
+use crate::fonts::UiFonts;
 use crate::front::Screen;
 use crate::input::{CYCLE, ShowPerf};
 
@@ -63,6 +66,8 @@ const MAP_BORDER: f32 = 2.0;
 const BIG_ZOOMS: usize = 3;
 /// Pixels of a trackpad's scroll that make one wheel step.
 const SCROLL_STEP: f32 = 40.0;
+/// The maps are made from OpenStreetMap, whose licence (ODbL) asks for this wherever one is shown.
+const MAP_CREDIT: &str = "Map data © OpenStreetMap contributors";
 
 #[derive(Component)] struct HpBar;
 #[derive(Component)] struct ShieldBar;
@@ -71,6 +76,7 @@ const SCROLL_STEP: f32 = 40.0;
 #[derive(Component)] struct SlotText(usize);
 #[derive(Component)] struct AmmoText;
 #[derive(Component)] struct Prompt;
+#[derive(Component)] struct PromptLore;
 #[derive(Component)] struct FeedText;
 /// One arm of the reticle, pointing along `0` (screen space, +y down) from the centre.
 #[derive(Component)] struct ReticleBar(Vec2);
@@ -172,14 +178,19 @@ fn text(s: &str, size: f32, color: Color) -> (Text, TextFont, TextColor) {
     (Text::new(s), TextFont { font_size: FontSize::Px(size), ..default() }, TextColor(color))
 }
 
-fn build_hud(mut commands: Commands) {
+/// Text in a face of its own: Khand for numbers, Gajraj One for titles.
+fn text_in(font: &Handle<Font>, s: &str, size: f32, color: Color) -> (Text, TextFont, TextColor) {
+    (Text::new(s), TextFont { font: font.into(), font_size: FontSize::Px(size), ..default() }, TextColor(color))
+}
+
+fn build_hud(mut commands: Commands, fonts: Res<UiFonts>) {
     let panel = Color::srgba(0.05, 0.04, 0.03, 0.55);
     // Vitals, bottom-left.
     commands
         .spawn(Node { position_type: PositionType::Absolute, left: px(24.0), bottom: px(24.0), width: px(320.0),
                       flex_direction: FlexDirection::Column, row_gap: px(6.0), ..default() })
         .with_children(|p| {
-            p.spawn((HpText, text("100 | 0", 18.0, Color::WHITE)));
+            p.spawn((HpText, text_in(&fonts.number, "100 | 0", 22.0, Color::WHITE)));
             for (marker_shield, color) in [(true, Color::srgb(0.30, 0.65, 1.0)), (false, Color::srgb(0.35, 0.85, 0.35))] {
                 p.spawn((Node { width: percent(100.0), height: px(14.0), ..default() }, BackgroundColor(panel)))
                     .with_children(|b| {
@@ -193,7 +204,7 @@ fn build_hud(mut commands: Commands) {
         .spawn(Node { position_type: PositionType::Absolute, right: px(24.0), bottom: px(24.0),
                       flex_direction: FlexDirection::Column, align_items: AlignItems::FlexEnd, row_gap: px(6.0), ..default() })
         .with_children(|p| {
-            p.spawn((AmmoText, text("", 18.0, Color::WHITE)));
+            p.spawn((AmmoText, text_in(&fonts.number, "", 22.0, Color::WHITE)));
             p.spawn(Node { column_gap: px(6.0), ..default() }).with_children(|row| {
                 for i in 0..=INVENTORY_SLOTS {
                     row.spawn((SlotBox(i),
@@ -201,7 +212,7 @@ fn build_hud(mut commands: Commands) {
                                       flex_direction: FlexDirection::Column, justify_content: JustifyContent::SpaceBetween, ..default() },
                                BackgroundColor(panel), BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.2))))
                         .with_children(|s| {
-                            s.spawn(text(&format!("{}", i + 1), 11.0, Color::srgba(1.0, 1.0, 1.0, 0.5)));
+                            s.spawn(text_in(&fonts.number, &format!("{}", i + 1), 13.0, Color::srgba(1.0, 1.0, 1.0, 0.5)));
                             s.spawn((SlotText(i), text("", 12.0, Color::WHITE)));
                         });
                 }
@@ -240,6 +251,7 @@ fn build_hud(mut commands: Commands) {
                       flex_direction: FlexDirection::Column, align_items: AlignItems::Center, row_gap: px(6.0), ..default() })
         .with_children(|p| {
             p.spawn((Prompt, text("", 20.0, Color::srgb(1.0, 0.92, 0.7))));
+            p.spawn((PromptLore, text("", 15.0, Color::srgba(1.0, 0.95, 0.85, 0.8))));
             p.spawn((ProgressBar, Node { width: px(220.0), height: px(8.0), ..default() }, BackgroundColor(panel), Visibility::Hidden))
                 .with_children(|b| {
                     b.spawn((ProgressFill, Node { width: percent(0.0), height: percent(100.0), ..default() }, BackgroundColor(Color::srgb(1.0, 0.8, 0.3))));
@@ -256,6 +268,7 @@ fn build_hud(mut commands: Commands) {
             p.spawn((Node { width: px(MINIMAP), height: px(MINIMAP), border: UiRect::all(px(MAP_BORDER)), overflow: Overflow::clip(), ..default() },
                      BackgroundColor(Color::srgba(0.32, 0.38, 0.22, 0.8)), BorderColor::all(Color::srgba(0.0, 0.0, 0.0, 0.6))))
                 .with_children(|m| map_sheet(m, false));
+            p.spawn(text(MAP_CREDIT, 11.0, Color::srgba(1.0, 1.0, 1.0, 0.75)));
             p.spawn((TopRight, text("", 16.0, Color::WHITE), TextLayout::justify(Justify::Right)));
         });
     // The whole map, in the middle of the screen, over the rest of the HUD.
@@ -307,11 +320,13 @@ fn vitals(
     mut hp: Query<&mut Node, (With<HpBar>, Without<ShieldBar>)>,
     mut sh: Query<&mut Node, (With<ShieldBar>, Without<HpBar>)>,
     mut t: Query<&mut Text, With<HpText>>,
+    lines: Res<Lines>,
 ) {
     let Ok(h) = q.single() else { return };
     for mut n in &mut hp { n.width = percent(100.0 * h.hp / h.max_hp); }
     for mut n in &mut sh { n.width = percent(100.0 * h.shield / h.max_shield); }
-    for mut s in &mut t { set_text(&mut s, format!("Jaan {:.0}   Kavach {:.0}", h.hp.ceil(), h.shield.ceil())); }
+    let (hp, sh) = (format!("{:.0}", h.hp.ceil()), format!("{:.0}", h.shield.ceil()));
+    for mut s in &mut t { set_text(&mut s, with(lines.text("hud.vitals"), &[("hp", &hp), ("sh", &sh)])); }
 }
 
 fn hotbar(
@@ -320,6 +335,7 @@ fn hotbar(
     mut boxes: Query<(&SlotBox, &mut BorderColor, &mut BackgroundColor)>,
     mut texts: Query<(&SlotText, &mut Text), Without<AmmoText>>,
     mut ammo: Query<&mut Text, With<AmmoText>>,
+    lines: Res<Lines>,
 ) {
     let Ok((inv, act)) = q.single() else { return };
     CYCLE.with(|c| c.set(inv.selected as u8));
@@ -346,12 +362,13 @@ fn hotbar(
     }
     for mut t in &mut ammo {
         let cur = inv.current();
+        let goli = with(lines.text("hud.ammo"), &[("n", &inv.arrows.to_string())]);
         let new = match cur.map(|s| (s, &db.get(&s.id).kind)) {
             Some((s, ItemKind::Bow { magazine, .. })) => {
-                let state = if act.reload_left > 0.0 { "  reloading" } else if act.charge > 0.0 { "  drawing" } else { "" };
-                format!("{} / {}   Goli {}{}", s.count, magazine, inv.arrows, state)
+                let state = if act.reload_left > 0.0 { lines.text("hud.reload") } else if act.charge > 0.0 { lines.text("hud.draw") } else { "" };
+                format!("{} / {}   {goli}  {state}", s.count, magazine)
             }
-            _ => format!("Goli {}", inv.arrows),
+            _ => goli,
         };
         set_text(&mut t, new);
     }
@@ -360,13 +377,14 @@ fn hotbar(
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn prompts(
     layout: Res<shared::map::MapLayout>,
-    q: Query<(&Transform, &Kinematic, &Inventory, &Action, Has<Eliminated>), With<LocalPlayer>>,
+    q: Query<(&Transform, &Kinematic, &Inventory, &Action, Has<Eliminated>, &NetId), With<LocalPlayer>>,
     chests: Query<(&Transform, &Chest)>,
     pickups: Query<(&Transform, &Pickup)>,
     db: Res<ItemDb>,
+    lines: Res<Lines>,
     m: Res<Match>,
-    ride: Res<crate::visuals::DropRide>,
-    mut prompt: Query<&mut Text, With<Prompt>>,
+    mut prompt: Query<&mut Text, (With<Prompt>, Without<PromptLore>)>,
+    mut prompt_lore: Query<&mut Text, (With<PromptLore>, Without<Prompt>)>,
     mut bar: Query<&mut Visibility, With<ProgressBar>>,
     mut fill: Query<&mut Node, With<ProgressFill>>,
     mut misfires: MessageReader<shared::sim::combat::MisfireMsg>,
@@ -378,41 +396,53 @@ fn prompts(
     let now = time.elapsed_secs();
     for m in misfires.read() {
         if local.single().is_ok_and(|e| e == m.who) {
-            *toast = (if m.backfire { "Katta ulta pad gaya!" } else { "Katta ne dhoka diya!" }.to_string(), now + 1.4);
+            *toast = (lines.text(if m.backfire { "prompt.backfire" } else { "prompt.misfire" }).to_string(), now + 1.4);
         }
     }
-    let Ok((tf, kin, inv, act, dead)) = q.single() else { return };
+    let Ok((tf, kin, inv, act, dead, id)) = q.single() else { return };
     let me = tf.translation;
     let mut s = String::new();
+    let mut lore = String::new();
     let mut progress: Option<f32> = None;
+    let key = id.0 as u64;
     if dead {
     } else if kin.mode == MoveMode::Vimana {
         let over = me.x.abs() < layout.half_extent - 10.0 && me.z.abs() < layout.half_extent - 10.0;
-        let jugaad = *ride == crate::visuals::DropRide::Jugaad;
-        s = match (over && m.state == MatchState::Flight, jugaad) {
-            (true, true) => "[Space] Auto se kood jao!".into(),
-            (true, false) => "[Space] Vimana se chhalang lagao".into(),
-            (false, true) => "Udta Auto Dilli ki taraf... meter chalu hai".into(),
-            (false, false) => "Pushpaka Vimana Bharat ki taraf...".into(),
+        s = if m.vimana_t < 0.05 {
+            lines.text("drop.ride").into()
+        } else if over && m.state == MatchState::Flight {
+            lines.pick(if m.vimana_t > 0.8 { "drop.end" } else { "drop.jump" }, m.seed, key).into()
+        } else {
+            with(lines.pick("drop.far", m.seed, key), &[("map", &layout.name)])
         };
-    } else if kin.mode == MoveMode::Freefall {
-        s = "[Space] Garuda pankh kholo".into();
+    } else if matches!(kin.mode, MoveMode::Freefall | MoveMode::Gliding) {
+        let low = me.y - layout.terrain.height(me.x, me.z) < 40.0;
+        s = if low { lines.text("drop.ground") } else if kin.mode == MoveMode::Freefall { lines.text("drop.open") } else { "" }.into();
     } else if let Some((_, c)) = chests.iter().filter(|(t, c)| !c.opened && t.translation.distance(me) < INTERACT_RANGE).next() {
-        s = match c.kind {
-            ChestKind::Peti => "[E] Peti kholo".into(),
-            ChestKind::Kalash => "[E] Sone ka Kalash kholo".into(),
-        };
+        s = lines.text(match c.kind {
+            ChestKind::Peti => "prompt.peti",
+            ChestKind::Kalash => "prompt.ghada",
+        }).into();
     } else if let Some((_, p)) = pickups
         .iter()
         .filter(|(t, _)| t.translation.distance(me) < INTERACT_RANGE)
         .min_by(|a, b| a.0.translation.distance(me).total_cmp(&b.0.translation.distance(me)))
     {
-        s = format!("[E] {} uthao ({:?})", db.get(&p.stack.id).name, p.stack.rarity);
+        let item = db.get(&p.stack.id);
+        s = with(lines.text("prompt.pickup"), &[("item", &item.name), ("rarity", lines.rarity(p.stack.rarity))]);
+        lore = item.lore.clone();
+    } else if let Some((st, ItemKind::Bow { magazine, .. })) = inv.current().map(|s| (s, &db.get(&s.id).kind)) {
+        if act.reload_left <= 0.0 && st.count == 0 && inv.arrows == 0 {
+            s = lines.text("prompt.empty").into();
+        } else if act.reload_left <= 0.0 && st.count * 4 <= *magazine && inv.arrows > 0 {
+            s = lines.text("prompt.reload").into();
+        }
     }
     if let Some((slot, left)) = act.using {
         if let Some(st) = inv.slots[slot - 1].as_ref() {
             if let ItemKind::Consumable { use_time, .. } = db.get(&st.id).kind {
-                s = format!("{} pee rahe ho...", db.get(&st.id).name);
+                s = with(lines.text("prompt.drink"), &[("item", &db.get(&st.id).name)]);
+                lore.clear();
                 progress = Some(1.0 - left / use_time);
             }
         }
@@ -431,6 +461,7 @@ fn prompts(
         s = toast.0.clone();
     }
     for mut t in &mut prompt { set_text(&mut t, s.clone()); }
+    for mut t in &mut prompt_lore { set_text(&mut t, lore.clone()); }
     for mut v in &mut bar { *v = if progress.is_some() { Visibility::Inherited } else { Visibility::Hidden }; }
     for mut n in &mut fill { n.width = percent(100.0 * progress.unwrap_or(0.0)); }
 }
@@ -535,23 +566,24 @@ fn top_right(
     zone: Res<Zone>,
     local: Query<(&Transform, &Warrior), With<LocalPlayer>>,
     layout: Res<MapLayout>,
+    lines: Res<Lines>,
     mut q: Query<&mut Text, With<TopRight>>,
 ) {
     let Ok((tf, w)) = local.single() else { return };
     let (t, shrinking) = zone.countdown();
     let zone_line = if m.state != MatchState::InProgress {
-        "Aandhi aa rahi hai...".to_string()
-    } else if shrinking {
-        format!("Aandhi chal rahi  {:>2}:{:02}", t as u32 / 60, t as u32 % 60)
+        lines.text("hud.idle").to_string()
     } else {
-        format!("Aandhi in  {:>2}:{:02}", t as u32 / 60, t as u32 % 60)
+        let clock = format!("{}:{:02}", t as u32 / 60, t as u32 % 60);
+        with(lines.text(if shrinking { "hud.move" } else { "hud.wait" }), &[("t", &clock)])
     };
     let me = tf.translation.xz();
     let to_safe = (me.distance(zone.target_center) - zone.target_radius).max(0.0);
     let here = place_at(&layout, me).map(|p| p.name.as_str()).unwrap_or(layout.name.as_str());
-    let safe = if to_safe > 1.0 { format!("Safe zone {to_safe:.0} m door") } else { "Safe zone mein ho".into() };
+    let safe = if to_safe > 1.0 { with(lines.text("hud.safe.far"), &[("d", &format!("{to_safe:.0}"))]) } else { lines.text("hud.safe.in").to_string() };
+    let counts = with(lines.text("hud.counts"), &[("alive", &m.alive.to_string()), ("kills", &w.kills.to_string())]);
     for mut s in &mut q {
-        set_text(&mut s, format!("{here}\nAlive {}   Kills {}\n{zone_line}\n{safe}", m.alive, w.kills));
+        set_text(&mut s, format!("{here}\n{counts}\n{zone_line}\n{safe}"));
     }
 }
 
@@ -1173,6 +1205,7 @@ fn damage_numbers(
     mut nums: Query<(Entity, &mut DamageNumber, &mut Node, &mut Text, &mut TextColor, &mut TextFont)>,
     time: Res<Time>,
     view_scale: Res<crate::quality::ViewScale>,
+    fonts: Res<UiFonts>,
 ) {
     let Ok(me) = local.single() else { return };
     // This frame's hits per target (a volley lands in one tick), added to a recent number or new.
@@ -1205,7 +1238,7 @@ fn damage_numbers(
         let size = if headshot { 30.0 } else { 24.0 };
         commands.spawn((
             DamageNumber { target, at: at + Vec3::Y * 0.5, amount, size, age: 0.0 },
-            text("", size, color),
+            text_in(&fonts.number, "", size, color),
             TextShadow::default(),
             Node { position_type: PositionType::Absolute, ..default() },
             Visibility::Hidden,

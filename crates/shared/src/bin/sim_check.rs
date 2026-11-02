@@ -25,6 +25,7 @@ use shared::sim::flow::{Match, MatchState};
 use shared::sim::loot::{Chest, Pickup};
 use shared::sim::zone::Zone;
 use shared::sim::bots::BotBrain;
+use shared::sim::talk::FellMsg;
 use shared::sim::{DamageCause, DamageMsg, HitMsg, Inventory, Eliminated, FeedMsg, Kinematic, MatchConfig, MoveMode, RestartMatch, SimPlugin, Warrior};
 
 /// Hits landed this match.
@@ -212,39 +213,39 @@ fn main() {
             if !quiet && frame_ms.last().is_some_and(|ms| *ms > 16.0) {
                 println!("  slow frame: {:.1} ms at t={:.1}", frame_ms[frame_ms.len() - 1], world.resource::<Match>().elapsed);
             }
-            let mut feed: Vec<String> = world.resource_mut::<Messages<FeedMsg>>().drain().map(|f| f.0).collect();
-            for f in feed.drain(..) {
-                feed_seen += 1;
-                let elapsed = world.resource::<Match>().elapsed;
-                if !f.contains("jeet") {
-                    first_death.get_or_insert(elapsed);
-                    let z = world.resource::<Zone>();
-                    deaths.push((elapsed, z.phase, z.radius));
-                }
-                if f.contains("Aandhi") {
-                    kills_by_zone += 1;
-                    // "Aandhi ne X ko uda diya" / "Aandhi ne tumhe uda diya".
-                    let t = tracks.values().find(|t| f.contains(&format!(" {} ", t.name)) || (t.name == "You" && f.contains("tumhe")));
-                    if let Some(t) = t {
-                        let why = verdict(t, elapsed);
-                        println!(
-                            "  [aandhi] t={elapsed:.0} {} {why}: at {:.0},{:.1},{:.0} edge {:.0} m, outside {:.0} s, walked {:.0} m, fighting {}/{} idle {}/{}, goal {:?} path {}",
-                            t.name, t.pos.x, t.pos.y, t.pos.z, t.edge, elapsed - t.outside_since.unwrap_or(elapsed), t.walked,
-                            t.fighting, t.samples, t.idle, t.samples, t.goal.map(|g| g.round()), t.path
-                        );
-                        reasons.push((t.name.clone(), why));
+            let elapsed = world.resource::<Match>().elapsed;
+            let fell: Vec<FellMsg> = world.resource_mut::<Messages<FellMsg>>().drain().collect();
+            for f in fell {
+                first_death.get_or_insert(elapsed);
+                let z = world.resource::<Zone>();
+                deaths.push((elapsed, z.phase, z.radius));
+                match f.cause {
+                    DamageCause::Pralaya => {
+                        kills_by_zone += 1;
+                        if let Some(t) = tracks.get(&f.victim) {
+                            let why = verdict(t, elapsed);
+                            println!(
+                                "  [aandhi] t={elapsed:.0} {} {why}: at {:.0},{:.1},{:.0} edge {:.0} m, outside {:.0} s, walked {:.0} m, fighting {}/{} idle {}/{}, goal {:?} path {}",
+                                t.name, t.pos.x, t.pos.y, t.pos.z, t.edge, elapsed - t.outside_since.unwrap_or(elapsed), t.walked,
+                                t.fighting, t.samples, t.idle, t.samples, t.goal.map(|g| g.round()), t.path
+                            );
+                            reasons.push((t.name.clone(), why));
+                        }
                     }
-                } else if f.contains(" hi tapka") {
-                    // A gun that backfired: "... ne X ko hi tapka diya!"
-                    kills_by_self += 1;
-                } else if f.contains("tapka") {
-                    kills_by_weapon += 1;
-                } else if !f.contains("jeet") {
-                    kills_other += 1;
-                    let t = tracks.values().find(|t| f.starts_with(&format!("{} ", t.name)));
-                    let ground = t.map_or(0.0, |t| world.resource::<shared::map::MapLayout>().terrain.height(t.pos.x, t.pos.z));
-                    println!("  [other] {f}: last seen at {:?}, ground {ground:.1}", t.map(|t| t.pos.round()));
+                    // A gun that backfired.
+                    DamageCause::Weapon(_) if f.by == Some(f.victim) => kills_by_self += 1,
+                    DamageCause::Weapon(_) => kills_by_weapon += 1,
+                    DamageCause::Fall => {
+                        kills_other += 1;
+                        let t = tracks.get(&f.victim);
+                        let ground = t.map_or(0.0, |t| world.resource::<shared::map::MapLayout>().terrain.height(t.pos.x, t.pos.z));
+                        println!("  [other] {} fell: last seen at {:?}, ground {ground:.1}", t.map_or("?", |t| t.name.as_str()), t.map(|t| t.pos.round()));
+                    }
                 }
+            }
+            let feed: Vec<String> = world.resource_mut::<Messages<FeedMsg>>().drain().map(|f| f.0).collect();
+            for f in feed {
+                feed_seen += 1;
                 if !quiet {
                     let spot = tracks.values().find(|t| f.contains(&format!(" {} ", t.name))).map(|t| t.pos.round());
                     println!("  [feed] t={elapsed:.0} {f} {spot:?}");
