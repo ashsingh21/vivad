@@ -29,7 +29,7 @@ use super::{
     CAPSULE_LENGTH, CAPSULE_RADIUS, DamageCause, DamageMsg, Eliminated, HALF_HEIGHT, HitMsg, Kinematic, Layer, MatchConfig, MoveMode, PlayerIntent, SimSet,
     Warrior, btn, match_rng, solid_mask, stream, walk_mask,
 };
-use crate::map::MapLayout;
+use crate::map::{MapLayout, compose};
 use crate::map::parking;
 use crate::map::terrain::ground;
 
@@ -544,8 +544,10 @@ pub fn in_reach(me: Vec3, tf: &Transform, v: &Vehicle) -> bool {
     (local.abs() - v.kind.spec().size / 2.0).max(Vec3::ZERO).length() < BOARD_REACH
 }
 
-/// Beside the vehicle where a warrior fits: the left, the right, behind, in front, else on top.
-fn step_out(spatial: &SpatialQuery, tf: &Transform, v: &Vehicle, driver: Entity) -> Vec3 {
+/// Beside the vehicle where a warrior fits: the left, the right, behind, in front, else on top. A
+/// solid building's collider is only its surface, so a spot wholly past a wall touches nothing: the
+/// footprint is what says it's inside.
+fn step_out(spatial: &SpatialQuery, layout: &MapLayout, tf: &Transform, v: &Vehicle, driver: Entity) -> Vec3 {
     let spec = v.kind.spec();
     let foot = tf.translation - Vec3::Y * spec.centre();
     let filter = SpatialQueryFilter::from_mask(walk_mask()).with_excluded_entities([driver]);
@@ -554,7 +556,7 @@ fn step_out(spatial: &SpatialQuery, tf: &Transform, v: &Vehicle, driver: Entity)
     let (x, z) = (spec.size.x / 2.0 + CAPSULE_RADIUS + 0.15, spec.size.z / 2.0 + CAPSULE_RADIUS + 0.15);
     for side in [Vec3::NEG_X * x, Vec3::X * x, Vec3::Z * z, Vec3::NEG_Z * z] {
         let at = foot + yaw * side + Vec3::Y * (HALF_HEIGHT + 0.08);
-        if spatial.shape_intersections(&body, at, Quat::IDENTITY, &filter).is_empty() {
+        if spatial.shape_intersections(&body, at, Quat::IDENTITY, &filter).is_empty() && !compose::in_building(layout, at - Vec3::Y * HALF_HEIGHT) {
             return at;
         }
     }
@@ -582,6 +584,7 @@ fn board(
     chests: Query<(&Transform, &Chest), (Without<Warrior>, Without<Vehicle>)>,
     pickups: Query<&Transform, (With<Pickup>, Without<Warrior>, Without<Vehicle>)>,
     spatial: SpatialQuery,
+    layout: Res<MapLayout>,
 ) {
     for (e, mut tf, mut kin, mut intent, riding) in &mut warriors {
         if !intent.pressed(btn::INTERACT) {
@@ -591,7 +594,7 @@ fn board(
             intent.pressed &= !btn::INTERACT;
             let Ok((_, vt, mut v)) = vehicles.get_mut(ride) else { continue };
             v.driver = None;
-            let at = step_out(&spatial, vt, &v, e);
+            let at = step_out(&spatial, &layout, vt, &v, e);
             set_down(&mut tf, &mut kin, at, vt.rotation * Vec3::NEG_Z * v.speed * 0.5);
             commands.entity(e).remove::<Riding>();
             continue;
@@ -890,7 +893,7 @@ pub(super) fn at_the_wheel(
         if bail || (there && v.speed.abs() < 2.0) {
             *stuck += lost as u32;
             v.driver = None;
-            let out = step_out(&spatial, vt, &v, h.bot);
+            let out = step_out(&spatial, &layout, vt, &v, h.bot);
             set_down(&mut tf, &mut kin, out, vt.rotation * Vec3::NEG_Z * v.speed * 0.5);
             commands.entity(h.bot).remove::<Riding>();
             intent.move_axis = Vec2::ZERO;
@@ -1024,6 +1027,7 @@ fn wreck(
     mut vehicles: Query<(Entity, &Transform, &mut Vehicle), Without<Warrior>>,
     mut warriors: Query<(Entity, &mut Transform, &mut Kinematic), (With<Warrior>, Without<Eliminated>, Without<Remote>)>,
     spatial: SpatialQuery,
+    layout: Res<MapLayout>,
     mut damage: MessageWriter<DamageMsg>,
     mut wrecks: MessageWriter<WreckMsg>,
 ) {
@@ -1036,7 +1040,7 @@ fn wreck(
         let at = tf.translation;
         if let Some(d) = v.driver.take() {
             if let Ok((_, mut wt, mut kin)) = warriors.get_mut(d) {
-                let out = step_out(&spatial, tf, &v, d);
+                let out = step_out(&spatial, &layout, tf, &v, d);
                 set_down(&mut wt, &mut kin, out, Vec3::Y * 5.0);
             }
             commands.entity(d).remove::<Riding>();
