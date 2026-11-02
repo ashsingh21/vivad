@@ -299,6 +299,10 @@ pub(crate) mod spent {
 
     pub static PEOPLE: AtomicU64 = AtomicU64::new(0);
     pub static GOODS: AtomicU64 = AtomicU64::new(0);
+    /// Those who stepped out of a vehicle's way, those who had to leap, and those a vehicle caught.
+    pub static ASIDE: AtomicU64 = AtomicU64::new(0);
+    pub static LEAPT: AtomicU64 = AtomicU64::new(0);
+    pub static CAUGHT: AtomicU64 = AtomicU64::new(0);
 
     fn on() -> bool {
         static ON: OnceLock<bool> = OnceLock::new();
@@ -333,6 +337,7 @@ pub(crate) mod spent {
             let per = |c: &AtomicU64| c.swap(0, Ordering::Relaxed) as f32 / n;
             frames.sort_by(f32::total_cmp);
             info!("life spent: people {:.0} us, goods {:.0} us a frame; frame median {:.2} ms, 1% slowest from {:.2} ms", per(&PEOPLE), per(&GOODS), frames[frames.len() / 2], frames[frames.len() * 99 / 100]);
+            info!("life traffic so far: {} stepped aside, {} leapt, {} caught", ASIDE.load(Ordering::Relaxed), LEAPT.load(Ordering::Relaxed), CAUGHT.load(Ordering::Relaxed));
             frames.clear();
         }
     }

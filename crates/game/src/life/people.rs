@@ -5,6 +5,12 @@
 //! They keep about 6 m from the player and drift away as he nears, so anyone walking straight at
 //! him is a warrior. A gunshot, a blast or the Aandhi coming near sends them running for a side
 //! lane and out of sight, and they don't come back to that spot for a while.
+//!
+//! The road is shared the way Delhi shares it: nobody moves for a vehicle until it is nearly on
+//! them, then they step just clear of its line and watch it go by, a cow last and slowest. A horn
+//! gets them moving sooner. Whoever leaves it too late leaps, and nothing here ever stands inside a
+//! vehicle (`Traffic`, `give_way`, `keep_out`). All of it from what every client sees of the
+//! vehicles, and nothing goes back to the sim.
 
 use std::f32::consts::{PI, TAU};
 
@@ -17,6 +23,7 @@ use shared::map::MapLayout;
 use shared::map::terrain::ground;
 use shared::sim::combat::{Burst, Projectile};
 use shared::sim::nav::StreetFloor;
+use shared::sim::vehicle::{Riding, Vehicle};
 use shared::sim::zone::Zone;
 use shared::sim::{Eliminated, LocalPlayer, OfMap, Warrior};
 
@@ -32,7 +39,14 @@ impl Plugin for PeoplePlugin {
         app.init_resource::<Books>()
             .init_resource::<Alarms>()
             .init_resource::<Scares>()
-            .add_systems(Update, (finish_baking, shadows_near, (hear, listen_ring, populate, walk).chain()));
+            .init_resource::<Traffic>()
+            .add_systems(Update, (finish_baking, shadows_near, (hear, listen_ring, watch_road, populate, walk).chain()));
+        if std::env::var("VIVAD_LIFE_LINEUP").is_ok() {
+            app.add_systems(Update, lineup.after(populate));
+        }
+        if std::env::var("VIVAD_LIFE_CROWD").is_ok() {
+            app.add_systems(Update, crowd.after(populate));
+        }
     }
 }
 
@@ -72,6 +86,24 @@ const SCARED_FOR: f32 = 100.0;
 const SCARED_WIDE: f32 = 58.0;
 /// How near the ring may come before people leave.
 const RING_WARNING: f32 = 30.0;
+/// How far from the camera vehicles are watched for: past where anyone is drawn.
+const WATCHED: f32 = 96.0;
+/// Below this a vehicle is parked, as far as anyone on the road cares.
+const CREEPING: f32 = 0.6;
+/// A body's half width, and the room left between it and a passing vehicle: more the faster it goes.
+const BODY: f32 = 0.35;
+const ROOM: (f32, f32) = (0.3, 0.035);
+/// How far ahead of the bonnet a horn is heard as meant for you, and how much wider than the
+/// vehicle's own line.
+const HORN_REACH: f32 = 34.0;
+const HORN_WIDE: f32 = 1.6;
+/// How far past the line a walker stops: a step more than it needs.
+const CLEAR: f32 = 0.45;
+/// How long someone stands and watches once out of the way.
+const WATCHES: (f32, f32) = (0.7, 2.2);
+/// A last leap: its pace over a bolt's, and how long it goes on at the least and the most.
+const LEAP: f32 = 1.5;
+const LEAP_FOR: (f32, f32) = (0.22, 0.5);
 
 const PEOPLE_SHOTS: [Shot; 5] = [
     Shot { key: "idle", names: &["idle"], take: Take::Cycle(6), sit: false },
@@ -228,6 +260,10 @@ enum Doing {
     Shy { from: Vec2 },
     /// Running for it, after a moment's start.
     Flee { to: Vec2, start: f32, began: f32 },
+    /// Stepping out of a vehicle's line, then watching it go by from where it's come from.
+    Aside { to: Vec2, speed: f32, from: Vec2 },
+    /// Left too late: a leap, whatever way is clear of it.
+    Leap { dir: Vec2, until: f32, from: Vec2 },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -252,6 +288,15 @@ impl Role {
             Role::Dog => (1.1, 7.5),
             Role::Cow => (0.85, 4.8),
             _ => (1.5, 5.2),
+        }
+    }
+
+    /// Seconds off that a vehicle coming on is taken notice of: a cow takes its time and needs it.
+    fn notices(self) -> f32 {
+        match self {
+            Role::Dog => 2.0,
+            Role::Cow => 3.4,
+            _ => 2.5,
         }
     }
 
@@ -287,6 +332,10 @@ struct Walker {
     hidden: f32,
     /// The clip it stands about in.
     resting: &'static str,
+    /// How sharp it is, about 1: some step aside sooner than others.
+    wits: f32,
+    /// Stands for a picture, and no one moves it (VIVAD_LIFE_LINEUP).
+    posed: bool,
 }
 
 /// Loud things heard this frame, and how far each carries.
@@ -296,6 +345,127 @@ struct Alarms(Vec<(Vec3, f32)>);
 /// Spots that have been scared lately.
 #[derive(Resource, Default)]
 struct Scares(Vec<(Vec2, f32)>);
+
+/// A vehicle, as those on the road see it.
+#[derive(Clone, Copy)]
+struct Car {
+    at: Vec2,
+    /// The way it is going, or facing at a stand, and how fast.
+    dir: Vec2,
+    speed: f32,
+    /// Half its width and its length.
+    half: Vec2,
+}
+
+impl Car {
+    /// How far `p` is ahead of its nose, and off its middle line, to its right.
+    fn sees(&self, p: Vec2) -> (f32, f32) {
+        let d = p - self.at;
+        (d.dot(self.dir) - self.half.y, d.dot(self.dir.perp()))
+    }
+
+    /// How far off its middle line a walker is clear of it.
+    fn lane(&self) -> f32 {
+        self.half.x + BODY + ROOM.0 + self.speed * ROOM.1
+    }
+}
+
+/// What is on the road near the camera this frame.
+#[derive(Resource, Default)]
+struct Traffic {
+    cars: Vec<Car>,
+    /// The one whose horn just sounded.
+    horn: Option<usize>,
+}
+
+/// Looks up the road: every vehicle near the camera, and the player's horn, the same key `vehicles`
+/// sounds it by.
+fn watch_road(
+    mut traffic: ResMut<Traffic>,
+    keys: Res<ButtonInput<KeyCode>>,
+    camera: Query<&GlobalTransform, With<MainCamera>>,
+    vehicles: Query<(Entity, &Transform, &Vehicle)>,
+    me: Query<&Riding, With<LocalPlayer>>,
+) {
+    traffic.cars.clear();
+    traffic.horn = None;
+    let Ok(camera) = camera.single() else { return };
+    let eye = camera.translation().xz();
+    let mine = me.single().ok().map(|r| r.0);
+    for (e, tf, v) in &vehicles {
+        let at = tf.translation.xz();
+        if at.distance_squared(eye) > WATCHED * WATCHED {
+            continue;
+        }
+        let size = v.kind.spec().size;
+        let face = (tf.rotation * Vec3::NEG_Z).xz().normalize_or(Vec2::NEG_Y);
+        if mine == Some(e) && !v.wrecked && keys.just_pressed(KeyCode::KeyH) {
+            traffic.horn = Some(traffic.cars.len());
+        }
+        traffic.cars.push(Car { at, dir: if v.speed < 0.0 { -face } else { face }, speed: v.speed.abs(), half: Vec2::new(size.x, size.z) / 2.0 });
+    }
+}
+
+/// What a walker does about the traffic, if anything needs doing: the way Delhi does it, nothing
+/// until a vehicle is about to arrive, and then only as much as gets it clear.
+fn give_way(open: &impl Fn(Vec2) -> bool, w: &Walker, traffic: &Traffic, now: f32) -> Option<Doing> {
+    let (stroll, bolt) = w.role.paces();
+    for (k, car) in traffic.cars.iter().enumerate().filter(|(_, c)| c.speed > CREEPING) {
+        let honked = traffic.horn == Some(k);
+        let (ahead, aside) = car.sees(w.pos);
+        // Past the bonnet it is too late to step, and `keep_out` has it.
+        if ahead < -0.3 {
+            continue;
+        }
+        let lane = car.lane() + if honked { HORN_WIDE } else { 0.0 };
+        let time = ahead.max(0.0) / car.speed;
+        let noticed = time < w.role.notices() * w.wits || (honked && ahead < HORN_REACH);
+        if !noticed || aside.abs() >= lane {
+            continue;
+        }
+        // Already on the way somewhere clear of it.
+        match w.doing {
+            Doing::Aside { to, .. } if car.sees(to).1.abs() >= lane - 0.1 => return None,
+            Doing::Leap { .. } => return None,
+            _ => {}
+        }
+        // Across the nearer edge of its line, or the far one if that way is shut. The kerb's own
+        // ground beats the middle of the road, if it's no further.
+        let side = car.dir.perp();
+        let near = if aside >= 0.0 { 1.0 } else { -1.0 };
+        let way = |s: f32| {
+            let need = lane + CLEAR - s * aside;
+            let to = w.pos + side * s * need;
+            (need, to, open(to) && open(w.pos.lerp(to, 0.5)))
+        };
+        let (a, b) = (way(near), way(-near));
+        let (need, to, clear) = if a.2 || !b.2 { a } else { b };
+        let have = (time - 0.12).max(0.02);
+        if !clear || need / have > bolt {
+            // Leap for it: across its line and a little along with it.
+            let dir = (side * near + car.dir * 0.35).normalize();
+            let until = now + (need / (bolt * LEAP)).clamp(LEAP_FOR.0, LEAP_FOR.1);
+            return Some(Doing::Leap { dir, until, from: car.at });
+        }
+        let speed = (need / have * 1.25).clamp(stroll * 1.5, bolt);
+        return Some(Doing::Aside { to, speed, from: car.at });
+    }
+    None
+}
+
+/// Nothing stands inside a vehicle, moving or parked: whoever is found in one's box goes out by its
+/// nearer side at once. Returns the vehicle if it was moving.
+fn keep_out(p: &mut Vec2, traffic: &Traffic) -> Option<Car> {
+    for car in &traffic.cars {
+        let (ahead, aside) = car.sees(*p);
+        let (along, off) = (ahead + car.half.y, car.half.x + BODY);
+        if along.abs() < car.half.y + BODY && aside.abs() < off {
+            *p = car.at + car.dir * along + car.dir.perp() * if aside >= 0.0 { off } else { -off };
+            return (car.speed > CREEPING).then_some(*car);
+        }
+    }
+    None
+}
 
 impl Scares {
     fn scared(&self, p: Vec2, now: f32) -> bool {
@@ -403,6 +573,7 @@ fn populate(
     floor: Res<StreetFloor>,
     zone: Res<Zone>,
     scares: Res<Scares>,
+    traffic: Res<Traffic>,
     camera: Query<&GlobalTransform, With<MainCamera>>,
     walkers: Query<(Entity, &Walker)>,
 ) {
@@ -455,7 +626,14 @@ fn populate(
         d >= KEEP_OFF + 1.0 && d < DRAWN + 2.0 && (first || d > SEEN_FROM || ahead(p) < 0.1)
     };
     let inside = |p: Vec2| zone.radius - p.distance(zone.center) > RING_WARNING + 10.0;
-    let free = |p: Vec2| hidden(p) && inside(p) && !scares.scared(p, now) && walkable(&layout, &floor, &market, p);
+    // Nobody turns up on a vehicle, or in the road right before one.
+    let by_road = |p: Vec2| {
+        traffic.cars.iter().all(|c| {
+            let (ahead, aside) = c.sees(p);
+            aside.abs() > c.lane() + 1.0 || ahead > c.speed * 4.0 + 6.0 || ahead < -2.0 * c.half.y - 1.0
+        })
+    };
+    let free = |p: Vec2| hidden(p) && inside(p) && !scares.scared(p, now) && by_road(p) && walkable(&layout, &floor, &market, p);
     populate_animals(&mut commands, &books, &layout, busy, at, &walkers, &mut dice, now, &free);
     let mut room = want.saturating_sub(have);
     // A crowd is a crowd only if it is where the player is looking: shoppers behind
@@ -491,11 +669,11 @@ fn populate(
         let mut any = false;
         for (role, spot, yaw) in placed.into_iter().take(room) {
             // A table's keeper stands closer in than the street grid lets a warrior.
-            let fits = if stall.kind == StallKind::Row { hidden(spot) && inside(spot) && !scares.scared(spot, now) } else { free(spot) };
+            let fits = if stall.kind == StallKind::Row { hidden(spot) && inside(spot) && !scares.scared(spot, now) && by_road(spot) } else { free(spot) };
             if !fits {
                 continue;
             }
-            spawn_walker(&mut commands, &books, &mut dice, role, Some(id), true, spot, yaw, layout.terrain.height(spot.x, spot.y), now);
+            spawn_walker(&mut commands, &books, &mut dice, role, Some(id), true, spot, yaw, layout.terrain.height(spot.x, spot.y), now, None);
             room -= 1;
             kept += 1;
             any = true;
@@ -523,7 +701,7 @@ fn populate(
         for _ in 0..1 + (dice.next() * 2.0) as usize {
             let (spot, yaw) = in_front(&stall, &mut dice);
             if room > strollers && free(spot) {
-                spawn_walker(&mut commands, &books, &mut dice, Role::Shopper, None, true, spot, yaw, layout.terrain.height(spot.x, spot.y), now);
+                spawn_walker(&mut commands, &books, &mut dice, Role::Shopper, None, true, spot, yaw, layout.terrain.height(spot.x, spot.y), now, None);
                 room -= 1;
             }
         }
@@ -543,7 +721,7 @@ fn populate(
         for k in 0..group.min(room) {
             let spot = p + Vec2::from_angle(k as f32 * 2.1 + leader_yaw) * if k == 0 { 0.0 } else { 0.9 };
             if free(spot) {
-                spawn_walker(&mut commands, &books, &mut dice, Role::Shopper, None, false, spot, leader_yaw, layout.terrain.height(spot.x, spot.y), now);
+                spawn_walker(&mut commands, &books, &mut dice, Role::Shopper, None, false, spot, leader_yaw, layout.terrain.height(spot.x, spot.y), now, None);
                 room -= 1;
             }
         }
@@ -571,7 +749,7 @@ fn populate_animals(commands: &mut Commands, books: &Books, layout: &MapLayout, 
         }
         let role = if cows < 2 + (want > 6) as usize && dice.next() < 0.35 { Role::Cow } else { Role::Dog };
         let yaw = dice.range(0.0, TAU);
-        spawn_walker(commands, books, dice, role, None, true, p, yaw, layout.terrain.height(p.x, p.y), now);
+        spawn_walker(commands, books, dice, role, None, true, p, yaw, layout.terrain.height(p.x, p.y), now, None);
         left -= 1;
     }
 }
@@ -609,20 +787,22 @@ fn stall_people(s: &Stall, dice: &mut Dice) -> Vec<(Role, Vec2, f32)> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn spawn_walker(commands: &mut Commands, books: &Books, dice: &mut Dice, role: Role, stall: Option<u32>, at_stall: bool, spot: Vec2, yaw: f32, y: f32, now: f32) {
-    let woman = role == Role::Shopper && dice.next() < 0.5;
+fn spawn_walker(commands: &mut Commands, books: &Books, dice: &mut Dice, role: Role, stall: Option<u32>, at_stall: bool, spot: Vec2, yaw: f32, y: f32, now: f32, posed: Option<(bool, usize, &'static str)>) {
+    let woman = posed.map_or(role == Role::Shopper && dice.next() < 0.5, |p| p.0);
     let Some(book) = books.of(role, woman) else { return };
-    let look = (dice.next() * book.looks.len() as f32) as usize % book.looks.len();
-    let clip_name = match role {
-        Role::Sitter => "sip",
-        Role::Seller => "sit",
+    let look = posed.map_or((dice.next() * book.looks.len() as f32) as usize, |p| p.1) % book.looks.len();
+    let clip_name = match (posed, role) {
+        (Some(p), _) => p.2,
+        (_, Role::Sitter) => "sip",
+        (_, Role::Seller) => "sit",
         _ => "idle",
     };
 
     let Some(clip) = book.clip(clip_name) else { return };
     // Those not at a stall are on their way somewhere.
-    let until = now + if role == Role::Shopper && !at_stall { dice.range(0.0, 0.5) } else { dice.range(2.0, 9.0) };
+    let until = if posed.is_some() { f32::MAX } else { now + if role == Role::Shopper && !at_stall { dice.range(0.0, 0.5) } else { dice.range(2.0, 9.0) } };
     let phase = dice.next();
+    let wits = dice.range(0.8, 1.2);
     commands.spawn((
         Walker {
             role,
@@ -639,6 +819,8 @@ fn spawn_walker(commands: &mut Commands, books: &Books, dice: &mut Dice, role: R
             dice: Dice(dice.0 ^ 0x9e37_79b9),
             hidden: 0.0,
             resting: clip_name,
+            wits,
+            posed: posed.is_some(),
         },
         Mesh3d(book.clips[clip].frames[0].clone()),
         MeshMaterial3d(book.looks[look].clone()),
@@ -698,10 +880,11 @@ fn walk(
     layout: Res<MapLayout>,
     floor: Res<StreetFloor>,
     alarms: Res<Alarms>,
+    traffic: Res<Traffic>,
     mut scares: ResMut<Scares>,
     mut scattered: MessageWriter<Scattered>,
-    me: Query<&Transform, (With<LocalPlayer>, Without<Walker>)>,
-    warriors: Query<&Transform, (With<Warrior>, Without<Eliminated>, Without<LocalPlayer>, Without<Walker>)>,
+    me: Query<(&Transform, Has<Riding>), (With<LocalPlayer>, Without<Walker>)>,
+    warriors: Query<&Transform, (With<Warrior>, Without<Eliminated>, Without<LocalPlayer>, Without<Riding>, Without<Walker>)>,
     camera: Query<&GlobalTransform, With<MainCamera>>,
     spatial: avian3d::prelude::SpatialQuery,
     mut q: Query<(Entity, &mut Walker, &mut Transform, &mut Mesh3d)>,
@@ -714,8 +897,9 @@ fn walk(
     let now = time.elapsed_secs();
     let Ok(camera) = camera.single() else { return };
     let eye = camera.translation();
-    let player = me.single().map_or(eye, |t| t.translation).xz();
-    // Warriors near enough to matter to anyone here.
+    let (player, driving) = me.single().map_or((eye, false), |(t, riding)| (t.translation, riding));
+    let player = player.xz();
+    // Warriors on foot near enough to matter to anyone here: at the wheel one is traffic.
     let others: Vec<Vec2> = warriors.iter().map(|t| t.translation.xz()).filter(|p| p.distance_squared(player) < 90.0 * 90.0).collect();
     // Scares first: everyone in earshot is off.
     for (at, reach) in &alarms.0 {
@@ -728,7 +912,7 @@ fn walk(
                 continue;
             }
             any_near = true;
-            if matches!(w.doing, Doing::Flee { .. }) {
+            if matches!(w.doing, Doing::Flee { .. }) || w.posed {
                 continue;
             }
             let to = {
@@ -751,11 +935,20 @@ fn walk(
     for (e, mut w, mut tf, mut mesh) in &mut q {
         let w = &mut *w;
         let Some(book) = books.of(w.role, w.woman) else { continue };
-        // The nearest warrior, player or not.
-        let nearest = others.iter().copied().chain(std::iter::once(player)).min_by(|a, b| a.distance_squared(w.pos).total_cmp(&b.distance_squared(w.pos))).unwrap_or(player);
-        let dist = nearest.distance(w.pos);
-        if !matches!(w.doing, Doing::Flee { .. } | Doing::Shy { .. }) && dist < KEEP_OFF {
+        // The nearest warrior on foot, player or not.
+        let on_foot = (!driving).then_some(player);
+        let nearest = others.iter().copied().chain(on_foot).min_by(|a, b| a.distance_squared(w.pos).total_cmp(&b.distance_squared(w.pos))).unwrap_or(player);
+        let dist = if on_foot.is_none() && others.is_empty() { f32::MAX } else { nearest.distance(w.pos) };
+        if !w.posed && !matches!(w.doing, Doing::Flee { .. } | Doing::Shy { .. } | Doing::Aside { .. } | Doing::Leap { .. }) && dist < KEEP_OFF {
             w.doing = Doing::Shy { from: nearest };
+        }
+        // A vehicle coming on, whatever else is going on: only running for your life comes first.
+        if !w.posed && !matches!(w.doing, Doing::Flee { .. })
+            && let Some(next) = give_way(&|p| walkable(&layout, &floor, &market, p), w, &traffic, now)
+        {
+            let count = if matches!(next, Doing::Leap { .. }) { &super::spent::LEAPT } else { &super::spent::ASIDE };
+            count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            w.doing = next;
         }
         let mut pace = 0.0;
         let mut want = "idle";
@@ -804,6 +997,29 @@ fn walk(
                     None => {}
                 }
             }
+            Doing::Aside { to, speed, from } => {
+                let d = to - w.pos;
+                if d.length() < 0.2 {
+                    w.doing = Doing::Stay { until: now + w.dice.range(WATCHES.0, WATCHES.1), yaw: facing(from - w.pos) };
+                } else {
+                    let dir = d.normalize();
+                    w.pos += dir * speed * dt;
+                    turn_to = Some(facing(dir));
+                    want = if speed > stroll * 2.0 { "run" } else { "walk" };
+                    pace = speed;
+                }
+            }
+            Doing::Leap { dir, until, from } => {
+                if now >= until {
+                    w.doing = Doing::Stay { until: now + w.dice.range(WATCHES.0, WATCHES.1), yaw: facing(from - w.pos) };
+                } else {
+                    let speed = bolt * LEAP;
+                    w.pos += dir * speed * dt;
+                    turn_to = Some(facing(dir));
+                    want = "run";
+                    pace = speed;
+                }
+            }
             Doing::Flee { to, start, began } => {
                 if now >= start {
                     let d = to - w.pos;
@@ -833,6 +1049,15 @@ fn walk(
                     }
                 }
             }
+        }
+        // Whatever came of that, not inside a vehicle: one that has caught someone has them leap.
+        if let Some(car) = keep_out(&mut w.pos, &traffic)
+            && !matches!(w.doing, Doing::Leap { .. } | Doing::Flee { .. })
+        {
+            super::spent::CAUGHT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let (_, aside) = car.sees(w.pos);
+            let dir = (car.dir.perp() * if aside >= 0.0 { 1.0 } else { -1.0 } + car.dir * 0.35).normalize();
+            w.doing = Doing::Leap { dir, until: now + LEAP_FOR.0, from: car.at };
         }
         // Turn the page.
         let Some(clip) = book.clip(want) else { continue };
@@ -866,9 +1091,55 @@ fn walk(
     }
 }
 
+/// VIVAD_LIFE_LINEUP=1, for pictures: everyone the books have, close to, in an arc before the player
+/// as soon as the books are in, each in a clip of their own and left alone.
+fn lineup(mut commands: Commands, mut done: Local<bool>, books: Res<Books>, layout: Res<MapLayout>, time: Res<Time>, me: Query<&Transform, With<LocalPlayer>>) {
+    if *done || !books.ready() || books.dog.is_none() || books.cow.is_none() {
+        return;
+    }
+    let Ok(tf) = me.single() else { return };
+    *done = true;
+    let (at, forward) = (tf.translation.xz(), (tf.rotation * Vec3::NEG_Z).xz());
+    let (men, women) = (men().len(), women().len());
+    let clips = ["idle", "walk", "run", "sit", "sip"];
+    let mut dice = Dice(0x1234_5671);
+    for k in 0..men + women {
+        let woman = k >= men;
+        let turn = (k as f32 / (men + women - 1) as f32 - 0.5) * 1.5;
+        let spot = at + Vec2::from_angle(turn).rotate(forward) * 4.2;
+        let yaw = facing(at - spot) + if k % 3 == 1 { 1.2 } else { 0.0 };
+        spawn_walker(&mut commands, &books, &mut dice, Role::Shopper, None, true, spot, yaw, layout.terrain.height(spot.x, spot.y), time.elapsed_secs(), Some((woman, if woman { k - men } else { k }, clips[k % clips.len()])));
+    }
+}
+
+/// VIVAD_LIFE_CROWD=<n>, for pictures: n people, a couple of dogs and a cow in the road ahead of
+/// where the player is facing, as soon as the books are in, then left to get on with it.
+fn crowd(mut commands: Commands, mut done: Local<bool>, books: Res<Books>, layout: Res<MapLayout>, time: Res<Time>, me: Query<&Transform, With<LocalPlayer>>) {
+    if *done || !books.ready() || books.dog.is_none() || books.cow.is_none() {
+        return;
+    }
+    let Ok(tf) = me.single() else { return };
+    let Some(n) = std::env::var("VIVAD_LIFE_CROWD").ok().and_then(|s| s.parse::<usize>().ok()) else { return };
+    *done = true;
+    let (at, forward) = (tf.translation.xz(), (tf.rotation * Vec3::NEG_Z).xz());
+    let mut dice = Dice(0x7654_3211);
+    for k in 0..n + 3 {
+        let role = match k {
+            0 => Role::Cow,
+            1 | 2 => Role::Dog,
+            _ => Role::Shopper,
+        };
+        let spot = at + forward * dice.range(14.0, 56.0) + forward.perp() * dice.range(-2.4, 2.4);
+        let yaw = dice.range(0.0, TAU);
+        spawn_walker(&mut commands, &books, &mut dice, role, None, true, spot, yaw, layout.terrain.height(spot.x, spot.y), time.elapsed_secs(), None);
+    }
+}
+
 /// What someone does next after standing about.
 fn next_step(layout: &MapLayout, floor: &StreetFloor, market: &Market, w: &mut Walker, now: f32) -> Doing {
     match w.role {
+        // Back to the stall, if a vehicle moved it off.
+        Role::Keeper | Role::Sitter | Role::Seller if w.pos.distance(w.home) > 0.3 => Doing::Go { to: w.home, speed: 1.4, then: 6.0, yaw: Some(w.home_yaw) },
         Role::Keeper | Role::Sitter | Role::Seller => Doing::Stay { until: now + w.dice.range(4.0, 14.0), yaw: w.home_yaw },
         Role::Dog | Role::Cow => {
             // Lie down, nose about, or move on along the road.
@@ -959,6 +1230,116 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn walker(role: Role, pos: Vec2) -> Walker {
+        Walker {
+            role,
+            woman: false,
+            stall: None,
+            home: pos,
+            home_yaw: 0.0,
+            pos,
+            yaw: 0.0,
+            doing: Doing::Stay { until: 100.0, yaw: 0.0 },
+            clip: 0,
+            phase: 0.0,
+            frame: 0,
+            dice: Dice(9),
+            hidden: 0.0,
+            resting: "idle",
+            wits: 1.0,
+            posed: false,
+        }
+    }
+
+    /// A vehicle on a straight road, going -Z.
+    fn road(speed: f32) -> Traffic {
+        Traffic { cars: vec![Car { at: Vec2::ZERO, dir: Vec2::NEG_Y, speed, half: Vec2::new(0.75, 1.7) }], horn: None }
+    }
+
+    /// Steps a walker on, by what `give_way` tells it, as the street's own loop does, with the
+    /// vehicle coming on, and says how near to the vehicle's box it ever came.
+    fn run_down(role: Role, ahead: f32, off: f32, speed: f32, open: impl Fn(Vec2) -> bool) -> f32 {
+        let mut traffic = road(speed);
+        let mut w = walker(role, Vec2::new(off, -ahead));
+        let dt = 1.0 / 60.0;
+        let (mut now, mut nearest) = (0.0, f32::MAX);
+        let (_, bolt) = role.paces();
+        for _ in 0..360 {
+            if let Some(next) = give_way(&open, &w, &traffic, now) {
+                w.doing = next;
+            }
+            match w.doing {
+                Doing::Aside { to, speed, .. } => w.pos = w.pos.move_towards(to, speed * dt),
+                Doing::Leap { dir, until, .. } if now < until => w.pos += dir * bolt * LEAP * dt,
+                _ => {}
+            }
+            let caught = keep_out(&mut w.pos, &traffic);
+            let car = &mut traffic.cars[0];
+            car.at += car.dir * speed * dt;
+            let (front, aside) = car.sees(w.pos);
+            let along = (front + car.half.y).abs() - car.half.y;
+            nearest = nearest.min(along.max(aside.abs() - car.half.x));
+            assert!(caught.is_none() || nearest < BODY + 0.01);
+            now += dt;
+        }
+        nearest
+    }
+
+    #[test]
+    fn people_and_animals_clear_the_road_in_time() {
+        for role in [Role::Shopper, Role::Dog, Role::Cow] {
+            for speed in [3.0, 8.0, 15.0] {
+                for off in [0.0, 0.5, -1.0] {
+                    let near = run_down(role, 90.0, off, speed, |_| true);
+                    assert!(near > BODY, "{role:?} at {speed} m/s, {off} m off its line, came within {near}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn nobody_is_ever_driven_through() {
+        // Turning up a few metres ahead of it, with a wall one side: too late to do it well.
+        for off in [0.0, 0.3, -0.6, 1.0] {
+            for ahead in [0.5, 2.0, 4.0, 8.0] {
+                let near = run_down(Role::Shopper, ahead, off, 20.0, |p| p.x > -1.2);
+                assert!(near > 0.0, "{ahead} m ahead, {off} m off, came within {near}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_vehicle_is_left_alone_until_it_is_nearly_there() {
+        let traffic = road(8.0);
+        let far = walker(Role::Shopper, Vec2::new(0.0, -40.0));
+        assert!(give_way(&|_| true, &far, &traffic, 0.0).is_none(), "5 s off");
+        let aside = walker(Role::Shopper, Vec2::new(3.0, -10.0));
+        assert!(give_way(&|_| true, &aside, &traffic, 0.0).is_none(), "off its line");
+        let past = walker(Role::Shopper, Vec2::new(0.0, 6.0));
+        assert!(give_way(&|_| true, &past, &traffic, 0.0).is_none(), "behind it");
+        let near = walker(Role::Shopper, Vec2::new(0.0, -16.0));
+        assert!(matches!(give_way(&|_| true, &near, &traffic, 0.0), Some(Doing::Aside { .. })), "2 s off, in its way");
+    }
+
+    #[test]
+    fn a_horn_moves_people_sooner() {
+        let mut traffic = road(4.0);
+        let w = walker(Role::Cow, Vec2::new(0.6, -26.0));
+        assert!(give_way(&|_| true, &w, &traffic, 0.0).is_none(), "6 s off");
+        traffic.horn = Some(0);
+        assert!(give_way(&|_| true, &w, &traffic, 0.0).is_some());
+    }
+
+    #[test]
+    fn nothing_stands_in_a_parked_vehicle() {
+        let traffic = road(0.0);
+        let mut p = Vec2::new(0.3, -1.0);
+        assert!(keep_out(&mut p, &traffic).is_none(), "a parked one startles nobody");
+        assert!((p.x - (0.75 + BODY)).abs() < 1e-4, "{p}");
+        let (_, aside) = traffic.cars[0].sees(p);
+        assert!(aside.abs() >= 0.75 + BODY - 1e-4);
     }
 
     #[test]
