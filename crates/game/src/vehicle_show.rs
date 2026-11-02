@@ -6,8 +6,12 @@
 //!                  the horn now and then, turn into the ring's outer wall and scrape along it, brake,
 //!                  get out. With VIVAD_CLIP for the frames.
 //! VIVAD_ROAD=<kind>[,<seconds>]  on the NCR, get in at the head of the Ring Road and drive it flat
-//!                  out for that long by the same keys, braking for the bends, then log the frames:
-//!                  mean, 99th percentile, the worst and where. The near tier at road speed.
+//!                  out for that long by the same keys, braking for the bends, then stop and stand
+//!                  for 25 s. Logs the frames of each: mean, 99th percentile, the worst and where, so
+//!                  the near tier at road speed is measured against the same run standing still.
+//! VIVAD_FLEET=<dir>  on the NCR, a picture of each kind where this match really parked it, then a
+//!                  drivable auto beside the street kit's tarped one, then bots at the wheel from the
+//!                  roadside as they come. Exits once it has them, or at 170 s of match.
 //! VIVAD_SHOW=<dir> one picture of each vehicle parked, driven and from the side with its driver, then
 //!                  of health, smoke and a wreck, then exit. VIVAD_SHOW_ONLY=a,b only the pictures whose names
 //!                  hold one of these. VIVAD_SHOW_WINDOW=1 takes the window, HUD and all (keep it
@@ -16,6 +20,7 @@
 
 use bevy::prelude::*;
 use bevy::render::view::window::screenshot::{Screenshot, save_to_disk};
+use shared::sim::bots::BotBrain;
 use shared::map::{MapLayout, compose};
 use shared::sim::flow::Match;
 use shared::sim::vehicle::{Riding, Vehicle, VehicleKind, spawn_vehicle};
@@ -43,6 +48,12 @@ impl Plugin for VehicleShowPlugin {
             let line = compose::network().swap_remove(0).1;
             app.insert_resource(Road { kind, seconds, line, next: 0, phase: 0, t: 0.0, vehicle: None, frames: vec![], worst: (0.0, Vec2::ZERO, 0.0), top: 0.0 })
                 .add_systems(PreUpdate, road.after(bevy::input::InputSystems).before(LocalInput));
+        }
+        if let Ok(dir) = std::env::var("VIVAD_FLEET") {
+            std::fs::create_dir_all(&dir).ok();
+            app.insert_resource(Fleet { dir, step: 0, t: 0.0, shot: false, eye: None, watching: None, left: 5 })
+                .add_systems(PreUpdate, fleet.after(bevy::input::InputSystems).before(LocalInput))
+                .add_systems(PostUpdate, fleet_camera.after(CameraSystems).before(TransformSystems::Propagate));
         }
         if let Ok(dir) = std::env::var("VIVAD_SHOW") {
             std::fs::create_dir_all(&dir).ok();
@@ -294,15 +305,165 @@ fn road(
                 road.worst = (ms, p, v.speed);
             }
             if road.t > road.seconds || road.next + 2 >= n {
-                let mut f = road.frames.clone();
-                f.sort_by(f32::total_cmp);
-                let (mean, p99) = (f.iter().sum::<f32>() / f.len().max(1) as f32, f[(f.len() - 1) * 99 / 100]);
+                let (mean, p99) = frames(&road.frames);
                 let (w, at, speed) = road.worst;
-                info!("[road] {:?}: {:.0} s, {} frames, top {:.1} m/s, ended at {:.0},{:.0}, health {:.0}: mean {mean:.1} ms, 1 in 100 over {p99:.1} ms, worst {w:.1} ms at {:.0},{:.0} doing {speed:.1} m/s", road.kind, road.t, f.len(), road.top, p.x, p.y, v.hp, at.x, at.y);
+                info!("[road] {:?}: {:.0} s, {} frames, top {:.1} m/s, ended at {:.0},{:.0}, health {:.0}: mean {mean:.1} ms, 1 in 100 over {p99:.1} ms, worst {w:.1} ms at {:.0},{:.0} doing {speed:.1} m/s", road.kind, road.t, road.frames.len(), road.top, p.x, p.y, v.hp, at.x, at.y);
+                for k in [KeyCode::KeyW, KeyCode::KeyA, KeyCode::KeyD] {
+                    keys.release(k);
+                }
+                road.frames.clear();
+                road.phase = 3;
+            }
+        }
+        3 => {
+            let Some(Ok((_, v))) = road.vehicle.map(|e| vehicles.get(e)) else { return };
+            hold(&mut keys, KeyCode::KeyS, v.speed > 0.3);
+            if v.speed <= 0.3 {
+                keys.release(KeyCode::KeyS);
+                road.frames.clear();
+                road.t = 0.0;
+                road.phase = 4;
+            }
+        }
+        4 => {
+            road.frames.push(dt * 1000.0);
+            if road.t > 25.0 {
+                let (mean, p99) = frames(&road.frames);
+                let worst = road.frames.iter().copied().fold(0.0, f32::max);
+                info!("[road] standing still after it: {} frames, mean {mean:.1} ms, 1 in 100 over {p99:.1} ms, worst {worst:.1} ms", road.frames.len());
                 exit.write(AppExit::Success);
             }
         }
         _ => {}
+    }
+}
+
+/// The mean of some frame times and the one that 1 in 100 are over.
+fn frames(times: &[f32]) -> (f32, f32) {
+    let mut f = times.to_vec();
+    f.sort_by(f32::total_cmp);
+    (f.iter().sum::<f32>() / f.len().max(1) as f32, f[(f.len().max(1) - 1) * 99 / 100])
+}
+
+#[derive(Resource)]
+struct Fleet {
+    dir: String,
+    step: usize,
+    t: f32,
+    shot: bool,
+    /// The camera's place and what it looks at; a driver it is watching instead.
+    eye: Option<(Vec3, Vec3)>,
+    watching: Option<Entity>,
+    /// Roadside pictures still to take.
+    left: u32,
+}
+
+/// Seconds at a new place before the picture, for the near tier to arrive.
+const SETTLE: f32 = 3.0;
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn fleet(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut fleet: ResMut<Fleet>,
+    m: Res<Match>,
+    layout: Res<MapLayout>,
+    view: Res<crate::quality::View3d>,
+    mut me: Query<(&mut Transform, &mut Kinematic, &mut Health), With<LocalPlayer>>,
+    vehicles: Query<(Entity, &Transform, &Vehicle), Without<LocalPlayer>>,
+    bots: Query<(), With<BotBrain>>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    if m.elapsed < 8.0 {
+        return;
+    }
+    let Ok((mut tf, mut kin, mut hp)) = me.single_mut() else { return };
+    hp.hp = hp.max_hp;
+    fleet.t += time.delta_secs();
+    if m.elapsed > 170.0 {
+        info!("[fleet] out of time, {} roadside pictures short", fleet.left);
+        exit.write(AppExit::Success);
+        return;
+    }
+    let (kinds, kerb) = (VehicleKind::ALL.len(), VehicleKind::ALL.len());
+    if fleet.eye.is_none() && fleet.watching.is_none() {
+        fleet.t = 0.0;
+        fleet.shot = false;
+        if fleet.step < kinds {
+            let kind = VehicleKind::ALL[fleet.step];
+            let Some((_, vt, v)) = vehicles.iter().find(|(_, _, v)| v.kind == kind && v.driver.is_none()) else {
+                fleet.step += 1;
+                return;
+            };
+            let spec = v.kind.spec();
+            let foot = vt.translation - Vec3::Y * spec.centre();
+            let dist = (spec.size.z * 1.5).max(4.0);
+            let eye = vt.translation + vt.rotation * (Quat::from_rotation_y(0.8) * Vec3::NEG_Z * dist) + Vec3::Y * 0.7;
+            stand(&mut tf, &mut kin, foot + vt.rotation * Vec3::Z * (spec.size.z / 2.0 + 14.0), 0.0);
+            fleet.eye = Some((eye, vt.translation));
+            info!("[fleet] {} at {:.0},{:.0}", spec.name, foot.x, foot.z);
+            return;
+        }
+        if fleet.step == kerb {
+            let pair = vehicles.iter().filter(|(_, _, v)| v.kind == VehicleKind::Auto).find_map(|(_, vt, _)| layout.kit.iter().find(|k| k.name == "auto" && k.pos.xz().distance(vt.translation.xz()) < 9.0).map(|k| (vt.translation, k.pos)));
+            let Some((live, kit)) = pair else {
+                info!("[fleet] no drivable auto beside a tarped one in this match");
+                fleet.step += 1;
+                return;
+            };
+            let along = (live - kit).normalize_or_zero();
+            let mid = (live + kit) / 2.0;
+            let eye = mid + Vec3::new(-along.z, 0.0, along.x) * 7.5 + along * 2.5 + Vec3::Y * 1.2;
+            stand(&mut tf, &mut kin, mid + Vec3::new(along.z, 0.0, -along.x) * 16.0 - Vec3::Y * 0.9, 0.0);
+            fleet.eye = Some((eye, mid));
+            return;
+        }
+        // Bots at the wheel: from the road ahead of one, as it comes.
+        let driven = vehicles.iter().find(|(_, _, v)| v.speed > 7.0 && v.driver.is_some_and(|d| bots.contains(d)));
+        let Some((e, vt, v)) = driven else { return };
+        let dir = vt.rotation * Vec3::NEG_Z;
+        let eye = vt.translation + dir * v.speed * SETTLE * 1.45 + Vec3::new(-dir.z, 0.0, dir.x) * 6.0 + Vec3::Y * 0.6;
+        stand(&mut tf, &mut kin, eye - dir * 2.0, 0.0);
+        fleet.eye = Some((eye, vt.translation));
+        fleet.watching = Some(e);
+        info!("[fleet] a bot driving a {} at {:.1} m/s, at {:.0},{:.0}", v.kind.spec().name, v.speed, vt.translation.x, vt.translation.z);
+        return;
+    }
+    if let Some(Ok((_, vt, _))) = fleet.watching.map(|e| vehicles.get(e)) {
+        let look = vt.translation;
+        if let Some(e) = fleet.eye.as_mut() {
+            e.1 = look;
+        }
+    }
+    if fleet.t >= SETTLE && !fleet.shot {
+        fleet.shot = true;
+        let name = if fleet.step < kinds {
+            format!("{:02}_{}", fleet.step + 1, VehicleKind::ALL[fleet.step].spec().name.to_lowercase().replace(' ', "_"))
+        } else if fleet.step == kerb {
+            "10_kit_auto_under_tarp_and_a_drivable_one".to_string()
+        } else {
+            format!("2{}_bot_at_the_wheel", fleet.left)
+        };
+        let path = format!("{}/{name}.png", fleet.dir);
+        commands.spawn(Screenshot::image(view.image.clone())).observe(save_to_disk(path));
+    }
+    if fleet.t >= SETTLE + 0.4 {
+        fleet.eye = None;
+        fleet.watching = None;
+        if fleet.step <= kerb {
+            fleet.step += 1;
+        } else {
+            fleet.left -= 1;
+            if fleet.left == 0 {
+                exit.write(AppExit::Success);
+            }
+        }
+    }
+}
+
+fn fleet_camera(fleet: Res<Fleet>, mut cam: Query<&mut Transform, With<MainCamera>>) {
+    if let (Some((eye, look)), Ok(mut ct)) = (fleet.eye, cam.single_mut()) {
+        *ct = Transform::from_translation(eye).looking_at(look, Vec3::Y);
     }
 }
 

@@ -32,7 +32,7 @@ impl Plugin for VehiclesPlugin {
         app.init_resource::<BoardPrompt>()
             .add_systems(Startup, setup)
             .add_systems(PreUpdate, swing_camera.after(LocalInput))
-            .add_systems(Update, (dress, clear_orphans, board_prompt, panel, engine, crashes, smoke, fly_puffs, wrecks, fade_blasts))
+            .add_systems(Update, (dress, clear_orphans, board_prompt, panel, engine, passing, crashes, smoke, fly_puffs, wrecks, fade_blasts))
             .add_systems(Update, horn.run_if(in_state(Screen::Match)))
             .add_systems(PostUpdate, (place, seat_riders).chain().before(CameraSystems))
             .add_systems(PostUpdate, pose_riders.after(bevy::app::AnimationSystems).before(TransformSystems::Propagate));
@@ -55,6 +55,10 @@ const SEEN_TO: f32 = 450.0;
 const DUST_SPEED: f32 = 5.0;
 const DUST_RATE: f32 = 16.0;
 const DUST_SEEN: f32 = 150.0;
+/// How far off another's engine is heard, metres, how many at a time, and how loud at its nearest.
+const HEARD_TO: f32 = 160.0;
+const PASSING: usize = 3;
+const PASSING_LOUD: f32 = 0.6;
 
 #[derive(Resource)]
 struct Kit {
@@ -483,6 +487,46 @@ fn engine(
         if running.is_empty() {
             *note = (0.8, 0.2);
             commands.spawn((EngineSound(v.kind), AudioPlayer(kit.engines[engine_of(v.kind).0].clone()), PlaybackSettings::LOOP.with_volume(Volume::Linear(0.2))));
+        }
+    }
+}
+
+/// An engine that isn't the local driver's.
+#[derive(Component)]
+struct PassingEngine(Entity);
+
+/// The nearest vehicles driven by somebody else, each with its own engine, fading with distance:
+/// you hear them coming before you see them.
+fn passing(
+    mut commands: Commands,
+    kit: Res<Kit>,
+    me: Query<(&Transform, Option<&Riding>), With<LocalPlayer>>,
+    vehicles: Query<(Entity, &Transform, &Vehicle)>,
+    mut running: Query<(Entity, &PassingEngine, Option<&mut AudioSink>)>,
+) {
+    let Ok((ear, ride)) = me.single() else { return };
+    let mut near: Vec<(f32, Entity, &Vehicle)> = vehicles
+        .iter()
+        .filter(|(e, _, v)| v.driver.is_some() && !v.wrecked && ride.is_none_or(|r| r.0 != *e))
+        .map(|(e, t, v)| (t.translation.distance(ear.translation), e, v))
+        .filter(|n| n.0 < HEARD_TO)
+        .collect();
+    near.sort_by(|a, b| a.0.total_cmp(&b.0));
+    near.truncate(PASSING);
+    for (e, sound, sink) in &mut running {
+        let Some(n) = near.iter().find(|n| n.1 == sound.0) else {
+            commands.entity(e).despawn();
+            continue;
+        };
+        let Some(mut sink) = sink else { continue };
+        let (rate, _) = engine_note((n.2.speed.abs() / n.2.kind.spec().law.top).min(1.0), n.2.input.throttle);
+        let fade = 1.0 - n.0 / HEARD_TO;
+        sink.set_speed(rate * engine_of(n.2.kind).1);
+        sink.set_volume(Volume::Linear(PASSING_LOUD * fade * fade));
+    }
+    for n in &near {
+        if !running.iter().any(|(_, sound, _)| sound.0 == n.1) {
+            commands.spawn((PassingEngine(n.1), AudioPlayer(kit.engines[engine_of(n.2.kind).0].clone()), PlaybackSettings::LOOP.with_volume(Volume::Linear(0.0))));
         }
     }
 }

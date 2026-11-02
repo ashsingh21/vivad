@@ -5,8 +5,12 @@
 //! warrior, never by forces, so walls stop a vehicle and it slides along them.
 //!
 //! Colliders are on a layer of their own, so the nav grid, bot sight and the camera's wall check never
-//! see them; warriors walk round them, shots and blows hurt them. Bots do not drive. Vehicles are off
-//! in online matches for now (`enabled`): nothing here is told to other peers.
+//! see them; warriors walk round them, shots and blows hurt them. Vehicles are off in online matches
+//! for now (`enabled`): nothing here is told to other peers.
+//!
+//! On the NCR a bot with a long way to go takes a vehicle parked beside it, follows its usual street
+//! route at a moderate pace and gets out at the ring, at a fight or as soon as it is stuck
+//! (`at_the_wheel`): `drive_bots` knows nothing of it, and goes on writing where it wants to go.
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -20,6 +24,7 @@ use super::loot::{Chest, INTERACT_RANGE, Pickup};
 use super::movement::{GRAVITY, wading};
 use super::nav::on_bridge;
 use super::net::{Peers, Remote};
+use super::zone::Zone;
 use super::{
     CAPSULE_LENGTH, CAPSULE_RADIUS, DamageCause, DamageMsg, Eliminated, HALF_HEIGHT, HitMsg, Kinematic, Layer, MatchConfig, MoveMode, PlayerIntent, SimSet,
     Warrior, btn, match_rng, solid_mask, stream, walk_mask,
@@ -322,6 +327,30 @@ const SLOPE_PULL_ROUGH: f32 = 0.3;
 const SHED: f32 = 2.5;
 /// How near a moving vehicle a bot gets out of its way, metres; a calm bot leaves it later.
 const DODGE: (f32, f32) = (14.0, 10.0);
+/// How many bots may be at the wheel at once. A bot takes a vehicle this near it, metres, in plain
+/// sight, for a goal at least this far, and has so many seconds to reach it.
+const DRIVERS: usize = 12;
+const TAKE_NEAR: f32 = 25.0;
+const LONG_WAY: f32 = 160.0;
+const WALK_TO: f32 = 6.0;
+/// A bot's pace on the straight and into a turn, m/s: well short of a player's.
+const CRUISE: f32 = 12.0;
+const CORNER: f32 = 6.0;
+/// How far short of its goal a driver stops and gets out, and how far past the edge of the coming
+/// circle a driver from outside it does.
+const OUT_SHORT: f32 = 45.0;
+const OUT_AT_RING: f32 = 40.0;
+/// Barely moving for this long, a driver gets out, and it must be this far on every so many seconds,
+/// whatever its wheels are doing. A ride lasts this long at the most.
+const STUCK: f32 = 3.0;
+const HEADWAY: (f32, f32) = (20.0, 10.0);
+const LONGEST_RIDE: f32 = 150.0;
+/// Hurt past this share of its health, a vehicle is left where it is.
+const SPENT: f32 = 0.35;
+/// Seconds before a bot that has just got out will take a vehicle again.
+const AGAIN: f32 = 20.0;
+/// How often the bots are looked over for a new driver, seconds.
+const LOOK_EVERY: f32 = 0.5;
 /// What is parked on the NCR in a match, the roads' own mix. It adds up to `Rules::parked`.
 const FLEET: [(VehicleKind, usize); 9] = [
     (VehicleKind::Commuter, 18),
@@ -352,7 +381,7 @@ pub struct VehiclePlugin;
 
 impl Plugin for VehiclePlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<CrashMsg>().add_message::<WreckMsg>().add_systems(
+        app.add_message::<CrashMsg>().add_message::<WreckMsg>().init_resource::<Hitches>().add_systems(
             FixedUpdate,
             (
                 (park, board).chain().in_set(SimSet::Flow),
@@ -755,6 +784,165 @@ pub(super) fn sidestep(
                 break;
             }
         }
+    }
+}
+
+/// A bot on its way to a vehicle, or at the wheel of it.
+struct Hitch {
+    bot: Entity,
+    vehicle: Entity,
+    /// Match time it set out, and then when it got in.
+    since: f32,
+    driving: bool,
+    /// It set out from outside the coming circle: it gets out at the circle.
+    from_outside: bool,
+    /// Seconds barely moving, and where it stood at the last check of its headway, and when.
+    still: f32,
+    mark: (Vec2, f32),
+}
+
+/// The bots at the wheel, with who has just left one and until when they won't take another.
+#[derive(Resource, Default)]
+pub struct Hitches {
+    going: Vec<Hitch>,
+    rested: Vec<(Entity, f32)>,
+    next_look: f32,
+    /// A match's rides, and how many of them ended stuck: `sim_check`'s to report.
+    pub rides: u32,
+    pub stuck: u32,
+    pub metres: f32,
+}
+
+impl Hitches {
+    /// How many bots are at the wheel now.
+    pub fn driving(&self) -> usize {
+        self.going.iter().filter(|h| h.driving).count()
+    }
+}
+
+/// Bots and vehicles, on the NCR: a bot with a long way to go takes one parked beside it. Comes last
+/// among the brains: what `drive_bots` wrote, the way it wants to go, is turned here into steering.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub(super) fn at_the_wheel(
+    mut commands: Commands,
+    mut hitches: ResMut<Hitches>,
+    m: Res<Match>,
+    config: Res<MatchConfig>,
+    peers: Res<Peers>,
+    zone: Res<Zone>,
+    layout: Res<MapLayout>,
+    time: Res<Time>,
+    spatial: SpatialQuery,
+    mut bots: Query<(Entity, &mut Transform, &mut Kinematic, &mut PlayerIntent, &mut BotBrain), (Without<Eliminated>, Without<Vehicle>)>,
+    mut vehicles: Query<(Entity, &Transform, &mut Vehicle), Without<BotBrain>>,
+) {
+    let now = m.elapsed;
+    if layout.parking.is_empty() || (hitches.going.is_empty() && now < hitches.next_look && now + LOOK_EVERY >= hitches.next_look) || !enabled(&config, &peers) || std::env::var("VIVAD_BOTS_DRIVE").as_deref() == Ok("0") {
+        return;
+    }
+    let dt = time.delta_secs();
+    if now < hitches.next_look - LOOK_EVERY {
+        // A new match.
+        *hitches = Hitches::default();
+    }
+    let h = &mut *hitches;
+    let (rested, rides, stuck, metres) = (&mut h.rested, &mut h.rides, &mut h.stuck, &mut h.metres);
+    h.going.retain_mut(|h| {
+        let (Ok((_, mut tf, mut kin, mut intent, mut brain)), Ok((ve, vt, mut v))) = (bots.get_mut(h.bot), vehicles.get_mut(h.vehicle)) else { return false };
+        let spec = v.kind.spec();
+        if !h.driving {
+            // On foot to it, and off if anything comes up.
+            if v.driver.is_some() || v.wrecked || now - h.since > WALK_TO || brain.target.is_some() || brain.provoked.is_some() {
+                return false;
+            }
+            if in_reach(tf.translation, vt, &v) && kin.mode == MoveMode::Ground && kin.grounded {
+                v.driver = Some(h.bot);
+                kin.mode = MoveMode::Riding;
+                kin.velocity = Vec3::ZERO;
+                commands.entity(h.bot).insert(Riding(ve));
+                h.driving = true;
+                h.since = now;
+                h.mark = (vt.translation.xz(), now);
+                *rides += 1;
+            } else {
+                let to = (vt.translation - tf.translation).xz().normalize_or_zero();
+                intent.yaw = (-to.x).atan2(-to.y);
+                intent.move_axis = Vec2::Y;
+                intent.held |= btn::SPRINT;
+            }
+            return true;
+        }
+        // A wreck has thrown it out already.
+        if v.driver != Some(h.bot) {
+            return false;
+        }
+        let at = vt.translation.xz();
+        h.still = if v.speed.abs() < 1.0 { h.still + dt } else { 0.0 };
+        let mut lost = h.still > STUCK;
+        if now - h.mark.1 > HEADWAY.1 {
+            lost |= at.distance(h.mark.0) < HEADWAY.0;
+            h.mark = (at, now);
+        }
+        let wet = wading(&layout, vt.translation + Vec3::Y * (HALF_HEIGHT - spec.centre()));
+        // In a hurry, at speed; otherwise it brakes first.
+        let bail = brain.target.is_some() || brain.provoked.is_some() || brain.flee > 0.0 || wet || lost || v.hp < spec.hp * SPENT;
+        let there = brain.goal.is_none_or(|g| g.xz().distance(at) < OUT_SHORT) || now - h.since > LONGEST_RIDE || (h.from_outside && zone.target_center.distance(at) < zone.target_radius - OUT_AT_RING);
+        if bail || (there && v.speed.abs() < 2.0) {
+            *stuck += lost as u32;
+            v.driver = None;
+            let out = step_out(&spatial, vt, &v, h.bot);
+            set_down(&mut tf, &mut kin, out, vt.rotation * Vec3::NEG_Z * v.speed * 0.5);
+            commands.entity(h.bot).remove::<Riding>();
+            intent.move_axis = Vec2::ZERO;
+            brain.route_goal = None;
+            rested.push((h.bot, now + AGAIN));
+            return false;
+        }
+        *metres += v.speed.abs() * dt;
+        // The route's corners are for a warrior's feet: a vehicle takes them wider.
+        let pos = tf.translation.xz();
+        while brain.path.first().is_some_and(|p| p.distance(pos) < 4.0) {
+            brain.path.remove(0);
+        }
+        while brain.route.last().is_some_and(|p| p.distance(pos) < 6.0) {
+            brain.route.pop();
+        }
+        let off = wrap(intent.yaw - v.heading);
+        let pace = if off.abs() > 0.7 { CORNER } else { CRUISE.min(spec.law.top * 0.75) };
+        let pedal = if there { -1.0 } else if v.speed > pace + 1.0 { -1.0 } else if v.speed < pace { 1.0 } else { 0.0 };
+        intent.move_axis = Vec2::new((-off * 3.0).clamp(-1.0, 1.0), pedal);
+        intent.held = 0;
+        intent.pressed &= !btn::INTERACT;
+        true
+    });
+    if now < hitches.next_look {
+        return;
+    }
+    hitches.next_look = now + LOOK_EVERY;
+    hitches.rested.retain(|r| r.1 > now);
+    let filter = SpatialQueryFilter::from_mask(solid_mask());
+    for (e, tf, kin, _, brain) in &bots {
+        if hitches.going.len() >= DRIVERS {
+            break;
+        }
+        let pos = tf.translation;
+        let far = brain.goal.is_some_and(|g| g.xz().distance(pos.xz()) >= LONG_WAY);
+        let free = brain.target.is_none() && brain.provoked.is_none() && brain.flee <= 0.0 && kin.mode == MoveMode::Ground && kin.grounded;
+        if !far || !free || hitches.going.iter().any(|h| h.bot == e) || hitches.rested.iter().any(|r| r.0 == e) {
+            continue;
+        }
+        let near = vehicles
+            .iter()
+            .filter(|(ve, t, v)| v.driver.is_none() && !v.wrecked && v.speed == 0.0 && v.kind != VehicleKind::Tractor && t.translation.distance(pos) < TAKE_NEAR && !hitches.going.iter().any(|h| h.vehicle == *ve))
+            .min_by(|a, b| a.1.translation.distance(pos).total_cmp(&b.1.translation.distance(pos)));
+        let Some((ve, vt, _)) = near else { continue };
+        let to = vt.translation - pos;
+        // In plain sight: not round a wall.
+        if Dir3::new(to).is_ok_and(|d| spatial.cast_ray(pos, d, to.length(), true, &filter).is_some()) {
+            continue;
+        }
+        let from_outside = zone.target_center.distance(pos.xz()) > zone.target_radius;
+        hitches.going.push(Hitch { bot: e, vehicle: ve, since: now, driving: false, from_outside, still: 0.0, mark: (pos.xz(), now) });
     }
 }
 

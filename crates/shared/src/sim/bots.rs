@@ -214,7 +214,7 @@ pub struct BotPlugin;
 
 impl Plugin for BotPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(FixedUpdate, (senses::shot_noise, super::birds::startle, senses::sense, drive_bots, super::vehicle::sidestep, senses::look_about, mind_the_drop).chain().in_set(SimSet::Brains));
+        app.add_systems(FixedUpdate, (senses::shot_noise, super::birds::startle, senses::sense, drive_bots, super::vehicle::sidestep, senses::look_about, mind_the_drop, super::vehicle::at_the_wheel).chain().in_set(SimSet::Brains));
     }
 }
 

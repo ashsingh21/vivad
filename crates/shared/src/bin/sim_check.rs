@@ -487,6 +487,8 @@ fn main() {
                 );
                 let hits = world.resource::<Hits>().0;
                 let opened = world.query::<&Chest>().iter(world).filter(|c| c.opened).count();
+                let rides = world.resource::<shared::sim::vehicle::Hitches>();
+                println!("vehicles: {} rides by bots, {} ended stuck, {:.1} km driven, {} at the wheel at the end", rides.rides, rides.stuck, rides.metres / 1000.0, rides.driving());
                 println!(
                     "stats {}: seed {} length {:.0} weapon {} aandhi {} own_gun {} other {} hits {} chests {} first_death {:.0}",
                     n + 1, m.seed, m.elapsed, kills_by_weapon, kills_by_zone, kills_by_self, kills_other, hits, opened, first_death.unwrap_or(0.0)
