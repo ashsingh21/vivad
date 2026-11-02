@@ -299,6 +299,12 @@ ncr-tour:
 ncr-walk:
     VIVAD_MAP=ncr cargo run --release -p shared --bin ncr_walk_check
 
+# The hollow buildings, proved with real physics: every door, room and chest reachable, a walker from
+# the street to the roof in 60 buildings, down again from every 10th. ONLY=<k> walks one; --plan <k>
+# draws one's ground floor. Pictures from the real game: VIVAD_ROOM_WALK=<dir>[,<k>].
+rooms *args:
+    VIVAD_MAP=ncr cargo run --release -p shared --bin room_check -- {{args}}
+
 # What the NCR map holds, and a picture of it from above: just ncr-map-check build/ncr.ppm
 ncr-map-check out="build/ncr.ppm":
     cargo run --release -p shared --bin ncr_map_check -- {{out}}

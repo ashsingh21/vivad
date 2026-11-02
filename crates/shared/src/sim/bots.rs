@@ -351,6 +351,11 @@ fn street_heading(
         }
     }
     let deck = on_bridge(pos);
+    if let Some(p) = super::nav::way_down(layout, pos) {
+        brain.route_goal = None;
+        brain.path.clear();
+        return Some(Vec3::new(p.x, pos.y, p.y));
+    }
     if pos.y > ground + HALF_HEIGHT + 1.5 && !deck {
         if brain.way_down.is_none_or(|p| p.distance(pos.xz()) < 0.8) || brain.replan <= 0.0 {
             brain.way_down = roof_edge(pos, goal, spatial, filter);

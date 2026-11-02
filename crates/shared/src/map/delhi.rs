@@ -498,6 +498,9 @@ fn footprints(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp
             "infill" => houses[rng.random_range(0..houses.len())],
             _ => palette[rng.random_range(0..palette.len())],
         };
+        if matches!(bld.kind.as_str(), "mosque" | "temple" | "ruins") {
+            b.map.closed.push(c);
+        }
         b.map.footprints.push(Footprint { pts, base: bld.base.unwrap_or(0.0), top: bld.h, mat });
         // A chest at the foot of every other building inside the play area, on the pavement.
         if c.abs().max_element() < HALF - 8.0 && rng.random_bool(chest_odds) {

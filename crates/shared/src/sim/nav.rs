@@ -574,6 +574,9 @@ pub struct StreetFloor {
     half: f32,
     /// A bit per cell, row by row: set where a warrior can't stand.
     blocked: Vec<u64>,
+    /// A bit per cell: the hollow buildings' ground floors, flooded in from their doors. The routes
+    /// don't go indoors, so these are the cells a warrior can walk out from without one.
+    indoors: Vec<u64>,
     scratch: Mutex<FloorScratch>,
     /// Searches run, seconds in all, the longest, nodes expanded in all: for the checks.
     stats: Mutex<(u32, f32, f32, u64)>,
@@ -609,8 +612,10 @@ impl StreetFloor {
         let n = (2.0 * map.half_extent / CELL).ceil() as usize;
         let mut floor = Self { n, half: map.half_extent, blocked: vec![0; (n * n).div_ceil(64)], ..default() };
         floor.draw_water(map);
-        for f in map.footprints.iter().filter(|f| f.mat != Mat::Water) {
-            floor.draw_building(map, f);
+        for (k, f) in map.footprints.iter().enumerate().filter(|(_, f)| f.mat != Mat::Water) {
+            if map.rooms_of(k).is_none() {
+                floor.draw_building(map, f);
+            }
         }
         for b in map.blocks.iter().filter(|b| b.collide).chain(&map.doors) {
             floor.draw_block(map, b);
@@ -621,8 +626,60 @@ impl StreetFloor {
             }
         }
         floor.draw_steep(map);
+        // Routes go round a hollow building as round any other, so they are the same with or
+        // without rooms: it is drawn solid for them, and then its rooms take its place.
+        let open = floor.blocked.clone();
+        for r in &map.rooms {
+            floor.draw_building(map, &map.footprints[r.footprint]);
+        }
         floor.lay_routes();
+        if !map.rooms.is_empty() {
+            floor.blocked = open;
+            floor.draw_rooms(map);
+        }
         floor
+    }
+
+    /// The hollow buildings' ground floors: their walls and furniture, and the cells a warrior can
+    /// reach from their doors. Stairs stay blocked: there is one level here, and upstairs is the
+    /// player's edge.
+    fn draw_rooms(&mut self, map: &MapLayout) {
+        self.indoors = vec![0; self.blocked.len()];
+        for r in &map.rooms {
+            for b in r.solids().iter().chain(r.stair_block().iter()) {
+                self.draw_block(map, b);
+            }
+        }
+        let mut stack = vec![];
+        for r in &map.rooms {
+            for p in r.ways_in() {
+                if let Some(cell) = self.cell(p).and_then(|c| self.nearest_free(c, 1.0)) {
+                    stack.push(cell);
+                }
+            }
+            while let Some((i, j)) = stack.pop() {
+                let k = j * self.n + i;
+                if self.indoors[k / 64] >> (k % 64) & 1 != 0 || !r.contains(self.centre((i, j))) {
+                    continue;
+                }
+                self.indoors[k / 64] |= 1 << (k % 64);
+                for (di, dj) in [(1isize, 0isize), (-1, 0), (0, 1), (0, -1)] {
+                    let next = ((i as isize + di) as usize, (j as isize + dj) as usize);
+                    if !self.is_blocked(next) {
+                        stack.push(next);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whether a point is on a hollow building's ground floor, reached from its door.
+    pub fn is_indoors(&self, p: Vec2) -> bool {
+        !self.indoors.is_empty()
+            && self.cell(p).is_some_and(|(i, j)| {
+                let k = j * self.n + i;
+                self.indoors[k / 64] >> (k % 64) & 1 != 0
+            })
     }
 
     pub fn ready(&self) -> bool {
@@ -921,7 +978,7 @@ impl StreetFloor {
 
     /// Whether a warrior at `p` could join the routes on foot: not walled up in a yard.
     pub fn reachable(&self, p: Vec2) -> bool {
-        self.walkable(p) && self.grid_points(p, ENTRY_NEAR).iter().any(|n| self.line_clear(p, self.points[n.1 as usize]))
+        self.walkable(p) && (self.is_indoors(p) || self.grid_points(p, ENTRY_NEAR).iter().any(|n| self.line_clear(p, self.points[n.1 as usize])))
     }
 
     /// The way from one point of the map to another along the routes, as points with the next one
@@ -1163,6 +1220,15 @@ impl StreetFloor {
         }
         (Some(out), expanded)
     }
+}
+
+/// For a warrior on an upper floor or a roof of a hollow building: where to walk next, on the way
+/// down its stairs. `roof_edge` would strand a bot here: a parapet stops it, and a window's sill.
+pub fn way_down(layout: &MapLayout, pos: Vec3) -> Option<Vec2> {
+    if pos.y - HALF_HEIGHT - layout.terrain.height(pos.x, pos.z) < 0.35 {
+        return None;
+    }
+    layout.rooms.iter().find(|r| r.corner.distance_squared(pos.xz()) < 3600.0 && r.contains(pos.xz())).and_then(|r| r.way_down(pos))
 }
 
 pub struct NavPlugin;

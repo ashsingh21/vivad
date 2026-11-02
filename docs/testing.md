@@ -134,6 +134,16 @@ NCR match takes up to about 900 game seconds, which is why `net` and `p2p` now a
 `just tour`, `perf`, `flicker`, `zfight`, `seeds` and `armoury` stay on Connaught Place unless
 `VIVAD_MAP` says otherwise, because their views and seeds are the small maps'.
 
+**Rooms.** `just rooms` proves about 520 hollow buildings with the warrior's real capsule, in about a
+minute: every door has the routes at it, every ground-floor room and all indoor loot can be reached, a
+walker goes from the street through the rooms and up the stairs to the roof in 60 buildings (and says
+how much of that was crawling, which is what sticking feels like), and a walker set on every 10th roof
+gets down the stairs to a floor that leads on. `ONLY=<k>` walks one building, `--list` lists them and
+`--plan <k>` draws a ground floor as the bots' floor sees it. `VIVAD_ROOM_WALK=<dir>[,<k>|ring]` is the
+same walk in the real game from the player's own seat, saved every half second with the window hidden:
+it holds at the door until the map's textures are in, so a machine busy building still shows the street.
+`ROOMS_PER_CELL` in `compose.rs` turns rooms down, and zero is the map without them.
+
 **The map on screen.** `cargo test -p game --lib hud` covers the zoom, the drag and the free cursor
 without a game. `just ncr-hud` plays a real autopilot match on NCR and shoots the corner map at each
 zoom and the whole map at each zoom, with the keys pressed for it by `VIVAD_SHOTS_KEYS=m:116,n:120`.

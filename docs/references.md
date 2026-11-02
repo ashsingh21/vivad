@@ -118,6 +118,8 @@ lofted too, and taped on as a joke. Their rings are `tools/textures/scope.py`.
 
 | Surface scans (plaster, asphalt, concrete, withered_grass, sparse_grass, brick_wall_02, dirty_concrete, listed in `assets/textures/ultra/sources.json`) | [Poly Haven](https://polyhaven.com) | CC0 | Real surfaces on the city maps, Medium and up (`assets/textures/ultra/`) |
 | kloofendal_38d_partly_cloudy_puresky HDRI (8k) | [Poly Haven](https://polyhaven.com/a/kloofendal_38d_partly_cloudy_puresky) | CC0 | The sky on every level, with Delhi's haze baked in (`assets/textures/sky/`, `tools/textures/sky.py`) |
+| Room surfaces: PaintedPlaster017, Terrazzo013 | [ambientCG](https://ambientcg.com/view?id=PaintedPlaster017) | CC0 | Walls and mosaic floors of the hollow buildings, baked into `assets/textures/rooms/room_atlas.png` by `tools/textures/room_atlas.py` |
+| Room surfaces: grey_plaster, damaged_plaster, interior_tiles, floor_tiles_06, concrete_floor_worn_001 | [Poly Haven](https://polyhaven.com/textures) | CC0 | The same atlas: stains, old plaster and brick, shop tiles, marble squares, godown floors |
 | MPFB (MakeHuman plugin for Blender) | [extensions.blender.org/add-ons/mpfb](https://extensions.blender.org/add-ons/mpfb/) | GPL (tool only); generated humans are CC0 | Character base bodies, rig (`game_engine`) |
 | LGDuel's bot aim (`crates/bot/src/lib.rs`), adapted in `crates/shared/src/sim/aim.rs` | [github.com/s0pk/lgduel](https://github.com/s0pk/lgduel) | MIT, notice kept in the file | How bots turn and see: a limited turn speed and a late sight of targets |
 | Leaf scans LeafSet013, 022, 023 and 024 (2K) | [ambientCG](https://ambientcg.com/view?id=LeafSet023) | CC0 | Trees' and bushes' leaf atlas (`tools/blender/nature/leaf_atlas.py`, `assets/models/textures/leaf_atlas_*.png`) |
@@ -130,6 +132,10 @@ lofted too, and taped on as a joke. Their rings are `tools/textures/scope.py`.
 | Khand Bold and SemiBold, 2014 Indian Type Foundry | [Google Fonts](https://fonts.google.com/specimen/Khand) | SIL OFL 1.1 (`assets/fonts/OFL-Khand.txt`) | Numbers |
 | Button click (`assets/audio/ui_click.ogg`) | [bevy_new_2d](https://github.com/TheBevyFlock/bevy_new_2d), by Jaszunio15 | CC0 | Front door buttons |
 | Screen, menu and button patterns in `crates/game/src/front/` | [bevy_new_2d](https://github.com/TheBevyFlock/bevy_new_2d) (CC0, MIT or Apache 2.0), [bevy_game_template](https://github.com/NiklasEi/bevy_game_template) (CC0) | CC0 | Followed by hand, adapted to Bevy 0.20 |
+| Furniture Pack 1.0 by Kenney: `table`, `stoolBarSquare`, `kitchenBar`, `desk`, `cabinetTelevisionDoors`, `televisionModern` | [OpenGameArt](https://opengameart.org/content/furniture-kit), from [kenney.nl](https://kenney.nl) | CC0 | Room kit: base meshes of the table, stool, counter, desk and TV unit, stretched to real sizes (`tools/blender/props/room_kit.py`) |
+| Ultimate House Interior Pack, June 2020, by Quaternius: `Couch_Medium2` | [OpenGameArt](https://opengameart.org/node/126986), from [quaternius.com](https://quaternius.com) | CC0 | Room kit: the sofa, thinned to under 300 triangles and baked from the full mesh |
+| Scans: rosewood_veneer1, stained_pine, teak_veneer, plywood, green_metal_rust, hessian_380, velour_velvet | [Poly Haven](https://polyhaven.com) | CC0 | Room kit: wood, painted steel, jute and velvet in the atlas |
+| Scans: Metal009, PaintedMetal004, Plastic006, Plastic008, Plastic010 | [ambientCG](https://ambientcg.com) | CC0 | Room kit: bare steel, the cylinder's red paint and plastics in the atlas |
 
 All other textures are generated: weapons and characters are baked from procedural Blender
 materials (`tools/blender/lib/`, `tools/blender/characters/finish.py`); leaf and bark textures are

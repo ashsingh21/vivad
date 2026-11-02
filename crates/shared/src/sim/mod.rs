@@ -549,13 +549,20 @@ fn spawn_map(mut commands: Commands, layout: Res<MapLayout>) {
         if fp.mat == crate::map::Mat::Water {
             continue;
         }
-        let (pos, tris) = crate::map::footprint::solid(fp);
+        // One collider either way: as separate entities the hollow ones' boxes would be 47,000.
+        let collider = match layout.rooms_of(index) {
+            Some(rooms) => Collider::compound(rooms.solids().iter().map(|b| (b.pos, b.rot, collider_for(b))).collect::<Vec<_>>()),
+            None => {
+                let (pos, tris) = crate::map::footprint::solid(fp);
+                Collider::trimesh(pos, tris)
+            }
+        };
         commands.spawn((
             MapFootprint(index),
             OfMap,
             Transform::default(),
             RigidBody::Static,
-            Collider::trimesh(pos, tris),
+            collider,
             CollisionLayers::new(Layer::World, LayerMask::ALL),
         ));
     }

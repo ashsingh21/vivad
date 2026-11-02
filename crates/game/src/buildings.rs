@@ -22,6 +22,7 @@ use shared::sim::{OfMap, map_reloaded};
 
 use crate::surfaces::{Surface, SurfacesPlugin, UltraSurfaces};
 
+pub mod interior;
 pub mod tiers;
 
 const CHUNK: f32 = 64.0;
@@ -47,7 +48,7 @@ impl Plugin for MaterialMipsPlugin {
 
 impl Plugin for BuildingsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(SurfacesPlugin)
+        app.add_plugins((SurfacesPlugin, interior::InteriorPlugin))
             .add_systems(Startup, build_chunks)
             .add_systems(Update, (build_chunks.run_if(map_reloaded), mipmap_textures).chain())
             .add_systems(Last, (gpu_only_images, gpu_only_meshes));
@@ -771,7 +772,8 @@ fn build_footprints(
     let mut walls: HashMap<(i32, i32, Mat, bool), MeshBuf> = HashMap::new();
     let mut roofs: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     let mut water = MeshBuf::default();
-    for fp in &layout.footprints {
+    for (index, fp) in layout.footprints.iter().enumerate() {
+        let rooms = layout.rooms_of(index);
         let c = fp.pts.iter().sum::<Vec2>() / fp.pts.len() as f32;
         let (cx, cz) = ((c.x / CHUNK).floor() as i32, (c.y / CHUNK).floor() as i32);
         // Water is only its surface.
@@ -895,6 +897,7 @@ fn build_footprints(
                 let rows = if shop { STOREY } else { 2.0 * STOREY };
                 let (v0, v1) = (-(lo - fp.base) / rows, -(hi - fp.base) / rows);
                 let w = walls.entry((cx, cz, fp.mat, shop)).or_default();
+                if let Some(rooms) = rooms { interior::skin(w, &rooms.skin[i], (a, dir, len), (lo, hi), (u0, u1), (v0, v1), (tint_at(s0), tint_at(s1)), out); continue; }
                 // Inside corners in shadow (baked occlusion): the wall is cut 1.5 m from each one
                 // and darkened toward it.
                 const DIM: f32 = 1.5;
@@ -1002,7 +1005,7 @@ fn build_footprints(
             let (lo, hi) = fp.pts.iter().fold((Vec2::MAX, Vec2::MIN), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
             for t in 0..1 + (r(31) * 2.5) as u32 {
                 let p = c.lerp(lo + (hi - lo) * Vec2::new(r(32 + t), r(36 + t)), 0.5);
-                if shared::map::footprint::contains(&fp.pts, p) {
+                if shared::map::footprint::contains(&fp.pts, p) && !rooms.is_some_and(|r| r.by_stair_room(p)) {
                     let (radius, h) = (0.55 + 0.2 * r(33 + t), 1.0 + 0.4 * r(34 + t));
                     k.solid_cylinder(Vec3::new(p.x, fp.top + h * 0.5, p.y), radius, h, lin([0.07, 0.07, 0.08]));
                 }
@@ -1010,6 +1013,7 @@ fn build_footprints(
         }
         let roof = roofs.entry((cx, cz)).or_default();
         let roof_col = roof_shade(r(6));
+        if let Some(rooms) = rooms { interior::roof(roof, rooms, fp.top, roof_col); continue; }
         for [i, j, k] in shared::map::footprint::triangulate(&fp.pts) {
             let p = [fp.pts[i as usize], fp.pts[j as usize], fp.pts[k as usize]].map(|q| Vec3::new(q.x, fp.top, q.y));
             let p = if (p[1] - p[0]).cross(p[2] - p[0]).y >= 0.0 { p } else { [p[0], p[2], p[1]] };
@@ -1231,6 +1235,7 @@ pub(crate) fn build_chunks(
     let facade = build_footprints(&mut commands, &layout, &mut meshes, &mut materials, &mut images, &mut pending, roof, signs_tex, &mut ultra, scale);
     if big {
         tiers::build(&mut commands, &layout, &mut meshes, &mut materials, facade, &mut ultra, scale);
+        interior::build(&mut commands, &layout, &assets, &mut meshes, &mut materials, &mut images, &mut pending, scale);
     }
     info!("architecture: {} static blocks merged into {} chunk meshes", layout.blocks.iter().filter(|b| is_static_visual(b)).count(), n);
     commands.insert_resource(pending);
@@ -1247,7 +1252,7 @@ pub(crate) fn gpu_only_images(mut events: MessageReader<AssetEvent<Image>>, asse
         let AssetEvent::Added { id } = ev else { continue };
         let Some(path) = assets.get_path(*id) else { continue };
         let Some(img) = images.get_mut_untracked(*id) else { continue };
-        if path.path().starts_with("models/textures") || path.path().starts_with("models/samples/delhi_street/textures") {
+        if path.path().starts_with("models/textures") || path.path().starts_with("models/samples/delhi_street/textures") || path.path().ends_with("room_kit.glb") {
             mip_chain(img);
         }
         img.asset_usage = RenderAssetUsages::RENDER_WORLD;
