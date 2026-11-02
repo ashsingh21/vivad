@@ -102,6 +102,11 @@ speed, height and stance as `[foot]` lines. `VIVAD_KEYS="2:+KeyW,6:+ShiftLeft,..
 match times through the same bindings as a keyboard, `VIVAD_TURN=<t>:<degrees>,...` turns the view,
 and `VIVAD_GIVE=saintalis,talwar` fills the first slots. With `VIVAD_CLIP=<dir>,<from>,<to>,<fps>` and
 `VIVAD_CLIP_VIEW=1` that films a run from the game's own camera with the window hidden.
+`VIVAD_KEYS` also takes KeyE, KeyM, KeyN, KeyT, Escape, Enter and F4, at match times, so a key that
+pauses holds the rest of the script. `VIVAD_FOOT=chest,<x>,<z>` (or `chestup`, `pickup`, `vehicle`)
+stands the player beside the nearest of those, `VIVAD_FOOT_BOTS=8,saintalis` stands that many armed
+bots round it at 6 s, and `VIVAD_WINDOW=1512x982` opens the window at that size, to read the HUD on
+another screen. macOS itself shrinks a window that is too big for the screen.
 
 A window without focus is held to 60 updates a second by Bevy's default, and a measuring run's window
 never has focus, so `VIVAD_NO_VSYNC=1` also turns that off: numbers from before 2 Nov that stop at

@@ -46,10 +46,14 @@
 //!   150 m off, then watch it for a few seconds: frames for tools/clip.py.
 //! VIVAD_FOOT=<x>,<z>[,<yaw degrees>]  the player starts the match on foot there, 9 m out in front
 //!                        of a gumti's shutter with `gumti`, or down the longest road near a spot
-//!                        with `street,<x>,<z>`, and logs what it does as `[foot]` lines:
+//!                        with `street,<x>,<z>`, beside the nearest chest, floor find or vehicle
+//!                        with `chest,<x>,<z>`, `chestup,<x>,<z>`, `pickup,<x>,<z>` or `vehicle,<x>,<z>`, and logs
+//!                        what it does as `[foot]` lines:
 //!                        a scripted run with VIVAD_KEYS and VIVAD_GIVE (crate::input), filmed by
 //!                        VIVAD_CLIP from the game's own camera. VIVAD_TURN=<t>:<degrees>,... turns
 //!                        the view at those match times, as a hand on the mouse would, in 0.3 s.
+//!                        VIVAD_FOOT_BOTS=<n>,<item> stands n bots round the player at 6 s with that
+//!                        item in hand.
 
 use bevy::camera::{ImageRenderTarget, RenderTarget};
 use bevy::prelude::*;
@@ -880,12 +884,37 @@ fn clip_frames(
     clip.next += clip.step;
 }
 
+/// What VIVAD_FOOT can stand the player beside.
+#[derive(bevy::ecs::system::SystemParam)]
+struct FootThings<'w, 's> {
+    chests: Query<'w, 's, (&'static Transform, &'static shared::sim::loot::Chest), (Without<LocalPlayer>, Without<Warrior>)>,
+    pickups: Query<'w, 's, &'static Transform, (With<shared::sim::loot::Pickup>, Without<LocalPlayer>, Without<Warrior>)>,
+    vehicles: Query<'w, 's, &'static Transform, (With<shared::sim::vehicle::Vehicle>, Without<LocalPlayer>, Without<Warrior>)>,
+    bots: Query<'w, 's, (&'static mut Transform, &'static mut Kinematic, &'static mut Inventory), (With<Warrior>, Without<LocalPlayer>)>,
+}
+
+impl FootThings<'_, '_> {
+    fn nearest(&self, kind: &str, spot: Vec2) -> Option<Vec3> {
+        let found: Vec<Vec3> = match kind {
+            "chest" => self.chests.iter().filter(|(_, c)| !c.opened).map(|(t, _)| t.translation).collect(),
+            // Upstairs, so in a room or on a roof.
+            "chestup" => self.chests.iter().filter(|(t, c)| !c.opened && t.translation.y > 2.0).map(|(t, _)| t.translation).collect(),
+            "pickup" => self.pickups.iter().map(|t| t.translation).collect(),
+            _ => self.vehicles.iter().map(|t| t.translation).collect(),
+        };
+        found.into_iter().min_by(|a, b| a.xz().distance(spot).total_cmp(&b.xz().distance(spot)))
+    }
+}
+
 /// Puts the player on foot once, then logs the run in numbers (VIVAD_FOOT).
 #[allow(clippy::type_complexity)]
 fn foot_run(
     layout: Res<MapLayout>,
     m: Res<Match>,
     mut q: Query<(&mut Transform, &mut Kinematic, &mut PlayerIntent, &Inventory), With<LocalPlayer>>,
+    mut things: FootThings,
+    db: Res<ItemDb>,
+    mut company: Local<bool>,
     mut placed: Local<bool>,
     mut next: Local<f32>,
     mut turned: Local<Vec<f32>>,
@@ -907,9 +936,24 @@ fn foot_run(
         *done = share;
     }
     if !*placed {
-        *placed = true;
         let spec = std::env::var("VIVAD_FOOT").unwrap_or_default();
         let num: Vec<f32> = spec.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+        // Beside the nearest of a kind of thing to a spot, which the match may not have placed yet.
+        if let (Some(kind), [x, z, ..]) = (["chestup", "chest", "pickup", "vehicle"].iter().find(|k| spec.starts_with(**k)), num.as_slice()) {
+            let spot = Vec2::new(*x, *z);
+            let Some(p) = things.nearest(kind, spot) else { return };
+            *placed = true;
+            let away = (spot - p.xz()).normalize_or(Vec2::X) * 1.6;
+            let at = p + Vec3::new(away.x, HALF_HEIGHT + 0.05, away.y);
+            tf.translation = at;
+            kin.mode = MoveMode::Ground;
+            kin.velocity = Vec3::ZERO;
+            kin.fall_from = Some(at.y);
+            intent.yaw = away.x.atan2(away.y);
+            println!("[foot] beside the {kind} at {p}, on foot at {at}");
+            return;
+        }
+        *placed = true;
         let (at, yaw) = match (spec.as_str(), num.as_slice()) {
             ("gumti", _) => {
                 let g = layout.kit.iter().find(|k| k.name == "gumti").expect("a map with gumtis");
@@ -932,6 +976,28 @@ fn foot_run(
         kin.fall_from = Some(tf.translation.y);
         intent.yaw = yaw;
         println!("[foot] on foot at {at} facing {:.0} degrees", yaw.to_degrees());
+    }
+    // VIVAD_FOOT_BOTS=<n>,<item>: at 6 s that many bots stand round the player, each with that item.
+    if !*company && m.elapsed > 6.0 {
+        *company = true;
+        let spec = std::env::var("VIVAD_FOOT_BOTS").unwrap_or_default();
+        if let Some((n, item)) = spec.split_once(',').and_then(|(n, i)| Some((n.parse::<usize>().ok()?, i))) {
+            let at = tf.translation.xz();
+            for (k, (mut t, mut bot, mut bag)) in things.bots.iter_mut().take(n).enumerate() {
+                let spot = at + Vec2::from_angle(k as f32 * std::f32::consts::TAU / n.max(1) as f32) * (8.0 + (k % 3) as f32 * 3.0);
+                t.translation = Vec3::new(spot.x, layout.terrain.height(spot.x, spot.y) + HALF_HEIGHT + 0.05, spot.y);
+                bot.mode = MoveMode::Ground;
+                bot.velocity = Vec3::ZERO;
+                bot.fall_from = Some(t.translation.y);
+                let count = match db.get(item).kind {
+                    ItemKind::Bow { magazine, .. } => magazine,
+                    _ => 1,
+                };
+                bag.slots[0] = Some(ItemStack { id: item.into(), rarity: Rarity::Rare, count });
+                bag.arrows = 300;
+                bag.selected = 1;
+            }
+        }
     }
     if m.elapsed >= *next {
         *next = m.elapsed + 0.25;

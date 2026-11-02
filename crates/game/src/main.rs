@@ -50,7 +50,7 @@ fn main() {
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         title: "Panga".into(),
-                        resolution: (1600u32, 900u32).into(),
+                        resolution: window_size().into(),
                         // VIVAD_NO_VSYNC=1 uncaps the frame rate, for measuring.
                         present_mode: if std::env::var("VIVAD_NO_VSYNC").is_ok() { bevy::window::PresentMode::AutoNoVsync } else { default() },
                         // In the browser: fill the page, and keep the keys and mouse for the game.
@@ -110,6 +110,15 @@ fn main() {
         app.add_plugins(bevy::post_process::auto_exposure::AutoExposurePlugin);
     }
     app.run();
+}
+
+/// The window's size in points; VIVAD_WINDOW=<w>x<h> tries another, for the HUD on another screen.
+fn window_size() -> (u32, u32) {
+    let asked = std::env::var("VIVAD_WINDOW").ok().and_then(|s| {
+        let (w, h) = s.split_once('x')?;
+        Some((w.parse().ok()?, h.parse().ok()?))
+    });
+    asked.unwrap_or((1600, 900))
 }
 
 /// Bevy turns off wgpu's check of indirect draws in release builds, but leaves it on where DirectX

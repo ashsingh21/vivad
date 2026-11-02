@@ -358,6 +358,13 @@ fn scripted_keys(
                     "Digit2" => KeyCode::Digit2,
                     "Digit3" => KeyCode::Digit3,
                     "Digit4" => KeyCode::Digit4,
+                    "KeyE" => KeyCode::KeyE,
+                    "KeyM" => KeyCode::KeyM,
+                    "KeyN" => KeyCode::KeyN,
+                    "KeyT" => KeyCode::KeyT,
+                    "Escape" => KeyCode::Escape,
+                    "Enter" => KeyCode::Enter,
+                    "F4" => KeyCode::F4,
                     _ => return None,
                 };
                 Some((t.trim().parse().ok()?, down, Ok(code)))
