@@ -145,15 +145,17 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
     commands.insert_resource(sfx);
 }
 
-/// How many times each sound was triggered (VIVAD_AUDIO_LOG prints it every 30 s).
+/// How many times each sound was triggered (VIVAD_AUDIO_LOG prints it every 30 s, or every
+/// VIVAD_AUDIO_LOG=<n> seconds).
 #[derive(Resource, Default)]
 struct Played(HashMap<String, u32>);
 
 fn log_counts(time: Res<Time>, played: Res<Played>, street: Res<crate::street_sound::Ambience>, mut next: Local<f32>) {
-    if std::env::var("VIVAD_AUDIO_LOG").is_err() || time.elapsed_secs() < *next {
+    let Ok(every) = std::env::var("VIVAD_AUDIO_LOG") else { return };
+    if time.elapsed_secs() < *next {
         return;
     }
-    *next = time.elapsed_secs() + 30.0;
+    *next = time.elapsed_secs() + every.parse::<f32>().ok().filter(|s| *s > 1.0).unwrap_or(30.0);
     let mut v: Vec<_> = played.0.iter().collect();
     v.sort();
     info!("sounds played: {v:?}");

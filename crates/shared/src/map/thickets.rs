@@ -25,9 +25,13 @@ pub struct SoftCover {
     pub size: Vec3,
 }
 
+/// Every bush and tree here is also in the far leaves merged for the whole map (crate::batch): a
+/// tree 860 triangles and a bush 330, and the merging is the map's peak of memory. 2,000 bushes and
+/// 400 trees add about 200 MB to that peak, so these counts are that budget.
+///
 /// Metres a side of the open land's squares, and the share of them with a clump of bushes.
 const BUSH_CELL: f32 = 70.0;
-const BUSH_SHARE: f64 = 0.22;
+const BUSH_SHARE: f64 = 0.14;
 /// A clump: its bushes and how far they spread. A crouched warrior's head is at about 1 m.
 const CLUMP: (u32, u32) = (3, 5);
 const CLUMP_SPREAD: f32 = 2.4;
@@ -37,17 +41,17 @@ const RIDGE_UP: f32 = 4.0;
 const MOUND: Vec2 = Vec2::new(1000.0, -210.0);
 const MOUND_REACH: f32 = 140.0;
 /// A thicket's squares, and how many of the Ridge's are thicket (fbm's middle is about 0.5).
-const THICKET_CELL: f32 = 36.0;
-const THICKET_NOISE: f32 = 0.5;
-const THICKET_COVER: Vec3 = Vec3::new(36.0, 2.6, 36.0);
+const THICKET_CELL: f32 = 22.0;
+const THICKET_NOISE: f32 = 0.64;
+const THICKET_COVER: Vec3 = Vec3::new(22.0, 2.6, 22.0);
 /// Kikar and scrub in a thicket's square.
-const KIKAR: (u32, u32) = (3, 5);
-const SCRUB: (u32, u32) = (4, 7);
+const KIKAR: (u32, u32) = (2, 4);
+const SCRUB: (u32, u32) = (6, 9);
 /// How far apart hedge pieces are tried across a park, how long one is, and the bushes' spacing.
 const HEDGE_CELL: f32 = 16.0;
 const HEDGE_LONG: f32 = 12.0;
 const HEDGE_GAP: f32 = 2.2;
-const HEDGE_SHARE: f64 = 0.22;
+const HEDGE_SHARE: f64 = 0.16;
 const HEDGE_COVER: (f32, f32) = (1.3, 1.5);
 /// Bushes stand this far from chests and street kit.
 const ROOM: f32 = 3.0;
@@ -90,6 +94,10 @@ fn cover(map: &mut MapLayout, p: Vec2, yaw: f32, size: Vec3) {
 
 /// Plants the lot. Run once the map's roads, buildings, kit and chests are down.
 pub fn plant(map: &mut MapLayout) {
+    // VIVAD_NO_LEAVES=1 leaves them out, to measure what they cost. Peers must agree on it.
+    if std::env::var("VIVAD_NO_LEAVES").is_ok() {
+        return;
+    }
     let mut rng = SmallRng::seed_from_u64(0x7A1E);
     let taken = Taken::new(map);
     thickets(map, &mut rng);
@@ -107,7 +115,7 @@ fn thickets(map: &mut MapLayout, rng: &mut SmallRng) {
             if !ridge(map, c) || fbm(c.x / 150.0, c.y / 150.0, 3, 77) < THICKET_NOISE {
                 continue;
             }
-            let spot = |rng: &mut SmallRng| c + Vec2::new(rng.random_range(-17.0..17.0), rng.random_range(-17.0..17.0));
+            let spot = |rng: &mut SmallRng| c + Vec2::new(rng.random_range(-11.0..11.0), rng.random_range(-11.0..11.0));
             for _ in 0..rng.random_range(KIKAR.0..KIKAR.1) {
                 let p = spot(rng);
                 if ridge(map, p) {
@@ -119,7 +127,7 @@ fn thickets(map: &mut MapLayout, rng: &mut SmallRng) {
             for _ in 0..rng.random_range(SCRUB.0..SCRUB.1) {
                 let p = spot(rng);
                 if ridge(map, p) {
-                    let scale = rng.random_range(1.3..2.1);
+                    let scale = rng.random_range(1.5..2.5);
                     bush(map, rng, india::BUSH_LANTANA, p, scale);
                 }
             }
@@ -194,12 +202,12 @@ mod tests {
         let leaves: Vec<&Prop> = m.props.iter().filter(|p| p.model.contains("bush")).collect();
         let count = |size: f32| m.soft.iter().filter(|s| s.size.x == size).count();
         println!("{} bushes, {} soft covers: {} thicket squares, {} clumps, {} hedges", leaves.len(), m.soft.len(), count(THICKET_COVER.x), count(CLUMP_COVER.x), count(HEDGE_LONG));
-        assert!((800..3400).contains(&leaves.len()), "{} bushes", leaves.len());
-        assert!((300..1400).contains(&m.soft.len()), "{} covers", m.soft.len());
+        assert!((800..2600).contains(&leaves.len()), "{} bushes", leaves.len());
+        assert!((300..800).contains(&m.soft.len()), "{} covers", m.soft.len());
         let on_ridge = m.soft.iter().filter(|s| s.size == THICKET_COVER).count();
-        assert!((60..260).contains(&on_ridge), "{on_ridge} thicket squares");
+        assert!((80..220).contains(&on_ridge), "{on_ridge} thicket squares");
         let hedges = m.soft.iter().filter(|s| s.size.y == HEDGE_COVER.1 && s.size.x == HEDGE_LONG).count();
-        assert!(hedges >= 40, "{hedges} hedges");
+        assert!(hedges >= 30, "{hedges} hedges");
         for p in leaves.iter().filter(|p| p.pos.distance(Vec3::new(880.0, p.pos.y, 690.0)) > 120.0) {
             let at = p.pos.xz();
             assert!(!m.is_holy(at), "a bush on holy ground at {at}");

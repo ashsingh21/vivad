@@ -378,13 +378,13 @@ impl Plugin for AutoshotPlugin {
                 poses = vec![
                     snipe("thri_not_thri", 150.0, 0.0),
                     range("thaana_slr", View::Player, 80.0, 0.8),
+                    p("chappal", Use::Carry, View::Front, 0.0),
+                    range("chappal", View::Side, 12.0, 0.12),
+                    range("chappal", View::Range, 12.0, 0.2),
+                    range("chappal", View::Range, 12.0, 0.35),
                     range("toradar", View::Back, 40.0, 0.5),
                     range("toradar", View::Back, 40.0, 3.0),
                     range("toradar", View::Back, 40.0, 6.0),
-                    range("chappal", View::Front, 12.0, 0.0),
-                    p("chappal", Use::Carry, View::Front, 0.0),
-                    range("chappal", View::Range, 12.0, 0.2),
-                    range("chappal", View::Range, 12.0, 0.35),
                 ];
             }
             app.insert_resource(Armoury { dir, poses, index: 0, t: -3.0, shot: false, pressed: false, spot: None, frames, frame: 0, next: 0.0 })
