@@ -816,7 +816,7 @@ pub enum Shot {
 
 /// Guns held to the shoulder (the `rifle_aim` clip) rather than out in the hand.
 pub fn long_gun(item: &str) -> bool {
-    matches!(item, "dunali" | "bandook")
+    shared::sim::movement::long_gun(item)
 }
 
 pub fn shot_kind(item: &str) -> Shot {

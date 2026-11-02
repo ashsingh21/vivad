@@ -30,6 +30,10 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")
 FPS = 30
 # Ground speed per clip (m/s), as the game plays them (crates/shared/src/sim/movement.rs).
 SPEEDS = {"walk": 1.8, "run": 5.6, "sprint": 8.6, "crouch": 1.4}
+# A long gun's gaits by direction (f, b, l, r): the rifle pack's recorded speeds (anims.py RIFLE_GAIT).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+RIFLE = {"walk": (1.35, 1.12, 1.23, 1.27), "run": (5.16, 2.72, 4.36, 4.88), "crouch": (0.93, 0.92, 1.12, 1.02), "sprint": (6.2,) * 4}
+RIFLE_AIM = {"walk": (1.29, 1.19, 1.14, 1.10), "run": (3.02, 2.52, 3.50, 3.97), "crouch": (0.88, 0.84, 1.09, 0.98)}
 # Ground-contact clips (the feet should touch the ground; the rest are in the air or lying down).
 AIR = ("jump", "fall", "freefall", "glide", "death", "slide")
 # Arms-only clips (the game lays them over the legs): the legs aren't checked.
@@ -37,9 +41,14 @@ UPPER = ("melee_", "bow_draw", "rifle_aim", "pistol_aim", "consume")
 
 
 def speed_of(name):
-    base = name.split("_", 1)[1] if name.startswith(("rifle_", "pistol_")) else name
+    base = name.split("_", 1)[1] if name.startswith(("rifle_", "rifleaim_", "pistol_")) else name
     kind = base.split("_")[0]
-    return SPEEDS.get(kind, 0.0) if base[-2:] in ("_f", "_b", "_l", "_r") else 0.0
+    if base[-2:] not in ("_f", "_b", "_l", "_r"):
+        return 0.0
+    table = RIFLE_AIM if name.startswith("rifleaim_") else RIFLE if name.startswith("rifle_") else None
+    if table:
+        return table.get(kind, (0.0,) * 4)["fblr".index(base[-1])]
+    return SPEEDS.get(kind, 0.0)
 
 
 def main():
@@ -87,15 +96,19 @@ def main():
         n = len(frames)
         flags = []
         # Pops: each frame's biggest bone turn (degrees), the loop's seam included.
-        steps = []
+        steps, movers = [], []
         for i in range(1, n):
             a, b = frames[i - 1]["q"], frames[i]["q"]
             # The shorter way round (q and -q are the same turn).
-            steps.append(max(math.degrees(min(d, 2 * math.pi - d)) for d in (a[k].rotation_difference(b[k]).angle for k in a)))
+            turns = {k: math.degrees(min(d, 2 * math.pi - d)) for k, d in ((k, a[k].rotation_difference(b[k]).angle) for k in a)}
+            worst = max(turns, key=turns.get)
+            steps.append(turns[worst])
+            movers.append(worst)
         med = sorted(steps)[len(steps) // 2] if steps else 0.0
         pop = max(steps) / max(med, 0.5) if steps else 0.0
         if steps and max(steps) > 25 and pop > 4:
-            flags.append(f"pop {max(steps):.0f}deg at f{steps.index(max(steps)) + 1}")
+            k = steps.index(max(steps))
+            flags.append(f"pop {max(steps):.0f}deg at f{k + 1} ({movers[k]})")
         # Feet.
         speed = speed_of(name)
         feet_x = sink = flt = skid = float("nan")

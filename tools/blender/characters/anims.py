@@ -379,21 +379,38 @@ MIXAMO = os.path.join(HERE, "mixamo")
 # over the Mixamo pack's.
 MOTUS = os.path.join(HERE, "mocaponline", "FBX_Rifle_Basic_27A2", "Animation", "In-Place")
 MOTUS_BONES = {k: v.removeprefix("mixamorig:") for k, v in MIXAMO_BONES.items()}
+# Moving with a long gun, each gait's speed by direction (forward, back, left, right; m/s): the
+# pack's own, as recorded (measured on the male; the female's clips are set to the same, as both
+# move alike). Must match RIFLE_GAIT in crates/shared/src/sim/movement.rs.
+RIFLE_GAIT = {
+    "walk": (1.35, 1.12, 1.23, 1.27), "run": (5.16, 2.72, 4.36, 4.88), "crouch": (0.93, 0.92, 1.12, 1.02),
+    "aimwalk": (1.29, 1.19, 1.14, 1.10), "aimrun": (3.02, 2.52, 3.50, 3.97), "aimcrouch": (0.88, 0.84, 1.09, 0.98),
+}
+RIFLE_SPRINT = 6.2
+_G = lambda gait, d: RIFLE_GAIT[gait]["fblr".index(d)]
 MOTUS_CLIPS = [
     # The idles from where they settle (each file opens on a step in from another pose), there and
     # back so they loop.
     ("rifle_idle", "W2_Stand_Relaxed_Idle_IPC", 0.0, {"window": (25, 99), "pingpong": True}),
     ("rifle_aim", "W2_Stand_Aim_Idle_v2_IPC", 0.0, {"window": (7, 121), "pingpong": True}),
     ("rifle_crouch_idle", "W2_Crouch_Idle_IPC", 0.0, {"window": (25, 58), "pingpong": True}),
-    *[(f"rifle_walk_{d}", f"W2_Walk_{d.upper()}_Loop_IPC", 1.8, {}) for d in "fblr"],
-    *[(f"rifle_crouch_{d}", f"W2_CrouchWalk_{d.upper()}_Loop_IPC", 1.4, {}) for d in "fblr"],
-    # Running: its run ahead and to the sides, its jog backward (it has no run back); the run
-    # again, quicker, for the sprint.
-    ("rifle_run_f", "W2_Run_F_Loop_IPC", 5.6, {}),
-    ("rifle_run_b", "W2_Jog_B_Loop_IPC", 5.6, {}),
-    ("rifle_run_l", "W2_Run_L_Loop_IPC", 5.6, {}),
-    ("rifle_run_r", "W2_Run_R_Loop_IPC", 5.6, {}),
-    ("rifle_sprint_f", "W2_Run_F_Loop_IPC", 8.6, {}),
+    # Moving: every clip at its own recorded pace, the game moving at the speeds it was captured at
+    # (RIFLE_GAIT): sped up, mocap reads as fast-forward.
+    *[(f"rifle_walk_{d}", f"W2_Walk_{d.upper()}_Loop_IPC", _G("walk", d), {}) for d in "fblr"],
+    *[(f"rifle_crouch_{d}", f"W2_CrouchWalk_{d.upper()}_Loop_IPC", _G("crouch", d), {}) for d in "fblr"],
+    # Running: its run ahead and to the sides, its jog backward (it has no run back).
+    ("rifle_run_f", "W2_Run_F_Loop_IPC", _G("run", "f"), {}),
+    ("rifle_run_b", "W2_Jog_B_Loop_IPC", _G("run", "b"), {}),
+    ("rifle_run_l", "W2_Run_L_Loop_IPC", _G("run", "l"), {}),
+    ("rifle_run_r", "W2_Run_R_Loop_IPC", _G("run", "r"), {}),
+    # No sprint in the pack: the run, a fifth quicker.
+    ("rifle_sprint_f", "W2_Run_F_Loop_IPC", RIFLE_SPRINT, {}),
+    # Aiming as you move, whole body: standing, walking, jogging, crouched.
+    ("rifleaim_idle", "W2_Stand_Aim_Idle_v2_IPC", 0.0, {"window": (7, 121), "pingpong": True}),
+    ("rifleaim_crouch_idle", "W2_Crouch_Aim_Idle_v2_IPC", 0.0, {"window": (7, 113), "pingpong": True}),
+    *[(f"rifleaim_walk_{d}", f"W2_Walk_Aim_{d.upper()}_Loop_IPC", _G("aimwalk", d), {}) for d in "fblr"],
+    *[(f"rifleaim_run_{d}", f"W2_Jog_Aim_{d.upper()}_Loop_IPC", _G("aimrun", d), {}) for d in "fblr"],
+    *[(f"rifleaim_crouch_{d}", f"W2_CrouchWalk_Aim_{d.upper()}_Loop_IPC", _G("aimcrouch", d), {}) for d in "fblr"],
 ]
 # (our clip, the file in mixamo/, the speed it's played at, mocap options). Missing files are skipped.
 _R, _P = "rifle/", "pistol/"
@@ -799,6 +816,10 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
                     v.append((d.dot(back) if travel.length else Vector((d.x, d.y)).length) * src_fps)
         v.sort()
         natural = v[len(v) // 2] * r if v else speed
+        # speed < 0: played at its own pace (the game moves at the recorded speed, -speed only a
+        # fallback): no retiming.
+        if speed < 0:
+            speed = natural
         out = max(8, round(frames * natural / speed * FPS / src_fps))
         print(f"[anims] {name} from {clip}: natural {natural:.2f} m/s, {frames} -> {out} frames")
     S = [sample(i * frames / out) for i in range(out)]

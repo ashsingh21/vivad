@@ -26,6 +26,54 @@ pub const AIM_SPEED: f32 = 3.6;
 pub const STROLL_SPEED: f32 = 1.8;
 /// Crouched: slower, steadier (crate::sim::combat), and shorter.
 pub const CROUCH_SPEED: f32 = 1.4;
+
+/// A gait's ground speed by direction (forward, back, left, right; m/s), for a body-relative
+/// direction blended as the animation blends its clips (each share squared).
+#[derive(Clone, Copy)]
+pub struct Gait(pub [f32; 4]);
+
+impl Gait {
+    /// The speed along `(forward, right)` (any length; its direction is what counts).
+    pub fn speed(&self, forward: f32, right: f32) -> f32 {
+        let len = forward.hypot(right);
+        if len < 1e-4 {
+            return self.0[0];
+        }
+        let (f, r) = (forward / len, right / len);
+        f.max(0.0).powi(2) * self.0[0] + (-f).max(0.0).powi(2) * self.0[1] + (-r).max(0.0).powi(2) * self.0[2] + r.max(0.0).powi(2) * self.0[3]
+    }
+}
+
+/// Moving with a long gun: the speeds MoCap Online's rifle pack was captured at, so its clips play
+/// at their own pace (sped up, mocap reads as fast-forward). Must match RIFLE_GAIT in
+/// tools/blender/characters/anims.py.
+pub const RIFLE_WALK: Gait = Gait([1.35, 1.12, 1.23, 1.27]);
+pub const RIFLE_RUN: Gait = Gait([5.16, 2.72, 4.36, 4.88]);
+pub const RIFLE_CROUCH: Gait = Gait([0.93, 0.92, 1.12, 1.02]);
+pub const RIFLE_AIM_WALK: Gait = Gait([1.29, 1.19, 1.14, 1.10]);
+pub const RIFLE_AIM_RUN: Gait = Gait([3.02, 2.52, 3.50, 3.97]);
+pub const RIFLE_AIM_CROUCH: Gait = Gait([0.88, 0.84, 1.09, 0.98]);
+/// The pack has no sprint: its run, a fifth quicker.
+pub const RIFLE_SPRINT: f32 = 6.2;
+
+/// Guns held in both hands (and moved with like a rifle).
+pub fn long_gun(item: &str) -> bool {
+    matches!(item, "dunali" | "bandook")
+}
+
+/// A long gun's gait for this intent, or None to sprint.
+pub fn rifle_gait(intent: &PlayerIntent, crouched: bool) -> Option<Gait> {
+    let walk = intent.held(btn::WALK) && !intent.held(btn::SPRINT);
+    Some(match (intent.held(btn::AIM), crouched, walk) {
+        (true, true, _) => RIFLE_AIM_CROUCH,
+        (true, false, true) => RIFLE_AIM_WALK,
+        (true, false, false) => RIFLE_AIM_RUN,
+        (false, true, _) => RIFLE_CROUCH,
+        (false, false, true) => RIFLE_WALK,
+        _ if intent.held(btn::SPRINT) && intent.move_axis.y > 0.3 => return None,
+        _ => RIFLE_RUN,
+    })
+}
 /// A slide: crouching while running fast throws the warrior into it at at least SLIDE_SPEED,
 /// slowing by SLIDE_FRICTION (m/s each second; downhill, gravity along the slope speeds it up),
 /// steered only a little; it ends crouched under SLIDE_END, and the next can start SLIDE_COOLDOWN
@@ -98,7 +146,7 @@ fn feet_probe(spatial: &SpatialQuery, center: Vec3, entity: Entity, max: f32) ->
 #[allow(clippy::type_complexity)]
 fn move_warriors(
     mut commands: Commands,
-    mut q: Query<(Entity, &mut Transform, &mut Kinematic, &PlayerIntent, &Collider), (Without<Eliminated>, Without<super::net::Remote>)>,
+    mut q: Query<(Entity, &mut Transform, &mut Kinematic, &PlayerIntent, &Collider, Option<&super::Inventory>), (Without<Eliminated>, Without<super::net::Remote>)>,
     move_and_slide: MoveAndSlide,
     spatial: SpatialQuery,
     time: Res<Time>,
@@ -106,7 +154,7 @@ fn move_warriors(
 ) {
     let dt = time.delta_secs();
     let config = MoveAndSlideConfig::default();
-    for (entity, mut tf, mut kin, intent, collider) in &mut q {
+    for (entity, mut tf, mut kin, intent, collider, inv) in &mut q {
         tf.rotation = intent.body_rotation();
         let wish = wish_dir(intent);
         match kin.mode {
@@ -129,7 +177,14 @@ fn move_warriors(
             }
             MoveMode::Ground => {
                 let crouch = intent.held(btn::CROUCH);
-                let mut speed = if intent.held(btn::WALK) && !intent.held(btn::SPRINT) {
+                let rifle = inv.and_then(|i| i.current()).is_some_and(|s| long_gun(&s.id));
+                let mut speed = if rifle {
+                    // At the pace the rifle clips were captured at, by gait and direction.
+                    match rifle_gait(intent, kin.crouched) {
+                        Some(g) => g.speed(intent.move_axis.y, intent.move_axis.x),
+                        None => RIFLE_SPRINT,
+                    }
+                } else if intent.held(btn::WALK) && !intent.held(btn::SPRINT) {
                     STROLL_SPEED
                 } else if intent.held(btn::AIM) {
                     AIM_SPEED
@@ -138,15 +193,16 @@ fn move_warriors(
                 } else {
                     WALK_SPEED
                 };
-                if kin.crouched {
+                if kin.crouched && !rifle {
                     speed = speed.min(CROUCH_SPEED);
                 }
+                let run_speed = if rifle { RIFLE_RUN.0[0] } else { WALK_SPEED };
                 kin.jump_buffer = if intent.pressed(btn::JUMP) { JUMP_BUFFER } else { (kin.jump_buffer - dt).max(0.0) };
                 kin.air_time = if kin.grounded { 0.0 } else { kin.air_time + dt };
                 kin.slide_cooldown = (kin.slide_cooldown - dt).max(0.0);
                 let cur = kin.velocity.with_y(0.0);
                 // Crouching while running fast on the ground: a slide.
-                if crouch && intent.pressed(btn::CROUCH) && kin.grounded && !kin.sliding && kin.slide_cooldown <= 0.0 && cur.length() > WALK_SPEED - 0.3 {
+                if crouch && intent.pressed(btn::CROUCH) && kin.grounded && !kin.sliding && kin.slide_cooldown <= 0.0 && cur.length() > run_speed - 0.3 {
                     kin.sliding = true;
                     kin.velocity = (cur.normalize() * cur.length().max(SLIDE_SPEED)).with_y(kin.velocity.y);
                 }
