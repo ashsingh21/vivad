@@ -1020,6 +1020,43 @@ def stand_up(rig, name, lean, tuck, face):
           + (f", elbows in {tuck} deg" if tuck else "") + (", chest to the front" if face else ""))
 
 
+# Clips whose head turns on purpose (a swing's follow-through, a fall), left as they are.
+LOOK_FREE = ("melee_", "death", "freefall", "glide", "consume", "bow_draw")
+
+
+def look_ahead(rig, name):
+    """Turn `name`'s neck and head (half each) so the face points straight ahead on average, the
+    same turn every frame (their own small movements and the head's tilt up or down kept). Clips
+    carried over from other bodies, or turned (the slide), can leave the head looking off to the
+    side (the slide 51 degrees, the rifle's strafes 20-26)."""
+    sc = bpy.context.scene
+    act = bpy.data.actions[name]
+    rig.obj.animation_data.action = None
+    rig.rest()
+    # The face's direction in the head bone's frame, from the rest pose (facing FWD).
+    face = rig.world_rot("head").inverted() @ FWD
+    rig.obj.animation_data.action = act
+    f0, f1 = map(int, act.frame_range)
+    poses, yaws = [], []
+    for f in range(f0, f1 + 1):
+        sc.frame_set(f)
+        poses.append({pb.name: pb.matrix_basis.copy() for pb in rig.pb})
+        v = rig.world_rot("head") @ face
+        yaws.append(math.atan2(v.x, -v.y))
+    turn = sum(yaws) / len(yaws)
+    if abs(math.degrees(turn)) < 4:
+        return
+    new_action(rig, name)
+    for i, pose in enumerate(poses):
+        for pb in rig.pb:
+            pb.matrix_basis = pose[pb.name]
+        bpy.context.view_layer.update()
+        rig.rotate("neck_01", UP, -turn / 2)
+        rig.rotate("head", UP, -turn / 2)
+        rig.key(i + 1)
+    print(f"[anims] {name}: head turned {math.degrees(turn):+.0f} deg back to ahead")
+
+
 # (clip, the clip whose arms it takes): see arms_from.
 HIGH_READY = [*[(f"rifle_run_{d}", f"rifleaim_run_{d}") for d in "fblr"], ("rifle_sprint_f", "rifleaim_run_f")]
 ARM_CHAIN = ("clavicle", "upperarm", "lowerarm", "hand", "thumb", "index", "middle", "ring", "pinky", "weapon")
@@ -1501,6 +1538,10 @@ def main():
     # (the game plays it whole, no aim laid over).
     if "slide" in bpy.data.actions and "rifleaim_idle" in bpy.data.actions:
         arms_from(rig, "slide", "rifleaim_idle", "rifle_slide")
+    # Last, over everything moving: the head looking ahead.
+    for act in list(bpy.data.actions):
+        if not act.name.startswith(LOOK_FREE):
+            look_ahead(rig, act.name)
     hold_pose(rig, "freefall", 40, freefall_pose)
     hold_pose(rig, "glide", 40, glide_pose)
     hold_pose(rig, "death", 30, death_pose)

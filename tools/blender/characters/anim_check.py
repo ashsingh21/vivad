@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 RIFLE = {"walk": (1.35, 1.12, 1.23, 1.27), "run": (5.16, 2.72, 4.36, 4.88), "crouch": (0.93, 0.92, 1.12, 1.02), "sprint": (6.2,) * 4}
 RIFLE_AIM = {"walk": (1.29, 1.19, 1.14, 1.10), "run": (3.02, 2.52, 3.50, 3.97), "crouch": (0.88, 0.84, 1.09, 0.98)}
 # Ground-contact clips (the feet should touch the ground; the rest are in the air or lying down).
-AIR = ("jump", "fall", "freefall", "glide", "death", "slide")
+AIR = ("jump", "fall", "freefall", "glide", "death", "slide", "rifle_slide")
 # Arms-only clips (the game lays them over the legs): the legs aren't checked.
 UPPER = ("melee_", "bow_draw", "rifle_aim", "pistol_aim", "consume")
 
