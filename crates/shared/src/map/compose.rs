@@ -443,7 +443,7 @@ fn road_line(pts: &[Vec2]) -> Vec<Vec2> {
 }
 
 /// Every connecting road, as a width and a line: `ROADS`, and each bridge's approach at each end.
-fn network() -> Vec<(f32, Vec<Vec2>)> {
+pub fn network() -> Vec<(f32, Vec<Vec2>)> {
     let mut all: Vec<(f32, Vec<Vec2>)> = ROADS.iter().map(|(width, pts)| (*width, road_line(&v2s(pts)))).collect();
     for s in &SPANS {
         all.push((s.width, vec![s.a, s.at(-s.ramp(), 0.0)]));

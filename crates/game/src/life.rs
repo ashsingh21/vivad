@@ -19,6 +19,7 @@ use shared::sim::nav::StreetFloor;
 mod ab;
 pub mod flipbook;
 mod goods;
+mod paint;
 mod people;
 mod stage;
 
@@ -47,7 +48,7 @@ impl Plugin for LifePlugin {
         if only != "people" {
             app.add_plugins(goods::GoodsPlugin);
         }
-        app.add_plugins(stage::StagePlugin).add_systems(Startup, index_market).add_systems(Update, index_market.run_if(shared::sim::map_reloaded));
+        app.add_plugins((stage::StagePlugin, paint::PaintPlugin)).add_systems(Startup, index_market).add_systems(Update, index_market.run_if(shared::sim::map_reloaded));
         if std::env::var("VIVAD_LIFE_AB").is_ok() {
             app.add_systems(Update, ab::step);
         }
