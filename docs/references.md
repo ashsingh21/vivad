@@ -324,8 +324,9 @@ sources:
     Some place data from Overture Maps Foundation and Meta, CDLA Permissive 2.0.
 
 The full map screen already shows "Map data (c) OpenStreetMap contributors, ODbL 1.0"
-(`crates/game/src/hud.rs`). That covers OpenStreetMap while the map is open. The full wording above
-still needs a home on a credits or splash screen before anyone outside the team plays the game.
+(`crates/game/src/hud.rs`). That covers OpenStreetMap while the map is open. The Credits item on Home
+(`crates/game/src/front/credits.rs`) shows the full wording above, and every CC BY author in this
+file with the work's name, licence and page.
 
 ### What share-alike means for `ncr_*.json`
 
@@ -349,6 +350,17 @@ holy lists and other changes in them are part of that database.
   This is why `docs/ncr/HOLY-SITES.md` has its rule for positions.
 - **No locks on the data alone.** Encrypting it is allowed only if an unlocked copy is offered too, at
   no extra charge and just as easy to get (4.7).
+
+### The offer
+
+The Credits screen makes the offer ODbL 4.6 asks for, in these words:
+
+    Panga's map is a database made from OpenStreetMap, and stays under that licence. Anyone may have a free, machine-readable copy of its map files and the tools that make them: github.com/Apc0015/Panga, in assets/data/maps and tools/osm.
+
+For the offer to be good, `assets/data/maps/` and `tools/osm/` must be readable by anyone at that
+address on the day anyone outside the team gets the game or sees a picture of its map. The repository
+is private today, and nothing in it has been pushed for this. If only those two folders go public, or
+they go somewhere else, change the address here and in `credits.rs`. Nobody outside may play until then.
 
 One thing is not settled. OpenStreetMap's guideline says a result meant for extracting the data is a
 database and anything else is a Produced Work, and it says nothing about games

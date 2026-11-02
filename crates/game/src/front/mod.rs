@@ -6,6 +6,7 @@
 //! test's moves it too. The state layout follows bevy_new_2d's `screens` and `menus` (CC0, MIT or
 //! Apache 2.0). Test recipes, online play and the browser (whose page is its menu) skip Home.
 
+mod credits;
 mod demo;
 mod home;
 mod pause;
@@ -30,6 +31,8 @@ use theme::Shortcut;
 pub enum Screen {
     #[default]
     Home,
+    /// Off Home: who made what.
+    Credits,
     /// Online, gathering players (crate::lobby).
     Lobby,
     Match,
@@ -48,6 +51,9 @@ pub enum Press {
     Quit,
     /// Try the online session again.
     Retry,
+    Credits,
+    /// Back to Home from what lies off it.
+    Home,
 }
 
 /// The test recipes go straight to a match, and so does VIVAD_SKIP_HOME=1.
@@ -85,7 +91,7 @@ impl Plugin for FrontPlugin {
         app.insert_state(first)
             .init_resource::<theme::Fonts>()
             .init_resource::<theme::ClickSound>()
-            .add_plugins((home::plugin, pause::plugin, result::plugin, settings::plugin, demo::plugin))
+            .add_plugins((home::plugin, credits::plugin, pause::plugin, result::plugin, settings::plugin, demo::plugin))
             .add_observer(on_button)
             .add_systems(PreUpdate, free_mouse.after(LocalInput).run_if(not(in_state(Screen::Match))))
             .add_systems(Update, (follow_the_match, shortcuts, show_hud, theme::paint_buttons));
@@ -120,6 +126,8 @@ fn press(world: &mut World, what: Press) {
             world.write_message(AppExit::Success);
         }
         Press::Retry => crate::lobby::retry(world),
+        Press::Credits => world.resource_mut::<NextState<Screen>>().set(Screen::Credits),
+        Press::Home => world.resource_mut::<NextState<Screen>>().set(Screen::Home),
     }
 }
 

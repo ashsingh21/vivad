@@ -188,15 +188,37 @@ fn drive(
             demo.from = now - 5.0;
             demo.step += 1;
         }
+        // A look at the credits, and back.
         (Stage::Home, 1) if t > 5.4 => {
-            demo.hovered = hover(&mut events, Press::Play);
-            demo.step += 1;
+            demo.hovered = hover(&mut events, Press::Credits);
+            demo.step = 20;
         }
-        (Stage::Home, 2) if t > 5.7 => {
+        (Stage::Home, 20) if t > 5.7 => {
             mouse(&mut events, &mut buttons, ButtonState::Pressed, window);
             demo.step += 1;
         }
-        (Stage::Home, 3) if t > 5.8 => {
+        (Stage::Home, 21) if t > 5.8 => {
+            mouse(&mut events, &mut buttons, ButtonState::Released, window);
+            click_done(&mut commands, &mut demo);
+            demo.step += 1;
+        }
+        (Stage::Home, 22) if screen == Screen::Credits && t > 6.8 => {
+            demo.shot = Some("1_credits");
+            demo.step += 1;
+        }
+        (Stage::Home, 23) if t > 7.2 => {
+            tap(&mut keys, &mut demo, KeyCode::Escape, window, now);
+            demo.step += 1;
+        }
+        (Stage::Home, 24) if screen == Screen::Home && t > 7.8 => {
+            demo.hovered = hover(&mut events, Press::Play);
+            demo.step = 2;
+        }
+        (Stage::Home, 2) if t > 8.1 => {
+            mouse(&mut events, &mut buttons, ButtonState::Pressed, window);
+            demo.step += 1;
+        }
+        (Stage::Home, 3) if t > 8.2 => {
             mouse(&mut events, &mut buttons, ButtonState::Released, window);
             click_done(&mut commands, &mut demo);
             demo.pressed_at = now;
