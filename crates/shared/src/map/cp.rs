@@ -158,12 +158,18 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 let end = i == 0 || i + 1 == n;
                 for (r0, r1) in if split { vec![(core0, mid), (mid, core1)] } else { vec![(core0, core1)] } {
                     let (p, q) = (xz(r0, col), xz(r1, col));
-                    let door = if end { vec![Opening::door(p.distance(q) / 2.0)] } else { vec![] };
-                    b.wall(w, p, q, 0.0, r.g - SLAB, 0.3, Mat::Plaster, &door);
+                    let middle = p.distance(q) / 2.0;
+                    // A block's end looks down a radial road: a door, with a shop window each side.
+                    let front = if end { vec![Opening::door(middle), Opening { at: middle - 3.0, width: 1.6, bottom: 0.9, top: 3.0 }, Opening { at: middle + 3.0, width: 1.6, bottom: 0.9, top: 3.0 }] } else { vec![] };
+                    b.wall(w, p, q, 0.0, r.g - SLAB, 0.3, Mat::Plaster, &front);
                 }
                 if end {
                     let (p, q) = (xz(r.ri + 0.2, col), xz(r.ro - 0.2, col));
-                    b.wall(w, p, q, r.g, r.u - SLAB, 0.3, Mat::Plaster, &[Opening::window(p.distance(q) / 2.0)]);
+                    // The upper storey's windows go on round the corner, one to each shop's width.
+                    let len = p.distance(q);
+                    let bays = (len / r.seg_len).floor().max(1.0);
+                    let windows: Vec<Opening> = (0..bays as usize).map(|k| Opening::window((k as f32 + 0.5) * len / bays)).collect();
+                    b.wall(w, p, q, r.g, r.u - SLAB, 0.3, Mat::Plaster, &windows);
                 }
             }
             // Stairs up through the shop, climbing outwards onto the floor beyond the well.
