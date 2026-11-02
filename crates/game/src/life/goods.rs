@@ -47,12 +47,12 @@ const FADE_FROM: f32 = 104.0;
 const FADE_TO: f32 = 120.0;
 /// Where the full goods hand over to their stand-ins, from a patch's middle, and how far off the
 /// full ones are ready and gone. A corner of a patch is 45 m from its middle.
-const DETAIL_FROM: f32 = 54.0;
-const DETAIL_TO: f32 = 66.0;
-const DETAIL_REACH: f32 = 74.0;
-const DETAIL_LET_GO: f32 = 92.0;
+const DETAIL_FROM: f32 = 46.0;
+const DETAIL_TO: f32 = 56.0;
+const DETAIL_REACH: f32 = 64.0;
+const DETAIL_LET_GO: f32 = 80.0;
 /// Past this, a patch's overhead stops casting: the sun's far cascade is coarse there anyway.
-const SHADE_TO: f32 = 88.0;
+const SHADE_TO: f32 = 72.0;
 /// Above the ground, the camera is too far up for goods to show.
 const TOO_HIGH: f32 = 90.0;
 /// The middle of the atlas's white tile (tools/blender/life/goods_atlas.py).
@@ -395,6 +395,8 @@ fn dress(layout: &MapLayout, market: &Market, key: (i32, i32), out: &mut Vec<(&'
                     continue;
                 }
                 let busy = busy_at(market, front);
+                // Awnings over a way in, but nothing in it: a room's doors and open bays stay clear.
+                let open = layout.rooms_of(i as usize).is_some_and(|r| r.doors.iter().any(|d| d.pos.xz().distance(at) < d.width * 0.5 + BAY * 0.5 && d.out.dot(out2) > 0.7));
                 let yaw = (-out2.x).atan2(-out2.y);
                 let seed = (e as u32) * 97 + s as u32;
                 let at3 = |off: f32| Vec3::new(at.x + out2.x * off, y, at.y + out2.y * off);
@@ -405,8 +407,6 @@ fn dress(layout: &MapLayout, market: &Market, key: (i32, i32), out: &mut Vec<(&'
                     } else if theme < 0.66 {
                         ("shop_grocery", &["sacks_spice", "sacks_grain", "sacks_stack", "stand_veg", "stand_fruit", "greens", "crate_cauli"])
                     } else if theme < 0.84 {
-                // Awnings over a way in, but nothing in it: a room's doors and open bays stay clear.
-                let open = layout.rooms_of(i as usize).is_some_and(|r| r.doors.iter().any(|d| d.pos.xz().distance(at) < d.width * 0.5 + BAY * 0.5 && d.out.dot(out2) > 0.7));
                         ("shop_bartan", &["pots", "buckets", "cartons"])
                     } else {
                         ("shop_general", &["cartons", "buckets", "sacks_stack", "stand_fruit"])

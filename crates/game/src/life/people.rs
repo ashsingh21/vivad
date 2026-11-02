@@ -54,6 +54,8 @@ const CROWD: f32 = 58.0;
 const SEEN_FROM: f32 = 40.0;
 /// When the bakes start.
 const BAKE_AFTER: f32 = 9.0;
+/// Metres a side of the cubes a person's model is thinned to.
+const THIN: f32 = 0.045;
 /// How far off someone still casts a shadow: a blob of a figure past this won't be missed.
 const SHADOW_TO: f32 = 18.0;
 /// The most people moved round to the front of the view each look.
@@ -158,6 +160,7 @@ fn specs() -> Vec<(&'static str, Spec)> {
         looks,
         coats: vec![],
         scale: 1.0,
+        thin: THIN,
     };
     let animal = |name: &str, coats: usize, scale: f32| Spec {
         model: format!("models/life/{name}.glb"),
@@ -167,6 +170,7 @@ fn specs() -> Vec<(&'static str, Spec)> {
         looks: vec![],
         coats: (0..coats).map(|k| format!("models/life/{name}_coat_{k}.png")).collect(),
         scale,
+        thin: 0.0,
     };
     vec![("men", person("male", men())), ("women", person("female", women())), ("dog", animal("dog", 4, DOG_SCALE)), ("cow", animal("cow", 3, COW_SCALE))]
 }

@@ -84,6 +84,8 @@ pub struct Spec {
     pub coats: Vec<String>,
     /// Metres to a unit of the file.
     pub scale: f32,
+    /// Metres a side of the cubes the model is thinned to (`thinned`), zero for none.
+    pub thin: f32,
 }
 
 pub struct BakedClip {
@@ -562,6 +564,36 @@ fn luma(p: &[u8]) -> f32 {
 // ------------------------------------------------------------------ the bake
 
 /// Bakes a model. Runs for a second or so: on a worker.
+/// Fewer triangles for the same figure: every vertex in a cube `cell` metres a side moves to one of
+/// them, and the triangles that fall flat go. A market's people are at least 7 m off, and every
+/// triangle of theirs is paid for in the depth pass and the shadows as well. Returns the triangles
+/// left, and for each vertex the one whose place it takes; a vertex keeps its own texture
+/// coordinates, so a seam in the texture stays closed. Zero leaves the model as it is.
+fn thinned(idx: &[u32], pos: &[Vec3], uv: &[[f32; 2]], cell: f32) -> (Vec<u32>, Vec<u32>) {
+    if cell <= 0.0 {
+        return (idx.to_vec(), (0..pos.len() as u32).collect());
+    }
+    let mut place: HashMap<(i32, i32, i32), u32> = HashMap::new();
+    let mut same: HashMap<(u32, i32, i32), u32> = HashMap::new();
+    let (mut source, mut merged) = (Vec::with_capacity(pos.len()), Vec::with_capacity(pos.len()));
+    for (k, p) in pos.iter().enumerate() {
+        let c = (*p / cell).floor();
+        let first = *place.entry((c.x as i32, c.y as i32, c.z as i32)).or_insert(k as u32);
+        source.push(first);
+        // On the same patch of the texture it is one vertex; across a seam it is two, in one place.
+        let t = (uv[k][0] * 32.0, uv[k][1] * 32.0);
+        merged.push(*same.entry((first, t.0 as i32, t.1 as i32)).or_insert(k as u32));
+    }
+    let mut out = Vec::with_capacity(idx.len());
+    for t in idx.chunks_exact(3) {
+        let [a, b, c] = [t[0], t[1], t[2]].map(|i| merged[i as usize]);
+        if source[a as usize] != source[b as usize] && source[b as usize] != source[c as usize] && source[a as usize] != source[c as usize] {
+            out.extend_from_slice(&[a, b, c]);
+        }
+    }
+    (out, source)
+}
+
 pub fn bake(spec: &Spec) -> Result<Baked, String> {
     let read = |path: &str| std::fs::read(std::path::Path::new(crate::ASSET_DIR).join(path)).map_err(|e| format!("{path}: {e}"));
     let model = read(&spec.model)?;
@@ -660,6 +692,7 @@ pub fn bake(spec: &Spec) -> Result<Baked, String> {
         skin_w.extend_from_slice(&part.weights);
         idx.extend(part.idx.iter().map(|i| i + base));
     }
+    let (idx, source) = thinned(&idx, &pos, &uv, spec.thin);
     let wide = pos.len() > u16::MAX as usize;
     let indices = || if wide { Indices::U32(idx.clone()) } else { Indices::U16(idx.iter().map(|i| *i as u16).collect()) };
 
@@ -680,12 +713,14 @@ pub fn bake(spec: &Spec) -> Result<Baked, String> {
             let mut out_pos = Vec::with_capacity(pos.len());
             let mut out_nrm = Vec::with_capacity(pos.len());
             for k in 0..pos.len() {
-                let (j, w) = (skin_j[k], skin_w[k]);
+                // Where it stands comes from its cell's one vertex, so cells share their corners.
+                let from = source[k] as usize;
+                let (j, w) = (skin_j[from], skin_w[from]);
                 let (mut p, mut n) = (Vec3::ZERO, Vec3::ZERO);
                 for i in 0..4 {
                     if w[i] > 0.0 {
                         let m = matrices.get(j[i] as usize).copied().unwrap_or(Mat4::IDENTITY);
-                        p += m.transform_point3(pos[k]) * w[i];
+                        p += m.transform_point3(pos[from]) * w[i];
                         n += m.transform_vector3(nrm[k]) * w[i];
                     }
                 }
