@@ -65,15 +65,18 @@ fn spawn_skyline(mut commands: Commands, layout: Res<MapLayout>, mut meshes: Res
     };
     // City blocks on a street grid (lanes between them), lower near the map where they fill gaps
     // between its own buildings, taller and sparser farther out where they make the skyline.
-    const CELL: f32 = 34.0;
+    // On a big map the ring is 14 km² and one mesh, all of it drawn from anywhere, so its blocks are
+    // larger and only those at the map's edge carry anything on their roofs: past that a tank is
+    // under a pixel.
+    let cell = if big { 46.0 } else { 34.0 };
     let reach = if big { edge + 1100.0 } else { 1100.0 };
-    let cells = (reach / CELL) as i32;
+    let cells = (reach / cell) as i32;
     for gj in -cells..=cells {
         for gi in -cells..=cells {
-            let centre = Vec2::new(gi as f32 + 0.5, gj as f32 + 0.5) * CELL;
+            let centre = Vec2::new(gi as f32 + 0.5, gj as f32 + 0.5) * cell;
             let r = centre.length();
             // Kept off the playable square, and out of the corners of the terrain past it.
-            if r > reach || (centre.x.abs() < edge + CELL * 0.5 && centre.y.abs() < edge + CELL * 0.5) {
+            if r > reach || (centre.x.abs() < edge + cell * 0.5 && centre.y.abs() < edge + cell * 0.5) {
                 continue;
             }
             let far = ((r - edge) / (reach - edge)).clamp(0.0, 1.0);
@@ -84,18 +87,20 @@ fn spawn_skyline(mut commands: Commands, layout: Res<MapLayout>, mut meshes: Res
             let split = if rnd() < 0.5 { 1 } else { 2 };
             for sj in 0..split {
                 for si in 0..split {
-                    let sub = CELL / split as f32;
-                    let c = centre + (Vec2::new(si as f32 + 0.5, sj as f32 + 0.5) / split as f32 - Vec2::splat(0.5)) * CELL;
+                    let sub = cell / split as f32;
+                    let c = centre + (Vec2::new(si as f32 + 0.5, sj as f32 + 0.5) / split as f32 - Vec2::splat(0.5)) * cell;
                     let (w, d) = (sub * (0.62 + rnd() * 0.25), sub * (0.62 + rnd() * 0.25));
                     let tall = rnd() < 0.015 + 0.035 * far;
                     let h = if tall { 45.0 + rnd() * 40.0 } else { 7.0 + rnd() * rnd() * (14.0 + 26.0 * far) };
-                    // Paler and bluer the farther off, as distant walls look under a bright sky.
+                    // Paler the farther off, into Delhi's haze.
                     let col = colour((rnd() * 100.0) as usize);
                     let k = 0.2 + 0.35 * far;
-                    let col = (col.0 + (0.74 - col.0) * k, col.1 + (0.78 - col.1) * k, col.2 + (0.85 - col.2) * k);
+                    let col = (col.0 + (0.72 - col.0) * k, col.1 + (0.72 - col.1) * k, col.2 + (0.72 - col.2) * k);
                     let base = Vec3::new(c.x, floor, c.y);
                     parts.push(paint_keep_uv(block(w, h, d).translated_by(base), col));
-                    roof_things(&mut parts, &mut rnd, base, w, d, h, col);
+                    if !big || far < 0.15 {
+                        roof_things(&mut parts, &mut rnd, base, w, d, h, col);
+                    }
                 }
             }
         }

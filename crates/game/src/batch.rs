@@ -59,7 +59,7 @@ impl Plugin for BatchPlugin {
         app.add_plugins((probe::ProbePlugin, upload::UploadPlugin))
             .init_resource::<Templates>()
             .init_resource::<near::Near>()
-            .add_systems(Update, ((forget.run_if(map_reloaded)).in_set(near::NearReset), (spawn_templates, build_batches, near::stream).chain().after(near::NearReset)));
+            .add_systems(Update, ((forget.run_if(map_reloaded)).in_set(near::NearReset), (spawn_templates, build_batches, near::stream).chain().after(near::NearReset), near::loot_reach.run_if(|layout: Res<MapLayout>| tiers::big_map(&layout))));
     }
 }
 

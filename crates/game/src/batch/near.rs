@@ -14,6 +14,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use shared::sim::OfMap;
+use shared::sim::loot::{Chest, Pickup};
 
 use super::probe::Tagged;
 use crate::buildings::tiers::{MID_CELL, cell_at, cell_centre, near_reach};
@@ -25,6 +26,14 @@ use crate::quality::{LodScale, LodShadow};
 /// that again that they are despawned, so a player on the line doesn't churn them.
 const LEAD: f32 = 12.0;
 const LINGER: f32 = 12.0;
+
+/// How far a big map's floor loot and chests are drawn. A dropped gun is a whole model of up to 6,300
+/// triangles with a shadow, a pool of light and a beam, 2 cm of it to a pixel past this, and there
+/// are 1,600 on the floor: left to the frustum they were most of the triangles in every street view.
+const LOOT_REACH: f32 = 110.0;
+const CHEST_REACH: f32 = 180.0;
+/// Seconds between looks: at a car's 20 m/s, 5 m.
+const LOOT_EVERY: f32 = 0.25;
 
 /// One entity of a placed thing: a mesh at a LOD.
 pub(crate) struct Part {
@@ -71,6 +80,23 @@ impl Near {
 /// Runs before anything adds to `Near` for a new map.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NearReset;
+
+/// Hides floor loot and chests past their reach. By the root, so what is hidden costs nothing a
+/// frame, where a `VisibilityRange` on each of their thousands of parts would be looked at every frame.
+pub(crate) fn loot_reach(time: Res<Time>, mut wait: Local<f32>, camera: Query<&GlobalTransform, With<MainCamera>>, mut loot: Query<(&Transform, &mut Visibility, Has<Chest>), Or<(With<Pickup>, With<Chest>)>>) {
+    *wait -= time.delta_secs();
+    if *wait > 0.0 {
+        return;
+    }
+    *wait = LOOT_EVERY;
+    let Ok(camera) = camera.single() else { return };
+    let at = camera.translation();
+    for (tf, mut visibility, chest) in &mut loot {
+        let reach = if chest { CHEST_REACH } else { LOOT_REACH };
+        let wanted = if tf.translation.distance_squared(at) < reach * reach { Visibility::Inherited } else { Visibility::Hidden };
+        visibility.set_if_neq(wanted);
+    }
+}
 
 pub(crate) fn stream(mut commands: Commands, mut near: ResMut<Near>, camera: Query<&GlobalTransform, With<MainCamera>>, scale: Res<LodScale>) {
     let Ok(camera) = camera.single() else { return };
