@@ -51,7 +51,9 @@ impl Quality {
     fn max_rows(self, big_map: bool) -> Option<u32> {
         match self {
             Quality::Low => Some(720),
-            Quality::Medium => Some(1080),
+            // 1080 rows left 7 ms a frame spare on the NCR. The rows governor's sixth off lands on
+            // 1080 when a street is slow: real match, M4, 8 to 16 ms a frame, 4.36 GB.
+            Quality::Medium => Some(1296),
             // A big map's every pixel has more behind it. Measured on an M4: 1800 rows take 21 ms
             // a frame there and 600 MB of render targets, and 1440 rows hold 60 fps in most views.
             Quality::High if big_map => Some(1440),
@@ -65,8 +67,9 @@ impl Quality {
     /// The ambient occlusion setting (None: off).
     fn ssao(self) -> Option<ScreenSpaceAmbientOcclusion> {
         match self {
-            // Measured on an M4 on the NCR's Karol Bagh, Low samples at Ultra's radius: 3 to 12 ms a
-            // frame, most of it the normal prepass it brings, so not on Medium.
+            // Measured on an M4 on the NCR's busiest roads, Low samples at radius 0.6: 7 to 9 ms a
+            // frame, most of it the normal prepass it brings, for little a player would see in
+            // this light, so not on Medium.
             Quality::Low | Quality::Medium => None,
             Quality::High => Some(ScreenSpaceAmbientOcclusion { radius: 0.6, ..default() }),
             // Medium: Ultra's samples cost an M4 about 3 ms a frame for little that shows at this radius.
@@ -103,7 +106,7 @@ impl Quality {
 
     /// The far plane from the air on a big map, where the haze can thin out and the city shows.
     fn far_plane_aloft(self) -> f32 {
-        if self == Quality::Low { 2600.0 } else { 4000.0 }
+        if self == Quality::Low { 2600.0 } else { 4600.0 }
     }
 
     /// TAA needs the depth and motion prepass; Low does without it and uses FXAA.
@@ -302,8 +305,8 @@ fn choose(mut commands: Commands, info: Option<Res<RenderAdapterInfo>>, layout: 
     } else {
         let Some(info) = info else { return };
         // Apple Silicon reports itself as integrated, but with the render height capped it
-        // carries the top level. Not on a big map: with 64 warriors an M4 at High falls to 34-49
-        // fps on the NCR's busiest streets, and Medium holds 60 on most of them.
+        // carries the top level. Not on a big map: with 64 warriors an M4 at High takes about 20 ms
+        // a frame and 4.7 GB on the NCR, where Medium takes 8 to 15 ms and 4.3 GB.
         match (format!("{:?}", info.device_type).as_str(), format!("{:?}", info.backend).as_str()) {
             ("DiscreteGpu", _) => Quality::Ultra,
             ("IntegratedGpu", "Metal") if is_big(&layout) => Quality::Medium,
@@ -540,13 +543,17 @@ fn haze_by_height(q: Res<Quality>, layout: Res<shared::map::MapLayout>, mut cam:
     let Ok((at, mut projection, fog)) = cam.single_mut() else { return };
     let Projection::Perspective(p) = projection.as_mut() else { return };
     let t = ((at.translation().y - THINS.0) / (THINS.1 - THINS.0)).clamp(0.0, 1.0);
-    let far = q.far_plane(true).lerp(q.far_plane_aloft(), t * t * (3.0 - 2.0 * t));
+    let s = t * t * (3.0 - 2.0 * t);
+    let far = q.far_plane(true).lerp(q.far_plane_aloft(), s);
     if (far - p.far).abs() < 0.5 {
         return;
     }
     p.far = far;
     if let Some(mut fog) = fog {
+        // From the drop the city should read to the horizon: the haze is what lies under you, not
+        // a wall a kilometre off. It still closes just past the far plane, so no line shows.
         *fog = crate::camera::big_map_fog(far);
+        fog.falloff = bevy::pbr::FogFalloff::from_visibility_squared(far * (0.87 + 0.26 * s));
     }
     if let Some(rig) = painted.iter().next().map(|c| c.parent())
         && let Ok(mut t) = transforms.get_mut(rig)

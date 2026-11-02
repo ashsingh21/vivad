@@ -1,4 +1,4 @@
-//! Harmless people and street animals: drawn only near the player, about 16 people and 8 to 12
+//! Harmless people and street animals: drawn only near the player, about 24 people and 8 to 12
 //! animals at most, none with a weapon. Each is one entity showing one mesh from a flip book
 //! (`flipbook`), so a busy lane costs a few draws and no bones.
 //!
@@ -37,7 +37,7 @@ impl Plugin for PeoplePlugin {
 }
 
 /// The most people near the player, and how far off they stop being drawn.
-const PEOPLE: usize = 16;
+const PEOPLE: usize = 24;
 const ANIMALS: usize = 9;
 /// How big the animals are: a street dog about 52 cm at the shoulder, a cow about 1.3 m.
 const DOG_SCALE: f32 = 0.27;
@@ -48,12 +48,14 @@ const FADE: f32 = 8.0;
 const GONE: f32 = DRAWN + FADE + 4.0;
 /// A shopper or a stroller this far off and out of view gives way to one nearer.
 const STRAYED: f32 = 56.0;
-/// How far out shoppers are looked for: sixteen people go further the closer they stay.
+/// How far out shoppers are looked for: a crowd goes further the closer it stays.
 const CROWD: f32 = 58.0;
 /// How near the centre of the view someone may turn up: past this, in a busy street, nobody sees.
 const SEEN_FROM: f32 = 40.0;
 /// When the bakes start.
 const BAKE_AFTER: f32 = 9.0;
+/// Metres a side of the cubes a person's model is thinned to.
+const THIN: f32 = 0.045;
 /// How far off someone still casts a shadow: a blob of a figure past this won't be missed.
 const SHADOW_TO: f32 = 18.0;
 /// The most people moved round to the front of the view each look.
@@ -158,6 +160,7 @@ fn specs() -> Vec<(&'static str, Spec)> {
         looks,
         coats: vec![],
         scale: 1.0,
+        thin: THIN,
     };
     let animal = |name: &str, coats: usize, scale: f32| Spec {
         model: format!("models/life/{name}.glb"),
@@ -167,6 +170,7 @@ fn specs() -> Vec<(&'static str, Spec)> {
         looks: vec![],
         coats: (0..coats).map(|k| format!("models/life/{name}_coat_{k}.png")).collect(),
         scale,
+        thin: 0.0,
     };
     vec![("men", person("male", men())), ("women", person("female", women())), ("dog", animal("dog", 4, DOG_SCALE)), ("cow", animal("cow", 3, COW_SCALE))]
 }
@@ -454,7 +458,7 @@ fn populate(
     let free = |p: Vec2| hidden(p) && inside(p) && !scares.scared(p, now) && walkable(&layout, &floor, &market, p);
     populate_animals(&mut commands, &books, &layout, busy, at, &walkers, &mut dice, now, &free);
     let mut room = want.saturating_sub(have);
-    // Sixteen people are a crowd only if they are where the player is looking: shoppers behind
+    // A crowd is a crowd only if it is where the player is looking: shoppers behind
     // him go, and turn up ahead.
     let in_view = walkers.iter().filter(|(_, w)| !w.role.animal() && w.pos.distance(at) < CROWD && ahead(w.pos) > 0.55).count();
     if in_view < want * 3 / 4 {
@@ -842,7 +846,9 @@ fn walk(
             "run" => pages.cycle * (run_beat / pace.max(1.0)).clamp(0.8, 1.3),
             _ => pages.cycle,
         };
-        w.phase = (w.phase + dt / cycle).fract();
+        if !super::ab::FROZEN.load(std::sync::atomic::Ordering::Relaxed) {
+            w.phase = (w.phase + dt / cycle).fract();
+        }
         let frame = ((w.phase * pages.frames.len() as f32) as usize).min(pages.frames.len() - 1);
         if frame != w.frame {
             w.frame = frame;

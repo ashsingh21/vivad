@@ -345,7 +345,7 @@ mod layout_tests {
     /// means a map changed: update the numbers only if that was the intent.
     #[test]
     fn maps_are_unchanged() {
-        assert_eq!(fingerprint(MapId::Cp), (7035, 60, 147, 102, 379, 844, 11, 14063370636023318963));
+        assert_eq!(fingerprint(MapId::Cp), (7413, 60, 147, 102, 379, 844, 11, 4193203738649161128));
         assert_eq!(fingerprint(MapId::Chandni), (15869, 879, 98, 123, 69, 3588, 11, 9117080130056917365));
         assert_eq!(fingerprint(MapId::HauzKhas), (6681, 134, 81, 81, 350, 681, 2, 12842640503487594958));
         assert_eq!(fingerprint(MapId::IndiaGate), (790, 6, 70, 60, 585, 806, 5, 5598471239716277651));

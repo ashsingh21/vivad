@@ -103,6 +103,14 @@ match times through the same bindings as a keyboard, `VIVAD_TURN=<t>:<degrees>,.
 and `VIVAD_GIVE=saintalis,talwar` fills the first slots. With `VIVAD_CLIP=<dir>,<from>,<to>,<fps>` and
 `VIVAD_CLIP_VIEW=1` that films a run from the game's own camera with the window hidden.
 
+A window without focus is held to 60 updates a second by Bevy's default, and a measuring run's window
+never has focus, so `VIVAD_NO_VSYNC=1` also turns that off: numbers from before 2 Nov that stop at
+about 60 stopped there. `VIVAD_VIEWS` with `VIVAD_VIEW_DIR` holds the camera on named views and prints
+each one's frame time, batches and triangles by kind, what's left untagged by mesh size included:
+start there, as triangles are what a street costs on this Mac (about 8 ms per million in view, as
+each is drawn in the depth pass too). `VIVAD_LIFE_AB=1` on a long tour hold takes the market apart in
+turns inside one run, so a Mac busy building falls on both sides of each comparison.
+
 **Weapons in the hand.** `just armoury` stands the player on open ground and captures every item
 carried and in use (aiming, drawing, swinging, drinking) from the front, side and back, then
 tiles them into `previews/armoury_sheet.png`; `just armoury pinaka,soma` for a few. The last

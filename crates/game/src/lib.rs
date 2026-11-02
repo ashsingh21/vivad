@@ -30,6 +30,7 @@ pub mod studio_env;
 pub mod ultra;
 pub mod street_sample;
 pub mod surfaces;
+pub mod vehicle_far;
 pub mod vehicle_feel;
 pub mod vehicle_show;
 pub mod vehicles;

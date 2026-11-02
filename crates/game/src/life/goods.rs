@@ -40,19 +40,21 @@ impl Plugin for GoodsPlugin {
 /// Metres a side of a patch of street: the mesh it all goes in.
 const PATCH: f32 = 64.0;
 /// How far from the camera a patch's middle may be for it to exist, and where it goes.
-const REACH: f32 = 128.0;
-const LET_GO: f32 = 148.0;
+const REACH: f32 = 164.0;
+const LET_GO: f32 = 184.0;
 /// Where a patch fades out, from its middle.
-const FADE_FROM: f32 = 104.0;
-const FADE_TO: f32 = 120.0;
+const FADE_FROM: f32 = 140.0;
+const FADE_TO: f32 = 156.0;
 /// Where the full goods hand over to their stand-ins, from a patch's middle, and how far off the
 /// full ones are ready and gone. A corner of a patch is 45 m from its middle.
-const DETAIL_FROM: f32 = 54.0;
+const DETAIL_FROM: f32 = 56.0;
 const DETAIL_TO: f32 = 66.0;
 const DETAIL_REACH: f32 = 74.0;
 const DETAIL_LET_GO: f32 = 92.0;
 /// Past this, a patch's overhead stops casting: the sun's far cascade is coarse there anyway.
-const SHADE_TO: f32 = 88.0;
+const SHADE_TO: f32 = 72.0;
+/// How far a stall keeps from a parked vehicle's middle.
+const PARKED_CLEAR: f32 = 3.2;
 /// Above the ground, the camera is too far up for goods to show.
 const TOO_HIGH: f32 = 90.0;
 /// The middle of the atlas's white tile (tools/blender/life/goods_atlas.py).
@@ -243,7 +245,17 @@ fn read_pieces() -> Result<(HashMap<String, Piece>, Image), String> {
     let kit_path = std::path::Path::new(crate::ASSET_DIR).join("models/props/street_kit.glb");
     let kit_bytes = std::fs::read(&kit_path).map_err(|e| e.to_string())?;
     let kit = gltf::Gltf::from_slice(&kit_bytes).map_err(|e| e.to_string())?;
-    read_file(&kit, kit.blob.as_deref().ok_or("no binary chunk")?, &["scooter_LOD1", "thela_LOD1"])?;
+    read_file(&kit, kit.blob.as_deref().ok_or("no binary chunk")?, &["scooter_LOD0", "thela_LOD1"])?;
+    // Under this light the goods' plain colours came out as blocks of paint: cloth and tarps fade
+    // and dull in a street's sun and dust, and the eye should go to the warriors.
+    for (_, piece) in out.iter_mut().filter(|(name, _)| !name.contains("_LOD")) {
+        for c in &mut piece.col {
+            let grey = 0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2];
+            for v in c.iter_mut().take(3) {
+                *v = (*v * 0.68 + grey * 0.32) * 0.88;
+            }
+        }
+    }
     if let Some(p) = out.get_mut("thela_LOD1") {
         for c in &mut p.col {
             let grey = 0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2];
@@ -253,7 +265,7 @@ fn read_pieces() -> Result<(HashMap<String, Piece>, Image), String> {
         }
     }
     // The kit's scooter in the colours a street's old ones come in: its red body repainted.
-    if let Some(red) = out.remove("scooter_LOD1") {
+    if let Some(red) = out.remove("scooter_LOD0") {
         for (name, paint) in [("scooter_black", [0.02, 0.02, 0.022]), ("scooter_grey", [0.16, 0.17, 0.18]), ("scooter_blue", [0.03, 0.07, 0.14]), ("scooter_maroon", [0.14, 0.025, 0.03])] {
             let col = red.col.iter().map(|c| if c[0] > 3.0 * c[1] { [paint[0], paint[1], paint[2], 1.0] } else { [c[0] * 0.7, c[1] * 0.7, c[2] * 0.7, 1.0] }).collect();
             out.insert(name.to_owned(), Piece { pos: red.pos.clone(), nrm: red.nrm.clone(), uv: red.uv.clone(), col, idx: red.idx.clone() });
@@ -293,7 +305,7 @@ fn row_goods(s: &super::Stall) -> &'static str {
 }
 
 /// Everything in a patch of street, from the map.
-fn dress(layout: &MapLayout, market: &Market, key: (i32, i32), out: &mut Vec<(&'static str, Vec3, f32)>, wires: &mut Vec<Wire>, banners: &mut Vec<Banner>) {
+fn dress(layout: &MapLayout, market: &Market, key: (i32, i32), parked: &[Vec2], out: &mut Vec<(&'static str, Vec3, f32)>, wires: &mut Vec<Wire>, banners: &mut Vec<Banner>) {
     let inside = |p: Vec2| patch_at(p) == key;
     let ground_y = |p: Vec2| layout.terrain.height(p.x, p.y);
     let mid = patch_centre(key);
@@ -303,6 +315,10 @@ fn dress(layout: &MapLayout, market: &Market, key: (i32, i32), out: &mut Vec<(&'
         let s = market.stalls[id as usize];
         let at = s.pos.xz();
         if !inside(at) {
+            continue;
+        }
+        // A match's parked vehicle has the spot: its colliders can't give way to a table.
+        if s.kind != super::StallKind::Thela && parked.iter().any(|p| p.distance_squared(at) < PARKED_CLEAR * PARKED_CLEAR) {
             continue;
         }
         let (a, b) = (at.x.to_bits(), at.y.to_bits());
@@ -385,11 +401,13 @@ fn dress(layout: &MapLayout, market: &Market, key: (i32, i32), out: &mut Vec<(&'
                     continue;
                 }
                 let busy = busy_at(market, front);
+                // Awnings over a way in, but nothing in it: a room's doors and open bays stay clear.
+                let open = layout.rooms_of(i as usize).is_some_and(|r| r.doors.iter().any(|d| d.pos.xz().distance(at) < d.width * 0.5 + BAY * 0.5 && d.out.dot(out2) > 0.7));
                 let yaw = (-out2.x).atan2(-out2.y);
                 let seed = (e as u32) * 97 + s as u32;
                 let at3 = |off: f32| Vec3::new(at.x + out2.x * off, y, at.y + out2.y * off);
                 // The shop's stock out at its door, floor to lintel.
-                if hash(i, seed, 2) < (busy * 2.4).min(0.96) {
+                if !open && hash(i, seed, 2) < (busy * 2.4).min(0.96) {
                     let (front, floor): (&str, &[&str]) = if theme < 0.34 {
                         ("shop_cloth", &["bolts", "rack_short", "rack_cloth"])
                     } else if theme < 0.66 {
@@ -610,6 +628,7 @@ fn stream(
     market: Res<Market>,
     layout: Res<MapLayout>,
     camera: Query<&GlobalTransform, With<MainCamera>>,
+    vehicles: Query<&Transform, With<shared::sim::vehicle::Vehicle>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -714,7 +733,8 @@ fn stream(
         .content
         .get_or_insert_with(|| {
             let mut c = Content::default();
-            dress(&layout, &market, key, &mut c.placed, &mut c.wires, &mut c.banners);
+            let parked: Vec<Vec2> = vehicles.iter().map(|t| t.translation.xz()).collect();
+            dress(&layout, &market, key, &parked, &mut c.placed, &mut c.wires, &mut c.banners);
             if std::env::var("VIVAD_LIFE_LOG").is_ok() {
                 let tris: usize = c.placed.iter().filter_map(|(n, ..)| pieces.get(*n)).map(|p| p.idx.len() / 3).sum();
                 info!("goods patch {key:?}: {} pieces, {tris} tris, {} wires, {} banners", c.placed.len(), c.wires.len(), c.banners.len());
@@ -888,7 +908,7 @@ mod tests {
                 for di in -3..=3 {
                     let k = (key.0 + di, key.1 + dj);
                     let mut c = Content::default();
-                    dress(&layout, &market, k, &mut c.placed, &mut c.wires, &mut c.banners);
+                    dress(&layout, &market, k, &[], &mut c.placed, &mut c.wires, &mut c.banners);
                     for (name, ..) in &c.placed {
                         assert!(pieces.contains_key(*name), "{name} isn't in the files");
                         seen.insert(*name);

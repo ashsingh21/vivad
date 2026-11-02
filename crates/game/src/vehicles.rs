@@ -6,7 +6,6 @@ use std::f32::consts::TAU;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::audio::Volume;
-use bevy::camera::visibility::VisibilityRange;
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
@@ -50,8 +49,6 @@ pub struct BoardPrompt(pub Option<String>);
 /// How long a wreck burns, then smoulders, seconds.
 const BURN: f32 = 14.0;
 const SMOULDER: f32 = 40.0;
-/// How far off a vehicle is drawn, metres: 10 to 14 of a match's 72 at a time.
-const SEEN_TO: f32 = 450.0;
 /// Dust: the speed that raises it, the puffs a second flat out, and how far off it is worth a card.
 const DUST_SPEED: f32 = 5.0;
 const DUST_RATE: f32 = 24.0;
@@ -247,7 +244,7 @@ fn dress(mut commands: Commands, q: Query<(Entity, &Vehicle, &Transform), Added<
                 let wheel = |e: Entity| names.get(e).is_ok_and(|n| n.starts_with("wheel_"));
                 for d in children.iter_descendants(ready.entity) {
                     if drawn.contains(d) {
-                        commands.entity(d).insert((VisibilityRange::abrupt(0.0, SEEN_TO), VehiclePart(e)));
+                        commands.entity(d).insert(VehiclePart(e));
                     }
                     let Ok(t) = tf.get(d) else { continue };
                     // The node, not the mesh parts under it, which share its name.
