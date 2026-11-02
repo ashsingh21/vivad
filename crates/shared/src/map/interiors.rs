@@ -454,7 +454,7 @@ impl Interior {
             });
             if let Some(k) = k {
                 let (foot, _) = s.flight(k);
-                let past = foot + (foot - s.flight(k).1).signum() * self.stair_step(s);
+                let past = foot + (foot - s.flight(k).1).signum() * s.landing * 0.5;
                 return Some(world(Vec2::new(past, s.lane(k))));
             }
         }
@@ -480,7 +480,7 @@ impl Interior {
                 };
                 return Some(world(target));
             }
-            let on_it = (l.y - lane).abs() < LANE / 2.0 - 0.15 && (l.x - head).abs() < self.stair_step(s) + 0.4;
+            let on_it = (l.y - lane).abs() < LANE / 2.0 - 0.15 && (l.x - head).abs() < s.landing * 0.5 + 0.4;
             let toward = s.flight(storey - 1).0;
             return Some(world(if on_it { Vec2::new(toward, lane) } else { Vec2::new(head, lane) }));
         }
@@ -530,10 +530,6 @@ impl Interior {
         way.push(flat(Vec2::new(x, s.z.0 + 0.7), self.roof));
         way.push(flat(Vec2::new(x, s.z.0 - 1.2), self.roof));
         Some(way)
-    }
-
-    fn stair_step(&self, s: &Stair) -> f32 {
-        s.landing * 0.5
     }
 
     /// What the bots' floor marks on the ground floor beyond `solids`: flight 0, as they don't climb.
@@ -601,7 +597,6 @@ struct Maker<'a> {
     /// Doors between rooms, as the rooms they join (`None` for the stairs) and a point each side.
     links: Vec<(usize, Option<usize>, Vec2, Vec2)>,
     spots: Vec<Spot>,
-    placed: Vec<(usize, Vec2, Vec2)>,
 }
 
 impl Maker<'_> {
@@ -677,13 +672,14 @@ impl Maker<'_> {
         let (x0, x1) = (SHELL, w - SHELL);
         let z_end = stair.map_or(d - SHELL, |s| s.z.0 - PARTITION);
         let door_w = if k == 0 { GROUND_DOOR } else { UPPER_DOOR };
-        let (col, row) = match (plan, k) {
-            (Plan::Shop, _) => (5.0, 7.5),
-            (Plan::Flat, _) => (3.2, 4.4),
-            (Plan::Office, _) => (6.0, 6.0),
-            (Plan::Godown, _) => (14.0, 14.0),
-            (Plan::Dhaba, _) => (9.0, 7.0),
-            (Plan::Lobby, _) => (40.0, 40.0),
+        // About how wide and deep its rooms are.
+        let (col, row) = match plan {
+            Plan::Shop => (5.0, 7.5),
+            Plan::Flat => (3.2, 4.4),
+            Plan::Office => (6.0, 6.0),
+            Plan::Godown => (14.0, 14.0),
+            Plan::Dhaba => (9.0, 7.0),
+            Plan::Lobby => (40.0, 40.0),
         };
         let along0 = self.site.along[self.site.front];
         // Partitions on the bay lines, between the windows; a shop's at the shutter bays' middles,
@@ -784,8 +780,7 @@ impl Maker<'_> {
         while let Some(r) = todo.pop() {
             for &(a, b, pa, pb) in &self.links {
                 let Some(b) = b else { continue };
-                let (from, to, before, beyond) = if a == r { (b, a, pb, pa) } else if b == r { (a, b, pa, pb) } else { continue };
-                let _ = to;
+                let (from, before, beyond) = if a == r { (b, pb, pa) } else if b == r { (a, pa, pb) } else { continue };
                 if !seen[from] {
                     seen[from] = true;
                     self.int.rooms[from].exit = Some(Exit { before, beyond });
@@ -1105,7 +1100,7 @@ fn make(site: &Site, open: &dyn Fn(Vec2, f32) -> bool, rng: &mut SmallRng) -> (I
         doors: vec![],
         skin: Default::default(),
     };
-    let mut m = Maker { int, site, links: vec![], spots: vec![], placed: vec![] };
+    let mut m = Maker { int, site, links: vec![], spots: vec![] };
     m.shell();
     m.slabs();
     m.stairs();
@@ -1116,7 +1111,6 @@ fn make(site: &Site, open: &dyn Fn(Vec2, f32) -> bool, rng: &mut SmallRng) -> (I
     m.openings(open);
     m.furniture(rng);
     m.roof_spots();
-    let _ = &m.placed;
     (m.int, m.spots)
 }
 
@@ -1241,7 +1235,7 @@ pub fn hollow(map: &mut MapLayout, per_cell: usize) -> Vec<Spot> {
     let mut in_cell: HashMap<(i32, i32), usize> = HashMap::new();
     let mut spots = vec![];
     let mut rooms = vec![];
-    let mut along_cache = vec![];
+    let mut shapes = vec![];
     for index in order {
         let f = &map.footprints[index];
         if f.mat == Mat::Water || f.base > 1.0 {
@@ -1307,12 +1301,11 @@ pub fn hollow(map: &mut MapLayout, per_cell: usize) -> Vec<Spot> {
         let top = f.base + height;
         let shops = has_shops(c, height);
         // The front: an edge with a door's width of the street before it, the busiest such.
-        let middle = c;
         let mut best: Option<(i32, usize, i32)> = None;
         for i in 0..4 {
             let (a, b) = (pts[i], pts[(i + 1) % 4]);
             let (len, dir) = (a.distance(b), (b - a).normalize());
-            let out = ((a + b) / 2.0 - middle).normalize();
+            let out = ((a + b) / 2.0 - c).normalize();
             let mid = (a + b) / 2.0;
             let score = match map.terrain.ground_at(mid.x + out.x * 5.0, mid.y + out.y * 5.0) {
                 Some(ground::ROAD | ground::PLAZA) => 3,
@@ -1365,7 +1358,7 @@ pub fn hollow(map: &mut MapLayout, per_cell: usize) -> Vec<Spot> {
         }
         spots.append(&mut found);
         rooms.push(int);
-        along_cache.push((index, pts, top));
+        shapes.push((index, pts, top));
         *in_cell.entry(cell).or_default() += 1;
         match district {
             Some(d) if tower => left[d].1 -= 1,
@@ -1373,7 +1366,7 @@ pub fn hollow(map: &mut MapLayout, per_cell: usize) -> Vec<Spot> {
             None => sheds -= 1,
         }
     }
-    apply(map, rooms, along_cache, &mut rng);
+    apply(map, rooms, shapes, &mut rng);
     spots.retain(|s| !compose::no_loot(s.pos.xz()) && !map.is_holy(s.pos.xz()));
     spots
 }

@@ -426,7 +426,6 @@ fn paint(buf: &mut MeshBuf, r: &Interior, fp: &Footprint) {
             buf.solid_box(c, r.rot(), Vec3::new(s.x.1 - s.x.0, s.thick, s.z.1 - s.z.0), times(outside, 0.9));
         }
     }
-    let _ = SHELL;
 }
 
 /// Whether a room has a window, door or shop bay of its own to the outside.
