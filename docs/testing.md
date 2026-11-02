@@ -10,8 +10,8 @@ pixels only when the numbers point somewhere.
    jump into the stepwell). Drops of up to 6.5 m are free; `sim` lists "fell to their death"
    in the feed if bots start walking off edges again. `sim` ends each match with a verdict per
    Aandhi death (stuck, no path, above the street, too far...) and a `nav paths` line (searches a
-   second, their mean and worst milliseconds); `VIVAD_MAP=cp VIVAD_ROTATE=0 SIM_SEED=7 just sim 5`
-   plays the same five Connaught Place matches every time, and `TRACK=<name>` (or `TRACK='*'` for
+   second, their mean and worst milliseconds); `VIVAD_MAP=cp VIVAD_ROTATE=0 SIM_SEED=7 just sim 3 15`
+   plays the same three Connaught Place matches every time, and `TRACK=<name>` (or `TRACK='*'` for
    everyone outside the ring) prints a warrior's position, goal, path and intent twice a second.
    `VIVAD_MAP=cp cargo run --release -p shared --bin nav_check` checks the grid itself: walkable
    share, stairs joined, chests and Aandhi circles reachable, path cost; `SKETCH=level,x0,z0,x1,z1`
@@ -27,6 +27,21 @@ pixels only when the numbers point somewhere.
    tamancha sprays (spread bloom, closing again at 2.5 degrees a second once the trigger is let
    go), each gun has its own kick, and the hit ticks go red and large for the hit that drops
    someone.
+   `just loop` plays the whole front door by itself in the real window (`VIVAD_LOOP=<dir>,<fps>`,
+   crates/game/src/front/demo.rs): Home, a click on PANGA LO, the drop, the whole map and Esc, the
+   pause menu, a walk at the nearest warrior until something kills it, the result card, Enter, the
+   next drop, Esc, a click on Match chhodo, Home again. It writes a picture of each screen and
+   `full_loop.webp` to `previews/front-door/`, and `[loop]` log lines with the time from Enter to
+   the next drop on screen and the longest frame. On the NCR nothing may reach the player for
+   minutes, so the walk ends in a fall 15 s after landing (`just loop ncr 30` for 30 s,
+   `VIVAD_LOOP_FALL=<seconds>` without the recipe).
+   `VIVAD_BOTS=0` gives the win card; with `VIVAD_HOST` or `VIVAD_JOIN` it shoots the lobby, and
+   `MESH_JOIN=<code> just p2p 1 0 170` adds a headless autopilot player that does not fall, so the
+   window can fall while the match goes on online (on this Mac a second process only reaches the
+   host on 127.0.0.1, so swap the code's LAN address for it). With a hidden window or a locked
+   screen, `VIVAD_LOOP_OFFSCREEN=1` has the UI camera draw to an image, so menus and HUD still come
+   out in the pictures; clicks then press the button directly. Test recipes skip Home on their own
+   (`front::skip_home`); `VIVAD_SKIP_HOME=1` does it by hand.
 2. **Models: text only.** `just mesh assets/models/props/x.gltf` prints triangles per LOD, size
    and height range, open edges, loose pieces and materials: enough to catch a broken export,
    a missing LOD, a model floating or sunk, or a mesh that lost its closure.

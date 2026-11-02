@@ -6,7 +6,7 @@ use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions};
 use shared::sim::flow::{Match, MatchState};
-use shared::sim::{Eliminated, LocalPlayer, PlayerIntent, RestartMatch, btn};
+use shared::sim::{Eliminated, LocalPlayer, PlayerIntent, btn};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Act {
@@ -18,7 +18,10 @@ pub enum Act {
     Sprint,
     NextSlot,
     PrevSlot,
+    /// The big button on a menu (crate::front).
     Restart,
+    /// Into the pause menu and back (crate::front).
+    Menu,
     TogglePerf,
     CycleQuality,
 }
@@ -52,7 +55,8 @@ impl Default for Bindings {
                 (Act::Sprint, vec![Key(KeyCode::ShiftLeft), Pad(GamepadButton::LeftThumb)]),
                 (Act::NextSlot, vec![Pad(GamepadButton::RightTrigger)]),
                 (Act::PrevSlot, vec![Pad(GamepadButton::LeftTrigger)]),
-                (Act::Restart, vec![Key(KeyCode::KeyR), Key(KeyCode::Enter), Pad(GamepadButton::Start)]),
+                (Act::Restart, vec![Key(KeyCode::Enter), Pad(GamepadButton::Start)]),
+                (Act::Menu, vec![Key(KeyCode::Escape), Pad(GamepadButton::Select)]),
                 (Act::TogglePerf, vec![Key(KeyCode::F3)]),
                 (Act::CycleQuality, vec![Key(KeyCode::F4)]),
             ],
@@ -276,18 +280,8 @@ fn vote(
     }
 }
 
-fn meta_actions(
-    state: Res<ActionState>,
-    m: Res<Match>,
-    local: Query<Has<Eliminated>, With<LocalPlayer>>,
-    mut perf: ResMut<ShowPerf>,
-    mut restart: MessageWriter<RestartMatch>,
-) {
+fn meta_actions(state: Res<ActionState>, mut perf: ResMut<ShowPerf>) {
     if state.just_pressed(Act::TogglePerf) {
         perf.0 = !perf.0;
-    }
-    let dead = local.single().unwrap_or(true);
-    if state.just_pressed(Act::Restart) && (m.state == MatchState::Ended || dead) {
-        restart.write(RestartMatch);
     }
 }

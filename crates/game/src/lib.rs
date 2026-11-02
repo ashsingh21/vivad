@@ -6,6 +6,7 @@ pub mod batch;
 pub mod autoshot;
 pub mod buildings;
 pub mod camera;
+pub mod front;
 pub mod fx;
 pub mod grass;
 pub mod characters;

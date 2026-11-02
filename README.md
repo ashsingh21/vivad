@@ -30,11 +30,10 @@ just autoplay          # a bot plays as you; screenshots the match
 ```
 
 ## Controls
-WASD move, mouse look, Space jump / leap from the Vimana / open Garuda wings,
-LMB attack / draw (hold for Pinaka), RMB aim, E open chest / pick up, R reload (R restarts after a match),
-1-6 or mouse wheel hotbar, Shift sprint, M whole map (N zooms it, the wheel zooms round the cursor, drag moves it),
-N zooms the corner map, F3 performance overlay, F4 cycles quality (Low / Medium / High / Ultra),
-Esc releases the mouse. Quality is picked from the GPU at start; `VIVAD_QUALITY=low just play` forces one.
+WASD move, mouse look, Space jump, leap from the Udta Auto, open the patang. LMB attack or draw, RMB aim,
+E or F open chest, pick up. R reload. 1-6 or wheel hotbar, Shift sprint. M whole map, N zoom.
+F3 performance, F4 quality (Low, Medium, High, Ultra). Esc menu. Enter presses the big button.
+Quality is picked from the GPU at start; `VIVAD_QUALITY=low just play` forces one.
 `VIVAD_NO_POST=1` turns off the bloom and vignette, for comparisons.
 
 `VIVAD_VIMANA=pushpaka` brings back the Pushpaka Vimana as the drop ride instead of the Udta Auto (the default).

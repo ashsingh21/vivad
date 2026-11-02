@@ -4,6 +4,8 @@
 .env
 # Intermediate review passes stay local; the final pass and the Bevy check are committed.
 /previews/*/pass1/
+/previews/front-door/frames/
+/previews/front-door/*.webp
 /previews/*/pass2/
 /previews/*/pass3*/
 __pycache__/

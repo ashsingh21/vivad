@@ -342,6 +342,10 @@ fn step_projectiles(
 ) {
     let dt = time.delta_secs();
     for (e, mut tf, mut p) in &mut q {
+        // Chakras fly themselves, timer and all (fly_chakras).
+        if matches!(p.astra, Some(AstraEffect::Chakra { .. })) {
+            continue;
+        }
         // An echo of another peer's arrow: its shooter decides what it hit.
         let echo = remote.contains(p.owner);
         p.ttl -= dt;
@@ -349,7 +353,7 @@ fn step_projectiles(
             commands.entity(e).despawn();
             continue;
         }
-        if p.stuck || matches!(p.astra, Some(AstraEffect::Chakra { .. })) {
+        if p.stuck {
             continue;
         }
         p.velocity.y -= p.gravity * dt;
@@ -569,10 +573,11 @@ fn apply_damage(
     let mut alive_count = alive.iter().count() as u32;
     for msg in msgs.read() {
         if let Ok(mut door) = doors.get_mut(msg.target) {
+            let standing = door.hp > 0.0;
             door.hp -= msg.amount;
             outbox.0.push(NetMsg::DoorHit { index: door.index, amount: msg.amount });
-            // Two hits in one tick can both find it broken.
-            if door.hp <= 0.0 {
+            // Only on the hit that breaks it: a blast hits it several times in one tick.
+            if standing && door.hp <= 0.0 {
                 commands.entity(msg.target).try_despawn();
             }
             continue;

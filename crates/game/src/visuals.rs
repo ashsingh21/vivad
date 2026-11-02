@@ -9,7 +9,7 @@ use bevy::world_serialization::WorldInstanceReady;
 use shared::items::{ItemDb, ItemKind, Rarity};
 use shared::map::{ChestKind, Mat, Shape};
 use shared::sim::combat::{Burst, FireZone, Projectile};
-use shared::sim::flow::Vimana;
+use shared::sim::flow::{Match, Vimana};
 use shared::sim::loot::{Chest, Pickup};
 use shared::sim::zone::Zone;
 use shared::sim::{
@@ -477,10 +477,12 @@ fn zone_wall_mesh() -> Mesh {
     m
 }
 
-fn update_zone_wall(zone: Res<Zone>, mut q: Query<&mut Transform, With<ZoneWall>>) {
-    for mut t in &mut q {
+fn update_zone_wall(zone: Res<Zone>, m: Res<Match>, mut q: Query<(&mut Transform, &mut Visibility), With<ZoneWall>>) {
+    for (mut t, mut shown) in &mut q {
         t.translation = Vec3::new(zone.center.x, 100.0, zone.center.y);
         t.scale = Vec3::new(zone.radius.max(0.5), 400.0, zone.radius.max(0.5));
+        // No match, no ring: the empty map behind Home has none to show.
+        shown.set_if_neq(if m.total == 0 { Visibility::Hidden } else { Visibility::Inherited });
     }
 }
 

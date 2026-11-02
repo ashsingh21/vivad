@@ -125,6 +125,8 @@ fn main() {
     let quiet = std::env::var("SIM_QUIET").is_ok();
     app.insert_resource(MatchConfig { bots, autopilot: true, match_seed: seed, ..default() })
         .add_plugins((MinimalPlugins, TransformPlugin, AssetPlugin::default(), bevy::mesh::MeshPlugin, bevy::diagnostic::DiagnosticsPlugin))
+        // Warnings only, so a double despawn or a dead entity in the sim shows up here.
+        .add_plugins(bevy::log::LogPlugin { level: bevy::log::Level::WARN, ..default() })
         .add_plugins(PhysicsPlugins::default())
         .add_plugins(SimPlugin { items_ron: items })
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)));

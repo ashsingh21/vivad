@@ -332,6 +332,8 @@ pub struct MatchConfig {
     pub bot_skill: BotSkill,
     /// Online: no match at startup; the transport starts one when the lobby fills.
     pub online: bool,
+    /// A menu comes first: no match at startup; `RestartMatch` starts one.
+    pub menu: bool,
     /// Move to the next map in turn after each match (`flow::ROTATION`, which is the NCR alone for
     /// now): on unless VIVAD_ROTATE=0.
     pub rotate: bool,
@@ -355,7 +357,7 @@ pub struct Hold(pub bool);
 impl Default for MatchConfig {
     fn default() -> Self {
         let map = crate::map::MapId::from_env();
-        Self { map, map_seed: map_seed(), match_seed: None, bots: map.default_bots(), autopilot: false, bot_skill: BotSkill::from_env(), online: false, rotate: std::env::var("VIVAD_ROTATE").as_deref() != Ok("0") }
+        Self { map, map_seed: map_seed(), match_seed: None, bots: map.default_bots(), autopilot: false, bot_skill: BotSkill::from_env(), online: false, menu: false, rotate: std::env::var("VIVAD_ROTATE").as_deref() != Ok("0") }
     }
 }
 

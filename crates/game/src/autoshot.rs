@@ -638,7 +638,7 @@ fn match_shots(
 }
 
 /// A frame of the clip, shrunk to 800 px wide so two minutes of them fit on a disk.
-fn save_small(path: String) -> impl FnMut(On<ScreenshotCaptured>) {
+pub fn save_small(path: String) -> impl FnMut(On<ScreenshotCaptured>) {
     move |captured| {
         let img = captured.image.clone();
         let path = path.clone();

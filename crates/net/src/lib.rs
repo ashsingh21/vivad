@@ -409,15 +409,20 @@ impl Node {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn host(self, players: usize, bots: u32, map_seed: u64) -> Result<Session, Error> {
         let rt = self.rt.clone();
-        rt.block_on(self.host_until(bots, map_seed, &mut |_| {}, &mut |n| n >= players))
+        rt.block_on(self.host_until(bots, map_seed, &mut |_| {}, &mut |n| n >= players, &mut || true))
     }
 
-    /// Gather players, telling `report` who is in, until `go` says how many is enough.
-    async fn host_until(mut self, bots: u32, map_seed: u64, report: &mut dyn FnMut(Vec<String>), go: &mut dyn FnMut(usize) -> bool) -> Result<Session, Error> {
+    /// Gather players, telling `report` who is in, until `go` says how many is enough, for as long
+    /// as `stay` says so (leaving closes our links, so those who joined see the room go).
+    async fn host_until(mut self, bots: u32, map_seed: u64, report: &mut dyn FnMut(Vec<String>), go: &mut dyn FnMut(usize) -> bool, stay: &mut dyn FnMut() -> bool) -> Result<Session, Error> {
         let mut members = vec![self.mesh.me.clone()];
         let mut ready = BTreeSet::new();
         report(names(&members));
         while !go(members.len()) {
+            if !stay() {
+                let _ = timeout(Duration::from_secs(1), self.router.shutdown()).await;
+                return Err("left the lobby".into());
+            }
             let Some((from, wire)) = self.next(Duration::from_millis(100), &mut ready).await? else { continue };
             match wire {
                 Wire::Hello(m) if !members.iter().any(|x| x.peer() == m.peer()) => {
@@ -770,6 +775,8 @@ pub struct Lobby {
     /// The match has been built (it may still be waiting for everyone to load).
     pub started: bool,
     go: Arc<std::sync::atomic::AtomicBool>,
+    /// We have left: what is gathering in the background stops.
+    left: Arc<std::sync::atomic::AtomicBool>,
     news: Mutex<std::sync::mpsc::Receiver<News>>,
 }
 
@@ -779,7 +786,7 @@ impl Lobby {
     /// `room_map_seed` of it); without, a long code carrying our addresses.
     pub fn host(name: String, relay: bool, room: Option<String>, players: Option<usize>, bots: u32, map: MapId, map_seed: u64) -> Lobby {
         let (lobby, news) = Lobby::new(true);
-        let go = lobby.go.clone();
+        let (go, left) = (lobby.go.clone(), lobby.left.clone());
         background(move |rt| async move {
             let node = match (rt, &room) {
                 (Err(e), _) => Err(e),
@@ -790,9 +797,13 @@ impl Lobby {
                 Ok(node) => {
                     let _ = news.send(News::Code(node.code(map, map_seed)));
                     let tell = news.clone();
-                    node.host_until(bots, map_seed, &mut |p| drop(tell.send(News::Players(p))), &mut |n| {
-                        players.is_some_and(|p| n >= p) || go.load(Ordering::Relaxed)
-                    })
+                    node.host_until(
+                        bots,
+                        map_seed,
+                        &mut |p| drop(tell.send(News::Players(p))),
+                        &mut |n| players.is_some_and(|p| n >= p) || go.load(Ordering::Relaxed),
+                        &mut || !left.load(Ordering::Relaxed),
+                    )
                     .await
                 }
                 Err(e) => Err(e),
@@ -807,13 +818,12 @@ impl Lobby {
 
     pub fn join(name: String, relay: bool, code: String) -> Lobby {
         let (lobby, news) = Lobby::new(false);
-        // For a joiner, `go` means leave.
-        let go = lobby.go.clone();
+        let left = lobby.left.clone();
         background(move |rt| async move {
             let tell = news.clone();
             let result = match rt {
                 Ok(rt) => match Node::connect(rt, &name, relay, None).await {
-                    Ok(node) => node.enter(&code, &mut |p| drop(tell.send(News::Players(p))), &mut || !go.load(Ordering::Relaxed)).await,
+                    Ok(node) => node.enter(&code, &mut |p| drop(tell.send(News::Players(p))), &mut || !left.load(Ordering::Relaxed)).await,
                     Err(e) => Err(e),
                 },
                 Err(e) => Err(e),
@@ -833,16 +843,14 @@ impl Lobby {
 
     fn new(hosting: bool) -> (Lobby, std::sync::mpsc::Sender<News>) {
         let (tx, rx) = std::sync::mpsc::channel();
-        (Lobby { hosting, code: None, players: vec![], error: None, started: false, go: default(), news: Mutex::new(rx) }, tx)
+        (Lobby { hosting, code: None, players: vec![], error: None, started: false, go: default(), left: default(), news: Mutex::new(rx) }, tx)
     }
 }
 
 impl Drop for Lobby {
-    /// A joiner closing the game before the start leaves the lobby (the host's is gone with it).
+    /// Dropping the lobby before the start leaves it, for host and joiner alike.
     fn drop(&mut self) {
-        if !self.hosting {
-            self.go.store(true, Ordering::Relaxed);
-        }
+        self.left.store(true, Ordering::Relaxed);
     }
 }
 

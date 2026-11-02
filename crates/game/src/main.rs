@@ -23,7 +23,7 @@ fn main() {
     // Built in, so the browser build needn't fetch it before the app starts.
     let items_ron = include_str!("../../../assets/data/items.ron").to_string();
     let autopilot = std::env::var("VIVAD_AUTOPILOT").is_ok();
-    let mut config = MatchConfig { autopilot, ..default() };
+    let mut config = MatchConfig { autopilot, menu: !game::front::skip_home(), ..default() };
     // In the browser the first map comes from the address: …/?map=chandni.
     #[cfg(target_arch = "wasm32")]
     if let Some(map) = setting("map").and_then(|m| shared::map::MapId::parse(&m)) {
@@ -31,8 +31,8 @@ fn main() {
     }
     config.bots = setting("bots").and_then(|s| s.parse().ok()).unwrap_or(config.map.default_bots());
     let mut app = App::new();
-    if let Some(lobby) = online(&mut config) {
-        app.insert_resource(lobby);
+    if let Some(session) = online(&mut config) {
+        app.insert_resource((session.gather)()).insert_resource(session);
     }
     app.insert_resource(config)
         .add_plugins(
@@ -87,7 +87,7 @@ fn main() {
             }).or(Some(Default::default()))),
             ..default()
         });
-    app.add_plugins((net::TransportPlugin, game::lobby::LobbyPlugin));
+    app.add_plugins((net::TransportPlugin, game::lobby::LobbyPlugin, game::front::FrontPlugin));
     // GPU time per render pass, for the perf overlay (F3) and VIVAD_PERF_ALL=1's log. Only when
     // asked for (VIVAD_GPU_TIMERS=1): on Metal the timers run out of counter sample buffers after
     // a minute or two, and wgpu reports that as a lost device, which quits the game. The browser
@@ -135,7 +135,7 @@ fn setting(key: &str) -> Option<String> {
 /// you as, and VIVAD_LAN=1 skips iroh's relays (enough on one machine or a LAN; the code is then
 /// longer, carrying addresses). The window opens on a lobby screen meanwhile. In the browser the
 /// same from the address: ?host, ?host=4, ?join=chai-tiger-kulfi-42, &name=, &bots=, &map=.
-fn online(config: &mut MatchConfig) -> Option<net::Lobby> {
+fn online(config: &mut MatchConfig) -> Option<game::lobby::Online> {
     let host = setting("host");
     let join = setting("join").filter(|c| !c.is_empty());
     if host.is_none() && join.is_none() {
@@ -145,7 +145,8 @@ fn online(config: &mut MatchConfig) -> Option<net::Lobby> {
     // The browser can only go through the relays.
     let relay = cfg!(target_arch = "wasm32") || setting("lan").is_none();
     config.online = true;
-    Some(match join {
+    config.menu = false;
+    let gather: Box<dyn Fn() -> net::Lobby + Send + Sync> = match join {
         Some(code) => {
             // The code names the map, so it is built before the match starts (a bad code is
             // reported by the lobby).
@@ -153,7 +154,7 @@ fn online(config: &mut MatchConfig) -> Option<net::Lobby> {
                 config.map = map;
                 config.map_seed = map_seed;
             }
-            net::Lobby::join(name, relay, code)
+            Box::new(move || net::Lobby::join(name.clone(), relay, code.clone()))
         }
         None => {
             let players = host.and_then(|h| h.parse::<usize>().ok()).filter(|n| *n > 1);
@@ -166,7 +167,11 @@ fn online(config: &mut MatchConfig) -> Option<net::Lobby> {
                 config.map = net::room_map(r);
                 config.map_seed = net::room_map_seed(r);
             }
-            net::Lobby::host(name, relay, room, players, bots, config.map, config.map_seed)
+            let (map, map_seed) = (config.map, config.map_seed);
+            Box::new(move || net::Lobby::host(name.clone(), relay, room.clone(), players, bots, map, map_seed))
         }
-    })
+    };
+    // A solo match after Ghar stays on the session's map, so it is filled for that map.
+    let solo_bots = setting("bots").and_then(|s| s.parse().ok()).unwrap_or(config.map.default_bots());
+    Some(game::lobby::Online { gather, solo_bots })
 }

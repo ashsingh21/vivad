@@ -139,6 +139,14 @@ clip from="95" to="215" fps="8" map="cp":
     VIVAD_MAP={{map}} VIVAD_ROTATE=0 VIVAD_AUTOPILOT=1 VIVAD_CLIP=previews/{{map}}_clip,{{from}},{{to}},{{fps}} caffeinate -d -i -u cargo run --release -q -p game --bin game
     python3 tools/clip.py previews/{{map}}_clip {{fps}}
 
+# The front door played by itself in the real window, Home to death to the next drop and back:
+# a picture of each screen and a clip in previews/front-door. Keep the window in view. The player
+# falls `fall` seconds after landing, as nothing may reach it for minutes on the NCR.
+loop map="ncr" fall="15":
+    rm -rf previews/front-door/frames && mkdir -p previews/front-door/frames
+    VIVAD_MAP={{map}} VIVAD_LOOP=previews/front-door,6 VIVAD_LOOP_FALL={{fall}} caffeinate -d -i -u cargo run --release -q -p game --bin game
+    python3 tools/clip.py previews/front-door/frames 6 previews/front-door/full_loop.webp
+
 # Headless matches to sanity-check the loop and bots: just sim 5, or just sim 3 15 for 16 warriors
 sim matches="3" bots="63":
     cargo run --release -p shared --bin sim_check -- {{matches}} {{bots}}

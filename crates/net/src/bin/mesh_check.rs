@@ -7,6 +7,10 @@
 //! rest fight on without it; then two players ask for a rematch at once.
 //!
 //! cargo run --release -p net --bin mesh_check -- [peers] [bots] [max seconds] [speed] [leave at seconds, 0 = never] [rematch seconds]
+//!
+//! MESH_JOIN=<code> instead joins that code as one headless player on autopilot, for a game window
+//! to play against, and stops after [max seconds]. It heals every tick, so the match goes on after
+//! the window's player falls.
 //! (VIVAD_RELAY=1 to go through iroh's relays)
 
 use std::collections::BTreeMap;
@@ -32,6 +36,24 @@ fn main() {
     let leave_at: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(90.0);
     let rematch: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(90.0);
     let items = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/data/items.ron")).unwrap();
+
+    if let Ok(code) = std::env::var("MESH_JOIN") {
+        App::new().add_plugins(bevy::log::LogPlugin::default());
+        let session = Node::bind("Rakesh", false).expect("bind").join(&code).expect("lobby");
+        let mut app = peer(session, &items);
+        let started = Instant::now();
+        let mut tick = 0;
+        while started.elapsed().as_secs_f32() < seconds {
+            app.update();
+            let w = app.world_mut();
+            for mut h in w.query_filtered::<&mut shared::sim::Health, With<shared::sim::LocalPlayer>>().iter_mut(w) {
+                h.hp = h.max_hp;
+            }
+            tick += 1;
+            pace(started, tick, 1.0);
+        }
+        return;
+    }
 
     let mut failed = 0;
     let mut check = |ok: bool, what: String| {

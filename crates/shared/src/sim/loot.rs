@@ -80,7 +80,9 @@ impl Plugin for LootPlugin {
         app.init_resource::<Claims>()
             .init_resource::<Gone>()
             .init_resource::<Swaps>()
-            .add_systems(FixedUpdate, (prune_gone.before(interact).before(auto_pickup_arrows), interact, auto_pickup_arrows, tick_pickups).in_set(SimSet::Loot));
+            // In a chain, so what `interact` took is gone before `auto_pickup_arrows` looks: the
+            // same goli must not be taken, and counted, twice.
+            .add_systems(FixedUpdate, ((prune_gone, interact, auto_pickup_arrows).chain(), tick_pickups).in_set(SimSet::Loot));
     }
 }
 

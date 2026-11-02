@@ -1,5 +1,5 @@
 //! HUD: health/shield, hotbar, reticle + hit markers, prompts, kill feed, the map, place names,
-//! Pralaya timer, match result screens and the performance overlay.
+//! Pralaya timer and the performance overlay. The result of a match is crate::front's.
 //!
 //! The map is a picture of the real ground baked from `MapLayout`: a corner map round the player
 //! and the whole map on demand (M), with the place names, the Aandhi's ring, the safe circle and
@@ -22,6 +22,7 @@ use shared::sim::loot::{Chest, INTERACT_RANGE, Pickup};
 use shared::sim::zone::Zone;
 use shared::sim::{Action, Eliminated, FeedMsg, Health, HitMsg, INVENTORY_SLOTS, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, Warrior, btn};
 
+use crate::front::Screen;
 use crate::input::{CYCLE, ShowPerf};
 
 pub struct HudPlugin;
@@ -36,10 +37,12 @@ impl Plugin for HudPlugin {
             .init_resource::<Feed>()
             .init_resource::<MapView>()
             .add_systems(Startup, build_hud)
-            // Before the local input, so the wheel is used up before it changes weapons.
-            .add_systems(PreUpdate, map_keys.in_set(MapKeys).after(bevy::input::InputSystems).before(crate::input::LocalInput))
-            .add_systems(PreUpdate, map_cursor.after(crate::input::LocalInput))
-            .add_systems(Update, (vitals, hotbar, prompts, feed, reticle, hit_marker, top_right, minimap, map_names, place_banner, overlay, perf))
+            // Before the local input, so the wheel is used up before it changes weapons. The keys
+            // are for a match: on a menu they do nothing, and leaving a match shuts the whole map.
+            .add_systems(PreUpdate, map_keys.in_set(MapKeys).after(bevy::input::InputSystems).before(crate::input::LocalInput).run_if(in_state(Screen::Match)))
+            .add_systems(PreUpdate, map_cursor.after(crate::input::LocalInput).run_if(in_state(Screen::Match)))
+            .add_systems(OnExit(Screen::Match), shut_big_map)
+            .add_systems(Update, (vitals, hotbar, prompts, feed, reticle, hit_marker, top_right, minimap, map_names, place_banner, perf))
             // The first frame and each map swap; not each match, which only borrows the layout.
             .add_systems(Update, refresh_map.run_if(resource_changed::<shared::sim::MapSwaps>))
             .add_systems(PostUpdate, (damage_numbers, hurt_markers).after(crate::camera::CameraSystems));
@@ -98,9 +101,6 @@ const SCROLL_STEP: f32 = 40.0;
 /// The place's name, big, across the top of the screen as you come into it.
 #[derive(Component)] struct PlaceName;
 #[derive(Component)] struct PlaceRule;
-#[derive(Component)] struct Overlay;
-#[derive(Component)] struct OverlayText;
-#[derive(Component)] struct VoteText;
 #[derive(Component)] struct PerfText;
 #[derive(Component)] struct ProgressBar;
 #[derive(Component)] struct ProgressFill;
@@ -258,7 +258,7 @@ fn build_hud(mut commands: Commands) {
                 .with_children(|m| map_sheet(m, false));
             p.spawn((TopRight, text("", 16.0, Color::WHITE), TextLayout::justify(Justify::Right)));
         });
-    // The whole map, in the middle of the screen, over everything but the result screen.
+    // The whole map, in the middle of the screen, over the rest of the HUD.
     commands
         .spawn((BigMap, Node { position_type: PositionType::Absolute, width: percent(100.0), height: percent(100.0),
                                flex_direction: FlexDirection::Column, row_gap: px(6.0),
@@ -278,16 +278,6 @@ fn build_hud(mut commands: Commands) {
         .with_children(|p| {
             p.spawn((PlaceName, text("", 34.0, Color::NONE), TextShadow { offset: Vec2::splat(2.0), color: Color::NONE }));
             p.spawn((PlaceRule, Node { width: px(220.0), height: px(2.0), ..default() }, BackgroundColor(Color::NONE)));
-        });
-    // End-of-match / eliminated overlay.
-    commands
-        .spawn((Overlay, Node { position_type: PositionType::Absolute, width: percent(100.0), height: percent(100.0),
-                                flex_direction: FlexDirection::Column, row_gap: px(28.0),
-                                justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() },
-                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)), GlobalZIndex(6), Visibility::Hidden))
-        .with_children(|p| {
-            p.spawn((OverlayText, text("", 40.0, Color::srgb(1.0, 0.85, 0.5)), TextLayout::justify(Justify::Center)));
-            p.spawn((VoteText, text("", 22.0, Color::srgb(0.95, 0.92, 0.85)), TextLayout::justify(Justify::Center)));
         });
     // Performance overlay (F3).
     commands.spawn((PerfText, text("", 14.0, Color::srgb(0.6, 1.0, 0.6)),
@@ -449,9 +439,16 @@ fn feed(
     mut msgs: MessageReader<FeedMsg>,
     mut f: ResMut<Feed>,
     time: Res<Time>,
+    m: Res<Match>,
+    mut generation: Local<u32>,
     mut q: Query<&mut Text, With<FeedText>>,
 ) {
     let now = time.elapsed_secs();
+    // A new match starts with a clean feed.
+    if *generation != m.generation {
+        *generation = m.generation;
+        f.lines.clear();
+    }
     for m in msgs.read() {
         f.lines.push((m.0.clone(), now));
     }
@@ -573,7 +570,7 @@ fn place_at(layout: &MapLayout, p: Vec2) -> Option<&Poi> {
 /// round the player. On the whole map the wheel zooms round the cursor and a drag moves the map.
 #[allow(clippy::too_many_arguments)]
 fn map_keys(
-    keys: Res<ButtonInput<KeyCode>>,
+    mut keys: ResMut<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     mut wheel: ResMut<AccumulatedMouseScroll>,
     frame: Query<&RelativeCursorPosition, With<BigMapFrame>>,
@@ -591,7 +588,8 @@ fn map_keys(
             view.zoom += 1;
         }
     }
-    if keys.just_pressed(KeyCode::KeyM) || (view.big && keys.just_pressed(KeyCode::Escape)) {
+    // With the map open, Esc is used up here: it shuts the map, not opens the menu as well.
+    if keys.just_pressed(KeyCode::KeyM) || (view.big && keys.clear_just_pressed(KeyCode::Escape)) {
         view.big = !view.big;
         view.big_focus = None;
     }
@@ -641,6 +639,12 @@ fn map_keys(
     if let Some(focus) = view.big_focus {
         view.big_focus = Some(Scrolled::new(panel, 2.0 * half / (1 << view.big_zoom) as f32, half, focus).middle());
     }
+}
+
+/// Whatever comes after a match, the whole map is not left open behind it.
+fn shut_big_map(mut view: ResMut<MapView>) {
+    view.big = false;
+    view.big_focus = None;
 }
 
 /// While the whole map is open the cursor is free to drag it, so the view stops following the
@@ -1121,49 +1125,6 @@ fn place_banner(
     }
 }
 
-fn overlay(
-    m: Res<Match>,
-    peers: Res<shared::sim::net::Peers>,
-    local: Query<(Entity, Option<&Eliminated>, &Warrior), With<LocalPlayer>>,
-    names: Query<&Warrior>,
-    mut o: Query<&mut Visibility, With<Overlay>>,
-    mut t: Query<&mut Text, (With<OverlayText>, Without<VoteText>)>,
-    mut vote_t: Query<&mut Text, (With<VoteText>, Without<OverlayText>)>,
-    config: Res<shared::sim::MatchConfig>,
-    votes: Res<shared::sim::flow::MapVotes>,
-) {
-    let Ok((me, elim, w)) = local.single() else { return };
-    let msg = if m.state == MatchState::Ended && m.winner == Some(me) {
-        Some(format!("PANGA KING!\n#1 of {}   Kills {}\n\nR dabao, phir se panga lo", m.total, w.kills))
-    } else if let Some(e) = elim {
-        let by = e.by.and_then(|b| names.get(b).ok()).map(|k| format!("{} ne tapka diya", k.name)).unwrap_or_else(|| "Tapak gaye".into());
-        // Online, the next match starts for everyone at once, when this one is over.
-        let next = if peers.all.len() > 1 && m.state != MatchState::Ended { "Panga tumhare bina chalu hai" } else { "R dabao, phir se panga lo" };
-        Some(format!("{by}\n#{} of {}   Kills {}\n\n{next}", e.placement, m.total, w.kills))
-    } else {
-        None
-    };
-    // The vote for the next map, and where it stands.
-    let pool = &shared::sim::flow::ROTATION;
-    let mut vote = String::new();
-    // With one map in the turn there is nothing to vote on, and the vote stays off the screen.
-    if msg.is_some() && config.rotate && pool.len() > 1 {
-        let next = shared::sim::flow::next_map(config.map, &votes);
-        vote.push_str("Agla map? Number dabao");
-        for (k, map) in pool.iter().enumerate() {
-            let n = votes.count(*map);
-            let count = if n > 0 { format!(" ({n})") } else { String::new() };
-            let (l, r) = if *map == next { ("[ ", " ]") } else { ("", "") };
-            vote.push_str(&format!("\n{l}{}  {}{count}{r}", k + 1, map.title()));
-        }
-    }
-    for mut tt in &mut vote_t { set_text(&mut tt, vote.clone()); }
-    for mut v in &mut o { *v = if msg.is_some() { Visibility::Inherited } else { Visibility::Hidden }; }
-    if let Some(s) = msg {
-        for mut tt in &mut t { set_text(&mut tt, s.clone()); }
-    }
-}
-
 fn perf(
     show: Res<ShowPerf>,
     diag: Res<DiagnosticsStore>,
@@ -1481,6 +1442,16 @@ mod tests {
         app.update();
         assert!(!app.world().resource::<MapView>().big);
         assert_eq!(grab(&mut app), CursorGrabMode::Locked);
+    }
+
+    #[test]
+    fn esc_shuts_the_map_and_goes_no_further() {
+        let mut app = open_map(0, Vec2::ZERO);
+        app.update();
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::Escape);
+        app.update();
+        assert!(!app.world().resource::<MapView>().big);
+        assert!(!app.world().resource::<ButtonInput<KeyCode>>().just_pressed(KeyCode::Escape), "the menu must not open as well");
     }
 
     #[test]

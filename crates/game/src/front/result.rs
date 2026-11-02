@@ -1,0 +1,250 @@
+//! The result card: where you came, who got you, your numbers, and one press to go again.
+//! The layout follows Free Fire's: PLAY AGAIN beside the way back to the lobby.
+
+use bevy::prelude::*;
+use bevy::ui::InteractionDisabled;
+use shared::items::ItemDb;
+use shared::map::MapLayout;
+use shared::sim::flow::{self, Match, MatchState};
+use shared::sim::net::Peers;
+use shared::sim::{DamageCause, DamageMsg, Eliminated, HitMsg, LocalPlayer, MatchConfig, Warrior};
+
+use super::theme::{self, CREAM, Fonts, GHOST, INK, MARIGOLD, MUSTARD, RED, Shortcut, TEAL, u};
+use super::{Press, Screen};
+
+const AGAIN: &str = "PHIR SE PANGA";
+const HOME: &str = "Ghar";
+const OUT: &str = "TAPAK GAYE";
+const WON: &str = "PANGA KING!";
+const KILLS: &str = "KILLS";
+const DAMAGE: &str = "DAMAGE";
+const TIME: &str = "TIME";
+const GONE_ON: &str = "Panga tumhare bina chalu hai";
+const ZONE_GOT_YOU: &str = "Aandhi ne uda diya";
+const GROUND_GOT_YOU: &str = "Zameen se panga ho gaya";
+const VOTE: &str = "Agla map? Number dabao";
+
+fn you_won(map: &str) -> String {
+    format!("Tumne Panga jeet liya. {map} tumhara.")
+}
+fn got_you(killer: &str) -> String {
+    format!("{killer} ne tapka diya")
+}
+fn with_weapon(weapon: &str) -> String {
+    format!("{weapon} se")
+}
+fn own_weapon(weapon: &str) -> String {
+    format!("{weapon} ne tumhe hi tapka diya!")
+}
+fn they_won(name: &str) -> String {
+    format!("{name} ne Panga jeet liya")
+}
+fn left_standing(n: u32) -> String {
+    format!("Abhi {n} bache hain")
+}
+
+/// A beat to see it happen, before the card comes up.
+const BEAT: f32 = 0.6;
+/// How long the card's buttons wait, so a shot still being fired can't press one.
+const LOCK: f32 = 1.0;
+
+/// This match's numbers for the local player.
+#[derive(Resource, Default)]
+pub(super) struct Tally {
+    generation: u32,
+    damage: f32,
+    /// What hurt us last.
+    last_hit: Option<DamageCause>,
+    /// Match time when we fell or won.
+    out_at: Option<f32>,
+}
+
+/// When the card came up.
+#[derive(Resource, Default)]
+struct Opened(f32);
+
+/// The live line on the card: who is left, and who won.
+#[derive(Component)]
+struct Status;
+
+pub(super) fn plugin(app: &mut App) {
+    app.init_resource::<Tally>()
+        .init_resource::<Opened>()
+        .add_systems(Update, tally)
+        .add_systems(Update, out_of_the_match.after(tally).run_if(in_state(Screen::Match)))
+        .add_systems(OnEnter(Screen::Result), spawn)
+        .add_systems(Update, (unlock, status).run_if(in_state(Screen::Result)));
+}
+
+fn tally(
+    mut t: ResMut<Tally>,
+    m: Res<Match>,
+    local: Query<(Entity, Has<Eliminated>), With<LocalPlayer>>,
+    mut hits: MessageReader<HitMsg>,
+    mut hurts: MessageReader<DamageMsg>,
+) {
+    if t.generation != m.generation {
+        *t = Tally { generation: m.generation, ..default() };
+    }
+    let Ok((me, dead)) = local.single() else { return };
+    t.damage += hits.read().filter(|h| h.attacker == me && h.target != me).map(|h| h.amount).sum::<f32>();
+    if t.out_at.is_some() {
+        return;
+    }
+    if let Some(hurt) = hurts.read().filter(|d| d.target == me).last() {
+        t.last_hit = Some(hurt.cause.clone());
+    }
+    if dead || m.winner == Some(me) {
+        t.out_at = Some(m.elapsed);
+    }
+}
+
+/// Out of the match, by falling or by winning: after a beat, the card.
+fn out_of_the_match(m: Res<Match>, local: Query<(Entity, Has<Eliminated>), With<LocalPlayer>>, time: Res<Time>, mut next: ResMut<NextState<Screen>>, mut since: Local<Option<f32>>) {
+    let now = time.elapsed_secs();
+    let out = local.single().is_ok_and(|(me, dead)| dead || m.winner == Some(me));
+    if !out {
+        *since = None;
+    } else if now - *since.get_or_insert(now) >= BEAT {
+        next.set(Screen::Result);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn(
+    mut commands: Commands,
+    fonts: Res<Fonts>,
+    m: Res<Match>,
+    tally: Res<Tally>,
+    layout: Res<MapLayout>,
+    db: Res<ItemDb>,
+    local: Query<(Entity, &Warrior, Option<&Eliminated>), With<LocalPlayer>>,
+    names: Query<&Warrior>,
+    time: Res<Time>,
+    mut opened: ResMut<Opened>,
+) {
+    opened.0 = time.elapsed_secs();
+    let Ok((me, w, fell)) = local.single() else { return };
+    let seconds = tally.out_at.unwrap_or(m.elapsed) as u32;
+    let numbers = [(w.kills.to_string(), KILLS), ((tally.damage.round() as u32).to_string(), DAMAGE), (format!("{}:{:02}", seconds / 60, seconds % 60), TIME)];
+    let won = m.winner == Some(me);
+    commands.spawn((theme::layer(5), theme::scrim_left(), DespawnOnExit(Screen::Result))).with_children(|p| {
+        p.spawn((
+            Node { position_type: PositionType::Absolute, left: u(72.0), top: u(60.0), width: u(640.0), flex_direction: FlexDirection::Column, row_gap: u(16.0), ..default() },
+            Pickable::IGNORE,
+        ))
+        .with_children(|c| {
+            if won {
+                c.spawn(theme::painted(WON, &fonts.title, 100.0, MUSTARD));
+                c.spawn(theme::line(you_won(&layout.name), &fonts.body, 27.0, CREAM));
+                c.spawn((Node { column_gap: u(52.0), margin: UiRect::top(u(12.0)), ..default() }, Pickable::IGNORE)).with_children(|row| {
+                    stats(row, &fonts, &numbers, MUSTARD, CREAM);
+                });
+            } else {
+                let place = fell.map_or(m.alive, |e| e.placement);
+                c.spawn((Node { align_items: AlignItems::FlexEnd, column_gap: u(16.0), ..default() }, Pickable::IGNORE)).with_children(|row| {
+                    row.spawn(theme::line(format!("#{place}"), &fonts.number, 104.0, MUSTARD));
+                    row.spawn(theme::line(format!("of {}", m.total), &fonts.body, 26.0, CREAM));
+                });
+                let (title, detail) = who_got_you(me, fell, tally.last_hit.as_ref(), &names, &db);
+                c.spawn(theme::sign(CREAM, MARIGOLD, UiRect::axes(u(36.0), u(26.0)))).with_children(|s| {
+                    s.spawn(theme::line(OUT, &fonts.body, 17.0, INK));
+                    s.spawn(theme::line(title, &fonts.title, 42.0, RED));
+                    s.spawn(theme::line(detail, &fonts.body, 23.0, INK));
+                    s.spawn((Node { justify_content: JustifyContent::SpaceBetween, margin: UiRect::top(u(14.0)), ..default() }, Pickable::IGNORE)).with_children(|row| {
+                        stats(row, &fonts, &numbers, INK, INK);
+                    });
+                });
+                c.spawn(theme::sign(TEAL, MUSTARD, UiRect::axes(u(30.0), u(16.0)))).with_child((Status, theme::line("", &fonts.body, 25.0, CREAM)));
+            }
+        });
+        p.spawn(theme::corner()).with_children(|c| {
+            c.spawn((Node { column_gap: u(14.0), ..default() }, Pickable::IGNORE)).with_children(|row| {
+                let home = theme::small_button(row, &fonts, HOME, Press::Ghar, GHOST, Some(Shortcut::Esc));
+                row.commands().entity(home).insert(InteractionDisabled);
+            });
+            let again = theme::big_button(c, &fonts, AGAIN, Press::Play, Shortcut::Enter);
+            c.commands().entity(again).insert(InteractionDisabled);
+        });
+    });
+}
+
+fn stats(row: &mut ChildSpawnerCommands, fonts: &Fonts, numbers: &[(String, &str)], number: Color, label: Color) {
+    for (n, what) in numbers {
+        row.spawn((Node { flex_direction: FlexDirection::Column, ..default() }, Pickable::IGNORE)).with_children(|c| {
+            c.spawn(theme::line(n.clone(), &fonts.number, 64.0, number));
+            c.spawn(theme::line(*what, &fonts.body, 17.0, label));
+        });
+    }
+}
+
+/// The card's title and the line under it.
+fn who_got_you(me: Entity, fell: Option<&Eliminated>, last_hit: Option<&DamageCause>, names: &Query<&Warrior>, db: &ItemDb) -> (String, String) {
+    let killer = fell.and_then(|e| e.by).filter(|by| *by != me).and_then(|by| names.get(by).ok()).map(|w| w.name.as_str());
+    match (last_hit, killer) {
+        (Some(DamageCause::Pralaya), _) => (ZONE_GOT_YOU.into(), String::new()),
+        (Some(DamageCause::Fall), _) => (GROUND_GOT_YOU.into(), String::new()),
+        (Some(DamageCause::Weapon(id)), Some(k)) => (got_you(k), with_weapon(&db.get(id).name)),
+        (Some(DamageCause::Weapon(id)), None) => (own_weapon(&db.get(id).name), String::new()),
+        (None, Some(k)) => (got_you(k), String::new()),
+        (None, None) => (OUT.into(), String::new()),
+    }
+}
+
+/// Online the next match starts for everyone at once, so its button waits until it may.
+fn unlock(
+    mut commands: Commands,
+    time: Res<Time>,
+    opened: Res<Opened>,
+    m: Res<Match>,
+    config: Res<MatchConfig>,
+    peers: Res<Peers>,
+    standing: Query<&Warrior, Without<Eliminated>>,
+    buttons: Query<(Entity, &Press), With<InteractionDisabled>>,
+) {
+    if time.elapsed_secs() - opened.0 < LOCK {
+        return;
+    }
+    let online = config.online || peers.all.len() > 1;
+    let open = !online || flow::next_match_open(&m, standing.iter());
+    for (e, press) in &buttons {
+        if *press != Press::Play || open {
+            commands.entity(e).remove::<InteractionDisabled>();
+        }
+    }
+}
+
+fn status(
+    m: Res<Match>,
+    config: Res<MatchConfig>,
+    peers: Res<Peers>,
+    votes: Res<flow::MapVotes>,
+    names: Query<&Warrior>,
+    mut line: Query<&mut Text, With<Status>>,
+) {
+    let online = config.online || peers.all.len() > 1;
+    let mut s = match m.winner.and_then(|e| names.get(e).ok()) {
+        Some(w) if m.state == MatchState::Ended => they_won(&w.name),
+        _ if online => format!("{GONE_ON}\n{}", left_standing(m.alive)),
+        _ => left_standing(m.alive),
+    };
+    // The vote for the next map (the number keys, crate::input), and where it stands. With one map
+    // in the turn there is nothing to vote on, and the vote stays off the card.
+    let pool = &flow::ROTATION;
+    if config.rotate && pool.len() > 1 {
+        let next = flow::next_map(config.map, &votes);
+        s.push('\n');
+        s.push_str(VOTE);
+        for (k, map) in pool.iter().enumerate() {
+            let n = votes.count(*map);
+            let count = if n > 0 { format!(" ({n})") } else { String::new() };
+            let (l, r) = if *map == next { ("[ ", " ]") } else { ("", "") };
+            s.push_str(&format!("\n{l}{}  {}{count}{r}", k + 1, map.title()));
+        }
+    }
+    for mut t in &mut line {
+        if t.as_str() != s {
+            t.0 = s.clone();
+        }
+    }
+}

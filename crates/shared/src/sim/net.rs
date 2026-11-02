@@ -293,9 +293,10 @@ fn apply_inbox(
             }
             NetMsg::DoorHit { index, amount } => {
                 if let Some((e, mut door)) = doors.iter_mut().find(|(_, d)| d.index == index) {
+                    let standing = door.hp > 0.0;
                     door.hp -= amount;
-                    if door.hp <= 0.0 {
-                        commands.entity(e).despawn();
+                    if standing && door.hp <= 0.0 {
+                        commands.entity(e).try_despawn();
                     }
                 }
             }
@@ -369,7 +370,8 @@ fn apply_loot(
             }
             NetMsg::Took { pickup, by, at } => {
                 if let Some((e, _)) = pickups.iter().find(|(_, p)| p.id == pickup) {
-                    commands.entity(e).despawn();
+                    // Two peers may report the same take in one batch.
+                    commands.entity(e).try_despawn();
                 } else if let Some(k) = claims.0.iter().position(|c| c.pickup == pickup) {
                     // We took it too: the earlier take keeps it.
                     let mine = &claims.0[k];

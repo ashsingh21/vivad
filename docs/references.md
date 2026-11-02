@@ -105,6 +105,11 @@ upper limb toward the thumb, edge or bow's back along the hand); see `crates/gam
 | "Male classic jeans", punkduck, MakeHuman community pack pants02 | [asset packs](https://static.makehumancommunity.org/assets/assetpacks.html) | CC-BY 4.0: credit needed | Man's jeans, recoloured, top cut away under the polo |
 | "Running shoes 01", punkduck, MakeHuman community pack shoes02 | [asset packs](https://static.makehumancommunity.org/assets/assetpacks.html) | CC-BY 3.0: credit needed | Man's shoes, recoloured |
 | Polo shirt, Namuhekam, pack shirts01; flapper dress, AEthelraed_Unraed, pack dress01; harem pants and cloth shoes, MRT (toigo), packs pants01 and shoes01; brows 02 and 05, Mindfront, pack eyebrows01 | [asset packs](https://static.makehumancommunity.org/assets/assetpacks.html) | CC0 | Polo; the dress cut into the woman's kurta; salwar; flat shoes; brow strands baked into the head |
+| Mukta | [Ek Type](https://github.com/EkType/Mukta) | SIL OFL 1.1 (`assets/fonts/OFL-Mukta.txt`) | Front door text |
+| Gajraj One | [Google Fonts](https://fonts.google.com/specimen/Gajraj+One) | SIL OFL 1.1 (`assets/fonts/OFL-GajrajOne.txt`) | Front door titles and buttons |
+| Khand | [Google Fonts](https://fonts.google.com/specimen/Khand) | SIL OFL 1.1 (`assets/fonts/OFL-Khand.txt`) | Front door numbers |
+| Button click (`assets/audio/ui_click.ogg`) | [bevy_new_2d](https://github.com/TheBevyFlock/bevy_new_2d), by Jaszunio15 | CC0 | Front door buttons |
+| Screen, menu and button patterns in `crates/game/src/front/` | [bevy_new_2d](https://github.com/TheBevyFlock/bevy_new_2d) (CC0, MIT or Apache 2.0), [bevy_game_template](https://github.com/NiklasEi/bevy_game_template) (CC0) | CC0 | Followed by hand, adapted to Bevy 0.20 |
 
 All other textures are generated: weapons and characters are baked from procedural Blender
 materials (`tools/blender/lib/`, `tools/blender/characters/finish.py`); leaf and bark textures are

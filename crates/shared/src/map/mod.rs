@@ -53,7 +53,7 @@ impl MapId {
             MapId::Chandni => "Chandni Chowk",
             MapId::HauzKhas => "Hauz Khas",
             MapId::IndiaGate => "India Gate",
-            MapId::Ncr => "NCR",
+            MapId::Ncr => "Dilli NCR",
         }
     }
 

@@ -236,9 +236,37 @@ pub fn tick_simulation_pause(mut pause: ResMut<super::SimulationPause>, time: Re
 }
 
 fn start_match_on_startup(world: &mut World) {
-    if !world.resource::<super::MatchConfig>().online {
+    let config = world.resource::<super::MatchConfig>();
+    if !config.online && !config.menu {
         start_match(world);
     }
+}
+
+/// Online, the next match starts for everyone at once: when this one is over, or once no player is
+/// left in it (bots alone could fight on for minutes). `standing`: the warriors still in it.
+pub fn next_match_open<'a>(m: &Match, mut standing: impl Iterator<Item = &'a Warrior>) -> bool {
+    m.state == MatchState::Ended || !standing.any(|w| !w.is_bot)
+}
+
+/// Sweeps the match away: warriors, loot and whatever is in the air. The map stays.
+fn clear_match(world: &mut World) {
+    world.resource_mut::<MapVotes>().0.clear();
+    world.resource_mut::<super::loot::Claims>().0.clear();
+    world.resource_mut::<super::loot::Gone>().0.clear();
+    let mut doomed: Vec<Entity> = vec![];
+    for e in world.query_filtered::<Entity, Or<(With<Warrior>, With<Chest>, With<Pickup>, With<Projectile>, With<FireZone>, With<Burst>, With<Vimana>)>>().iter(world) {
+        doomed.push(e);
+    }
+    for e in doomed {
+        world.despawn(e);
+    }
+}
+
+/// Out of the match and back to the empty map, for the menu; `RestartMatch` starts the next one.
+pub fn leave_match(world: &mut World) {
+    clear_match(world);
+    let generation = world.resource::<Match>().generation;
+    *world.resource_mut::<Match>() = Match { generation, ..default() };
 }
 
 /// Spawns warriors, loot and resets the zone. Everything from a previous match must already be gone.
@@ -348,9 +376,9 @@ pub fn start_match(world: &mut World) {
 }
 
 /// A new match, when our player asks for one or another peer has started it. Online, only once
-/// the match is over (for everyone), and the peers tell each other so they all move on together.
-/// The next match is on the map most voted for (`next_map`), and the restart names it, so a peer
-/// that is told follows onto the same map.
+/// `next_match_open` says so, and the peers tell each other so they all move on together. With
+/// rotation on, the next match is on the map most voted for (`next_map`), and the restart names
+/// it, so a peer that is told follows onto the same map.
 fn restart(world: &mut World) {
     let requested = world.resource_mut::<Messages<RestartMatch>>().drain().count() > 0;
     let generation = world.resource::<Match>().generation;
@@ -374,7 +402,11 @@ fn restart(world: &mut World) {
         }
         // Otherwise an older one: we both started the same next match.
     }
-    let asked = requested && (!online || world.resource::<Match>().state == MatchState::Ended);
+    // Online, until the first match is built there is nothing to restart (the empty `Match` reads as
+    // over), and starting one here would put a second match under the one the lobby begins.
+    let waiting = config.online && generation == 0;
+    let mut standing = world.query_filtered::<&Warrior, Without<Eliminated>>();
+    let asked = requested && !waiting && (!online || next_match_open(world.resource::<Match>(), standing.iter(world)));
     if told.is_none() && !asked {
         return;
     }
@@ -383,16 +415,7 @@ fn restart(world: &mut World) {
         world.resource_mut::<Outbox>().0.push(NetMsg::Restart { generation, map: map.index() });
     }
     world.resource_mut::<StartedBy>().0 = by;
-    world.resource_mut::<MapVotes>().0.clear();
-    world.resource_mut::<super::loot::Claims>().0.clear();
-    world.resource_mut::<super::loot::Gone>().0.clear();
-    let mut doomed: Vec<Entity> = vec![];
-    for e in world.query_filtered::<Entity, Or<(With<Warrior>, With<Chest>, With<Pickup>, With<Projectile>, With<FireZone>, With<Burst>, With<Vimana>)>>().iter(world) {
-        doomed.push(e);
-    }
-    for e in doomed {
-        world.despawn(e);
-    }
+    clear_match(world);
     if map != config.map {
         super::load_map(world, map);
     }
@@ -472,7 +495,12 @@ fn check_winner(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use bevy::time::TimeUpdateStrategy;
+
     use super::*;
+    use crate::sim::{MatchConfig, SimPlugin};
 
     /// The NCR is the default and the only map in the turn; a small map picked by hand stays, and
     /// no vote moves a match on to one.
@@ -486,5 +514,58 @@ mod tests {
         for map in [MapId::Cp, MapId::Chandni, MapId::HauzKhas, MapId::IndiaGate] {
             assert_eq!(next_map(map, &votes), map);
         }
+    }
+
+    /// On a small map: every one of these would otherwise build the whole NCR.
+    fn sim(config: MatchConfig) -> App {
+        let mut app = App::new();
+        app.insert_resource(MatchConfig { map: MapId::Cp, ..config })
+            .add_plugins((MinimalPlugins, TransformPlugin, AssetPlugin::default(), bevy::mesh::MeshPlugin))
+            .add_plugins(PhysicsPlugins::default())
+            .add_plugins(SimPlugin { items_ron: include_str!("../../../../assets/data/items.ron").to_string() })
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)));
+        app.finish();
+        app.cleanup();
+        for _ in 0..5 {
+            app.update();
+        }
+        app
+    }
+
+    fn restart_now(app: &mut App) {
+        app.world_mut().write_message(RestartMatch);
+        for _ in 0..5 {
+            app.update();
+        }
+    }
+
+    #[test]
+    fn a_lobby_starts_no_match_of_its_own() {
+        let mut app = sim(MatchConfig { online: true, bots: 1, ..default() });
+        restart_now(&mut app);
+        assert_eq!(app.world().resource::<Match>().generation, 0);
+        let w = app.world_mut();
+        assert_eq!(w.query::<&Warrior>().iter(w).count(), 0);
+    }
+
+    #[test]
+    fn online_the_next_match_waits_only_for_players() {
+        let m = Match { state: MatchState::InProgress, ..default() };
+        let player = Warrior { name: "Player".into(), is_bot: false, look: 0, kills: 0 };
+        let bot = Warrior { is_bot: true, ..player.clone() };
+        assert!(!next_match_open(&m, [&player, &bot].into_iter()));
+        assert!(next_match_open(&m, [&bot].into_iter()));
+        assert!(next_match_open(&Match { state: MatchState::Ended, ..default() }, [&player].into_iter()));
+    }
+
+    #[test]
+    fn the_next_match_stays_on_this_map() {
+        let mut app = sim(MatchConfig { bots: 1, ..default() });
+        let map = app.world().resource::<MatchConfig>().map;
+        restart_now(&mut app);
+        assert_eq!(app.world().resource::<Match>().generation, 2);
+        assert_eq!(app.world().resource::<MatchConfig>().map, map);
+        let w = app.world_mut();
+        assert_eq!(w.query::<&Warrior>().iter(w).count(), 2);
     }
 }

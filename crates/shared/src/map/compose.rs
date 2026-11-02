@@ -1427,7 +1427,7 @@ pub fn generate(seed: u64) -> MapLayout {
     let size = 2.0 * HALF + 60.0;
     let n = (size / STEP) as usize + 1;
     let terrain = Terrain { n, size, h: vec![0.0; n * n], road_d: vec![1e3; n * n], ground: vec![ground::OPEN; n * n] };
-    let mut map = MapLayout { name: "NCR".into(), half_extent: HALF, style: MapStyle::Ncr, terrain, ..default() };
+    let mut map = MapLayout { name: "Dilli NCR".into(), half_extent: HALF, style: MapStyle::Ncr, terrain, ..default() };
     let mut rng = SmallRng::seed_from_u64(LAYOUT_SEED ^ 0xD31);
     let mut loot = SmallRng::seed_from_u64(seed ^ 0x100D);
     let network = network();
