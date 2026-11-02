@@ -39,8 +39,11 @@ const DOOR_NEAR: f32 = 3.2;
 const DOOR_SEEN: f32 = 45.0;
 /// The fill lights.
 const FILLS: usize = 4;
-const FILL_LUMENS: f32 = 90_000.0;
+const FILL_LUMENS: f32 = 80_000.0;
 const FILL_NEAR: f32 = 16.0;
+const FILL_RANGE: f32 = 8.0;
+/// How quickly a fill comes up or goes, a second.
+const FILL_EASE: f32 = 5.0;
 /// How much of the sky's light reaches a room, of 255.
 const SKY_INDOORS: u8 = 96;
 /// Metres the wall strip repeats over, and how tall a row of the atlas is.
@@ -227,7 +230,9 @@ fn look(room: &Room) -> Look {
     const SHOP: [[f32; 3]; 4] = [[0.96, 0.93, 0.84], [0.78, 0.88, 0.82], [0.96, 0.87, 0.68], [0.80, 0.86, 0.92]];
     let t = room.tone as usize;
     match room.plan {
-        _ if room.shaft => Look { wall_row: OLD_WALL, wall: [1.0, 0.97, 0.90], floor_row: MOSAIC, floor: [0.86, 0.84, 0.80] },
+        // A stair is walked with a wall at the shoulder: the old plaster's bricks, a scan stretched
+        // over a storey, are as big as a head there, so it is plain paint, dulled by hands.
+        _ if room.shaft => Look { wall_row: WALL, wall: [0.80, 0.77, 0.70], floor_row: MOSAIC, floor: [0.86, 0.84, 0.80] },
         Plan::Flat => Look { wall_row: WALL, wall: DISTEMPER[t % 6], floor_row: MOSAIC, floor: [1.0, 0.97, 0.92] },
         Plan::Office => Look { wall_row: WALL, wall: OFFICE[t % 3], floor_row: MARBLE, floor: [1.0, 0.98, 0.94] },
         Plan::Shop => Look { wall_row: WALL, wall: SHOP[t % 4], floor_row: TILES, floor: [1.0, 0.97, 0.92] },
@@ -298,7 +303,7 @@ fn shell_cap(buf: &mut MeshBuf, r: &Interior, wall: &Wall) {
 /// A wall that belongs to no room: both its faces and its ends. The stair room is in the building's
 /// own paint, over plain plaster; the spine between the flights is the stair well's old wall.
 fn free_wall(buf: &mut MeshBuf, r: &Interior, wall: &Wall, outside: [f32; 4], inner: [f32; 4]) {
-    let (row, tint) = if wall.y.0 >= r.roof - 0.01 { (CEILING, outside) } else { (OLD_WALL, inner) };
+    let (row, tint) = if wall.y.0 >= r.roof - 0.01 { (CEILING, outside) } else { (WALL, inner) };
     let t = wall.thick / 2.0;
     let side = if wall.along_x { r.z } else { r.x };
     let side = Vec3::new(side.x, 0.0, side.y);
@@ -728,20 +733,32 @@ fn swing_doors(
     }
 }
 
+/// A fill light: which of the nearest rooms it takes, and how bright it is going to be.
 #[derive(Component)]
-struct Fill(usize);
+struct Fill(usize, f32);
 
-/// A few warm lights in the rooms nearest the camera: no light per room, and none of them casts a
-/// shadow. They do what a bounce off the floor would.
-fn place_fills(mut commands: Commands, layout: Res<MapLayout>, mut doors: ResMut<Doors>, camera: Query<&GlobalTransform, With<MainCamera>>, mut fills: Query<(&mut Transform, &mut PointLight, &Fill)>, mut frame: Local<u32>) {
+/// A few warm lights in the rooms round the camera, and only while it is indoors: no light per room,
+/// and none of them casts a shadow. They do what a bounce off the floor would. With no shadow a
+/// fill reaches through its walls, so from the street, where it would lie on the pavement and the
+/// house opposite in full day, there are none, and a room seen from outside is as dim as a real one.
+/// They ease in and out, so walking in at a door is the eye adjusting and not a switch.
+#[allow(clippy::too_many_arguments)]
+fn place_fills(mut commands: Commands, layout: Res<MapLayout>, time: Res<Time>, mut doors: ResMut<Doors>, camera: Query<&GlobalTransform, With<MainCamera>>, mut fills: Query<(&mut Transform, &mut PointLight, &mut Fill)>, mut frame: Local<u32>) {
     if layout.rooms.is_empty() {
         return;
     }
     if doors.rooms.is_empty() {
         doors.rooms = index_rooms(&layout);
         for k in 0..FILLS {
-            let light = PointLight { color: Color::srgb(1.0, 0.86, 0.68), intensity: 0.0, range: 9.0, shadow_maps_enabled: false, ..default() };
-            commands.spawn((light, Transform::default(), Fill(k), OfMap));
+            let light = PointLight { color: Color::srgb(1.0, 0.86, 0.68), intensity: 0.0, range: FILL_RANGE, shadow_maps_enabled: false, ..default() };
+            commands.spawn((light, Transform::default(), Fill(k, 0.0), OfMap));
+        }
+    }
+    let ease = (time.delta_secs() * FILL_EASE).min(1.0);
+    for (_, mut light, fill) in &mut fills {
+        let step = (fill.1 - light.intensity) * ease;
+        if step.abs() > 1.0 {
+            light.intensity += step;
         }
     }
     *frame = frame.wrapping_add(1);
@@ -753,9 +770,14 @@ fn place_fills(mut commands: Commands, layout: Res<MapLayout>, mut doors: ResMut
     let mut near: Vec<(f32, Vec3)> = vec![];
     for k in around(&doors.rooms, at.xz(), FILL_NEAR + 30.0) {
         let r = &layout.rooms[k as usize];
+        if at.y > r.roof + 0.3 || !shared::map::footprint::contains(&layout.footprints[r.footprint].pts, at.xz()) {
+            continue;
+        }
         for room in &r.rooms {
             let (mx, mz) = ((room.x.0 + room.x.1) / 2.0, (room.z.0 + room.z.1) / 2.0);
-            let p = r.at(mx, r.level(room.storey) + 2.5, mz);
+            // In the middle of the air: near a ceiling or a wall it lights a hard oval on it, and
+            // a fill stands in for light that comes from everywhere.
+            let p = r.at(mx, r.level(room.storey) + 1.7, mz);
             let d = p.distance(at);
             if d < FILL_NEAR {
                 near.push((d, p));
@@ -763,13 +785,13 @@ fn place_fills(mut commands: Commands, layout: Res<MapLayout>, mut doors: ResMut
         }
     }
     near.sort_by(|a, b| a.0.total_cmp(&b.0));
-    for (mut tf, mut light, fill) in &mut fills {
+    for (mut tf, _, mut fill) in &mut fills {
         match near.get(fill.0) {
             Some((d, p)) => {
                 tf.translation = *p;
-                light.intensity = FILL_LUMENS * (1.0 - d / FILL_NEAR).clamp(0.0, 1.0);
+                fill.1 = FILL_LUMENS * (1.0 - d / FILL_NEAR).clamp(0.0, 1.0);
             }
-            None => light.intensity = 0.0,
+            None => fill.1 = 0.0,
         }
     }
 }
