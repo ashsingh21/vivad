@@ -7,6 +7,7 @@ pub mod cp;
 pub mod delhi;
 pub mod footprint;
 pub mod india;
+pub mod interiors;
 pub mod kit;
 pub mod navigation;
 pub mod ncr;
@@ -226,6 +227,11 @@ impl MapLayout {
     pub fn is_holy(&self, p: Vec2) -> bool {
         self.holy.iter().any(|(c, r)| p.distance(*c) < *r)
     }
+
+    /// The rooms of `footprints[index]`, if it is one of the hollow ones.
+    pub fn rooms_of(&self, index: usize) -> Option<&interiors::Interior> {
+        self.room_of.get(index).and_then(|k| self.rooms.get(*k as usize))
+    }
 }
 
 #[derive(Resource, Clone, Debug, Default)]
@@ -243,6 +249,16 @@ pub struct MapLayout {
     pub ornaments: Vec<Ornament>,
     pub lamps: Vec<Lamp>,
     pub footprints: Vec<Footprint>,
+    /// The hollow buildings (crate::map::interiors), and by footprint which of them it is. They
+    /// are kept here and not on `Footprint` so that a building is the same data whether it is
+    /// hollow or not.
+    pub rooms: Vec<interiors::Interior>,
+    pub room_of: Vec<u32>,
+    /// Where a place of worship or a ruin stands: buildings never opened up.
+    pub closed: Vec<Vec2>,
+    /// Connaught Place's ring of shops, which the NCR furnishes (crate::map::interiors).
+    pub ring_shops: Vec<interiors::RingShop>,
+    pub ring_pieces: Vec<interiors::Piece>,
     /// Holy sites, as a point and a radius: nothing that draws a fight lies inside one.
     pub holy: Vec<(Vec2, f32)>,
     /// The street kit's pieces on a city map (crate::map::kit); drawn by the client, merged.

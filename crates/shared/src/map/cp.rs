@@ -125,6 +125,16 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                     b.push(base + Vec3::Y * (r.g - SLAB - 0.15), Quat::from_rotation_y(-col), super::Shape::Box(Vec3::new(0.78, 0.3, 0.78)), Mat::Plaster, false, true);
                 }
             }
+            // Every second segment starts a shop, which the NCR may furnish.
+            if i % 2 == 0 && i + 1 < n && !stairs(i) && !stairs(i + 1) {
+                let middle = s1;
+                let wide = 2.0 * mid.max(core0 + 1.0) * (s1 - s0).sin();
+                let back = if split { mid } else { core1 };
+                b.map.ring_shops.push(super::interiors::RingShop { back: r.at(back - 0.15, middle, 0.0), into: -r.at(1.0, middle, 0.0).xz() + r.at(0.0, middle, 0.0).xz(), wide });
+                if split {
+                    b.map.ring_shops.push(super::interiors::RingShop { back: r.at(back + 0.15, middle, 0.0), into: r.at(1.0, middle, 0.0).xz() - r.at(0.0, middle, 0.0).xz(), wide });
+                }
+            }
             // Shop fronts on both faces: an arched opening, or a window over a stall board.
             let front = if i % 2 == 0 { Opening::arch(0.0, 1.8, 3.2) } else { Opening { at: 0.0, width: 1.6, bottom: 0.9, top: 3.0 } };
             for rad in [core1, core0] {

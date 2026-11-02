@@ -13,7 +13,7 @@ use crate::SmallRng;
 
 use super::build::{Builder, CHHATRI, Frame};
 use super::terrain::{Terrain, fbm, ground};
-use super::{ChestKind, ChestSpawn, Footprint, Mat, MapId, MapLayout, MapStyle, Poi, Prop, Shape, delhi, footprint, india, kit};
+use super::{ChestKind, ChestSpawn, Footprint, Mat, MapId, MapLayout, MapStyle, Poi, Prop, Shape, delhi, footprint, india, interiors, kit};
 
 pub const HALF: f32 = 2000.0;
 /// The map is always built from this seed, so players can learn it. The seed a match passes in
@@ -29,6 +29,9 @@ const WALL_TOP: f32 = 900.0;
 const LANDMARK_AREA: f32 = 900.0;
 /// Houses built to go inside, at most, in a district.
 const HOUSES: usize = 16;
+/// Buildings to go inside, at most, in each 128 m square: the one number that turns rooms down.
+/// Zero gives the map without them.
+pub const ROOMS_PER_CELL: usize = 12;
 /// Floor spots on the whole map: the districts' own, each named spot's and each bridge's, and the
 /// roadsides and open land make up the rest.
 const FLOOR_SPOTS: usize = 1600;
@@ -685,10 +688,14 @@ fn add(map: &mut MapLayout, place: &Place, index: usize, seed: u64) {
         b.pos += at;
         map.blocks.push(b);
     }
-    for mut b in t.doors.drain(..).filter(|b| inside(b.pos.xz())) {
+    // With rooms in the map nothing has a door to break: leaves swing open by themselves, and bots
+    // go in and out of the old houses too.
+    for mut b in t.doors.drain(..).filter(|b| inside(b.pos.xz()) && ROOMS_PER_CELL == 0) {
         b.pos += at;
         map.doors.push(b);
     }
+    map.closed.extend(t.closed.iter().map(|c| *c + place.at));
+    map.ring_shops.extend(t.ring_shops.iter().map(|s| interiors::RingShop { back: s.back + at, ..*s }));
     // Nothing behind a wall: a chest set down at the foot of one building can be in the next.
     let mut chests: Vec<_> = t.chests.iter().filter(|c| inside(c.pos.xz()) && !in_building(&t, c.pos)).cloned().collect();
     let mut floor: Vec<_> = t.floor_loot.iter().copied().filter(|p| inside(p.xz()) && !in_building(&t, *p)).collect();
@@ -1419,7 +1426,7 @@ pub fn holy() -> Vec<(Vec2, f32)> {
 }
 
 /// Where no loot may lie: the India Gate arch, the Red Fort's wall, the Okhla wetland.
-fn no_loot(p: Vec2) -> bool {
+pub(super) fn no_loot(p: Vec2) -> bool {
     p.distance(Vec2::new(-327.0, -5.0)) < 60.0 || (p.x - -85.0).abs() < 55.0 && (p.y - -1410.0).abs() < 210.0 || in_marsh(p)
 }
 
@@ -1469,6 +1476,10 @@ pub fn generate(seed: u64) -> MapLayout {
     clear_the_ground(&mut map);
     let MapLayout { terrain, blocks, .. } = &mut map;
     terrain.settle_under(blocks);
+    // Last, so that the rest of the map is laid out exactly as it would be without rooms.
+    let spots = interiors::hollow(&mut map, ROOMS_PER_CELL);
+    interiors::furnish_ring(&mut map);
+    interiors::move_loot(&mut map, &spots, &mut loot);
     map
 }
 
@@ -1495,7 +1506,7 @@ pub fn bridge_at(p: Vec2) -> Option<&'static str> {
 /// Whether something standing at `p` is inside a solid building: on a roof it isn't.
 pub fn in_building(map: &MapLayout, p: Vec3) -> bool {
     let y = p.y + 0.5;
-    map.footprints.iter().any(|f| f.mat != Mat::Water && y > f.base && y < f.top - 0.05 && f.pts[0].distance(p.xz()) < 400.0 && footprint::contains(&f.pts, p.xz()))
+    map.footprints.iter().enumerate().any(|(k, f)| f.mat != Mat::Water && y > f.base && y < f.top - 0.05 && f.pts[0].distance(p.xz()) < 400.0 && footprint::contains(&f.pts, p.xz()) && map.rooms_of(k).is_none())
 }
 
 /// Whether a point is inside any solid building, for tools that draw or check the map.

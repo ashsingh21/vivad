@@ -98,6 +98,8 @@ upper limb toward the thumb, edge or bow's back along the hand); see `crates/gam
 | studio_small_08 HDRI (2k) | [Poly Haven](https://polyhaven.com/a/studio_small_08) | CC0 | Preview renders only |
 | studio_small_09 HDRI (2k) | [Poly Haven](https://polyhaven.com/a/studio_small_09) | CC0 | Preview renders (alternative) |
 
+| Room surfaces: PaintedPlaster017, Terrazzo013 | [ambientCG](https://ambientcg.com/view?id=PaintedPlaster017) | CC0 | Walls and mosaic floors of the hollow buildings, baked into `assets/textures/rooms/room_atlas.png` by `tools/textures/room_atlas.py` |
+| Room surfaces: grey_plaster, damaged_plaster, interior_tiles, floor_tiles_06, concrete_floor_worn_001 | [Poly Haven](https://polyhaven.com/textures) | CC0 | The same atlas: stains, old plaster and brick, shop tiles, marble squares, godown floors |
 | Ultra surface scans (plaster, asphalt, concrete and others, listed in `assets/textures/ultra/sources.json`) | [Poly Haven](https://polyhaven.com) | CC0 | Ultra materials on the city maps (`assets/textures/ultra/`) |
 | MPFB (MakeHuman plugin for Blender) | [extensions.blender.org/add-ons/mpfb](https://extensions.blender.org/add-ons/mpfb/) | GPL (tool only); generated humans are CC0 | Character base bodies, rig (`game_engine`) |
 | LGDuel's bot aim (`crates/bot/src/lib.rs`), adapted in `crates/shared/src/sim/aim.rs` | [github.com/s0pk/lgduel](https://github.com/s0pk/lgduel) | MIT, notice kept in the file | How bots turn and see: a limited turn speed and a late sight of targets |
