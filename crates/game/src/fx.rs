@@ -14,7 +14,7 @@ use shared::items::{ItemDb, ItemKind};
 use shared::lines::{Lines, with};
 use shared::sim::combat::Projectile;
 use shared::sim::melee::{BrokeMsg, GuardMsg};
-use shared::sim::{Action, FeedMsg, HitMsg, Inventory, LocalPlayer, PlayerIntent, btn};
+use shared::sim::{Action, Eliminated, FeedMsg, HitMsg, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, Warrior, btn};
 
 use crate::animation::WarriorAnim;
 use crate::visuals::{Shot, shot_kind};
@@ -26,7 +26,7 @@ impl Plugin for FxPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraPunch>()
             .add_systems(Startup, setup)
-            .add_systems(Update, (add_streaks, muzzle_flash, misfire_smoke, blast_shake, hit_sparks, guard_sparks, broke_splinters, arrow_dust, landing_dust, fly_sparks, punch_camera, hit_stop))
+            .add_systems(Update, (add_streaks, muzzle_flash, misfire_smoke, blast_shake, hit_sparks, guard_sparks, broke_splinters, arrow_dust, landing_dust, fly_sparks, scope_glints, punch_camera, hit_stop))
             .add_systems(PostUpdate, (update_streaks, swing_ribbons).after(TransformSystems::Propagate));
     }
 }
@@ -56,6 +56,8 @@ struct FxAssets {
     gulal: Handle<StandardMaterial>,
     dust: Handle<StandardMaterial>,
     smoke: Handle<StandardMaterial>,
+    /// A scope's lens catching the sun.
+    lens: Handle<StandardMaterial>,
 }
 
 fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>) {
@@ -105,6 +107,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: Res
             unlit: true,
             ..default()
         }),
+        lens: glow(&mut mats, Color::WHITE, LinearRgba::rgb(90.0, 80.0, 60.0), 1.0),
     });
 }
 
@@ -455,6 +458,66 @@ fn muzzle_flash(mut commands: Commands, q: Query<(&Projectile, &Transform), Adde
             billow(&mut commands, &fx, &fx.smoke, at + ahead * 0.5, ahead, 22, 2.4, 0.2);
         }
     }
+}
+
+/// A scope seen from in front catches the sun: far rifles show where they are, more the more nearly
+/// they point at you. A small point of light, the same size on the screen near or far.
+#[derive(Component)]
+struct Glint(Entity);
+
+/// How near facing the viewer a scope must be to catch the light, 1 being dead on.
+const GLINT_FROM: f32 = 0.55;
+/// Its size as a share of its distance, faintest and full.
+const GLINT_SIZE: (f32, f32) = (0.0012, 0.0052);
+/// The sun's hours: at night a lens has nothing to catch.
+const SUN_UP: (f32, f32) = (6.0, 19.0);
+
+#[allow(clippy::type_complexity)]
+fn scope_glints(
+    mut commands: Commands,
+    warriors: Query<(Entity, &Transform, &PlayerIntent, &Inventory, &Kinematic), (With<Warrior>, Without<LocalPlayer>, Without<Eliminated>)>,
+    mut glints: Query<(Entity, &Glint, &mut Transform), Without<Warrior>>,
+    camera: Query<&GlobalTransform, With<crate::camera::MainCamera>>,
+    db: Res<ItemDb>,
+    fx: Res<FxAssets>,
+    tod: Res<crate::visuals::TimeOfDay>,
+    time: Res<Time>,
+    mut had: Local<Vec<Entity>>,
+) {
+    let Ok(cam) = camera.single() else { return };
+    let cam = cam.translation();
+    let hour = tod.hour.rem_euclid(24.0);
+    let day = (SUN_UP.0..SUN_UP.1).contains(&hour);
+    let t = time.elapsed_secs();
+    let mut now: Vec<(Entity, Vec3, f32)> = vec![];
+    for (e, tf, intent, inv, kin) in &warriors {
+        if !day || kin.mode != MoveMode::Ground || !intent.held(btn::AIM) || inv.current().is_none_or(|s| db.get(&s.id).kind.scope().is_none()) {
+            continue;
+        }
+        let aim = intent.aim_dir();
+        let lens = tf.translation + Vec3::Y * (shared::sim::EYE_OFFSET - intent.drop()) + aim * 0.4;
+        let facing = aim.dot((cam - lens).normalize_or_zero());
+        if facing > GLINT_FROM {
+            let k = ((facing - GLINT_FROM) / (1.0 - GLINT_FROM)).powi(2);
+            let twinkle = 0.8 + 0.2 * (t * 11.0 + e.index().index() as f32).sin();
+            now.push((e, lens, lens.distance(cam) * (GLINT_SIZE.0 + (GLINT_SIZE.1 - GLINT_SIZE.0) * k) * twinkle));
+        }
+    }
+    for (e, g, mut tf) in &mut glints {
+        match now.iter().find(|n| n.0 == g.0) {
+            Some((_, at, size)) => {
+                tf.translation = *at;
+                tf.scale = Vec3::splat(*size);
+            }
+            None => commands.entity(e).despawn(),
+        }
+    }
+    for (e, at, size) in &now {
+        if !had.contains(e) {
+            commands.spawn((Glint(*e), Mesh3d(fx.sphere.clone()), MeshMaterial3d(fx.lens.clone()), Transform::from_translation(*at).with_scale(Vec3::splat(*size)), bevy::light::NotShadowCaster));
+        }
+    }
+    *had = now.iter().map(|n| n.0).collect();
 }
 
 fn fly_sparks(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &mut Spark, &mut Transform, Has<Billow>)>) {
