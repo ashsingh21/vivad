@@ -1255,6 +1255,11 @@ pub(crate) fn gpu_only_images(mut events: MessageReader<AssetEvent<Image>>, asse
         if path.path().starts_with("models/textures") || path.path().starts_with("models/samples/delhi_street/textures") || path.path().ends_with("room_kit.glb") {
             mip_chain(img);
         }
+        // A chest reads as one from its first frame: what main memory keeps goes straight to the GPU,
+        // past the queue the map's textures take seconds to clear (crate::batch::upload).
+        if path.path().file_name().is_some_and(|f| f.to_string_lossy().starts_with("chest_")) {
+            continue;
+        }
         img.asset_usage = RenderAssetUsages::RENDER_WORLD;
     }
 }

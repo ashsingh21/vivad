@@ -29,7 +29,8 @@ impl Plugin for FxPlugin {
         app.init_resource::<CameraPunch>()
             .add_systems(Startup, setup)
             .add_systems(Update, (add_streaks, muzzle_flash, misfire_smoke, blast_shake, hit_sparks, guard_sparks, broke_splinters, arrow_dust, landing_dust, fly_sparks, drift_puffs, scope_glints, punch_camera, climb, hit_stop))
-            .add_systems(PostUpdate, (update_streaks, swing_ribbons).after(TransformSystems::Propagate));
+            .add_systems(PostUpdate, (update_streaks, swing_ribbons).after(TransformSystems::Propagate))
+            .add_systems(PostUpdate, burn_flashes.before(TransformSystems::Propagate));
     }
 }
 
@@ -57,7 +58,9 @@ struct FxAssets {
     cylinder: Handle<Mesh>,
     streak: Handle<StandardMaterial>,
     tracer: Handle<StandardMaterial>,
-    flash: Handle<StandardMaterial>,
+    /// A muzzle flash's star and its tongue of flame, at each stage of its dying.
+    flash_star: [Handle<StandardMaterial>; FLASH_STAGES],
+    flash_tongue: [Handle<StandardMaterial>; FLASH_STAGES],
     fire_streak: Handle<StandardMaterial>,
     wind_streak: Handle<StandardMaterial>,
     ribbon: Handle<StandardMaterial>,
@@ -91,8 +94,50 @@ fn soft_blot() -> Image {
     Image::new(size, TextureDimension::D2, data, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD)
 }
 
+/// A muzzle flash's light, white at the heart and orange at the fringe and gone well before the
+/// picture's edge: a ragged star, as a flash looks down the barrel, or (`tongue`) a tongue of flame
+/// from the muzzle at the bottom edge to its tip at the top, as it looks from the side.
+fn flash_light(tongue: bool) -> Image {
+    const SIDE: usize = 96;
+    let mut data = Vec::with_capacity(SIDE * SIDE * 4);
+    for j in 0..SIDE {
+        for i in 0..SIDE {
+            let p = (Vec2::new(i as f32, j as f32) + 0.5) / SIDE as f32 * 2.0 - 1.0;
+            let shine = if tongue {
+                let up = (1.0 - p.y) / 2.0;
+                let width = 0.62 * (up / 0.3).min(1.0).sqrt() * (1.0 - up).powf(1.3);
+                (1.0 - (p.x / width.max(1e-3)).powi(2)).max(0.0).powi(2) * (1.0 - up).sqrt()
+            } else {
+                let turn = p.y.atan2(p.x);
+                let reach = 0.32 + 0.6 * (0.5 + 0.5 * (5.0 * turn + 1.4 * (3.0 * turn + 1.0).sin()).cos()).powi(2);
+                let body = (1.0 - (p.length() / reach).powi(2)).max(0.0).powi(2);
+                (0.75 * body + (1.0 - p.length() / 0.4).max(0.0).powi(2)).min(1.0)
+            };
+            let heat = shine.powf(1.5);
+            let colour = Vec3::new(1.0, 0.42, 0.08).lerp(Vec3::new(1.0, 0.93, 0.78), heat);
+            data.extend_from_slice(&[(colour.x * 255.0) as u8, (colour.y * 255.0) as u8, (colour.z * 255.0) as u8, (shine * 255.0) as u8]);
+        }
+    }
+    let size = Extent3d { width: SIDE as u32, height: SIDE as u32, depth_or_array_layers: 1 };
+    Image::new(size, TextureDimension::D2, data, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD)
+}
+
 fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>) {
     let soft = images.add(soft_blot());
+    let (star, tongue) = (images.add(flash_light(false)), images.add(flash_light(true)));
+    let mut flash = |shape: &Handle<Image>| {
+        std::array::from_fn(|k| {
+            let hot = FLASH_BRIGHT * FLASH_DYING[k];
+            mats.add(StandardMaterial {
+                base_color: LinearRgba::rgb(hot, hot, hot).into(),
+                base_color_texture: Some(shape.clone()),
+                alpha_mode: AlphaMode::Add,
+                unlit: true,
+                ..default()
+            })
+        })
+    };
+    let (flash_star, flash_tongue) = (flash(&star), flash(&tongue));
     let glow = |mats: &mut Assets<StandardMaterial>, c: Color, e: LinearRgba, a: f32| {
         mats.add(StandardMaterial {
             base_color: c.with_alpha(a),
@@ -107,7 +152,8 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: Res
         cylinder: meshes.add(Cylinder::new(0.5, 1.0).mesh().resolution(6)),
         streak: glow(&mut mats, Color::srgb(1.0, 0.93, 0.78), LinearRgba::rgb(0.6, 0.5, 0.3), 0.6),
         tracer: glow(&mut mats, Color::srgb(1.0, 0.8, 0.45), LinearRgba::rgb(8.0, 4.5, 1.2), 0.8),
-        flash: glow(&mut mats, Color::srgb(1.0, 0.75, 0.35), LinearRgba::rgb(20.0, 11.0, 3.0), 1.0),
+        flash_star,
+        flash_tongue,
         fire_streak: glow(&mut mats, Color::srgb(1.0, 0.5, 0.15), LinearRgba::rgb(4.0, 1.2, 0.2), 0.55),
         wind_streak: glow(&mut mats, Color::srgb(0.75, 0.9, 1.0), LinearRgba::rgb(0.6, 1.0, 1.4), 0.4),
         ribbon: mats.add(StandardMaterial {
@@ -482,9 +528,55 @@ fn misfire_smoke(mut commands: Commands, mut msgs: MessageReader<shared::sim::co
     }
 }
 
-/// A gun going off: a hot flash at the muzzle with a moment of light round it, and a few sparks
-/// thrown forward. Once per shot, however many pellets it fires.
-fn muzzle_flash(mut commands: Commands, q: Query<(&Projectile, &Transform), Added<Projectile>>, shooters: Query<&Transform, With<Warrior>>, fx: Res<FxAssets>) {
+/// Where a gun's barrel ends, in its own frame (read off each model: the grip at the origin, the
+/// barrel -Z).
+fn muzzle_of(item: &str) -> Vec3 {
+    let (up, ahead) = match item {
+        "saintalis" => (0.058, 0.585),
+        "bandook" => (0.102, 0.625),
+        "vajra9" => (0.08, 0.37),
+        "trishul_carbine" => (0.067, 0.532),
+        "thaana_slr" => (0.115, 0.686),
+        "thri_not_thri" => (0.038, 0.821),
+        "toradar" => (0.03, 1.016),
+        "dunali" => (0.048, 0.634),
+        "katta" => (0.038, 0.165),
+        _ => (0.051, 0.167),
+    };
+    Vec3::new(0.0, up, -ahead)
+}
+
+/// A flash lasts this long (seconds), three frames at 60: a bright frame, then two dying ones.
+const FLASH_LIFE: f32 = 0.05;
+const FLASH_STAGES: usize = 3;
+const FLASH_DYING: [f32; FLASH_STAGES] = [1.0, 0.5, 0.16];
+const FLASH_BRIGHT: f32 = 6.0;
+/// The light a flash throws round it at its height.
+const FLASH_LIGHT: f32 = 150_000.0;
+
+/// One of a muzzle flash's two soft sprites: the star, facing the view, or the tongue of flame,
+/// lying `along` the barrel and turned as far toward the view as it will go. Both are gone before
+/// the eye can read a shape, and no two shots' are the same.
+#[derive(Component)]
+struct Flash {
+    life: f32,
+    size: Vec2,
+    turn: f32,
+    along: Option<Vec3>,
+    stage: usize,
+}
+
+/// A gun going off: a soft flash at the end of its barrel with a moment of light round it, and a
+/// few sparks thrown forward. Once per shot, however many pellets it fires.
+#[allow(clippy::type_complexity)]
+fn muzzle_flash(
+    mut commands: Commands,
+    q: Query<(&Projectile, &Transform), Added<Projectile>>,
+    shooters: Query<&Transform, With<Warrior>>,
+    vis: Query<(&WarriorVisual, &WeaponSocket)>,
+    globals: Query<&GlobalTransform>,
+    fx: Res<FxAssets>,
+) {
     let mut fired: Vec<Entity> = vec![];
     for (p, t) in &q {
         if p.astra.is_some() || shot_kind(&p.item) != Shot::Bullet || fired.contains(&p.owner) {
@@ -492,22 +584,73 @@ fn muzzle_flash(mut commands: Commands, q: Query<(&Projectile, &Transform), Adde
         }
         fired.push(p.owner);
         let ahead = p.velocity.normalize_or(Vec3::NEG_Z);
-        let at = t.translation + ahead * 0.15;
-        let size = if matches!(p.item.as_str(), "dunali" | "thri_not_thri" | "toradar") { 0.2 } else { 0.13 };
+        // A fast bullet is metres gone by the time it is seen here: the flash starts at the gun.
+        let gun = vis.iter().find(|(v, _)| v.sim == p.owner).and_then(|(_, socket)| globals.get(socket.0).ok());
+        let (at, barrel) = match gun {
+            Some(g) => (g.transform_point(muzzle_of(&p.item)), (g.rotation() * Vec3::NEG_Z).normalize_or(ahead)),
+            None => (shooters.get(p.owner).map_or(t.translation, |s| s.translation + Vec3::Y * shared::sim::EYE_OFFSET * 0.7 + ahead * 0.9), ahead),
+        };
+        let size = if matches!(p.item.as_str(), "dunali" | "thri_not_thri" | "toradar") { 0.5 } else { 0.34 };
+        let mut rng = rand::rng();
+        let (big, long) = (size * rng.random_range(0.85..1.15), size * rng.random_range(1.1..1.6));
         commands.spawn((
-            Spark { vel: Vec3::ZERO, life: 0.06, max: 0.06, size, gravity: 0.0 },
-            Mesh3d(fx.sphere.clone()),
-            MeshMaterial3d(fx.flash.clone()),
-            Transform::from_translation(at).with_scale(Vec3::splat(size)),
+            Flash { life: FLASH_LIFE, size: Vec2::splat(big), turn: rng.random_range(0.0..std::f32::consts::TAU), along: None, stage: 0 },
+            Mesh3d(fx.puff.clone()),
+            MeshMaterial3d(fx.flash_star[0].clone()),
+            Transform::from_translation(at + barrel * size * 0.12),
             bevy::light::NotShadowCaster,
-            PointLight { color: Color::srgb(1.0, 0.75, 0.4), intensity: 150_000.0, range: 7.0, shadow_maps_enabled: false, ..default() },
+            PointLight { color: Color::srgb(1.0, 0.75, 0.4), intensity: FLASH_LIGHT, range: 7.0, shadow_maps_enabled: false, ..default() },
         ));
-        burst(&mut commands, &fx, &fx.gold_spark, at, ahead, 5, 7.0, 0.01, 4.0);
+        commands.spawn((
+            Flash { life: FLASH_LIFE, size: Vec2::new(long * 0.5, long), turn: 0.0, along: Some(barrel), stage: 0 },
+            Mesh3d(fx.puff.clone()),
+            MeshMaterial3d(fx.flash_tongue[0].clone()),
+            Transform::from_translation(at + barrel * long * 0.5),
+            bevy::light::NotShadowCaster,
+        ));
+        burst(&mut commands, &fx, &fx.gold_spark, at, ahead, 3, 7.0, 0.01, 4.0);
         // Black powder: the big white puff that gives a Toradar's shooter away.
         if p.item == "toradar" {
-            // A fast bullet is metres gone by the time it is seen here: the smoke starts at the gun.
             let gun = shooters.get(p.owner).map_or(at, |s| s.translation + Vec3::Y * shared::sim::EYE_OFFSET * 0.7 + ahead * 0.9);
             powder_cloud(&mut commands, &fx, gun, ahead);
+        }
+    }
+}
+
+/// Each flash's few frames: turned to the view, a little wider and much dimmer by the frame. Its
+/// first frame is whole however slow the machine, as a gun that never flashed reads as a bug.
+fn burn_flashes(
+    mut commands: Commands,
+    time: Res<Time>,
+    fx: Res<FxAssets>,
+    camera: Query<&GlobalTransform, With<crate::camera::MainCamera>>,
+    mut q: Query<(Entity, &mut Flash, &mut Transform, &mut MeshMaterial3d<StandardMaterial>, Option<&mut PointLight>)>,
+) {
+    let Ok(view) = camera.single() else { return };
+    for (e, mut f, mut t, mut look, light) in &mut q {
+        if !f.is_added() {
+            f.life -= time.delta_secs();
+        }
+        if f.life <= 0.0 {
+            commands.entity(e).despawn();
+            continue;
+        }
+        let age = 1.0 - f.life / FLASH_LIFE;
+        t.scale = (f.size * (1.0 + 0.3 * age)).extend(1.0);
+        t.rotation = match f.along {
+            None => view.rotation() * Quat::from_rotation_z(f.turn),
+            Some(along) => {
+                let side = along.cross(view.translation() - t.translation).normalize_or(Vec3::X);
+                Quat::from_mat3(&Mat3::from_cols(side, along, side.cross(along)))
+            }
+        };
+        let stage = ((age * FLASH_STAGES as f32) as usize).min(FLASH_STAGES - 1);
+        if stage != f.stage {
+            f.stage = stage;
+            look.0 = if f.along.is_some() { fx.flash_tongue[stage].clone() } else { fx.flash_star[stage].clone() };
+        }
+        if let Some(mut light) = light {
+            light.intensity = FLASH_LIGHT * (1.0 - age).powi(2);
         }
     }
 }

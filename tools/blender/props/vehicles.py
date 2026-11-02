@@ -335,6 +335,11 @@ def paint_car():
     tan = np.median(a[..., :3].reshape(-1, 3), axis=0)
     box[..., :3] = tan
     put_pixels(img, a)
+    # The model's windows are painted shut: real glass, so a driver shows.
+    for o in meshes():
+        for slot in o.material_slots:
+            if slot.material and slot.material.name == "Windows":
+                slot.material = glass(alpha=0.36)
 
 
 def paint_ambassador():

@@ -1,5 +1,6 @@
 //! Over-the-shoulder third-person camera. Mirrors `shared::sim::aim_origin` so the crosshair is
-//! where shots go; pulls in when blocked by walls. At a scope (crate::scope) it goes to the eye.
+//! where shots go; pulls in when blocked by walls, or when its line would thread a window into a
+//! view of nothing but wall. At a scope (crate::scope) it goes to the eye.
 
 use avian3d::prelude::*;
 use bevy::core_pipeline::tonemapping::Tonemapping;
@@ -7,7 +8,7 @@ use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use shared::items::{ItemDb, ItemKind};
 use shared::sim::flow::Match;
-use shared::sim::{ADS_DISTANCE, CAMERA_DISTANCE, CAMERA_SHOULDER, EYE_OFFSET, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, btn, camera_distance, solid_mask};
+use shared::sim::{ADS_DISTANCE, CAMERA_DISTANCE, CAMERA_SHOULDER, EYE_OFFSET, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, btn, camera_distance, solid_mask, wall_across};
 
 use crate::visuals::{WarriorVisual, TimeOfDay};
 
@@ -228,7 +229,11 @@ fn follow(
     let offset = rot * Vec3::new(shoulder, 0.0, mc.distance);
     let pos = match Dir3::new_and_length(offset) {
         Ok((dir, len)) => {
-            let room = boom_room(&spatial, pivot, dir, len, me);
+            let mut room = boom_room(&spatial, pivot, dir, len, me);
+            // A window or a door at his back: the camera stays on his side of that wall.
+            if on_foot && let Some(wall) = wall_across(&spatial, pivot, dir, len, me) {
+                room = room.min((wall - CAMERA_RADIUS - 0.07).max(0.2));
+            }
             let out = if on_foot { BOOM_OUT } else { len };
             mc.boom = if room < mc.boom { room } else { (mc.boom + out * dt).min(room) };
             pivot + dir * mc.boom

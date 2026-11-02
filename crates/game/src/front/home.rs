@@ -10,13 +10,14 @@ use crate::camera::{CameraSystems, MainCamera};
 const TAGLINE: &str = "Dilli ki galiyon mein last one standing.";
 const PLAY: &str = "PANGA LO";
 const QUIT: &str = "Bahar niklo";
+const CREDITS: &str = "Credits";
 
 /// Radians a second the camera turns round the map's main place.
 const TURN: f32 = 0.05;
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(OnEnter(Screen::Home), spawn)
-        .add_systems(PostUpdate, orbit.run_if(in_state(Screen::Home)).after(CameraSystems).before(TransformSystems::Propagate));
+        .add_systems(PostUpdate, orbit.run_if(|screen: Res<State<Screen>>| matches!(screen.get(), Screen::Home | Screen::Credits)).after(CameraSystems).before(TransformSystems::Propagate));
 }
 
 fn spawn(mut commands: Commands, fonts: Res<Fonts>, layout: Res<MapLayout>) {
@@ -28,7 +29,8 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>, layout: Res<MapLayout>) {
                 c.spawn(theme::line(TAGLINE, &fonts.body, 25.0, CREAM));
             });
         #[cfg(not(target_arch = "wasm32"))]
-        p.spawn((Node { position_type: PositionType::Absolute, left: u(72.0), bottom: u(72.0), width: u(360.0), ..default() }, Pickable::IGNORE)).with_children(|c| {
+        p.spawn((Node { position_type: PositionType::Absolute, left: u(72.0), bottom: u(72.0), width: u(360.0), flex_direction: FlexDirection::Column, row_gap: u(12.0), ..default() }, Pickable::IGNORE)).with_children(|c| {
+            theme::small_button(c, &fonts, CREDITS, Press::Credits, GHOST, None);
             theme::small_button(c, &fonts, QUIT, Press::Quit, GHOST, None);
         });
         p.spawn(theme::corner()).with_children(|c| {

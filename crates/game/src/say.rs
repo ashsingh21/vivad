@@ -223,7 +223,8 @@ fn bubbles(
     lines: Res<Lines>,
     people: Query<&Transform, (With<Warrior>, Without<Eliminated>)>,
     local: Query<&Transform, With<LocalPlayer>>,
-    cam: Query<(&Camera, &GlobalTransform), With<crate::camera::MainCamera>>,
+    cam: Query<(&Camera, &Transform), With<crate::camera::MainCamera>>,
+    drawn: Query<(&crate::visuals::WarriorVisual, &Transform), Without<crate::camera::MainCamera>>,
     mut q: Query<(Entity, &mut Bubble, &mut Node, &mut Text, &mut Visibility)>,
     time: Res<Time>,
     view_scale: Res<crate::quality::ViewScale>,
@@ -246,7 +247,10 @@ fn bubbles(
             Visibility::Hidden,
         ));
     }
-    let (Ok((camera, cam_g)), Ok(me)) = (cam.single(), local.single()) else { return };
+    let (Ok((camera, view)), Ok(me)) = (cam.single(), local.single()) else { return };
+    // Both as this frame will draw them. The camera's global transform is a frame old here and the
+    // sim runs ahead of the drawn body, which in a 42 m/s fall put the bubble on him or under him.
+    let view = GlobalTransform::from(*view);
     let dt = time.delta_secs();
     for (e, mut b, mut node, _, mut vis) in &mut q {
         b.age += dt;
@@ -254,9 +258,10 @@ fn bubbles(
             commands.entity(e).despawn();
             continue;
         };
-        let head = tf.translation + Vec3::Y * 1.25;
+        let body = drawn.iter().find(|(v, _)| v.sim == b.who).map_or(tf.translation, |(_, t)| t.translation);
+        let head = body + Vec3::Y * 1.25;
         let near = head.distance(me.translation) < SHOUT_REACH;
-        match camera.world_to_viewport(cam_g, head).map(|p| p * view_scale.0) {
+        match camera.world_to_viewport(&view, head).map(|p| p * view_scale.0) {
             Ok(p) if near => {
                 node.left = px(p.x);
                 node.top = px(p.y);

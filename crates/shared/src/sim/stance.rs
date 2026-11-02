@@ -20,8 +20,9 @@ use super::{CAPSULE_LENGTH, CAPSULE_RADIUS, Eliminated, Kinematic, MoveMode, Pla
 
 /// How much shorter a crouched warrior is: 1.76 m standing, 1.10 m down.
 pub const CROUCH_DROP: f32 = 0.66;
-/// The pace the crouch clips were captured at, so they play at it.
-pub const CROUCH_SPEED: f32 = 1.4;
+/// A crouch without a long gun, a little quicker than one with it (movement::RIFLE_CROUCH). Its clips
+/// play to match (movement::CROUCH_CLIPS).
+pub const CROUCH_SPEED: f32 = 1.9;
 
 #[derive(Component, Clone, Copy, Debug, Default, Reflect)]
 pub struct Stance {

@@ -422,6 +422,27 @@ fn main() {
         app.update();
     }
 
+    // Parked flush along a wall, with the wall on either side: a solid building's collider is only
+    // its surface, so a spot past the wall looks free to a capsule.
+    app.world_mut().get_mut::<Health>(me).unwrap().hp = 100.0;
+    let street = if compose::built(app.world().resource::<MapLayout>(), point.xz() + out * 3.0) { -out } else { out };
+    let street = Vec3::new(street.x, 0.0, street.y);
+    for (side, way) in [("one", along), ("other", -along)] {
+        let spec = VehicleKind::Car.spec();
+        let at = point + street * (spec.size.x / 2.0 + 0.12);
+        let v = spawn(&mut app, VehicleKind::Car, at, yaw_along(way));
+        put(&mut app, me, at + street * (spec.size.x / 2.0 + 0.9));
+        app.update();
+        press(&mut app, me);
+        let rode = app.world().get::<Riding>(me).is_some();
+        press(&mut app, me);
+        let feet = app.world().get::<Transform>(me).unwrap().translation - Vec3::Y * HALF_HEIGHT;
+        let walled = compose::in_building(app.world().resource::<MapLayout>(), feet);
+        check(&format!("out of a car with a wall on its {side} side"), rode && !walled, format!("{:.2} m out from the wall, inside the building {walled}", (feet - point).dot(street)));
+        app.world_mut().entity_mut(v).despawn();
+        app.update();
+    }
+
     // Rules: no shooting at the wheel, and bots stay out of the driving seat.
     let start = point + Vec3::new(out.x, 0.0, out.y) * 24.0;
     let v = spawn(&mut app, VehicleKind::Auto, start, yaw_along(along));

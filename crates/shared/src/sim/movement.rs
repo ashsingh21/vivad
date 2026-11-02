@@ -53,10 +53,18 @@ impl Gait {
 /// tools/blender/characters/anims.py.
 pub const RIFLE_WALK: Gait = Gait([1.35, 1.12, 1.23, 1.27]);
 pub const RIFLE_RUN: Gait = Gait([5.16, 2.72, 4.36, 4.88]);
-pub const RIFLE_CROUCH: Gait = Gait([0.93, 0.92, 1.12, 1.02]);
 pub const RIFLE_AIM_WALK: Gait = Gait([1.29, 1.19, 1.14, 1.10]);
 pub const RIFLE_AIM_RUN: Gait = Gait([3.02, 2.52, 3.50, 3.97]);
-pub const RIFLE_AIM_CROUCH: Gait = Gait([0.88, 0.84, 1.09, 0.98]);
+/// A crouch with a long gun, the one gait not at its capture's pace: the pack creeps at under 1 m/s,
+/// and a player wants about PUBG's. Its clips play quicker to suit (*_CROUCH_CLIPS).
+pub const RIFLE_CROUCH: Gait = Gait([1.75, 1.6, 1.7, 1.7]);
+pub const RIFLE_AIM_CROUCH: Gait = Gait([1.4, 1.3, 1.4, 1.4]);
+/// How fast a planted foot goes back along the body in the crouch clips (m/s by direction, read off
+/// the clips' own feet, both rigs): what ground speed they keep their feet down at, so the animation
+/// plays them at the body's speed over this.
+pub const RIFLE_CROUCH_CLIPS: Gait = Gait([1.04, 0.95, 1.12, 1.11]);
+pub const RIFLE_AIM_CROUCH_CLIPS: Gait = Gait([0.96, 0.87, 1.09, 1.05]);
+pub const CROUCH_CLIPS: Gait = Gait([1.56, 1.58, 1.56, 1.42]);
 /// The pack has no sprint: its run, a fifth quicker.
 pub const RIFLE_SPRINT: f32 = 6.2;
 

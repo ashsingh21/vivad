@@ -688,13 +688,41 @@ pub fn aim_ray(center: Vec3, intent: &PlayerIntent) -> (Vec3, Vec3) {
     (origin, rot * Vec3::NEG_Z)
 }
 
+/// A wall across the follow camera's line with a hole for the line to go through: a window or a door
+/// at a warrior's back. The line itself is clear, but the camera out past that wall would see it
+/// fill the screen, so it stays on his side. How far out the wall stands, if there is one: rays
+/// beside the line and parallel to it, most of them meeting a wall that faces them. A hole wider
+/// than they stand apart, an open shop front, leaves the view through it clear and doesn't count;
+/// nor do walls alongside him, ceilings or floors, which the rays run along.
+pub fn wall_across(spatial: &SpatialQuery, pivot: Vec3, dir: Dir3, len: f32, me: Entity) -> Option<f32> {
+    const WIDE: f32 = 0.95;
+    const HIGH: f32 = 0.65;
+    const MOST: usize = 5;
+    let filter = SpatialQueryFilter::from_mask(solid_mask()).with_excluded_entities([me]);
+    let right = dir.cross(Vec3::Y).normalize_or(Vec3::X);
+    let up = right.cross(*dir);
+    let mut out: Vec<f32> = [(-1.0, -1.0), (0.0, -1.0), (1.0, -1.0), (-1.0, 0.0), (1.0, 0.0), (-1.0, 1.0), (0.0, 1.0), (1.0, 1.0)]
+        .iter()
+        .filter_map(|(x, y)| {
+            let hit = spatial.cast_ray(pivot + right * WIDE * *x + up * HIGH * *y, dir, len, true, &filter)?;
+            (hit.distance > 0.0 && hit.normal.dot(-*dir) > 0.6 && hit.normal.y.abs() < 0.4).then_some(hit.distance)
+        })
+        .collect();
+    if out.len() < MOST {
+        return None;
+    }
+    out.sort_by(f32::total_cmp);
+    Some(out[out.len() / 2])
+}
+
 /// `offset` from `pivot`, the follow camera's place, pulled in front of any wall between the two.
 pub fn camera_spot(spatial: &SpatialQuery, pivot: Vec3, offset: Vec3, me: Entity) -> Vec3 {
     let Ok((dir, len)) = Dir3::new_and_length(offset) else { return pivot + offset };
     let filter = SpatialQueryFilter::from_mask(solid_mask()).with_excluded_entities([me]);
+    let len = wall_across(spatial, pivot, dir, len, me).map_or(len, |wall| (wall - 0.25).clamp(0.2, len));
     match spatial.cast_ray(pivot, dir, len, true, &filter) {
         Some(hit) => pivot + dir * (hit.distance - 0.25).max(0.2),
-        None => pivot + offset,
+        None => pivot + dir * len,
     }
 }
 
