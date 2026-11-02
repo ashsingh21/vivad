@@ -214,7 +214,7 @@ pub struct BotPlugin;
 
 impl Plugin for BotPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(FixedUpdate, (senses::shot_noise, super::birds::startle, senses::sense, drive_bots, senses::look_about, mind_the_drop).chain().in_set(SimSet::Brains));
+        app.add_systems(FixedUpdate, (senses::shot_noise, super::birds::startle, senses::sense, drive_bots, super::vehicle::sidestep, senses::look_about, mind_the_drop, super::vehicle::at_the_wheel).chain().in_set(SimSet::Brains));
     }
 }
 
@@ -496,7 +496,7 @@ fn heading(
 }
 
 /// The move axes that walk a warrior facing along `yaw` in the direction `dir`.
-fn axes_towards(yaw: f32, dir: Vec2) -> Vec2 {
+pub(super) fn axes_towards(yaw: f32, dir: Vec2) -> Vec2 {
     let (sin, cos) = yaw.sin_cos();
     let (forward, right) = (Vec2::new(-sin, -cos), Vec2::new(cos, -sin));
     Vec2::new(dir.dot(right), dir.dot(forward))

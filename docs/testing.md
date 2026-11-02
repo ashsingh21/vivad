@@ -82,6 +82,14 @@ cost. `VIVAD_PLACE=<n>` shows the result card for that place, and `VIVAD_SAVE=<f
 settings file from `~/.panga.ron`, which test recipes never write otherwise. `VIVAD_ARMOURY_RULES=1`
 with `VIVAD_ARMOURY=<dir>` shoots a far scope's glint, the Toradar's smoke and the chappal.
 
+**Vehicles.** `just vehicle-check` drives all eight bridges both ways, a Ring Road lap and the Ridge
+by car and bike with a player's inputs, and proves parking, rivers and bots at the wheel. The real
+game: `VIVAD_ROAD=<kind>,<seconds>` drives the Ring Road and logs the frames, then stands still 25 s
+and logs those too, so the road's cost is read against the same run. `VIVAD_FLEET=<dir>` takes each
+kind where the match parked it, a drivable auto beside a tarped one, and bots at the wheel from the
+roadside. `VIVAD_SKIP_HOME=1` with either. `VIVAD_BOTS_DRIVE=0` keeps bots on foot, and `just sim`
+reports each match's rides, stuck rides and kilometres.
+
 **Frame rate per view.** `just perf` holds every tour view for 400 frames uncapped and prints
 its frame rate (`[tour-fps]`); compare runs before and after a change. `VIVAD_PERF_ALL=1` logs
 every diagnostic, including the GPU time of each render pass: the shadow pass is the largest.

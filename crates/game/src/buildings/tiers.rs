@@ -63,7 +63,7 @@ const COPING: f32 = 0.14;
 /// too small or too thin to hide a player and stops with the near tier.
 #[allow(clippy::approx_constant)] // Colours, not 1/pi.
 const COVER: [(&str, [f32; 3], [f32; 3]); 8] = [
-    ("auto", [1.4, 1.8, 2.6], [0.354, 0.326, 0.039]),
+    ("auto", [1.4, 1.8, 2.6], [0.084, 0.085, 0.076]),
     ("scooter", [0.45, 1.1, 1.65], [0.453, 0.069, 0.066]),
     ("thela", [1.25, 1.0, 2.1], [0.455, 0.215, 0.064]),
     ("chai", [1.7, 1.0, 0.8], [0.318, 0.237, 0.221]),

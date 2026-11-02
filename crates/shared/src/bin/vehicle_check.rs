@@ -1,6 +1,8 @@
 //! Vehicles against the real map, headless: where they park, get in and out, a wall stops one, it
 //! slides along a wall it meets at an angle and never goes through, ramming hurts both ways, a wreck
 //! throws its driver out, water slows one to a wade, bots hear an engine, a match's end clears them.
+//! On the NCR also, driven by the same inputs as a player: the ground's prices, the rivers, all eight
+//! bridges both ways, a lap of the Ring Road and the passes over the Ridge, by car and by bike.
 //!
 //! VIVAD_MAP=cp cargo run --release -p shared --bin vehicle_check (the default map is the NCR)
 
@@ -12,12 +14,13 @@ use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use shared::items::{ItemStack, Rarity};
 use shared::map::terrain::ground;
-use shared::map::{MapLayout, Mat, footprint};
+use shared::map::{MapLayout, MapStyle, Mat, compose, footprint};
 use shared::sim::bots::BotBrain;
 use shared::sim::combat::Projectile;
 use shared::sim::flow::{Match, Rules, leave_match};
 use shared::sim::senses::ENGINE_NOISE;
-use shared::sim::vehicle::{Riding, Vehicle, VehicleKind, spawn_vehicle};
+use shared::sim::vehicle::{Hitches, Riding, Vehicle, VehicleKind, spawn_vehicle};
+use shared::sim::movement::SPRINT_SPEED;
 use shared::sim::{Action, DamageCause, DamageMsg, Eliminated, HALF_HEIGHT, Health, Inventory, Kinematic, LocalPlayer, MatchConfig, MoveMode, PlayerIntent, SimPlugin, Warrior, btn, solid_mask};
 
 fn app() -> App {
@@ -134,6 +137,172 @@ fn water_edge(layout: &MapLayout) -> Option<(Vec3, Vec2)> {
     found.first().map(|(p, d)| (Vec3::new(p.x, t.height(p.x, p.y), p.y), *d))
 }
 
+/// How a drive went.
+struct Run {
+    done: bool,
+    seconds: f32,
+    top: f32,
+    /// The slowest it went once under way, and its mean.
+    low: f32,
+    mean: f32,
+    /// Health lost, and where it stopped.
+    lost: f32,
+    end: Vec2,
+    /// The highest and lowest it rode, and the steepest it was, in degrees.
+    high: f32,
+    deep: f32,
+    steep: f32,
+}
+
+impl Run {
+    fn line(&self) -> String {
+        format!("{:.0} s, top {:.1} m/s, mean {:.1}, slowest {:.1}, health lost {:.0}, rode {:.1} to {:.1} m, steepest {:.1} degrees, ended at {:.0},{:.0}", self.seconds, self.top, self.mean, self.low, self.lost, self.deep, self.high, self.steep, self.end.x, self.end.y)
+    }
+}
+
+/// The point `metres` on along `line` from its point `from`.
+fn along_line(line: &[Vec2], from: usize, metres: f32) -> Vec2 {
+    let mut left = metres;
+    for s in line[from.min(line.len() - 1)..].windows(2) {
+        let len = s[0].distance(s[1]);
+        if len >= left {
+            return s[0].lerp(s[1], left / len.max(1e-3));
+        }
+        left -= len;
+    }
+    *line.last().unwrap()
+}
+
+/// `kind` driven the length of `line` by the player's own controls: it steers at a point ahead and
+/// brakes for what bends are coming, as a player would, and gives up if it stops for 5 s.
+fn pilot(app: &mut App, me: Entity, kind: VehicleKind, line: &[Vec2], seconds: f32) -> Run {
+    let spec = kind.spec();
+    // A point every few metres, so that the nearest of them is where it has got to.
+    let total: f32 = line.windows(2).map(|s| s[0].distance(s[1])).sum();
+    let dense: Vec<Vec2> = (0..=(total / 4.0) as usize).map(|k| along_line(line, 0, k as f32 * 4.0)).chain([*line.last().unwrap()]).collect();
+    let line = &dense[..];
+    let height = |app: &App, p: Vec2| app.world().resource::<MapLayout>().terrain.height(p.x, p.y);
+    let foot = Vec3::new(line[0].x, height(app, line[0]), line[0].y);
+    let d = (line[1] - line[0]).normalize();
+    let v = spawn(app, kind, foot, yaw_along(d));
+    put(app, me, foot + Vec3::new(d.y, 0.0, -d.x) * (spec.size.x / 2.0 + 0.9));
+    app.update();
+    app.world_mut().get_mut::<Health>(me).unwrap().hp = 100.0;
+    press(app, me);
+    assert!(app.world().get::<Riding>(me).is_some(), "{kind:?} at {:?}: not in", line[0]);
+    let mut run = Run { done: false, seconds: 0.0, top: 0.0, low: f32::MAX, mean: 0.0, lost: 0.0, end: line[0], high: f32::MIN, deep: f32::MAX, steep: 0.0 };
+    let (mut next, mut moved, mut still, mut ticks) = (0usize, foot, 0.0f32, 0u32);
+    let last = *line.last().unwrap();
+    for _ in 0..(seconds * 60.0) as u32 {
+        let t = app.world().get::<Transform>(v).unwrap().translation;
+        let vehicle = app.world().get::<Vehicle>(v).unwrap();
+        let (speed, heading, pitch) = (vehicle.speed, vehicle.heading, vehicle.pitch);
+        run.lost = spec.hp - vehicle.hp;
+        let p = t.xz();
+        run.end = p;
+        run.high = run.high.max(t.y - spec.centre());
+        run.deep = run.deep.min(t.y - spec.centre());
+        run.steep = run.steep.max(pitch.abs().to_degrees());
+        run.top = run.top.max(speed);
+        ticks += 1;
+        run.mean += speed;
+        if ticks > 300 {
+            run.low = run.low.min(speed);
+        }
+        // A closed road ends where it began.
+        if p.distance(last) < 9.0 && next + 8 > line.len() {
+            run.done = true;
+            break;
+        }
+        // Where it has got to along the line, then a point ahead of that.
+        let look = (next..(next + 24).min(line.len())).min_by(|a, b| line[*a].distance_squared(p).total_cmp(&line[*b].distance_squared(p)));
+        next = look.unwrap_or(next);
+        let aim = along_line(line, next, (speed * 0.9).max(10.0));
+        let off = wrap(yaw_along(aim - p) - heading);
+        let far = along_line(line, next, speed * 2.5 + 24.0);
+        let bend = wrap(yaw_along(far - aim) - yaw_along(aim - p)).abs();
+        let slow = (bend > 0.45 || off.abs() > 0.35) && speed > 10.0;
+        app.world_mut().get_mut::<PlayerIntent>(me).unwrap().move_axis = Vec2::new((-off * 3.0).clamp(-1.0, 1.0), if slow { -1.0 } else { 1.0 });
+        app.world_mut().get_mut::<Health>(me).unwrap().hp = 100.0;
+        app.update();
+        run.seconds += 1.0 / 60.0;
+        if t.distance(moved) > 1.0 {
+            moved = t;
+            still = 0.0;
+        } else {
+            still += 1.0 / 60.0;
+            if still > 5.0 {
+                break;
+            }
+        }
+    }
+    run.mean /= ticks.max(1) as f32;
+    app.world_mut().get_mut::<PlayerIntent>(me).unwrap().move_axis = Vec2::ZERO;
+    press(app, me);
+    app.world_mut().entity_mut(v).despawn();
+    app.update();
+    run
+}
+
+fn wrap(a: f32) -> f32 {
+    (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
+}
+
+/// A straight stretch of one ground class, long enough to reach what it allows.
+fn stretch(layout: &MapLayout, class: u8, len: f32) -> Option<Vec<Vec2>> {
+    let t = &layout.terrain;
+    let reach = layout.half_extent - 60.0 - len;
+    let mut x = -reach;
+    while x < reach {
+        let mut z = -reach;
+        while z < reach {
+            let a = Vec2::new(x, z);
+            for d in [Vec2::X, Vec2::Y, Vec2::NEG_X, Vec2::NEG_Y] {
+                let clear = (0..=(len / 4.0) as i32).all(|k| {
+                    let p = a + d * k as f32 * 4.0;
+                    (-3..=3).all(|side| {
+                        let q = p + d.perp() * side as f32 * 2.0;
+                        t.ground_at(q.x, q.y) == Some(class) && !compose::built(layout, q) && !layout.props.iter().any(|o| o.pos.xz().distance(q) < 3.0)
+                    })
+                });
+                if clear && (t.height(a.x, a.y) - t.height(a.x + d.x * len, a.y + d.y * len)).abs() < 2.0 {
+                    return Some(vec![a, a + d * len]);
+                }
+            }
+            z += 37.0;
+        }
+        x += 37.0;
+    }
+    None
+}
+
+/// Where each road crosses the Ridge: the stretch of road either side, the climbiest first.
+fn ridge_passes(layout: &MapLayout) -> Vec<Vec<Vec2>> {
+    let ridge: Vec<Vec2> = compose::RIDGE.iter().map(|p| Vec2::new(p.0, p.1)).collect();
+    let cross = |a: Vec2, b: Vec2, c: Vec2, d: Vec2| {
+        let (u, v) = (b - a, d - c);
+        let den = u.perp_dot(v);
+        let (t, s) = ((c - a).perp_dot(v) / den, (c - a).perp_dot(u) / den);
+        den.abs() > 1e-6 && (0.0..1.0).contains(&t) && (0.0..1.0).contains(&s)
+    };
+    let mut found: Vec<(f32, Vec<Vec2>)> = vec![];
+    for (_, line) in compose::network() {
+        for k in 1..line.len() {
+            if !ridge.windows(2).any(|r| cross(line[k - 1], line[k], r[0], r[1])) {
+                continue;
+            }
+            let part: Vec<Vec2> = line[k.saturating_sub(16)..(k + 16).min(line.len())].to_vec();
+            let (lo, hi) = part.iter().map(|p| layout.terrain.height(p.x, p.y)).fold((f32::MAX, f32::MIN), |(a, b), h| (a.min(h), b.max(h)));
+            if part.len() > 8 && found.iter().all(|f| f.1[f.1.len() / 2].distance(line[k]) > 250.0) {
+                found.push((hi - lo, part));
+            }
+        }
+    }
+    found.sort_by(|a, b| b.0.total_cmp(&a.0));
+    println!("  the Ridge: {} road crossings, rising {:?} m", found.len(), found.iter().map(|f| f.0.round()).collect::<Vec<_>>());
+    found.into_iter().map(|f| f.1).collect()
+}
+
 fn main() {
     let mut app = app();
     let mut fails = 0;
@@ -147,7 +316,28 @@ fn main() {
         let by = |k| parked.iter().filter(|p| p.0 == k).count();
         let layout = world.resource::<MapLayout>();
         let want = Rules::of(layout.style).parked;
-        check("parked at match start", parked.len() * 4 >= want * 3, format!("{} of {want} vehicles: {} autos, {} scooters, {} bikes, {} heavy, {} cars", parked.len(), by(VehicleKind::Auto), by(VehicleKind::Scooter), by(VehicleKind::Commuter), by(VehicleKind::Bullet), by(VehicleKind::Car)));
+        let fleet = VehicleKind::ALL.map(|k| format!("{} {}", by(k), k.spec().name)).join(", ");
+        check("parked at match start", parked.len() * 4 >= want * 3, format!("{} of {want} vehicles: {fleet}", parked.len()));
+        if layout.style == MapStyle::Ncr {
+            check("the whole fleet is out", parked.len() == want, format!("{} of {want}, {} bays on the map", parked.len(), layout.parking.len()));
+            // Jeeps and tractors in yards only.
+            let at_yard = |p: &Vec3| layout.parking.iter().any(|b| b.yard && b.pos.xz().distance(p.xz()) < 0.5);
+            let strays = parked.iter().filter(|p| p.0.rough() && !at_yard(&p.1)).count();
+            check("Khuli Gaadi and tractors at yards only", strays == 0 && by(VehicleKind::Khuli) == 6 && by(VehicleKind::Tractor) == 2, format!("{strays} out of a yard"));
+            // From anywhere dry: how far to the nearest one, at a sprint.
+            let mut far: Vec<f32> = vec![];
+            for i in -47..=47 {
+                for j in -47..=47 {
+                    let p = Vec2::new(i as f32, j as f32) * 40.0;
+                    if layout.terrain.ground_at(p.x, p.y) != Some(ground::WATER) {
+                        far.push(parked.iter().map(|v| v.1.xz().distance(p)).fold(f32::MAX, f32::min));
+                    }
+                }
+            }
+            far.sort_by(f32::total_cmp);
+            let at = |q: f32| far[((far.len() - 1) as f32 * q) as usize];
+            check("a vehicle within about a 30 s run", at(0.5) / SPRINT_SPEED < 30.0 && at(0.9) / SPRINT_SPEED < 50.0, format!("half of the dry map within {:.0} m ({:.0} s at a sprint), nine in ten within {:.0} m ({:.0} s), the farthest spot {:.0} m", at(0.5), at(0.5) / SPRINT_SPEED, at(0.9), at(0.9) / SPRINT_SPEED, at(1.0)));
+        }
         // Roads and hard ground, none in the water or on a lawn.
         let class = |p: &Vec3| layout.terrain.ground_at(p.x, p.z);
         let on = |c| parked.iter().filter(|p| class(&p.1) == Some(c)).count();
@@ -162,6 +352,8 @@ fn main() {
     for kind in VehicleKind::ALL {
         let spec = kind.spec();
         let half = spec.size.z / 2.0;
+        // Each crash costs the driver something: every kind starts whole.
+        app.world_mut().get_mut::<Health>(me).unwrap().hp = 100.0;
         // Head on, flat out.
         let start = point + Vec3::new(out.x, 0.0, out.y) * 24.0;
         let v = spawn(&mut app, kind, start, yaw_along(-out));
@@ -222,7 +414,8 @@ fn main() {
             inside += app.world_mut().run_system_once(move |spatial: SpatialQuery| spatial.shape_intersections(&shape, t, tf.rotation, &SpatialQueryFilter::from_mask(solid_mask())).len()).unwrap();
         }
         let vehicle = app.world().get::<Vehicle>(v).unwrap();
-        check(&format!("{kind:?} slides along"), slid > 6.0 && inside == 0, format!("{slid:.1} m along the wall, centre {closest:.2} m off it at the nearest, {inside} ticks inside it, still {:.1} m/s, health {:.0}/{:.0}", vehicle.speed, vehicle.hp, spec.hp));
+        let slide = if kind == VehicleKind::Tractor { 2.0 } else { 6.0 };
+        check(&format!("{kind:?} slides along"), slid > slide && inside == 0, format!("{slid:.1} m along the wall, centre {closest:.2} m off it at the nearest, {inside} ticks inside it, still {:.1} m/s, health {:.0}/{:.0}", vehicle.speed, vehicle.hp, spec.hp));
         press(&mut app, me);
         app.world_mut().get_mut::<PlayerIntent>(me).unwrap().move_axis = Vec2::ZERO;
         app.world_mut().entity_mut(v).despawn();
@@ -271,7 +464,7 @@ fn main() {
     put(&mut app, bot_brained, start + Vec3::new(out.y, 0.0, -out.x) * 1.5);
     app.update();
     press(&mut app, bot_brained);
-    check("bots do not drive", app.world().get::<Riding>(bot_brained).is_none() && app.world().get::<Vehicle>(v).unwrap().driver.is_none(), "a bot pressing the key beside an auto stays on foot".into());
+    check("bots use no key to drive", app.world().get::<Riding>(bot_brained).is_none() && app.world().get::<Vehicle>(v).unwrap().driver.is_none(), "a bot pressing the key beside an auto stays on foot".into());
     app.world_mut().entity_mut(v).despawn();
     app.update();
 
@@ -363,6 +556,124 @@ fn main() {
     check("bots hear an engine", riding && !on_foot && knows(&app), format!("at {:.0} m: standing by it unheard {}, at the wheel heard {}", off.length(), !on_foot, knows(&app)));
     press(&mut app, me);
 
+    // A bot with a long way to go takes a vehicle beside it, drives the street route and gets out at
+    // the end of it; a driver who is stopped gets out in seconds.
+    if app.world().resource::<MapLayout>().style == MapStyle::Ncr {
+        app.world_mut().get_mut::<PlayerIntent>(me).unwrap().move_axis = Vec2::ZERO;
+        let driver = listener;
+        let ring = compose::network().swap_remove(0).1;
+        let at = |k: usize| ring[k];
+        let (from, to) = (at(6), at(40));
+        let height = |app: &App, p: Vec2| app.world().resource::<MapLayout>().terrain.height(p.x, p.y);
+        let foot = Vec3::new(from.x, height(&app, from), from.y);
+        let beside = foot + Vec3::new(1.0, 0.0, 0.0) * 9.0;
+        let goal = Vec3::new(to.x, height(&app, to), to.y);
+        // Nobody else matters here, and the match must go on.
+        let tick = |app: &mut App| {
+            {
+                let mut b = app.world_mut().get_mut::<BotBrain>(driver).unwrap();
+                b.goal = Some(goal);
+                b.target = None;
+                b.provoked = None;
+                b.think = 5.0;
+            }
+            for who in [driver, me] {
+                app.world_mut().get_mut::<Health>(who).unwrap().hp = 100.0;
+            }
+        };
+        // A bot stood on the road gets off the line of what is coming at it, at the player's top speed.
+        let trials = 6;
+        let mut run_down = 0;
+        for k in 0..trials {
+            let (start, stood) = (at(60 + k * 12), at(62 + k * 12));
+            let ground = |app: &App, p: Vec2| Vec3::new(p.x, height(app, p), p.y);
+            let d = (stood - start).normalize();
+            let from_here = ground(&app, start);
+            let bike = spawn(&mut app, VehicleKind::Bullet, from_here, yaw_along(d));
+            put(&mut app, me, from_here + Vec3::new(d.y, 0.0, -d.x) * 1.2);
+            app.update();
+            press(&mut app, me);
+            app.world_mut().get_mut::<Vehicle>(bike).unwrap().speed = 19.0;
+            app.world_mut().get_mut::<PlayerIntent>(me).unwrap().move_axis = Vec2::Y;
+            let spot = ground(&app, stood);
+            put(&mut app, driver, spot);
+            let before = app.world().get::<Health>(driver).unwrap().shield;
+            let mut hit = false;
+            for _ in 0..110 {
+                {
+                    let mut b = app.world_mut().get_mut::<BotBrain>(driver).unwrap();
+                    b.goal = Some(spot);
+                    b.target = None;
+                    b.provoked = None;
+                    b.calm = false;
+                    b.think = 5.0;
+                }
+                app.update();
+                let h = app.world().get::<Health>(driver).unwrap();
+                hit |= h.hp < 100.0 || h.shield < before;
+                let h = app.world().get::<Kinematic>(driver).unwrap().velocity.length();
+                hit |= h > 11.0;
+                app.world_mut().get_mut::<Health>(me).unwrap().hp = 100.0;
+            }
+            run_down += hit as usize;
+            app.world_mut().get_mut::<PlayerIntent>(me).unwrap().move_axis = Vec2::ZERO;
+            press(&mut app, me);
+            app.world_mut().entity_mut(bike).despawn();
+            app.world_mut().get_mut::<Health>(driver).unwrap().hp = 100.0;
+            app.update();
+        }
+        check("bots sidestep a closing vehicle", run_down * 3 <= trials as usize, format!("{run_down} of {trials} run down, at 19 m/s on the Ring Road"));
+        // Blocked: its wheels turn and it goes nowhere.
+        let car = spawn(&mut app, VehicleKind::Car, foot, yaw_along(at(7) - from));
+        put(&mut app, driver, beside);
+        let (mut in_at, mut out_at) = (None, None);
+        for n in 0..60 * 20 {
+            tick(&mut app);
+            if in_at.is_some() {
+                app.world_mut().get_mut::<Vehicle>(car).unwrap().speed = 0.0;
+            }
+            app.update();
+            let riding = app.world().get::<Riding>(driver).is_some();
+            if riding && in_at.is_none() {
+                in_at = Some(n);
+            }
+            if !riding && in_at.is_some() {
+                out_at = Some(n);
+                break;
+            }
+        }
+        let stuck = app.world().resource::<Hitches>().stuck;
+        check("a stuck driver gets out", out_at.is_some() && stuck == 1, format!("in at tick {in_at:?}, out at tick {out_at:?}: {stuck} ride ended stuck"));
+        app.world_mut().entity_mut(car).despawn();
+        app.update();
+        // A long way to go. It won't take another for a while after that one.
+        let car = spawn(&mut app, VehicleKind::Car, foot, yaw_along(at(7) - from));
+        put(&mut app, driver, beside);
+        let (mut rode, mut far, mut ticks, mut top) = (false, 0.0f32, 0, 0.0f32);
+        for _ in 0..60 * 140 {
+            tick(&mut app);
+            app.update();
+            ticks += 1;
+            if app.world().get::<Riding>(driver).is_some() {
+                rode = true;
+                let t = app.world().get::<Transform>(car).unwrap().translation;
+                far = far.max(t.xz().distance(from));
+                top = top.max(app.world().get::<Vehicle>(car).unwrap().speed);
+            } else if rode {
+                break;
+            } else if ticks % 120 == 0 {
+                put(&mut app, driver, beside);
+            }
+        }
+        let t = app.world().get::<Transform>(driver).unwrap().translation;
+        let short = t.xz().distance(to);
+        let rides = app.world().resource::<Hitches>().rides;
+        let on_foot = app.world().get::<Riding>(driver).is_none();
+        check("a bot drives a long way and gets out", rode && far > 300.0 && short < 60.0 && on_foot, format!("{rides} rides, {far:.0} m from where it set out, top {top:.1} m/s, on foot {short:.0} m from its goal after {:.0} s", ticks as f32 / 60.0));
+        app.world_mut().entity_mut(car).despawn();
+        app.update();
+    }
+
     // Water takes a vehicle down to a wade.
     let wade = Rules::of(app.world().resource::<MapLayout>().style).wade_speed;
     let edge = water_edge(app.world().resource::<MapLayout>());
@@ -393,6 +704,100 @@ fn main() {
         }
         (Some(_), None) => check("water slows a vehicle to a wade", false, "no bank found".into()),
         _ => println!("  no wading on this map"),
+    }
+
+    if app.world().resource::<MapLayout>().style == MapStyle::Ncr {
+        if app.world().get::<Riding>(me).is_some() {
+            press(&mut app, me);
+        }
+        // A tractor wades, unhurt; anything else loses its engine trying.
+        let (bank, into) = water_edge(app.world().resource::<MapLayout>()).expect("a bank");
+        for kind in [VehicleKind::Tractor, VehicleKind::Car] {
+            let spec = kind.spec();
+            let foot = bank - Vec3::new(into.x, 0.0, into.y) * 12.0;
+            let foot = foot.with_y(app.world().resource::<MapLayout>().terrain.height(foot.x, foot.z));
+            let v = spawn(&mut app, kind, foot, yaw_along(into));
+            put(&mut app, me, foot + Vec3::new(into.y, 0.0, -into.x) * (spec.size.x / 2.0 + 0.9));
+            app.update();
+            press(&mut app, me);
+            app.world_mut().get_mut::<PlayerIntent>(me).unwrap().move_axis = Vec2::Y;
+            let (mut wet, mut ticks) = (0.0f32, 0);
+            for _ in 0..60 * 18 {
+                app.world_mut().get_mut::<Health>(me).unwrap().hp = 100.0;
+                app.update();
+                let t = app.world().get::<Transform>(v).unwrap().translation;
+                let speed = app.world().get::<Vehicle>(v).unwrap().speed.abs();
+                if app.world().resource::<MapLayout>().terrain.ground_at(t.x, t.z) == Some(ground::WATER) {
+                    ticks += 1;
+                    if ticks > 1 {
+                        wet = wet.max(speed);
+                    }
+                }
+            }
+            let vehicle = app.world().get::<Vehicle>(v).unwrap();
+            let (hp, wrecked) = (vehicle.hp, vehicle.wrecked);
+            let seconds = ticks as f32 / 60.0;
+            if kind == VehicleKind::Tractor {
+                check("a tractor wades unhurt", ticks > 60 && (3.0..=3.51).contains(&wet) && hp == spec.hp, format!("{wet:.1} m/s over {seconds:.0} s of water, health {hp:.0}/{:.0}", spec.hp));
+            } else {
+                check("a river drowns any other engine", ticks > 60 && wet <= 2.01 && hp < spec.hp - 10.0 * seconds.min(10.0), format!("{wet:.1} m/s over {seconds:.0} s of water, health {hp:.0}/{:.0}, wrecked {wrecked}", spec.hp));
+            }
+            app.world_mut().get_mut::<PlayerIntent>(me).unwrap().move_axis = Vec2::ZERO;
+            if app.world().get::<Riding>(me).is_some() {
+                press(&mut app, me);
+            }
+            app.world_mut().entity_mut(v).despawn();
+            app.update();
+        }
+
+        // Each ground's price, reached flat out on a straight of it.
+        for (name, class, car, jeep) in [("open land", ground::OPEN, 0.7, 1.0), ("sand", ground::SAND, 0.45, 0.8)] {
+            let Some(line) = stretch(app.world().resource::<MapLayout>(), class, 260.0) else {
+                check(&format!("speed on {name}"), false, "no straight of it".into());
+                continue;
+            };
+            for (kind, share) in [(VehicleKind::Car, car), (VehicleKind::Khuli, jeep)] {
+                let run = pilot(&mut app, me, kind, &line, 30.0);
+                let limit = kind.spec().law.top * share;
+                check(&format!("{kind:?} on {name}"), run.top < limit + 3.0 && run.top > limit * 0.75, format!("holds {:.1} m/s of a {limit:.1} limit: {}", run.top, run.line()));
+            }
+        }
+
+        // All eight bridges, both ways, by car and by bike, down the middle of the road.
+        for (s, name) in compose::SPANS.iter().zip(compose::BRIDGES) {
+            // From the foot of one ramp to the foot of the other: past them the road may turn away.
+            let out = [s.at(-s.ramp() - 6.0, 0.0), s.at(s.len() * 0.25, 0.0), s.at(s.len() * 0.75, 0.0), s.at(s.len() + s.ramp() + 6.0, 0.0)];
+            let back = [out[3], out[2], out[1], out[0]];
+            for kind in [VehicleKind::Car, VehicleKind::Commuter] {
+                for (way, line) in [("east", out), ("west", back)] {
+                    let run = pilot(&mut app, me, kind, &line, 70.0);
+                    check(&format!("{name} {way}, {kind:?}"), run.done && run.lost == 0.0 && run.mean > 8.0, run.line());
+                }
+            }
+        }
+
+        // The Ring Road's whole loop.
+        let ring = compose::network().swap_remove(0).1;
+        let length: f32 = ring.windows(2).map(|s| s[0].distance(s[1])).sum();
+        for kind in [VehicleKind::Car, VehicleKind::Commuter] {
+            let run = pilot(&mut app, me, kind, &ring, 900.0);
+            check(&format!("Ring Road lap, {kind:?}"), run.done && run.mean > 12.0, format!("{length:.0} m: {}", run.line()));
+        }
+
+        // The Ridge, by road and straight over its crest.
+        let passes = ridge_passes(app.world().resource::<MapLayout>());
+        check("three passes over the Ridge", passes.len() >= 3, format!("{} found", passes.len()));
+        for (k, line) in passes.iter().take(3).enumerate() {
+            for kind in [VehicleKind::Car, VehicleKind::Commuter] {
+                let run = pilot(&mut app, me, kind, line, 90.0);
+                check(&format!("Ridge pass {}, {kind:?}", k + 1), run.done, run.line());
+            }
+        }
+        let over = [Vec2::new(-1390.0, -450.0), Vec2::new(-1030.0, -450.0)];
+        for kind in [VehicleKind::Car, VehicleKind::Khuli] {
+            let run = pilot(&mut app, me, kind, &over, 60.0);
+            println!("  straight over the crest, {kind:?}: {}", run.line());
+        }
     }
 
     // Home: nothing of the match is left on the map.

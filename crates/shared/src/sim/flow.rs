@@ -71,8 +71,8 @@ impl Rules {
                 chest_sight: 250.0,
                 // Chests are a few hundred metres apart here: anything in sight comes first.
                 find_sight: 45.0,
-                // About one every 200 m.
-                parked: 96,
+                // One to a 420 m square (crate::map::parking): about a 30 s run from anywhere.
+                parked: 72,
             },
         }
     }

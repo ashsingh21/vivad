@@ -24,8 +24,6 @@
 //! OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 //! SOFTWARE.
 
-use std::f32::consts::TAU;
-
 use bevy::prelude::*;
 
 /// A vehicle's drawn state, eased each frame.
@@ -36,19 +34,17 @@ pub struct Feel {
     pub nose: f32,
     /// The speed a second ago, near enough: the gap to the real speed is the acceleration.
     lag: f32,
-    /// Wheel turn and front-wheel steer, radians.
-    pub spin: f32,
+    /// Front-wheel steer, radians.
     pub steer: f32,
 }
 
 impl Feel {
-    pub fn update(&mut self, speed: f32, steer: f32, top: f32, lean: f32, wheel: f32, dt: f32) {
+    pub fn update(&mut self, speed: f32, steer: f32, top: f32, lean: f32, dt: f32) {
         let rate = |r: f32| (dt * r).min(1.0);
         self.lag += (speed - self.lag) * rate(1.0);
         let frac = (speed.abs() / top).min(1.0);
         self.lean += (-steer * frac.sqrt() * lean - self.lean) * rate(5.0);
         self.nose += ((speed - self.lag) / top * 0.5 - self.nose) * rate(10.0);
-        self.spin = (self.spin - speed / wheel * dt) % TAU;
         self.steer += (-steer / 2.5 - self.steer) * rate(10.0);
     }
 

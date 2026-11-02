@@ -45,6 +45,8 @@ C = {
     "kettle": (0.72, 0.70, 0.66), "chai": (0.75, 0.50, 0.30), "scooter": (0.86, 0.18, 0.16),
     "tank": (0.05, 0.05, 0.06), "tank_rib": (0.09, 0.09, 0.10), "shutter": (0.50, 0.51, 0.50), "shutter_dk": (0.33, 0.33, 0.33),
     "gumti": (0.16, 0.42, 0.46),
+    # A parked auto is under a dusty tarp: green and yellow on the street mean one you can drive.
+    "cover": (0.37, 0.36, 0.33), "cover_dk": (0.29, 0.28, 0.26),
 }
 
 
@@ -158,11 +160,11 @@ class Piece:
 
 def auto():
     p = Piece("auto")
-    p.hull([(x, y, z) for x in (-0.68, 0.68) for y in (-1.22, 0.25) for z in (0.32, 0.98)], "auto_green")
-    p.hull([(x * w, y, z) for (y, w, z0, z1) in ((0.2, 0.62, 0.32, 1.0), (0.9, 0.42, 0.36, 1.02), (1.32, 0.26, 0.5, 0.98)) for x in (-1, 1) for z in (z0, z1)], "auto_green")
-    p.box((-0.70, -1.24, 0.60), (0.70, 0.22, 0.68), "auto_yellow")
+    p.hull([(x, y, z) for x in (-0.68, 0.68) for y in (-1.22, 0.25) for z in (0.32, 0.98)], "cover")
+    p.hull([(x * w, y, z) for (y, w, z0, z1) in ((0.2, 0.62, 0.32, 1.0), (0.9, 0.42, 0.36, 1.02), (1.32, 0.26, 0.5, 0.98)) for x in (-1, 1) for z in (z0, z1)], "cover")
+    p.box((-0.70, -1.24, 0.60), (0.70, 0.22, 0.68), "cover_dk")
     roof = [(x, y, z) for x in (-0.70, 0.70) for y in (-1.28, 0.62) for z in (1.62, 1.70)] + [(x, y, 1.80) for x in (-0.5, 0.5) for y in (-1.15, 0.45)]
-    p.hull(roof, "auto_yellow")
+    p.hull(roof, "cover_dk")
     p.box((-0.68, -1.24, 0.95), (0.68, -1.16, 1.64), "black")
     for x in (-0.66, 0.66):
         p.cyl((x, 0.55, 0.98), (x, 0.55, 1.64), 0.025, "black", 6)

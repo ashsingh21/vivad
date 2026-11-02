@@ -13,7 +13,7 @@ use crate::SmallRng;
 
 use super::build::{Builder, CHHATRI, Frame};
 use super::terrain::{Terrain, fbm, ground};
-use super::{ChestKind, ChestSpawn, Footprint, Mat, MapId, MapLayout, MapStyle, Poi, Prop, Shape, delhi, footprint, india, interiors, kit};
+use super::{ChestKind, ChestSpawn, Footprint, Mat, MapId, MapLayout, MapStyle, Poi, Prop, Shape, delhi, footprint, india, interiors, kit, parking};
 
 pub const HALF: f32 = 2000.0;
 /// The map is always built from this seed, so players can learn it. The seed a match passes in
@@ -157,7 +157,7 @@ const HINDON_BANK: f32 = 70.0;
 const WATER_BED: f32 = -1.2;
 const WATER_TOP: f32 = -0.2;
 /// The Delhi Ridge: green hills screening Delhi from Gurugram.
-const RIDGE: [(f32, f32); 12] = [
+pub const RIDGE: [(f32, f32); 12] = [
     (-1230.0, -790.0), (-1210.0, -450.0), (-1230.0, -100.0), (-1320.0, 250.0), (-1330.0, 550.0), (-1300.0, 880.0), (-1220.0, 1060.0),
     (-1040.0, 1210.0), (-760.0, 1400.0), (-520.0, 1510.0), (-200.0, 1640.0), (200.0, 1720.0),
 ];
@@ -180,14 +180,14 @@ pub struct Span {
 }
 
 impl Span {
-    fn len(&self) -> f32 {
+    pub fn len(&self) -> f32 {
         self.a.distance(self.c)
     }
-    fn dir(&self) -> Vec2 {
+    pub fn dir(&self) -> Vec2 {
         (self.c - self.a).normalize()
     }
     /// `along` metres from end a, and `off` metres to one side of the middle of the road.
-    fn at(&self, along: f32, off: f32) -> Vec2 {
+    pub fn at(&self, along: f32, off: f32) -> Vec2 {
         self.a + self.dir() * along + self.dir().perp() * off
     }
     /// Turns a box's x along the bridge and its z across it.
@@ -197,7 +197,7 @@ impl Span {
     }
     /// How long the road's slope up to each end is: 1 in 13 at the higher bridges, about what a
     /// real approach has.
-    fn ramp(&self) -> f32 {
+    pub fn ramp(&self) -> f32 {
         (self.top * 13.4).max(8.0)
     }
 }
@@ -442,8 +442,9 @@ fn road_line(pts: &[Vec2]) -> Vec<Vec2> {
     out
 }
 
-/// Every connecting road, as a width and a line: `ROADS`, and each bridge's approach at each end.
-fn network() -> Vec<(f32, Vec<Vec2>)> {
+/// Every connecting road, as a width and a line: `ROADS`, the Ring Road first, and each bridge's
+/// approach at each end.
+pub fn network() -> Vec<(f32, Vec<Vec2>)> {
     let mut all: Vec<(f32, Vec<Vec2>)> = ROADS.iter().map(|(width, pts)| (*width, road_line(&v2s(pts)))).collect();
     for s in &SPANS {
         all.push((s.width, vec![s.a, s.at(-s.ramp(), 0.0)]));
@@ -1481,6 +1482,7 @@ pub fn generate(seed: u64) -> MapLayout {
     let spots = interiors::hollow(&mut map, ROOMS_PER_CELL);
     interiors::furnish_ring(&mut map);
     interiors::move_loot(&mut map, &spots, &mut loot);
+    parking::lay(&mut map, &network, &SPOTS.map(|s| (Vec2::new(s.1, s.2), s.3.reach())));
     map
 }
 

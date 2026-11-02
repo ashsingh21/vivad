@@ -6,11 +6,14 @@ use std::f32::consts::TAU;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::audio::Volume;
+use bevy::camera::visibility::VisibilityRange;
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::world_serialization::WorldInstanceReady;
 use rand::RngExt;
+use shared::map::MapLayout;
+use shared::map::terrain::ground;
 use shared::sim::vehicle::{CrashMsg, Riding, Vehicle, VehicleKind, WreckMsg, in_reach};
 use shared::sim::{Eliminated, Kinematic, LocalPlayer, MoveMode, PlayerIntent};
 
@@ -29,7 +32,8 @@ impl Plugin for VehiclesPlugin {
         app.init_resource::<BoardPrompt>()
             .add_systems(Startup, setup)
             .add_systems(PreUpdate, swing_camera.after(LocalInput))
-            .add_systems(Update, (dress, clear_orphans, board_prompt, panel, engine, crashes, smoke, fly_puffs, wrecks, fade_blasts))
+            .add_systems(Update, (dress, clear_orphans, board_prompt, panel, engine, passing, crashes, smoke, fly_puffs, wrecks, fade_blasts))
+            .add_systems(Last, count_drawn.run_if(|| std::env::var("VIVAD_PERF_LOG").is_ok()))
             .add_systems(Update, horn.run_if(in_state(Screen::Match)))
             .add_systems(PostUpdate, (place, seat_riders).chain().before(CameraSystems))
             .add_systems(PostUpdate, pose_riders.after(bevy::app::AnimationSystems).before(TransformSystems::Propagate));
@@ -46,6 +50,16 @@ pub struct BoardPrompt(pub Option<String>);
 /// How long a wreck burns, then smoulders, seconds.
 const BURN: f32 = 14.0;
 const SMOULDER: f32 = 40.0;
+/// How far off a vehicle is drawn, metres: 10 to 14 of a match's 72 at a time.
+const SEEN_TO: f32 = 450.0;
+/// Dust: the speed that raises it, the puffs a second flat out, and how far off it is worth a card.
+const DUST_SPEED: f32 = 5.0;
+const DUST_RATE: f32 = 24.0;
+const DUST_SEEN: f32 = 150.0;
+/// How far off another's engine is heard, metres, how many at a time, and how loud at its nearest.
+const HEARD_TO: f32 = 160.0;
+const PASSING: usize = 3;
+const PASSING_LOUD: f32 = 0.6;
 
 #[derive(Resource)]
 struct Kit {
@@ -55,10 +69,23 @@ struct Kit {
     scrape: Handle<AudioSource>,
     blast: Handle<AudioSource>,
     card: Handle<Mesh>,
-    /// Fading steps of grey smoke, of black smoke, and of flame.
+    /// Fading steps of grey smoke, of black smoke, of flame, and of dust.
     grey: Vec<Handle<StandardMaterial>>,
     black: Vec<Handle<StandardMaterial>>,
     flame: Vec<Handle<StandardMaterial>>,
+    dust: Vec<Handle<StandardMaterial>>,
+}
+
+impl Kit {
+    /// A puff's fading steps, by `Puff::steps`.
+    fn steps(&self, steps: u8) -> &[Handle<StandardMaterial>] {
+        match steps {
+            0 => &self.grey,
+            1 => &self.black,
+            2 => &self.flame,
+            _ => &self.dust,
+        }
+    }
 }
 
 /// The engine recording each kind plays, and at what rate: tools/audio/vehicles.py has three.
@@ -69,14 +96,18 @@ fn engine_of(kind: VehicleKind) -> (usize, f32) {
         VehicleKind::Commuter => (1, 1.15),
         VehicleKind::Bullet => (2, 1.0),
         VehicleKind::Car => (1, 0.8),
+        VehicleKind::Khuli => (2, 0.85),
+        VehicleKind::Sarkari => (1, 0.7),
+        VehicleKind::ChhotaTruck => (2, 0.72),
+        VehicleKind::Tractor => (2, 0.55),
     }
 }
 
 fn horn_of(kind: VehicleKind) -> usize {
     match kind {
-        VehicleKind::Auto => 0,
+        VehicleKind::Auto | VehicleKind::Tractor => 0,
         VehicleKind::Scooter | VehicleKind::Commuter | VehicleKind::Bullet => 1,
-        VehicleKind::Car => 2,
+        VehicleKind::Car | VehicleKind::Khuli | VehicleKind::Sarkari | VehicleKind::ChhotaTruck => 2,
     }
 }
 
@@ -123,6 +154,8 @@ fn setup(mut commands: Commands, assets: Res<AssetServer>, mut meshes: ResMut<As
             .collect()
     };
     let (grey, black, flame) = (fade((0.62, 0.61, 0.6), 0.5, false), fade((0.07, 0.065, 0.06), 0.8, false), fade((1.0, 0.45, 0.1), 0.95, true));
+    // Paler than the ground it rises from: the colour of the sand itself doesn't show against it.
+    let dust = fade((0.90, 0.84, 0.72), 0.5, false);
     commands.insert_resource(Kit {
         engines: ["engine_auto", "engine_bike", "engine_thump"].map(|n| assets.load(format!("audio/{n}.ogg"))),
         horns: ["horn_auto", "horn_bike", "horn_car"].map(|n| assets.load(format!("audio/{n}.ogg"))),
@@ -133,6 +166,7 @@ fn setup(mut commands: Commands, assets: Res<AssetServer>, mut meshes: ResMut<As
         grey,
         black,
         flame,
+        dust,
     });
     if std::env::var("VIVAD_CLEAN_CAPTURE").is_err() {
         commands
@@ -167,35 +201,59 @@ pub struct VehicleVisual {
     pub sim: Entity,
     pub feel: Feel,
     pivot: Entity,
-    /// Seconds of smoke owed.
+    /// Seconds of smoke owed, and puffs of dust.
     puff: f32,
+    dust: f32,
     /// How long ago it blew.
     burnt: Option<f32>,
+}
+
+/// One of a vehicle's meshes, and whose it is.
+#[derive(Component)]
+struct VehiclePart(Entity);
+
+/// With VIVAD_PERF_LOG, how many of the match's vehicles are on screen, every 10 s.
+fn count_drawn(time: Res<Time>, mut next: Local<f32>, parts: Query<(&VehiclePart, &ViewVisibility)>, vehicles: Query<(), With<Vehicle>>) {
+    if time.elapsed_secs() < *next {
+        return;
+    }
+    *next = time.elapsed_secs() + 10.0;
+    let mut drawn: Vec<Entity> = parts.iter().filter(|(_, v)| v.get()).map(|(p, _)| p.0).collect();
+    drawn.sort();
+    drawn.dedup();
+    info!("vehicles drawn: {} of {}", drawn.len(), vehicles.iter().count());
 }
 
 #[derive(Component)]
 struct Wheel {
     rest: Quat,
     steers: bool,
+    radius: f32,
+    /// Its turn, radians: each wheel's own, as a tractor's two sizes run at two rates.
+    spin: f32,
 }
 
 fn dress(mut commands: Commands, q: Query<(Entity, &Vehicle, &Transform), Added<Vehicle>>, assets: Res<AssetServer>) {
     for (e, v, t) in &q {
         let spec = v.kind.spec();
         let pivot = commands.spawn((Transform::from_xyz(0.0, -spec.centre(), 0.0), Visibility::default())).id();
-        commands.spawn((VehicleVisual { sim: e, feel: Feel::default(), pivot, puff: 0.0, burnt: None }, *t, Visibility::default())).add_child(pivot);
-        let steers = v.kind == VehicleKind::Car;
+        commands.spawn((VehicleVisual { sim: e, feel: Feel::default(), pivot, puff: 0.0, dust: 0.0, burnt: None }, *t, Visibility::default())).add_child(pivot);
+        let steers = v.kind.steers();
+        let (front, rear) = (spec.wheel, spec.rear);
         commands
             .spawn((WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(spec.model))), Transform::default(), ChildOf(pivot)))
-            .observe(move |ready: On<WorldInstanceReady>, children: Query<&Children>, names: Query<&Name>, tf: Query<&Transform>, parents: Query<&ChildOf>, mut commands: Commands| {
+            .observe(move |ready: On<WorldInstanceReady>, children: Query<&Children>, names: Query<&Name>, tf: Query<&Transform>, parents: Query<&ChildOf>, drawn: Query<(), With<Mesh3d>>, mut commands: Commands| {
                 let mut wheels = 0;
                 let wheel = |e: Entity| names.get(e).is_ok_and(|n| n.starts_with("wheel_"));
                 for d in children.iter_descendants(ready.entity) {
+                    if drawn.contains(d) {
+                        commands.entity(d).insert((VisibilityRange::abrupt(0.0, SEEN_TO), VehiclePart(e)));
+                    }
                     let Ok(t) = tf.get(d) else { continue };
                     // The node, not the mesh parts under it, which share its name.
                     if wheel(d) && !parents.get(d).is_ok_and(|p| wheel(p.parent())) {
                         let steering = names.get(d).is_ok_and(|n| n.starts_with("wheel_f"));
-                        commands.entity(d).insert(Wheel { rest: t.rotation, steers: steers && steering });
+                        commands.entity(d).insert(Wheel { rest: t.rotation, steers: steers && steering, radius: if steering { front } else { rear }, spin: 0.0 });
                         wheels += 1;
                     }
                 }
@@ -221,7 +279,7 @@ fn place(
     mut vis: Query<(&mut VehicleVisual, &mut Transform, &Children)>,
     mut parts: Query<&mut Transform, Without<VehicleVisual>>,
     kids: Query<&Children>,
-    wheels: Query<&Wheel>,
+    mut wheels: Query<&mut Wheel>,
 ) {
     let (dt, a) = (time.delta_secs(), fixed.overstep_fraction());
     for (mut vv, mut t, _) in &mut vis {
@@ -230,13 +288,14 @@ fn place(
         t.rotation = v.before.1.slerp(v.now.1, a);
         let spec = v.kind.spec();
         let steer = if v.wrecked { 0.0 } else { v.input.steer };
-        vv.feel.update(v.speed, steer, spec.law.top, spec.lean, spec.wheel, dt);
+        vv.feel.update(v.speed, steer, spec.law.top, spec.lean, dt);
         let Ok(mut pivot) = parts.get_mut(vv.pivot) else { continue };
         pivot.rotation = vv.feel.body();
         for d in kids.iter_descendants(vv.pivot) {
-            let Ok(w) = wheels.get(d) else { continue };
+            let Ok(mut w) = wheels.get_mut(d) else { continue };
             let Ok(mut wt) = parts.get_mut(d) else { continue };
-            wt.rotation = if w.steers { Quat::from_rotation_y(vv.feel.steer) * w.rest } else { w.rest } * Quat::from_rotation_x(vv.feel.spin);
+            w.spin = (w.spin - v.speed / w.radius * dt) % TAU;
+            wt.rotation = if w.steers { Quat::from_rotation_y(vv.feel.steer) * w.rest } else { w.rest } * Quat::from_rotation_x(w.spin);
         }
     }
 }
@@ -282,7 +341,10 @@ fn pose_of(kind: VehicleKind) -> (f32, f32, f32, f32, f32) {
         VehicleKind::Scooter => (1.4, 1.45, 0.55, 0.6, 0.05),
         VehicleKind::Commuter => (1.2, 1.2, 0.75, 0.45, 0.28),
         VehicleKind::Bullet => (1.1, 1.1, 0.62, 0.45, 0.12),
-        VehicleKind::Car => (1.5, 1.35, 0.8, 0.7, -0.05),
+        VehicleKind::Car | VehicleKind::Sarkari => (1.5, 1.35, 0.8, 0.7, -0.05),
+        VehicleKind::Khuli => (1.4, 1.3, 0.8, 0.65, 0.0),
+        VehicleKind::ChhotaTruck => (1.35, 1.3, 0.8, 0.7, 0.0),
+        VehicleKind::Tractor => (1.15, 1.2, 0.75, 0.5, 0.22),
     }
 }
 
@@ -447,6 +509,49 @@ fn engine(
     }
 }
 
+/// An engine that isn't the local driver's.
+#[derive(Component)]
+struct PassingEngine(Entity);
+
+/// The nearest vehicles driven by somebody else, each with its own engine, fading with distance:
+/// you hear them coming before you see them.
+fn passing(
+    mut commands: Commands,
+    kit: Res<Kit>,
+    me: Query<(&Transform, Option<&Riding>), With<LocalPlayer>>,
+    vehicles: Query<(Entity, &Transform, &Vehicle)>,
+    mut running: Query<(Entity, &PassingEngine, Option<&mut AudioSink>)>,
+) {
+    let Ok((ear, ride)) = me.single() else { return };
+    let mut near: Vec<(f32, Entity, &Vehicle)> = vehicles
+        .iter()
+        .filter(|(e, _, v)| v.driver.is_some() && !v.wrecked && ride.is_none_or(|r| r.0 != *e))
+        .map(|(e, t, v)| (t.translation.distance(ear.translation), e, v))
+        .filter(|n| n.0 < HEARD_TO)
+        .collect();
+    near.sort_by(|a, b| a.0.total_cmp(&b.0));
+    near.truncate(PASSING);
+    for (e, sound, sink) in &mut running {
+        let Some(n) = near.iter().find(|n| n.1 == sound.0) else {
+            commands.entity(e).despawn();
+            continue;
+        };
+        let Some(mut sink) = sink else { continue };
+        let (rate, _) = engine_note((n.2.speed.abs() / n.2.kind.spec().law.top).min(1.0), n.2.input.throttle);
+        let fade = 1.0 - n.0 / HEARD_TO;
+        sink.set_speed(rate * engine_of(n.2.kind).1);
+        sink.set_volume(Volume::Linear(PASSING_LOUD * fade * fade));
+    }
+    for n in &near {
+        if !running.iter().any(|(_, sound, _)| sound.0 == n.1) {
+            if std::env::var("VIVAD_AUDIO_LOG").is_ok() {
+                info!("engine passing: {:?} heard at {:.0} m", n.2.kind, n.0);
+            }
+            commands.spawn((PassingEngine(n.1), AudioPlayer(kit.engines[engine_of(n.2.kind).0].clone()), PlaybackSettings::LOOP.with_volume(Volume::Linear(0.0))));
+        }
+    }
+}
+
 fn horn(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, kit: Res<Kit>, me: Query<&Riding, With<LocalPlayer>>, vehicles: Query<&Vehicle>) {
     if !keys.just_pressed(KeyCode::KeyH) {
         return;
@@ -486,29 +591,46 @@ struct Puff {
 }
 
 fn puff(commands: &mut Commands, kit: &Kit, steps: u8, at: Vec3, vel: Vec3, life: f32, size: f32, grow: f32) {
-    let set = match steps {
-        0 => &kit.grey,
-        1 => &kit.black,
-        _ => &kit.flame,
-    };
     commands.spawn((
         Puff { vel, age: 0.0, life, size, grow, spin: rand::rng().random_range(-1.0..1.0), steps },
         Mesh3d(kit.card.clone()),
-        MeshMaterial3d(set[0].clone()),
+        MeshMaterial3d(kit.steps(steps)[0].clone()),
         Transform::from_translation(at).with_scale(Vec3::splat(size)),
         bevy::light::NotShadowCaster,
         bevy::light::NotShadowReceiver,
     ));
 }
 
-/// Grey smoke under 55% health, black under 25%; a wreck burns, then smoulders.
-fn smoke(mut commands: Commands, time: Res<Time>, kit: Res<Kit>, sims: Query<(&Vehicle, &Transform)>, mut vis: Query<&mut VehicleVisual>) {
+/// Grey smoke under 55% health, black under 25%; a wreck burns, then smoulders. Moving over bare
+/// ground, dust behind the wheels.
+fn smoke(
+    mut commands: Commands,
+    time: Res<Time>,
+    kit: Res<Kit>,
+    layout: Res<MapLayout>,
+    cam: Query<&Transform, With<MainCamera>>,
+    sims: Query<(&Vehicle, &Transform)>,
+    mut vis: Query<&mut VehicleVisual>,
+) {
     let dt = time.delta_secs();
     let mut rng = rand::rng();
+    let eye = cam.single().map_or(Vec3::ZERO, |c| c.translation);
     for mut vv in &mut vis {
         let Ok((v, t)) = sims.get(vv.sim) else { continue };
         let spec = v.kind.spec();
         let left = v.hp / spec.hp;
+        let foot = t.translation - Vec3::Y * spec.centre();
+        let bare = matches!(layout.terrain.ground_at(foot.x, foot.z), Some(ground::OPEN | ground::SAND | ground::PATH));
+        if bare && v.speed.abs() > DUST_SPEED && foot.distance(eye) < DUST_SEEN && foot.y - layout.terrain.height(foot.x, foot.z) < 0.6 {
+            vv.dust += dt * DUST_RATE * (v.speed.abs() / spec.law.top).min(1.0);
+            while vv.dust >= 1.0 {
+                vv.dust -= 1.0;
+                let side = rng.random_range(-0.5..0.5) * spec.size.x;
+                let at = foot + t.rotation * Vec3::new(side, 0.2, spec.size.z * 0.42);
+                let vel = t.rotation * Vec3::Z * v.speed * 0.12 + Vec3::new(rng.random_range(-0.4..0.4), rng.random_range(0.3..0.9), rng.random_range(-0.4..0.4));
+                puff(&mut commands, &kit, 3, at, vel, rng.random_range(1.4..2.6), 0.8, 2.2);
+            }
+        }
         let at = t.translation + t.rotation * (spec.engine - Vec3::Y * spec.centre());
         let drift = t.rotation * Vec3::Z * v.speed * 0.4;
         if let Some(b) = vv.burnt.as_mut() {
@@ -548,11 +670,7 @@ fn fly_puffs(mut commands: Commands, time: Res<Time>, kit: Res<Kit>, cam: Query<
         p.vel *= 1.0 - 0.6 * dt;
         p.size += p.grow * dt;
         let k = ((p.age / p.life) * STEPS as f32) as usize;
-        let set = match p.steps {
-            0 => &kit.grey,
-            1 => &kit.black,
-            _ => &kit.flame,
-        };
+        let set = kit.steps(p.steps);
         if m.0 != set[k.min(STEPS - 1)] {
             m.0 = set[k.min(STEPS - 1)].clone();
         }
