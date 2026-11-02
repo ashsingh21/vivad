@@ -42,6 +42,11 @@ pub const CAMERA_DISTANCE: f32 = 3.4;
 pub const CAMERA_SHOULDER: f32 = 0.65;
 /// How far behind the body the camera sits while aiming, on the same line as CAMERA_DISTANCE.
 pub const ADS_DISTANCE: f32 = 1.9;
+/// And under a roof, on that line too, so shots stay on the crosshair: a room's walls would keep
+/// shoving a longer boom about.
+pub const INDOOR_DISTANCE: f32 = 2.4;
+/// How far over the eye a ceiling counts as a roof.
+const ROOF_OVER: f32 = 3.0;
 pub const HEADSHOT_HEIGHT: f32 = 0.5;
 
 #[derive(PhysicsLayer, Clone, Copy, Debug, Default)]
@@ -676,9 +681,16 @@ pub fn camera_spot(spatial: &SpatialQuery, pivot: Vec3, offset: Vec3, me: Entity
     }
 }
 
+/// How far behind the eye the follow camera wants to be: a little in, under a roof.
+pub fn camera_distance(spatial: &SpatialQuery, eye: Vec3, me: Entity) -> f32 {
+    let filter = SpatialQueryFilter::from_mask(solid_mask()).with_excluded_entities([me]);
+    if spatial.cast_ray(eye, Dir3::Y, ROOF_OVER, true, &filter).is_some() { INDOOR_DISTANCE } else { CAMERA_DISTANCE }
+}
+
 /// Where the crosshair's ray really starts for a warrior at `center`: at the camera, aiming or
 /// not, in front of a wall at their back. (`aim_ray` is the same line with nothing in the way.)
 pub fn aim_origin(spatial: &SpatialQuery, center: Vec3, intent: &PlayerIntent, me: Entity) -> Vec3 {
-    let behind = if intent.held(btn::AIM) { ADS_DISTANCE } else { CAMERA_DISTANCE };
-    camera_spot(spatial, center + Vec3::Y * eye_offset(intent), intent.aim_rotation() * Vec3::new(CAMERA_SHOULDER, 0.0, behind), me)
+    let eye = center + Vec3::Y * eye_offset(intent);
+    let behind = if intent.held(btn::AIM) { ADS_DISTANCE } else { camera_distance(spatial, eye, me) };
+    camera_spot(spatial, eye, intent.aim_rotation() * Vec3::new(CAMERA_SHOULDER, 0.0, behind), me)
 }

@@ -24,7 +24,7 @@ use shared::sim::nav::{NavGrid, StreetFloor};
 use shared::sim::senses::{self, NoiseMsg, in_sight};
 use shared::sim::stance::{CROUCH_DROP, CROUCH_SPEED, Stance};
 use shared::sim::zone::Zone;
-use shared::sim::{EYE_OFFSET, HALF_HEIGHT, Health, Inventory, Kinematic, Layer, MatchConfig, MoveMode, PlayerIntent, SimPlugin, Warrior, btn, hit_mask, solid_mask};
+use shared::sim::{ADS_DISTANCE, CAMERA_DISTANCE, CAMERA_SHOULDER, CROUCH_EYE_DROP, EYE_OFFSET, HALF_HEIGHT, Health, Inventory, Kinematic, Layer, MatchConfig, MoveMode, PlayerIntent, SimPlugin, Warrior, btn, hit_mask, solid_mask};
 
 const COVER: [&str; 11] = ["chai", "thela", "crates", "cooler", "drum", "scooter", "auto", "mumty", "tanki", "gumti", "clothesline"];
 
@@ -661,6 +661,49 @@ fn long_shots(stage: &mut Stage, check: &mut Check) {
     let (hip, low_hip) = (shot_at(stage, 0, 0), shot_at(stage, btn::CROUCH, 0));
     check.that(dropped(eye, low_eye, shared::sim::CROUCH_EYE_DROP), &format!("crouched, a scoped shot leaves {:.2} m lower", eye - low_eye));
     check.that(dropped(hip, low_hip, CROUCH_DROP), &format!("crouched, a shot from the hip leaves {:.2} m lower", hip - low_hip));
+    // Where a rifle's shots land on a wall 8 m ahead, against the middle of the player's view: the
+    // camera worked out as crate::camera does, 30 shots to even out the spread.
+    let wall_z = feet.z - 8.0;
+    let wall = stage.app.world_mut().spawn((RigidBody::Static, Collider::cuboid(14.0, 14.0, 0.4), Transform::from_xyz(feet.x, feet.y + 1.0, wall_z), CollisionLayers::new(Layer::World, LayerMask::ALL))).id();
+    stage.tick(2);
+    let off_centre = |stage: &mut Stage, held: u16, eye: f32, back: f32| {
+        const SHOTS: u32 = 30;
+        let (mut landed, mut fired) = (Vec2::ZERO, 0);
+        let mut centre = Vec3::ZERO;
+        for _ in 0..SHOTS {
+            stage.app.world_mut().get_mut::<Inventory>(player).unwrap().slots[0] = Some(ItemStack { id: "saintalis".into(), rarity: Rarity::Rare, count: 30 });
+            for _ in 0..50 {
+                stage.put(player, feet);
+                let mut intent = stage.intent(player);
+                (intent.pitch, intent.yaw, intent.held) = (0.0, 0.0, held);
+                stage.tick(1);
+            }
+            stage.intent(player).held = held | btn::FIRE;
+            stage.tick(1);
+            stage.intent(player).held = held;
+            let world = stage.app.world_mut();
+            centre = world.get::<Transform>(player).unwrap().translation;
+            // Just the shot that's still on its way to the wall, if the gun went off this tick.
+            let shot = world.query::<(&Transform, &Projectile)>().iter(world).filter(|(t, p)| p.owner == player && p.item == "saintalis" && t.translation.z > wall_z + 0.5).max_by(|a, b| a.1.ttl.total_cmp(&b.1.ttl));
+            if let Some((t, p)) = shot {
+                let at = t.translation + p.velocity * (wall_z + 0.2 - t.translation.z) / p.velocity.z;
+                landed += at.xy();
+                fired += 1;
+            }
+        }
+        let camera = centre + Vec3::Y * eye + Vec3::new(CAMERA_SHOULDER, 0.0, back);
+        (fired, (landed / fired.max(1) as f32 - camera.xy()).length())
+    };
+    let low_eye = EYE_OFFSET - CROUCH_EYE_DROP;
+    for (what, held, eye, back) in [
+        ("crouched and aiming", btn::CROUCH | btn::AIM, low_eye, ADS_DISTANCE),
+        ("crouched from the hip", btn::CROUCH, low_eye, CAMERA_DISTANCE),
+        ("standing and aiming", btn::AIM, EYE_OFFSET, ADS_DISTANCE),
+    ] {
+        let (fired, off) = off_centre(stage, held, eye, back);
+        check.that(fired >= 10 && off < 0.12, &format!("{what}, {fired} of a rifle's shots land {off:.2} m off the crosshair at 8 m"));
+    }
+    stage.app.world_mut().despawn(wall);
     stage.intent(player).held = 0;
 }
 
