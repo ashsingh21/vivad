@@ -122,7 +122,7 @@ fn material_for(mat: Mat, sets: &HashMap<&'static str, TexSet>, materials: &mut 
         Mat::TransitBlue => materials.add(StandardMaterial { base_color: Color::srgb(0.14,0.38,0.52), ..default() }),
         Mat::TransitYellow => materials.add(StandardMaterial { base_color: Color::srgb(0.76,0.60,0.20), ..default() }),
         Mat::Sandstone => textured("sandstone", Color::WHITE, 0.85, materials),
-        Mat::RedSandstone => textured("sandstone", Color::srgb(0.86, 0.50, 0.40), 0.85, materials),
+        Mat::RedSandstone => textured("sandstone", Color::srgb(0.70, 0.46, 0.38), 0.85, materials),
         Mat::Granite => textured("granite", Color::WHITE, 0.8, materials),
         Mat::Plaster => textured("plaster", PLASTER_TINT, 0.9, materials),
         Mat::PlasterOchre => textured("plaster", OCHRE_TINT, 0.9, materials),

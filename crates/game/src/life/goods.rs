@@ -53,6 +53,8 @@ const DETAIL_REACH: f32 = 74.0;
 const DETAIL_LET_GO: f32 = 92.0;
 /// Past this, a patch's overhead stops casting: the sun's far cascade is coarse there anyway.
 const SHADE_TO: f32 = 72.0;
+/// How far a stall keeps from a parked vehicle's middle.
+const PARKED_CLEAR: f32 = 3.2;
 /// Above the ground, the camera is too far up for goods to show.
 const TOO_HIGH: f32 = 90.0;
 /// The middle of the atlas's white tile (tools/blender/life/goods_atlas.py).
@@ -303,7 +305,7 @@ fn row_goods(s: &super::Stall) -> &'static str {
 }
 
 /// Everything in a patch of street, from the map.
-fn dress(layout: &MapLayout, market: &Market, key: (i32, i32), out: &mut Vec<(&'static str, Vec3, f32)>, wires: &mut Vec<Wire>, banners: &mut Vec<Banner>) {
+fn dress(layout: &MapLayout, market: &Market, key: (i32, i32), parked: &[Vec2], out: &mut Vec<(&'static str, Vec3, f32)>, wires: &mut Vec<Wire>, banners: &mut Vec<Banner>) {
     let inside = |p: Vec2| patch_at(p) == key;
     let ground_y = |p: Vec2| layout.terrain.height(p.x, p.y);
     let mid = patch_centre(key);
@@ -313,6 +315,10 @@ fn dress(layout: &MapLayout, market: &Market, key: (i32, i32), out: &mut Vec<(&'
         let s = market.stalls[id as usize];
         let at = s.pos.xz();
         if !inside(at) {
+            continue;
+        }
+        // A match's parked vehicle has the spot: its colliders can't give way to a table.
+        if s.kind != super::StallKind::Thela && parked.iter().any(|p| p.distance_squared(at) < PARKED_CLEAR * PARKED_CLEAR) {
             continue;
         }
         let (a, b) = (at.x.to_bits(), at.y.to_bits());
@@ -622,6 +628,7 @@ fn stream(
     market: Res<Market>,
     layout: Res<MapLayout>,
     camera: Query<&GlobalTransform, With<MainCamera>>,
+    vehicles: Query<&Transform, With<shared::sim::vehicle::Vehicle>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -726,7 +733,8 @@ fn stream(
         .content
         .get_or_insert_with(|| {
             let mut c = Content::default();
-            dress(&layout, &market, key, &mut c.placed, &mut c.wires, &mut c.banners);
+            let parked: Vec<Vec2> = vehicles.iter().map(|t| t.translation.xz()).collect();
+            dress(&layout, &market, key, &parked, &mut c.placed, &mut c.wires, &mut c.banners);
             if std::env::var("VIVAD_LIFE_LOG").is_ok() {
                 let tris: usize = c.placed.iter().filter_map(|(n, ..)| pieces.get(*n)).map(|p| p.idx.len() / 3).sum();
                 info!("goods patch {key:?}: {} pieces, {tris} tris, {} wires, {} banners", c.placed.len(), c.wires.len(), c.banners.len());
@@ -900,7 +908,7 @@ mod tests {
                 for di in -3..=3 {
                     let k = (key.0 + di, key.1 + dj);
                     let mut c = Content::default();
-                    dress(&layout, &market, k, &mut c.placed, &mut c.wires, &mut c.banners);
+                    dress(&layout, &market, k, &[], &mut c.placed, &mut c.wires, &mut c.banners);
                     for (name, ..) in &c.placed {
                         assert!(pieces.contains_key(*name), "{name} isn't in the files");
                         seen.insert(*name);
