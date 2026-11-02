@@ -111,6 +111,8 @@ fn announce_falls(
         let at = match (&f.cause, killer) {
             (DamageCause::Pralaya, _) => "down.aandhi",
             (DamageCause::Fall, _) => "down.fall",
+            (DamageCause::Ram, Some(_)) if !suicide => "down.ram.by",
+            (DamageCause::Ram, _) => "down.ram",
             (DamageCause::Weapon(id), _) if suicide => match (id.as_str(), &db.get(id).kind) {
                 ("katta", _) => "down.self.katta",
                 (_, ItemKind::Astra { .. }) => "down.self.bomb",

@@ -195,10 +195,15 @@ fn orient_bows(
     mut check: ResMut<GunCheck>,
     vis: Query<(&WarriorVisual, &WarriorAnim, &Body)>,
     intents: Query<&PlayerIntent>,
+    riders: Query<(), With<shared::sim::vehicle::Riding>>,
     mut tf: Query<(&Transform, &mut GlobalTransform)>,
 ) {
     for (e, rig) in &rigs {
         let Some((wv, anim, body)) = parents.iter_ancestors(e).find_map(|a| vis.get(a).ok()) else { continue };
+        // A driver's weapon is put away and his hands are on the bars (crate::vehicles).
+        if riders.contains(wv.sim) {
+            continue;
+        }
         let w = anim.bow_weight.clamp(0.0, 1.0);
         let gun = crate::visuals::shot_kind(&rig.model) == crate::visuals::Shot::Bullet;
         let long = crate::visuals::long_gun(&rig.model);

@@ -56,6 +56,8 @@ const LOOK_EVERY: f32 = 0.2;
 pub const RUN_NOISE: f32 = 30.0;
 pub const WALK_NOISE: f32 = 15.0;
 pub const CROUCH_NOISE: f32 = 8.0;
+/// How far an engine carries, flat out or ticking over.
+pub const ENGINE_NOISE: f32 = 60.0;
 /// How far a shot carries, and a gulel's twang.
 pub const SHOT_NOISE: f32 = 110.0;
 const TWANG_NOISE: f32 = 28.0;
@@ -207,6 +209,15 @@ pub fn step_noise(speed: f32, crouched: bool) -> f32 {
     }
 }
 
+/// How far off a warrior can be heard: by steps on foot, by the engine at the wheel, not at all in the air.
+pub fn noise_of(kin: &Kinematic, crouched: bool) -> f32 {
+    match kin.mode {
+        MoveMode::Ground => step_noise(kin.velocity.xz().length(), crouched),
+        MoveMode::Riding => ENGINE_NOISE,
+        _ => -1.0,
+    }
+}
+
 pub fn clear_line(spatial: &SpatialQuery, filter: &SpatialQueryFilter, eye: Vec3, point: Vec3) -> bool {
     let Ok((dir, len)) = Dir3::new_and_length(point - eye) else { return true };
     spatial.cast_ray(eye, dir, len, true, filter).is_none()
@@ -294,7 +305,7 @@ pub(crate) fn sense(
             let was_seen = senses.sees(who);
             let reach = if grudge == Some(who) { GRUDGE_SIGHT } else if was_seen { range * KEEP } else { range };
             let visible = in_view(from, intent.yaw, at, reach, crouched) && in_sight(&spatial, from, at, stance.drop());
-            let heard = okin.mode == MoveMode::Ground && from.distance(at) <= step_noise(okin.velocity.xz().length(), crouched);
+            let heard = from.distance(at) <= noise_of(okin, crouched);
             let hurt = hurt_by == Some(who);
             let signal = senses.known.iter().find(|k| k.who == who).map_or(0.0, |k| k.signal);
             let near = 1.0 - from.distance(at) / reach.max(1.0);
@@ -446,6 +457,15 @@ mod tests {
         assert_eq!(step_noise(2.6, true), CROUCH_NOISE);
         assert_eq!(step_noise(5.6, false), WALK_NOISE);
         assert_eq!(step_noise(7.4, false), RUN_NOISE);
+    }
+
+    #[test]
+    fn an_engine_carries_past_a_sprint_and_the_air_is_silent() {
+        let at = |mode, speed| Kinematic { mode, velocity: Vec3::X * speed, ..default() };
+        assert_eq!(noise_of(&at(MoveMode::Ground, 7.4), false), RUN_NOISE);
+        assert_eq!(noise_of(&at(MoveMode::Riding, 0.0), false), ENGINE_NOISE);
+        assert!(ENGINE_NOISE > RUN_NOISE);
+        assert!(noise_of(&at(MoveMode::Gliding, 14.0), false) < 0.0);
     }
 
     #[test]

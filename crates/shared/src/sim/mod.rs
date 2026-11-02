@@ -5,6 +5,7 @@ pub mod aim;
 pub mod birds;
 pub mod bots;
 pub mod combat;
+pub mod drive;
 pub mod flow;
 pub mod loot;
 pub mod melee;
@@ -14,6 +15,7 @@ pub mod net;
 pub mod senses;
 pub mod stance;
 pub mod talk;
+pub mod vehicle;
 pub mod zone;
 
 use avian3d::prelude::*;
@@ -51,6 +53,7 @@ pub enum Layer {
     Pickup,
     /// Hides a body but stops nothing: washing on a line.
     Soft,
+    Vehicle,
 }
 
 /// The world for movement and shots' line of sight: static geometry plus doors.
@@ -58,14 +61,19 @@ pub fn solid_mask() -> LayerMask {
     LayerMask::from([Layer::World, Layer::Door])
 }
 
-/// What a bot's eye can't see through (`senses`).
+/// What a bot's eye can't see through (`senses`). No vehicles: a driver sits inside the box.
 pub fn sight_mask() -> LayerMask {
     LayerMask::from([Layer::World, Layer::Door, Layer::Soft])
 }
 
+/// What a warrior walks round and stands on, and a vehicle drives into: the world and the vehicles.
+pub fn walk_mask() -> LayerMask {
+    LayerMask::from([Layer::World, Layer::Door, Layer::Vehicle])
+}
+
 /// What projectiles and melee can hit.
 pub fn hit_mask() -> LayerMask {
-    LayerMask::from([Layer::World, Layer::Door, Layer::Character])
+    LayerMask::from([Layer::World, Layer::Door, Layer::Character, Layer::Vehicle])
 }
 
 // ------------------------------------------------------------------ intent (the only input)
@@ -167,6 +175,8 @@ pub enum MoveMode {
     Freefall,
     Gliding,
     Ground,
+    /// At the wheel (crate::sim::vehicle).
+    Riding,
 }
 
 #[derive(Component, Clone, Debug, Default, Reflect)]
@@ -328,6 +338,8 @@ pub enum DamageCause {
     Weapon(String),
     Pralaya,
     Fall,
+    /// A vehicle, or a burning one's blast.
+    Ram,
 }
 
 /// A feed of eliminations and notable events, consumed by clients.
@@ -438,6 +450,7 @@ pub mod stream {
     pub const DISC: u64 = 4;
     /// Which of each district's sets of chests is out (the NCR).
     pub const CHEST_SETS: u64 = 5;
+    pub const VEHICLES: u64 = 6;
     /// Street weapons on the floor, apart from `FLOOR_LOOT`, so they leave the guns where they lay.
     pub const STREET_WEAPONS: u64 = 7;
     /// + the zone phase.
@@ -521,6 +534,7 @@ impl Plugin for SimPlugin {
                 nav::NavPlugin,
                 net::NetPlugin,
                 talk::TalkPlugin,
+                vehicle::VehiclePlugin,
             ));
     }
 }

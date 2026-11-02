@@ -228,15 +228,15 @@ fn write_intent(
         }
     }
     // Crouch toggles (a press down, a press up), as in most shooters; jumping or sprinting stands
-    // you up, and so does leaving the ground. A press while running fast slides (the sim's
-    // movement::SLIDE_*).
+    // you up, and so does a fall or a drop, but not a ride. A press while running fast slides (the
+    // sim's movement::SLIDE_*).
     if state.just_pressed(Act::Crouch) {
         *crouching = !*crouching;
         intent.pressed |= btn::CROUCH;
     } else if state.just_pressed(Act::Jump) || state.just_pressed(Act::Sprint) {
         *crouching = false;
     }
-    if kin.mode != MoveMode::Ground {
+    if !matches!(kin.mode, MoveMode::Ground | MoveMode::Riding) {
         *crouching = false;
     }
     if *crouching {

@@ -5,7 +5,7 @@ use bevy::prelude::*;
 
 use super::flow::Rules;
 use super::stance::{CROUCH_SPEED, size_bodies, update_stance};
-use super::{Action, CAPSULE_LENGTH, CAPSULE_RADIUS, DamageCause, DamageMsg, Eliminated, HALF_HEIGHT, Kinematic, MoveMode, PlayerIntent, SimSet, btn, solid_mask};
+use super::{Action, CAPSULE_LENGTH, CAPSULE_RADIUS, DamageCause, DamageMsg, Eliminated, HALF_HEIGHT, Kinematic, MoveMode, PlayerIntent, SimSet, btn, solid_mask, walk_mask};
 use crate::map::MapLayout;
 use crate::map::terrain::ground;
 
@@ -121,7 +121,7 @@ pub fn dive_reach(height: f32) -> f32 {
 }
 
 /// Whether a warrior at `center` has its feet on a river's bed, not on a bridge over it.
-fn wading(layout: &MapLayout, center: Vec3) -> bool {
+pub(super) fn wading(layout: &MapLayout, center: Vec3) -> bool {
     layout.terrain.ground_at(center.x, center.z) == Some(ground::WATER) && center.y - HALF_HEIGHT < layout.terrain.height(center.x, center.z) + 0.5
 }
 
@@ -159,7 +159,7 @@ fn ground_probe(spatial: &SpatialQuery, center: Vec3, entity: Entity, max: f32) 
 fn feet_probe(spatial: &SpatialQuery, center: Vec3, entity: Entity, max: f32) -> Option<(f32, Vec3)> {
     let shrink = 0.9;
     let r = CAPSULE_RADIUS * shrink;
-    let filter = SpatialQueryFilter::from_mask(solid_mask()).with_excluded_entities([entity]);
+    let filter = SpatialQueryFilter::from_mask(walk_mask()).with_excluded_entities([entity]);
     let config = ShapeCastConfig { max_distance: max, ignore_origin_penetration: true, ..default() };
     let origin = center - Vec3::Y * (CAPSULE_LENGTH / 2.0);
     spatial.cast_shape(&Collider::sphere(r), origin, Quat::IDENTITY, Dir3::NEG_Y, &config, &filter).map(|hit| {
@@ -169,7 +169,7 @@ fn feet_probe(spatial: &SpatialQuery, center: Vec3, entity: Entity, max: f32) ->
 }
 
 #[allow(clippy::type_complexity)]
-fn move_warriors(
+pub(super) fn move_warriors(
     mut q: Query<(Entity, &mut Transform, &mut Kinematic, &PlayerIntent, &Collider, &Action, Option<&super::Inventory>), (Without<Eliminated>, Without<super::net::Remote>)>,
     move_and_slide: MoveAndSlide,
     spatial: SpatialQuery,
@@ -185,6 +185,7 @@ fn move_warriors(
         let wish = wish_dir(intent);
         match kin.mode {
             MoveMode::Vimana => continue, // positioned by the flow system
+            MoveMode::Riding => continue, // carried by crate::sim::vehicle
             MoveMode::Freefall => {
                 let target = wish * FREEFALL_HORIZ;
                 let h = approach(kin.velocity.with_y(0.0), target, AIR_ACCEL * 2.0 * dt);
@@ -294,7 +295,7 @@ fn move_warriors(
             }
         }
 
-        let filter = SpatialQueryFilter::from_mask(solid_mask()).with_excluded_entities([entity]);
+        let filter = SpatialQueryFilter::from_mask(walk_mask()).with_excluded_entities([entity]);
         let out = move_and_slide.move_and_slide(
             collider,
             tf.translation,
