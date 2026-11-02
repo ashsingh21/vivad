@@ -44,10 +44,20 @@ const LET_GO: f32 = 148.0;
 /// Where a patch fades out, from its middle.
 const FADE_FROM: f32 = 104.0;
 const FADE_TO: f32 = 120.0;
+/// Where the full goods hand over to their stand-ins, from a patch's middle, and how far off the
+/// full ones are ready and gone. A corner of a patch is 45 m from its middle.
+const DETAIL_FROM: f32 = 66.0;
+const DETAIL_TO: f32 = 78.0;
+const DETAIL_REACH: f32 = 86.0;
+const DETAIL_LET_GO: f32 = 104.0;
 /// Above the ground, the camera is too far up for goods to show.
 const TOO_HIGH: f32 = 90.0;
 /// The middle of the atlas's white tile (tools/blender/life/goods_atlas.py).
 const WHITE_TEXEL: [f32; 2] = [0.08, 0.08];
+/// The atlas's plain linen tile: where it starts, and how wide.
+const LINEN: (f32, f32, f32) = (2.03 * 170.0 / 1024.0, 3.03 * 170.0 / 1024.0, 0.94 * 170.0 / 1024.0);
+/// Linear colours for what's strung over a road.
+const BANNER_COLOURS: [[f32; 3]; 6] = [[0.56, 0.06, 0.05], [0.72, 0.36, 0.03], [0.04, 0.14, 0.32], [0.05, 0.26, 0.11], [0.56, 0.10, 0.22], [0.62, 0.56, 0.42]];
 /// A shop's width along a wall, from the buildings' own window rule.
 const BAY: f32 = crate::buildings::BAY;
 
@@ -69,6 +79,16 @@ struct Wire {
     sag: f32,
 }
 
+/// Something strung over the road: a run of little flags, or a long plain cloth.
+#[derive(Clone, Copy)]
+struct Banner {
+    a: Vec3,
+    b: Vec3,
+    sag: f32,
+    cloth: bool,
+    tint: f32,
+}
+
 #[derive(Resource, Default)]
 struct Goods {
     pieces: Option<Arc<HashMap<String, Piece>>>,
@@ -76,9 +96,72 @@ struct Goods {
     reading: Option<Task<Option<(HashMap<String, Piece>, Image)>>>,
     material: Option<Handle<StandardMaterial>>,
     /// The patches that exist.
-    live: HashMap<(i32, i32), Entity>,
-    /// A patch being merged.
-    job: Option<((i32, i32), Task<Option<(Mesh, Aabb)>>)>,
+    live: HashMap<(i32, i32), Patch>,
+    /// A patch's mesh being merged.
+    job: Option<((i32, i32), Level, Task<Option<(Mesh, Aabb)>>)>,
+}
+
+/// The meshes of a patch. What hangs overhead is few faces and throws the shade that matters, and
+/// shows at every range; what stands under it is most of the faces and casts no shadow, in full
+/// close to and in stand-ins further off.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Level {
+    Over,
+    Near,
+    Far,
+}
+
+/// What a patch holds, once worked out, and its meshes.
+#[derive(Default)]
+struct Patch {
+    content: Option<Arc<Content>>,
+    over: Option<Entity>,
+    far: Option<Entity>,
+    near: Option<Entity>,
+    /// The meshes asked for since this patch came into reach, so an empty one isn't asked for again.
+    tried: Vec<Level>,
+}
+
+impl Patch {
+    fn mesh(&mut self, level: Level) -> &mut Option<Entity> {
+        match level {
+            Level::Over => &mut self.over,
+            Level::Near => &mut self.near,
+            Level::Far => &mut self.far,
+        }
+    }
+}
+
+/// Whether a piece hangs overhead.
+fn overhead(name: &str) -> bool {
+    ["roof_", "tarp_", "awning_", "sheet_", "canopy_", "bamboo_"].iter().any(|k| name.starts_with(k))
+}
+
+/// Everything in a patch of street.
+#[derive(Default)]
+struct Content {
+    placed: Vec<(&'static str, Vec3, f32)>,
+    wires: Vec<Wire>,
+    banners: Vec<Banner>,
+}
+
+/// The stand-in for a piece seen from afar, if it needs one: None leaves it out altogether, and a
+/// piece light enough stays as it is.
+fn far_piece(name: &'static str, roll: f32) -> Option<&'static str> {
+    Some(match name {
+        "stall_fruit" | "stall_tropic" | "stall_spice" => "far_fruit",
+        "stall_veg" | "stall_green" | "stall_grain" => "far_veg",
+        "stall_cloth" | "stall_cloth2" | "stall_toys" => "far_cloth",
+        "stall_bags" | "stall_shoes" | "stall_steel" | "stall_snack" => "far_mixed",
+        "shop_cloth" => "far_shop_b",
+        "shop_bartan" => "far_shop_c",
+        "shop_grocery" | "shop_general" => "far_shop_a",
+        "patri_veg" | "patri_fruit" | "patri_roots" | "greens" => "far_patri_a",
+        "patri_clothes" | "patri_shoes" | "patri_steel" => "far_patri_b",
+        "scooter_black" | "scooter_grey" | "scooter_blue" | "scooter_maroon" => "far_scooter",
+        "thela_LOD1" if roll < 2.0 => "thela_LOD1",
+        _ => return None,
+    })
 }
 
 fn load(mut goods: ResMut<Goods>, mut materials: ResMut<Assets<StandardMaterial>>) {
@@ -101,6 +184,20 @@ fn forget(mut goods: ResMut<Goods>) {
     goods.job = None;
 }
 
+fn patch_entity(commands: &mut Commands, mesh: Handle<Mesh>, material: Handle<StandardMaterial>, key: (i32, i32), level: Level, bounds: Aabb) -> Entity {
+    let c = patch_centre(key);
+    let (range, tag) = match level {
+        Level::Over => (VisibilityRange { start_margin: 0.0..0.0, end_margin: FADE_FROM..FADE_TO, use_aabb: false }, "life over"),
+        Level::Near => (VisibilityRange { start_margin: 0.0..0.0, end_margin: DETAIL_FROM..DETAIL_TO, use_aabb: false }, "life goods"),
+        Level::Far => (VisibilityRange { start_margin: DETAIL_FROM..DETAIL_TO, end_margin: FADE_FROM..FADE_TO, use_aabb: false }, "life far"),
+    };
+    let mut e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), Transform::from_xyz(c.x, 0.0, c.y), bounds, NoAutoAabb, range, Tagged(tag), OfMap));
+    if level != Level::Over {
+        e.insert(bevy::light::NotShadowCaster);
+    }
+    e.id()
+}
+
 fn read_pieces() -> Result<(HashMap<String, Piece>, Image), String> {
     let path = std::path::Path::new(crate::ASSET_DIR).join("models/life/goods.glb");
     let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
@@ -111,19 +208,51 @@ fn read_pieces() -> Result<(HashMap<String, Piece>, Image), String> {
     let file = gltf::Gltf::from_slice(&bytes).map_err(|e| e.to_string())?;
     let blob = file.blob.as_deref().ok_or("no binary chunk")?;
     let mut out = HashMap::new();
-    for node in file.document.nodes() {
-        let (Some(mesh), Some(name)) = (node.mesh(), node.name()) else { continue };
-        let mut piece = Piece::default();
-        for prim in mesh.primitives() {
-            let reader = prim.reader(|_| Some(blob));
-            let base = piece.pos.len() as u32;
-            piece.pos.extend(reader.read_positions().ok_or("no positions")?.map(Vec3::from));
-            piece.nrm.extend(reader.read_normals().ok_or("no normals")?.map(Vec3::from));
-            piece.uv.extend(reader.read_tex_coords(0).ok_or("no uvs")?.into_f32());
-            piece.col.extend(reader.read_colors(0).ok_or("no colours")?.into_rgba_f32());
-            piece.idx.extend(reader.read_indices().ok_or("no indices")?.into_u32().map(|i| i + base));
+    let mut read_file = |file: &gltf::Gltf, blob: &[u8], only: &[&str]| -> Result<(), String> {
+        for node in file.document.nodes() {
+            let (Some(mesh), Some(name)) = (node.mesh(), node.name()) else { continue };
+            if !only.is_empty() && !only.contains(&name) {
+                continue;
+            }
+            let mut piece = Piece::default();
+            for prim in mesh.primitives() {
+                let reader = prim.reader(|_| Some(blob));
+                let base = piece.pos.len() as u32;
+                piece.pos.extend(reader.read_positions().ok_or("no positions")?.map(Vec3::from));
+                piece.nrm.extend(reader.read_normals().ok_or("no normals")?.map(Vec3::from));
+                let n = piece.pos.len() - piece.uv.len();
+                match reader.read_tex_coords(0) {
+                    Some(uv) => piece.uv.extend(uv.into_f32()),
+                    None => piece.uv.extend(std::iter::repeat_n(WHITE_TEXEL, n)),
+                }
+                piece.col.extend(reader.read_colors(0).ok_or("no colours")?.into_rgba_f32());
+                piece.idx.extend(reader.read_indices().ok_or("no indices")?.into_u32().map(|i| i + base));
+            }
+            out.insert(name.to_owned(), piece);
         }
-        out.insert(name.to_owned(), piece);
+        Ok(())
+    };
+    read_file(&file, blob, &[])?;
+    // The street kit's own scooter and cart, parked as dressing. A dusty, old one: colour says
+    // what can be ridden, and these can't.
+    let kit_path = std::path::Path::new(crate::ASSET_DIR).join("models/props/street_kit.glb");
+    let kit_bytes = std::fs::read(&kit_path).map_err(|e| e.to_string())?;
+    let kit = gltf::Gltf::from_slice(&kit_bytes).map_err(|e| e.to_string())?;
+    read_file(&kit, kit.blob.as_deref().ok_or("no binary chunk")?, &["scooter_LOD1", "thela_LOD1"])?;
+    if let Some(p) = out.get_mut("thela_LOD1") {
+        for c in &mut p.col {
+            let grey = 0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2];
+            for v in c.iter_mut().take(3) {
+                *v = (*v * 0.5 + grey * 0.5) * 0.7;
+            }
+        }
+    }
+    // The kit's scooter in the colours a street's old ones come in: its red body repainted.
+    if let Some(red) = out.remove("scooter_LOD1") {
+        for (name, paint) in [("scooter_black", [0.02, 0.02, 0.022]), ("scooter_grey", [0.16, 0.17, 0.18]), ("scooter_blue", [0.03, 0.07, 0.14]), ("scooter_maroon", [0.14, 0.025, 0.03])] {
+            let col = red.col.iter().map(|c| if c[0] > 3.0 * c[1] { [paint[0], paint[1], paint[2], 1.0] } else { [c[0] * 0.7, c[1] * 0.7, c[2] * 0.7, 1.0] }).collect();
+            out.insert(name.to_owned(), Piece { pos: red.pos.clone(), nrm: red.nrm.clone(), uv: red.uv.clone(), col, idx: red.idx.clone() });
+        }
     }
     Ok((out, atlas))
 }
@@ -153,7 +282,7 @@ fn on_street(layout: &MapLayout, p: Vec2) -> bool {
 }
 
 /// Everything in a patch of street, from the map.
-fn dress(layout: &MapLayout, market: &Market, key: (i32, i32), out: &mut Vec<(&'static str, Vec3, f32)>, wires: &mut Vec<Wire>) {
+fn dress(layout: &MapLayout, market: &Market, key: (i32, i32), out: &mut Vec<(&'static str, Vec3, f32)>, wires: &mut Vec<Wire>, banners: &mut Vec<Banner>) {
     let inside = |p: Vec2| patch_at(p) == key;
     let ground_y = |p: Vec2| layout.terrain.height(p.x, p.y);
     let mid = patch_centre(key);
@@ -184,6 +313,30 @@ fn dress(layout: &MapLayout, market: &Market, key: (i32, i32), out: &mut Vec<(&'
                 out.push((pick(&["patri_veg", "patri_fruit", "patri_roots", "patri_clothes", "patri_shoes", "patri_steel", "greens"], hash(a, b, 1)), s.pos, s.yaw));
                 if hash(a, b, 2) < 0.25 + busy * 0.35 {
                     out.push((pick(&["sheet_blue", "sheet_orange", "sheet_white"], hash(a, b, 3)), s.pos, s.yaw));
+                }
+            }
+            super::StallKind::Row => {
+                const STALLS: [&str; 13] = ["stall_fruit", "stall_tropic", "stall_veg", "stall_green", "stall_cloth", "stall_cloth2", "stall_bags", "stall_shoes", "stall_steel", "stall_spice", "stall_grain", "stall_toys", "stall_snack"];
+                out.push((pick(&STALLS, hash(a, b, 1)), s.pos, s.yaw));
+                out.push((pick(&["roof_blue", "roof_orange", "roof_white", "roof_green", "roof_red", "roof_blue", "roof_white"], hash(a, b, 2)), s.pos, s.yaw));
+            }
+            super::StallKind::Cart => {
+                out.push(("thela_LOD1", s.pos, s.yaw));
+                out.push((pick(&["heap_orange_apple", "heap_banana_guava", "heap_tomato_onion", "heap_veg", "heap_cauli"], hash(a, b, 1)), s.pos, s.yaw));
+                if hash(a, b, 2) < 0.5 {
+                    out.push((pick(&["canopy_blue", "canopy_orange", "canopy_white"], hash(a, b, 3)), s.pos, s.yaw));
+                }
+            }
+            super::StallKind::Scooters => {
+                // A bunch nose to the kerb, each at its own slant, a gap here and there.
+                let bunch = 2 + (hash(a, b, 1) * 5.0) as i32;
+                for k in 0..bunch {
+                    if hash(a, b, 40 + k as u32) < 0.15 {
+                        continue;
+                    }
+                    let lean = (hash(a, b, 50 + k as u32) - 0.5) * 0.5;
+                    let x = (k as f32 - bunch as f32 / 2.0) * 0.85;
+                    out.push((pick(&["scooter_black", "scooter_grey", "scooter_blue", "scooter_maroon", "scooter_black"], hash(a, b, 60 + k as u32)), local(x, 0.0, 0.0), s.yaw + 0.5 + lean));
                 }
             }
             _ => {}
@@ -225,24 +378,49 @@ fn dress(layout: &MapLayout, market: &Market, key: (i32, i32), out: &mut Vec<(&'
                 let yaw = (-out2.x).atan2(-out2.y);
                 let seed = (e as u32) * 97 + s as u32;
                 let at3 = |off: f32| Vec3::new(at.x + out2.x * off, y, at.y + out2.y * off);
-                if hash(i, seed, 2) < (busy * 1.7).min(0.92) {
-                    let roll = hash(i, seed, 3);
-                    let (name, off) = if theme < 0.34 {
-                        (pick(&["rack_cloth", "rack_cloth", "rack_short", "rack_high", "bolts"], roll), 0.03)
+                // The shop's stock out at its door, floor to lintel.
+                if hash(i, seed, 2) < (busy * 2.4).min(0.96) {
+                    let (front, floor): (&str, &[&str]) = if theme < 0.34 {
+                        ("shop_cloth", &["bolts", "rack_short", "rack_cloth"])
                     } else if theme < 0.66 {
-                        (pick(&["sacks_spice", "sacks_grain", "sacks_stack", "stand_veg", "stand_fruit", "greens", "crate_cauli"], roll), 0.34)
+                        ("shop_grocery", &["sacks_spice", "sacks_grain", "sacks_stack", "stand_veg", "stand_fruit", "greens", "crate_cauli"])
                     } else if theme < 0.84 {
-                        (pick(&["pots", "buckets", "cartons", "rack_high"], roll), 0.34)
+                        ("shop_bartan", &["pots", "buckets", "cartons"])
                     } else {
-                        (pick(&["cartons", "buckets", "sacks_stack", "rack_short", "stand_fruit"], roll), 0.3)
+                        ("shop_general", &["cartons", "buckets", "sacks_stack", "stand_fruit"])
                     };
-                    let off = if name.starts_with("rack") { 0.03 } else { off };
-                    out.push((name, at3(off), yaw));
+                    out.push((front, at3(0.02), yaw));
+                    // And more at its feet, out on the pavement.
+                    if hash(i, seed, 3) < (busy * 1.5).min(0.85) {
+                        let name = pick(floor, hash(i, seed, 6));
+                        let off = if name.starts_with("rack") { 0.5 } else { 0.72 };
+                        out.push((name, at3(off), yaw));
+                    }
                 }
-                if s % 2 == 0 && hash(i, seed, 4) < busy * 0.6 {
-                    out.push((pick(&["tarp_blue", "tarp_orange", "tarp_grey", "tarp_green"], hash(i, seed, 5)), at3(0.02), yaw));
+                let roll = hash(i, seed, 4);
+                if roll < (busy * 1.4).min(0.8) {
+                    out.push((pick(&["awning_red", "awning_blue", "awning_green", "awning_orange"], hash(i, e as u32, 5)), at3(0.02), yaw));
+                } else if s % 2 == 0 && roll < 0.96 {
+                    out.push((pick(&["tarp_blue", "tarp_orange", "tarp_grey", "tarp_green"], hash(i, seed, 7)), at3(0.02), yaw));
                 }
             }
+        }
+    }
+
+    // Banners and flags over the road.
+    for (k, (a, b)) in market.banners.iter().enumerate() {
+        if !inside(a.xz()) {
+            continue;
+        }
+        let k = k as u32;
+        out.push(("bamboo_tall", *a, 0.0));
+        out.push(("bamboo_tall", *b, 0.0));
+        let ropes = [(5.9, false), (5.2, true)];
+        for (r, (height, cloth)) in ropes.iter().enumerate() {
+            let (ta, tb) = (*a + Vec3::Y * *height, *b + Vec3::Y * *height);
+            let sag = 0.05 * a.distance(*b);
+            wires.push(Wire { a: ta, b: tb, sag });
+            banners.push(Banner { a: ta, b: tb, sag, cloth: *cloth, tint: hash(k, r as u32, 12) });
         }
     }
 
@@ -304,7 +482,7 @@ fn dress(layout: &MapLayout, market: &Market, key: (i32, i32), out: &mut Vec<(&'
 }
 
 /// Merges a patch's pieces and wires into one mesh, its origin at the patch's middle.
-fn merge(pieces: &HashMap<String, Piece>, placed: &[(&'static str, Vec3, f32)], wires: &[Wire], origin: Vec3) -> Option<(Mesh, Aabb)> {
+fn merge(pieces: &HashMap<String, Piece>, placed: &[(&'static str, Vec3, f32)], wires: &[Wire], banners: &[Banner], origin: Vec3) -> Option<(Mesh, Aabb)> {
     let (mut pos, mut nrm, mut uv, mut col, mut idx): (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 4]>, Vec<u32>) = (vec![], vec![], vec![], vec![], vec![]);
     let (mut lo, mut hi) = (Vec3::MAX, Vec3::MIN);
     for (name, at, yaw) in placed {
@@ -349,15 +527,65 @@ fn merge(pieces: &HashMap<String, Piece>, placed: &[(&'static str, Vec3, f32)], 
             }
         }
     }
+    for b in banners {
+        let curve = |t: f32| b.a.lerp(b.b, t) - Vec3::Y * b.sag * 4.0 * t * (1.0 - t) - origin;
+        let len = b.a.distance(b.b);
+        let across = (b.b - b.a).normalize_or(Vec3::X);
+        let face = across.cross(Vec3::Y).normalize_or(Vec3::Z).to_array();
+        if b.cloth {
+            // A long plain cloth hung from the rope, in folds, no words on it.
+            let c = BANNER_COLOURS[(b.tint * BANNER_COLOURS.len() as f32) as usize % BANNER_COLOURS.len()];
+            let base = pos.len() as u32;
+            let steps = ((len / 1.2) as usize).clamp(4, 24);
+            for s in 0..=steps {
+                let t = 0.12 + 0.76 * s as f32 / steps as f32;
+                let top = curve(t);
+                let fold = (s as f32 * 1.9).sin() * 0.03;
+                for (v, drop) in [(0.0, 0.0), (1.0, 0.95)] {
+                    let q = top - Vec3::Y * drop + Vec3::from_array(face) * fold * v;
+                    lo = lo.min(q);
+                    hi = hi.max(q);
+                    pos.push(q.to_array());
+                    nrm.push(face);
+                    uv.push([LINEN.0 + LINEN.2 * (s % 2) as f32, LINEN.1 + LINEN.2 * v]);
+                    let shade = 0.82 + 0.18 * (s as f32 * 1.9).cos().abs();
+                    col.push([c[0] * shade, c[1] * shade, c[2] * shade, 1.0]);
+                }
+            }
+            for s in 0..steps as u32 {
+                let k = base + s * 2;
+                idx.extend_from_slice(&[k, k + 1, k + 2, k + 1, k + 3, k + 2]);
+            }
+        } else {
+            // Paper flags on the rope.
+            let flags = ((len / 0.62) as usize).clamp(6, 60);
+            for f in 0..flags {
+                let t = (f as f32 + 0.5) / flags as f32;
+                let (l, r, top) = (curve(t - 0.17 / len), curve(t + 0.17 / len), curve(t));
+                let c = BANNER_COLOURS[f % BANNER_COLOURS.len()];
+                let base = pos.len() as u32;
+                for q in [l, r, top - Vec3::Y * 0.42] {
+                    lo = lo.min(q);
+                    hi = hi.max(q);
+                    pos.push(q.to_array());
+                    nrm.push(face);
+                    uv.push(WHITE_TEXEL);
+                    col.push([c[0], c[1], c[2], 1.0]);
+                }
+                idx.extend_from_slice(&[base, base + 1, base + 2]);
+            }
+        }
+    }
     if pos.is_empty() {
         return None;
     }
+    let count = pos.len();
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, tiers::usage());
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, nrm);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uv);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
-    mesh.insert_indices(Indices::U32(idx));
+    mesh.insert_indices(if count > u16::MAX as usize { Indices::U32(idx) } else { Indices::U16(idx.iter().map(|i| *i as u16).collect()) });
     tiers::pack(&mut mesh);
     Some((mesh, Aabb::from_min_max(lo, hi)))
 }
@@ -390,41 +618,37 @@ fn stream(
         }
     }
     // A merge finished.
-    if let Some((key, task)) = &mut goods.job
+    if let Some((key, level, task)) = &mut goods.job
         && let Some(done) = block_on(poll_once(task))
     {
-        let key = *key;
+        let (key, level) = (*key, *level);
         goods.job = None;
-        if let (Some((mesh, bounds)), Some(material)) = (done, goods.material.clone()) {
-            let c = patch_centre(key);
-            let e = commands
-                .spawn((
-                    Mesh3d(meshes.add(mesh)),
-                    MeshMaterial3d(material),
-                    Transform::from_xyz(c.x, 0.0, c.y),
-                    bounds,
-                    NoAutoAabb,
-                    VisibilityRange { start_margin: 0.0..0.0, end_margin: FADE_FROM..FADE_TO, use_aabb: false },
-                    Tagged("life goods"),
-                    OfMap,
-                ))
-                .id();
-            goods.live.insert(key, e);
+        if let (Some((mesh, bounds)), Some(material), Some(patch)) = (done, goods.material.clone(), goods.live.get_mut(&key)) {
+            *patch.mesh(level) = Some(patch_entity(&mut commands, meshes.add(mesh), material, key, level, bounds));
         }
     }
     *every -= time.delta_secs();
     if *every > 0.0 {
         return;
     }
-    *every = 0.2;
+    *every = 0.05;
     let Ok(camera) = camera.single() else { return };
     let eye = camera.translation();
     let at = eye.xz();
     let aloft = eye.y - layout.terrain.height(at.x, at.y) > TOO_HIGH;
-    goods.live.retain(|key, e| {
-        let keep = !aloft && patch_centre(*key).distance(at) < LET_GO;
+    goods.live.retain(|key, patch| {
+        let d = patch_centre(*key).distance(at);
+        if aloft || d > DETAIL_LET_GO {
+            if let Some(e) = patch.near.take() {
+                commands.entity(e).despawn();
+            }
+            patch.tried.retain(|l| *l != Level::Near);
+        }
+        let keep = !aloft && d < LET_GO;
         if !keep {
-            commands.entity(*e).despawn();
+            for e in [patch.far.take(), patch.over.take()].into_iter().flatten() {
+                commands.entity(e).despawn();
+            }
         }
         keep
     });
@@ -432,34 +656,62 @@ fn stream(
         return;
     }
     let Some(pieces) = goods.pieces.clone() else { return };
-    // The nearest patch not yet there, one at a time.
+    // The nearest thing missing, one at a time.
     let reach = (REACH / PATCH).ceil() as i32;
     let (ci, cj) = patch_at(at);
-    let mut best: Option<(f32, (i32, i32))> = None;
+    let mut best: Option<(f32, (i32, i32), Level)> = None;
     for i in ci - reach..=ci + reach {
         for j in cj - reach..=cj + reach {
             let key = (i, j);
             let d = patch_centre(key).distance(at);
-            if d < REACH && !goods.live.contains_key(&key) && best.is_none_or(|b| d < b.0) {
-                best = Some((d, key));
+            if d >= REACH {
+                continue;
+            }
+            let patch = goods.live.get(&key);
+            // Overhead first: it is what shows from furthest. A patch that came out empty stays so.
+            let wanted = [(Level::Over, d - 30.0, d < REACH), (Level::Near, d - 15.0, d < DETAIL_REACH), (Level::Far, d, d < REACH)];
+            for (level, rank, needed) in wanted {
+                let missing = patch.is_none_or(|p| match level {
+                    Level::Over => p.over.is_none(),
+                    Level::Near => p.near.is_none(),
+                    Level::Far => p.far.is_none(),
+                });
+                let tried = patch.is_some_and(|p| p.tried.contains(&level));
+                if needed && missing && !tried && best.is_none_or(|b| rank < b.0) {
+                    best = Some((rank, key, level));
+                }
             }
         }
     }
-    let Some((_, key)) = best else { return };
-    let (mut placed, mut wires) = (vec![], vec![]);
-    dress(&layout, &market, key, &mut placed, &mut wires);
-    if std::env::var("VIVAD_LIFE_LOG").is_ok() {
-        info!("goods patch {key:?}: {} pieces, {} wires", placed.len(), wires.len());
-    }
+    let Some((_, key, level)) = best else { return };
+    let patch = goods.live.entry(key).or_default();
+    patch.tried.push(level);
+    let content = patch
+        .content
+        .get_or_insert_with(|| {
+            let mut c = Content::default();
+            dress(&layout, &market, key, &mut c.placed, &mut c.wires, &mut c.banners);
+            if std::env::var("VIVAD_LIFE_LOG").is_ok() {
+                let tris: usize = c.placed.iter().filter_map(|(n, ..)| pieces.get(*n)).map(|p| p.idx.len() / 3).sum();
+                info!("goods patch {key:?}: {} pieces, {tris} tris, {} wires, {} banners", c.placed.len(), c.wires.len(), c.banners.len());
+            }
+            Arc::new(c)
+        })
+        .clone();
     let c = patch_centre(key);
     let origin = Vec3::new(c.x, 0.0, c.y);
-    // An empty patch still counts as there, so it isn't looked at again.
-    if placed.is_empty() && wires.is_empty() {
-        let e = commands.spawn((Transform::from_xyz(c.x, 0.0, c.y), OfMap)).id();
-        goods.live.insert(key, e);
-        return;
-    }
-    goods.job = Some((key, AsyncComputeTaskPool::get().spawn(async move { merge(&pieces, &placed, &wires, origin) })));
+    goods.job = Some((
+        key,
+        level,
+        AsyncComputeTaskPool::get().spawn(async move {
+            let of = |placed: Vec<(&'static str, Vec3, f32)>, wires: &[Wire], banners: &[Banner]| merge(&pieces, &placed, wires, banners, origin);
+            match level {
+                Level::Over => of(content.placed.iter().filter(|p| overhead(p.0)).copied().collect(), &content.wires, &content.banners),
+                Level::Near => of(content.placed.iter().filter(|p| !overhead(p.0)).copied().collect(), &[], &[]),
+                Level::Far => of(content.placed.iter().filter(|p| !overhead(p.0)).filter_map(|(n, p, y)| Some((far_piece(n, p.x.fract().abs())?, *p, *y))).collect(), &[], &[]),
+            }
+        }),
+    ));
 }
 
 // ------------------------------------------------------------------ steam

@@ -123,11 +123,9 @@ class Piece:
             return abs(2 * ang - 1), (p.z - at[2]) / max(top, 1e-3)
         self.paint(rgb, tile, around, shade)
 
-    def heap(self, cx, cy, z0, rx, ry, h, tile, rgb=WHITE, rough=0.05):
+    def heap(self, cx, cy, z0, rx, ry, h, tile, rgb=WHITE, rough=0.05, rings=3, seg=9):
         """A dome with its tile laid on from above: a heap of hundreds of things for fifty faces.
         Its edge is lumpy, as a heap's is."""
-        rings = 5
-        seg = 11
         top = self.bm.verts.new((cx, cy, z0 + h))
         all_rings = []
         for i in range(1, rings + 1):
@@ -146,13 +144,14 @@ class Piece:
                 self.bm.faces.new((a[k], b[k], b[(k + 1) % seg], a[(k + 1) % seg]))
         self.paint(rgb, tile, lambda p: (0.5 + (p.x - cx) / (2.1 * rx), 0.5 + (p.y - cy) / (2.1 * ry)), lambda p: 0.55 + 0.45 * min(1.0, (p.z - z0) / max(h, 1e-3) * 1.4))
 
-    def sheet(self, grid, rgb=WHITE, tile="white", shade=None, tile_span=(1, 1)):
-        """Cloth: a grid of points (rows of Vectors); the game's material draws both faces."""
+    def sheet(self, grid, rgb=WHITE, tile="white", shade=None, tile_span=(1, 1), repeat=False):
+        """Cloth: a grid of points (rows of Vectors); the game's material draws both faces.
+        `repeat` lays the whole tile on every other cell, mirrored, for a big sheet."""
         rows = [[self.bm.verts.new(p) for p in row] for row in grid]
         where = {}
         for i, row in enumerate(rows):
             for j, v in enumerate(row):
-                where[v] = (j / (len(row) - 1) * tile_span[0], i / (len(rows) - 1) * tile_span[1])
+                where[v] = (j % 2, i % 2) if repeat else (j / (len(row) - 1) * tile_span[0], i / (len(rows) - 1) * tile_span[1])
         for a, b in zip(rows, rows[1:]):
             for k in range(len(a) - 1):
                 self.bm.faces.new((a[k], a[k + 1], b[k + 1], b[k]))
@@ -243,9 +242,9 @@ def sack(p, x, y, r, h, rgb, top=None):
     bulge = [(r * 0.86, 0.0), (r * 1.02, h * 0.22), (r * 1.06, h * 0.55), (r * 0.98, h * 0.85)]
     dark = lambda c: 0.66 + 0.34 * min(1.0, c.z / h)  # noqa: E731
     if top is None:
-        p.lathe(bulge + [(r * 0.5, h * 1.02), (r * 0.16, h * 1.1), (r * 0.25, h * 1.2)], rgb, 7, (x, y, 0), "jute", dark)
+        p.lathe(bulge + [(r * 0.5, h * 1.02), (r * 0.16, h * 1.1), (r * 0.25, h * 1.2)], rgb, 6, (x, y, 0), "jute", dark)
     else:
-        p.lathe(bulge + [(r * 1.08, h * 0.94), (r * 0.92, h * 0.98)], rgb, 8, (x, y, 0), "jute", dark, closed=False)
+        p.lathe(bulge[1:] + [(r * 1.08, h * 0.94), (r * 0.92, h * 0.98)], rgb, 6, (x, y, 0), "jute", dark, closed=False)
         p.heap(x, y, h * 0.9, r * 0.95, r * 0.95, h * 0.24, top)
 
 
@@ -266,7 +265,7 @@ def sacks_stack(name):
             cz = z * 0.235
             c = vary(WHITE, 0.08) if rng.random() < 0.7 else (1.0, 0.98, 0.9)
             y = rng.uniform(-0.03, 0.03)
-            p.lathe([(0.0, 0.0), (0.16, 0.0), (0.27, 0.07), (0.31, 0.14), (0.27, 0.21), (0.16, 0.27), (0.0, 0.28)], c, 8, (x, y, cz), "jute", lambda q, b=cz: 0.7 + 0.3 * min(1.0, (q.z - b) / 0.26), closed=False, scale=(1.0, 0.7, 1.0))
+            p.lathe([(0.0, 0.0), (0.2, 0.0), (0.31, 0.14), (0.2, 0.27), (0.0, 0.28)], c, 6, (x, y, cz), "jute", lambda q, b=cz: 0.7 + 0.3 * min(1.0, (q.z - b) / 0.26), closed=False, scale=(1.0, 0.7, 1.0))
     return p
 
 
@@ -454,9 +453,9 @@ def patri_shoes(name):
     rug(p, 2.2, 1.3, "tarp", (0.56, 0.56, 0.52))
     stool(p)
     colours = [(0.14, 0.12, 0.11), (0.34, 0.20, 0.12), (0.52, 0.34, 0.20), (0.62, 0.20, 0.18), (0.20, 0.28, 0.42), (0.74, 0.70, 0.64)]
-    for i in range(4):
-        for j in range(8):
-            x, y = -0.9 + j * 0.26, -0.45 + i * 0.3
+    for i in range(3):
+        for j in range(6):
+            x, y = -0.85 + j * 0.34, -0.4 + i * 0.4
             c = vary(rng.choice(colours), 0.06)
             for s in (-0.05, 0.05):
                 p.box((x + s - 0.04, y - 0.12, 0.012), (x + s + 0.04, y + 0.12, 0.012 + rng.uniform(0.03, 0.08)), c, "plastic")
@@ -468,11 +467,286 @@ def patri_steel(name):
     p = Piece(name)
     rug(p, 2.2, 1.3, "tarp", (0.3, 0.34, 0.3))
     stool(p)
-    for i in range(4):
+    for i in range(3):
+        for j in range(6):
+            x, y = -0.85 + j * 0.34 + rng.uniform(-0.02, 0.02), -0.4 + i * 0.4 + rng.uniform(-0.02, 0.02)
+            r = rng.uniform(0.09, 0.14)
+            p.lathe([(r * 0.5, 0.0), (r * 1.1, 0.05)], STEEL, 6, (x, y, 0.014), "steel", closed=True)
+    return p
+
+
+# ------------------------------------------------------------------ stall rows
+
+ROW_W = 2.7
+TOP = 0.78
+
+
+def table(p, skirt, colour=WHITE, w=2.4, d=1.0):
+    """A plank table with a cloth skirt down its front, so what's under it stays dark."""
+    p.box((-w / 2, -d / 2, TOP - 0.04), (w / 2, d / 2, TOP), WOOD_DK, "wood")
+    for x in (-w / 2 + 0.07, w / 2 - 0.07):
+        for y in (-d / 2 + 0.07, d / 2 - 0.07):
+            p.box((x - 0.03, y - 0.03, 0.0), (x + 0.03, y + 0.03, TOP - 0.04), WOOD_DK, "wood")
+    grid = [[Vector(((j / 5 - 0.5) * w, d / 2 + 0.01 + 0.012 * math.sin(j * 2.4), TOP - i / 2 * (TOP - 0.06))) for j in range(6)] for i in range(3)]
+    p.sheet(grid, colour, skirt, lambda c: 0.65 + 0.35 * min(1.0, c.z / TOP))
+
+
+def back_sheet(p, tile, colour, top=2.76, low=2.02, w=2.7):
+    """A sheet hung from the back of a stall's cover. It stops above a warrior's eyes: nothing in
+    a row may be a wall, since a shot goes straight through it and a player has to see that."""
+    grid = [[Vector(((j / 8 - 0.5) * w, -0.72 + 0.02 * math.sin(j * 2.1 + i), top - i / 2 * (top - low))) for j in range(9)] for i in range(3)]
+    p.sheet(grid, colour, tile, lambda c: 0.72 + 0.28 * abs(math.sin(c.x * 4.1)), repeat=True)
+
+
+def bags_row(p, z, n, w, y, colours, size=(0.2, 0.05, 0.24)):
+    for k in range(n):
+        x = (k + 0.5) / n * w - w / 2 + rng.uniform(-0.015, 0.015)
+        c = vary(rng.choice(colours), 0.07)
+        dz = rng.uniform(-0.03, 0.03)
+        p.box((x - size[0] / 2, y - size[1] / 2, z - size[2] + dz), (x + size[0] / 2, y + size[1] / 2, z + dz), c, "plastic")
+
+
+def stall_fruit(name, tiles, hang):
+    p = Piece(name)
+    table(p, "jute")
+    back_sheet(p, "jute", (0.9, 0.86, 0.76))
+    for k, tile in enumerate(tiles):
+        x = (k - (len(tiles) - 1) / 2) * 2.3 / len(tiles)
+        p.heap(x, 0.0, TOP, 1.15 / len(tiles) + 0.05, 0.5, 0.26, tile)
+    for k in range(hang):
+        x = (k + 0.5) / hang * 2.3 - 1.15
+        p.lathe([(0.0, -0.42), (0.1, -0.34), (0.13, -0.16), (0.09, 0.0)], (1.0, 1.0, 0.92), 6, (x, 0.42, 2.2), "banana", closed=False)
+    return p
+
+
+def stall_cloth(name):
+    p = Piece(name)
+    table(p, "linen", (0.5, 0.2, 0.26))
+    back_sheet(p, "linen", (0.46, 0.42, 0.4))
+    p.rod((-1.25, 0.56, 2.32), (1.25, 0.56, 2.32), 0.012, STEEL, 4)
+    for k in range(7):
+        x = (k + 0.5) / 7 * 2.5 - 1.25
+        tile, c = some_cloth()
+        garment(p, x, 0.56, 2.3, 0.3, rng.uniform(0.32, 0.62), tile, c)
+    for i in range(2):
+        for j in range(6):
+            x, y = -1.0 + j * 0.4, -0.2 + i * 0.42
+            tile, c = some_cloth()
+            h = rng.uniform(0.08, 0.24)
+            p.box((x - 0.18, y - 0.17, TOP), (x + 0.18, y + 0.17, TOP + h), c, tile)
+    return p
+
+
+def stall_bags(name):
+    p = Piece(name)
+    table(p, "denim")
+    back_sheet(p, "tarp", (0.28, 0.28, 0.3))
+    colours = [(0.34, 0.20, 0.12), (0.16, 0.14, 0.14), (0.60, 0.22, 0.20), (0.22, 0.30, 0.44), (0.70, 0.55, 0.30), (0.40, 0.42, 0.26)]
+    bags_row(p, 2.3, 6, 2.4, 0.56, colours, (0.3, 0.09, 0.3))
+    for k in range(6):
+        x = -1.0 + k * 0.4
+        c = vary(rng.choice(colours), 0.06)
+        p.box((x - 0.16, -0.14, TOP), (x + 0.16, 0.08, TOP + rng.uniform(0.22, 0.32)), c, "plastic")
+    return p
+
+
+def stall_shoes(name):
+    """Three steps of shoes, the way a footpath seller stands them."""
+    p = Piece(name)
+    back_sheet(p, "tarp", (0.2, 0.26, 0.4))
+    colours = [(0.13, 0.11, 0.10), (0.34, 0.20, 0.12), (0.52, 0.34, 0.20), (0.62, 0.20, 0.18), (0.20, 0.28, 0.42), (0.74, 0.70, 0.64)]
+    for k in range(3):
+        y0, y1, z = 0.5 - k * 0.36, 0.14 - k * 0.36, 0.28 + k * 0.28
+        p.box((-1.2, y1, 0.0), (1.2, y0, z), (0.5, 0.48, 0.46), "wood")
         for j in range(7):
-            x, y = -0.9 + j * 0.3 + rng.uniform(-0.02, 0.02), -0.45 + i * 0.3 + rng.uniform(-0.02, 0.02)
-            r = rng.uniform(0.08, 0.13)
-            p.lathe([(r * 0.5, 0.0), (r, 0.02), (r * 1.1, 0.05)], STEEL, 7, (x, y, 0.014), "steel", closed=True)
+            x = -1.05 + j * 0.35
+            c = vary(rng.choice(colours), 0.05)
+            for s in (-0.06, 0.06):
+                p.box((x + s - 0.05, y1 + 0.05, z), (x + s + 0.05, y0 - 0.03, z + rng.uniform(0.07, 0.11)), c, "plastic")
+    return p
+
+
+def stall_steel(name):
+    p = Piece(name)
+    table(p, "tarp", (0.36, 0.38, 0.42))
+    back_sheet(p, "tarp", (0.34, 0.36, 0.38))
+    for k in range(6):
+        x = -1.0 + k * 0.4
+        z = TOP
+        for level in range(rng.randint(2, 3)):
+            r = rng.uniform(0.12, 0.16) - level * 0.015
+            p.lathe([(r * 0.8, 0.0), (r, 0.03), (r * 1.06, 0.12)], STEEL, 6, (x, rng.uniform(-0.2, 0.2), z), "steel")
+            z += 0.1
+    p.rod((-1.2, 0.56, 2.28), (1.2, 0.56, 2.28), 0.012, STEEL, 4)
+    for k in range(6):
+        x = -1.05 + k * 0.42
+        r = rng.uniform(0.1, 0.14)
+        grid = [[Vector((x + (r * a) * math.cos(t), 0.58, 2.1 + (r * a) * math.sin(t))) for t in [q / 6 * math.tau for q in range(7)]] for a in (0.05, 1.0)]
+        p.sheet(grid, STEEL, "steel")
+    return p
+
+
+def stall_spice(name, tops):
+    """Open sacks stood along the front, a low table of tins behind."""
+    p = Piece(name)
+    back_sheet(p, "jute", (0.84, 0.78, 0.66))
+    n = len(tops)
+    for k, top in enumerate(tops):
+        x = (k - (n - 1) / 2) * 2.4 / n
+        sack(p, x, 0.26, 0.21, 0.56, vary(WHITE, 0.06), top)
+    p.box((-1.2, -0.44, 0.0), (1.2, -0.04, 0.72), WOOD_DK, "wood")
+    colours = [(0.70, 0.24, 0.12), (0.72, 0.56, 0.16), (0.36, 0.40, 0.20), (0.56, 0.40, 0.26)]
+    for k in range(6):
+        x = -1.05 + k * 0.42
+        p.lathe([(0.1, 0.0), (0.1, 0.24), (0.075, 0.28)], vary(rng.choice(colours), 0.07), 5, (x, -0.24, 0.72), "plastic")
+    return p
+
+
+def stall_toys(name):
+    p = Piece(name)
+    table(p, "tarp", (0.72, 0.36, 0.14))
+    back_sheet(p, "tarp", (0.2, 0.34, 0.44))
+    colours = [(0.86, 0.22, 0.16), (0.96, 0.74, 0.14), (0.16, 0.50, 0.74), (0.26, 0.66, 0.34), (0.90, 0.44, 0.60)]
+    bags_row(p, 2.3, 7, 2.4, 0.56, colours, (0.24, 0.06, 0.26))
+    for k in range(12):
+        x, y = rng.uniform(-1.1, 1.1), rng.uniform(-0.38, 0.38)
+        r = rng.uniform(0.07, 0.13)
+        p.lathe([(0.0, 0.0), (r, r * 0.6), (r, r * 1.4), (0.0, r * 2)], vary(rng.choice(colours), 0.06), 5, (x, y, TOP), "plastic", closed=False)
+    return p
+
+
+def stall_snack(name):
+    """A fry stall: a black pan on a stove, trays of something golden, steel tins."""
+    p = Piece(name)
+    table(p, "tarp", (0.74, 0.70, 0.60))
+    back_sheet(p, "tarp", (0.3, 0.26, 0.24))
+    p.lathe([(0.0, 0.0), (0.42, 0.04), (0.5, 0.14)], (0.07, 0.07, 0.08), 12, (-0.72, 0.0, TOP + 0.14), "steel", closed=False)
+    p.lathe([(0.0, 0.0), (0.46, 0.0)], (0.70, 0.46, 0.12), 12, (-0.72, 0.0, TOP + 0.24), closed=False)
+    p.box((-1.04, -0.32, TOP), (-0.4, 0.32, TOP + 0.14), (0.14, 0.14, 0.15), "steel")
+    for k, tile in enumerate(("turmeric", "coriander", "chilli")):
+        x = 0.1 + k * 0.42
+        p.box((x - 0.2, -0.3, TOP), (x + 0.2, 0.3, TOP + 0.03), STEEL, "steel")
+        p.heap(x, 0.0, TOP + 0.03, 0.19, 0.28, 0.12, tile)
+    return p
+
+
+def roof(name, colour):
+    """The row's cover: a sheet from 2.8 m behind to 2.4 m at the front on four poles, with a
+    scalloped edge hanging. A little wider than a stall, so a row's sheets lap over each other."""
+    p = Piece(name)
+    w = ROW_W + 0.5
+    for x in (-ROW_W / 2 + 0.05, ROW_W / 2 - 0.05):
+        p.rod((x, -0.72, 0.0), (x, -0.72, 2.8), 0.022, BAMBOO, 4)
+        p.rod((x, 0.92, 0.0), (x, 0.92, 2.42), 0.02, BAMBOO, 4)
+    grid = []
+    for i in range(5):
+        u = i / 4
+        row = []
+        for j in range(7):
+            v = j / 6
+            sag = 0.09 * math.sin(u * math.pi) * (0.5 + 0.5 * math.sin(v * math.pi * 2)) + 0.012 * math.sin(v * 23 + u * 5)
+            row.append(Vector(((v - 0.5) * w, -0.85 + 1.95 * u, 2.82 - 0.44 * u - sag)))
+        grid.append(row)
+    p.sheet(grid, colour, "tarp", lambda c: 0.8 + 0.2 * abs(math.sin(c.x * 2.6 + c.y * 1.9)))
+    edge = []
+    for i in range(2):
+        row = []
+        for j in range(13):
+            v = j / 12
+            drop = 0.26 + 0.06 * math.sin(j * math.pi) if i else 0.0
+            row.append(Vector(((v - 0.5) * w, 1.1, 2.38 - drop)))
+        edge.append(row)
+    p.sheet(edge, colour, "tarp", lambda c: 0.7 + 0.3 * abs(math.sin(c.x * 6.0)))
+    return p
+
+
+def awning(name, a, b):
+    """A striped cloth awning off a shop front: up at the wall, out over the pavement."""
+    p = Piece(name)
+    w, out = 3.1, 1.9
+    n = 8
+    for k in range(n):
+        x0, x1 = -w / 2 + k * w / n, -w / 2 + (k + 1) * w / n
+        c = a if k % 2 == 0 else b
+        grid = [[Vector((x, out * u, 2.95 - 0.6 * u - 0.05 * math.sin(u * math.pi))) for x in (x0, x1)] for u in (0.0, 0.34, 0.67, 1.0)]
+        grid.append([Vector((x, out + 0.01, 2.35 - 0.24)) for x in (x0, x1)])
+        p.sheet(grid, c, "linen", lambda q: 0.82 + 0.18 * abs(math.sin(q.x * 2.0 + q.y * 3.0)))
+    return p
+
+
+def shop_front(name, kind):
+    """A shop's stock brought out to its door: shelves against the wall, full to the top, with
+    things hung along the front."""
+    p = Piece(name)
+    w, d = 2.9, 0.42
+    for x in (-w / 2, w / 2):
+        p.box((x - 0.025, 0.0, 0.0), (x + 0.025, d, 2.3), WOOD_DK, "wood")
+    p.box((-w / 2, 0.0, 0.0), (w / 2, 0.02, 2.3), (0.3, 0.27, 0.25), "wood")
+    for z in (0.05, 0.62, 1.2, 1.78):
+        p.box((-w / 2, 0.0, z - 0.025), (w / 2, d, z), WOOD_DK, "wood")
+        x = -w / 2 + 0.06
+        while x < w / 2 - 0.3:
+            bw = rng.uniform(0.34, 0.72)
+            h = rng.uniform(0.3, 0.5)
+            if kind == "cloth":
+                tile, c = some_cloth()
+            elif kind == "bartan":
+                tile, c = "steel", STEEL
+            elif kind == "grocery":
+                tile, c = rng.choice([("card", WHITE), ("jute", WHITE), ("plastic", (0.7, 0.3, 0.2)), ("plastic", (0.8, 0.66, 0.2)), ("plastic", (0.26, 0.5, 0.3))])
+            else:
+                tile, c = rng.choice([("card", WHITE), ("plastic", (0.3, 0.4, 0.6)), ("plastic", (0.7, 0.26, 0.24)), ("plastic", (0.8, 0.7, 0.3)), ("card", WHITE)])
+            p.box((x, 0.04, z), (x + bw, d - rng.uniform(0.02, 0.1), z + h), vary(c, 0.06), tile)
+            x += bw + 0.03
+    if kind in ("cloth", "general"):
+        for k in range(3):
+            xx = (k + 0.5) / 3 * w - w / 2
+            tile, c = some_cloth()
+            garment(p, xx, d + 0.05, 2.34, 0.8, rng.uniform(0.5, 0.8), tile, c)
+    return p
+
+
+def far_stall(name, tiles, skirt):
+    """A stall at forty metres: a table and a low heap, the same size and colours."""
+    p = Piece(name)
+    p.box((-1.2, -0.5, 0.0), (1.2, 0.5, TOP), WOOD_DK, skirt)
+    for k, tile in enumerate(tiles):
+        x = (k - (len(tiles) - 1) / 2) * 2.3 / len(tiles)
+        p.heap(x, 0.0, TOP, 1.15 / len(tiles) + 0.05, 0.5, 0.26, tile, rings=2, seg=6)
+    return p
+
+
+def far_shop(name, tile, colour):
+    """A stocked shop front at forty metres: shelves are a colour."""
+    p = Piece(name)
+    p.box((-1.45, 0.0, 0.0), (1.45, 0.42, 2.3), colour, tile)
+    return p
+
+
+def far_patri(name, tiles):
+    p = Piece(name)
+    rug(p, 2.2, 1.3, "tarp", (0.3, 0.3, 0.32))
+    for k, tile in enumerate(tiles):
+        x = (k - (len(tiles) - 1) / 2) * 2.0 / len(tiles)
+        p.heap(x, 0.0, 0.01, 1.0 / len(tiles) + 0.04, 0.52, 0.17, tile, rings=2, seg=6)
+    return p
+
+
+def far_scooter():
+    """A scooter at forty metres, or a bunch of them."""
+    p = Piece("far_scooter")
+    c = (0.34, 0.22, 0.20)
+    p.box((-0.12, -0.75, 0.2), (0.12, 0.75, 0.62), c)
+    p.box((-0.2, -0.3, 0.62), (0.2, 0.55, 0.84), (0.12, 0.11, 0.11))
+    p.box((-0.3, 0.68, 0.8), (0.3, 0.74, 0.86), (0.1, 0.1, 0.1))
+    p.lathe([(0.0, -0.05), (0.2, -0.05), (0.2, 0.05), (0.0, 0.05)], (0.05, 0.05, 0.05), 6, (0, 0.65, 0.2), closed=False, scale=(1, 1, 1))
+    return p
+
+
+def bunting_pole():
+    """A tall bamboo that holds a banner's rope over the road."""
+    p = Piece("bamboo_tall")
+    p.rod((0, 0, 0), (0, 0, 6.3), 0.03, BAMBOO, 5, 0.018)
     return p
 
 
@@ -528,6 +802,43 @@ def main():
         patri_clothes("patri_clothes"),
         patri_shoes("patri_shoes"),
         patri_steel("patri_steel"),
+        stall_fruit("stall_fruit", ["orange", "apple", "guava"], 4),
+        stall_fruit("stall_tropic", ["banana", "orange", "coconut"], 5),
+        stall_fruit("stall_veg", ["potato", "onion", "tomato"], 0),
+        stall_fruit("stall_green", ["cauli", "greens", "brinjal"], 0),
+        stall_cloth("stall_cloth"),
+        stall_cloth("stall_cloth2"),
+        stall_bags("stall_bags"),
+        stall_shoes("stall_shoes"),
+        stall_steel("stall_steel"),
+        stall_spice("stall_spice", ["chilli", "turmeric", "coriander", "chilli", "lentil"]),
+        stall_spice("stall_grain", ["rice", "lentil", "rice", "coriander", "rice"]),
+        stall_toys("stall_toys"),
+        stall_snack("stall_snack"),
+        roof("roof_blue", (0.15, 0.27, 0.46)),
+        roof("roof_orange", (0.70, 0.33, 0.12)),
+        roof("roof_white", (0.78, 0.78, 0.73)),
+        roof("roof_green", (0.20, 0.36, 0.26)),
+        roof("roof_red", (0.56, 0.14, 0.13)),
+        awning("awning_red", (0.62, 0.15, 0.14), (0.86, 0.82, 0.74)),
+        awning("awning_blue", (0.15, 0.28, 0.48), (0.86, 0.82, 0.74)),
+        awning("awning_green", (0.17, 0.38, 0.27), (0.84, 0.78, 0.56)),
+        awning("awning_orange", (0.78, 0.42, 0.12), (0.84, 0.78, 0.60)),
+        shop_front("shop_cloth", "cloth"),
+        shop_front("shop_bartan", "bartan"),
+        shop_front("shop_grocery", "grocery"),
+        shop_front("shop_general", "general"),
+        far_stall("far_fruit", ["orange", "apple", "guava"], "jute"),
+        far_stall("far_veg", ["potato", "onion", "greens"], "jute"),
+        far_stall("far_cloth", ["gingham", "linen", "floral"], "linen"),
+        far_stall("far_mixed", ["steel", "card", "turmeric"], "tarp"),
+        far_shop("far_shop_a", "card", (0.9, 0.86, 0.8)),
+        far_shop("far_shop_b", "floral", (0.9, 0.86, 0.9)),
+        far_shop("far_shop_c", "steel", (0.84, 0.86, 0.9)),
+        far_patri("far_patri_a", ["tomato", "onion", "potato"]),
+        far_patri("far_patri_b", ["linen", "gingham", "floral"]),
+        far_scooter(),
+        bunting_pole(),
         crow(),
     ]
     built = [p.finish() for p in made]

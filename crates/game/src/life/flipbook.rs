@@ -305,6 +305,27 @@ struct Piece {
     joints: Vec<[u16; 4]>,
     weights: Vec<[f32; 4]>,
     idx: Vec<u32>,
+    /// The vertices of a warrior's pack, flattened (`flatten_pack`): their cloth is painted over.
+    pack: Vec<bool>,
+    /// The body under the clothes.
+    body: bool,
+}
+
+/// Whether a joint moves skin that shows past the clothes.
+fn bare(name: &str) -> bool {
+    ["hand", "lowerarm", "foot", "ball", "index", "middle", "ring", "pinky", "thumb", "neck", "head"].iter().any(|k| name.contains(k))
+}
+
+/// The body's faces that clothes cover cost the most and are never seen. Nothing is lost by
+/// leaving them out of every picture.
+fn strip_covered(piece: &mut Piece, joint_bare: &[bool]) {
+    let shown = |v: u32| {
+        let (j, w) = (piece.joints[v as usize], piece.weights[v as usize]);
+        let top = (0..4).max_by(|a, b| w[*a].total_cmp(&w[*b])).unwrap_or(0);
+        joint_bare.get(j[top] as usize).copied().unwrap_or(true)
+    };
+    let kept: Vec<u32> = piece.idx.chunks_exact(3).filter(|t| t.iter().any(|v| shown(*v))).flatten().copied().collect();
+    piece.idx = kept;
 }
 
 /// The lowest detail the model has: its highest `..._LOD<n>` nodes, or all of it if it has none.
@@ -347,7 +368,9 @@ fn pieces(doc: &gltf::Document, blob: &[u8]) -> Result<Vec<Piece>, String> {
             let weights: Vec<[f32; 4]> = reader.read_weights(0).ok_or("no weights")?.into_f32().collect();
             let idx: Vec<u32> = reader.read_indices().ok_or("no indices")?.into_u32().collect();
             let image = pbr.base_color_texture().map(|t| t.texture().source().index());
-            out.push(Piece { part, image, colour: pbr.base_color_factor(), pos, nrm, uv, joints, weights, idx });
+            let pack = vec![false; pos.len()];
+            let body = name.contains("body");
+            out.push(Piece { part, image, colour: pbr.base_color_factor(), pos, nrm, uv, joints, weights, idx, pack, body });
         }
     }
     if out.is_empty() {
@@ -359,9 +382,12 @@ fn pieces(doc: &gltf::Document, blob: &[u8]) -> Result<Vec<Piece>, String> {
 /// A warrior's pack is what a warrior looks like from behind, so a shopper's goes flat against the
 /// back, where it is only more shirt. Model space: +Z is forward, feet at y = 0.
 fn flatten_pack(piece: &mut Piece) {
-    const BACK: f32 = -0.115;
-    for p in piece.pos.iter_mut().filter(|p| p.y > 0.8 && p.z < BACK) {
-        p.z = BACK + (p.z - BACK) * 0.12;
+    const BACK: f32 = -0.1;
+    for (p, pack) in piece.pos.iter_mut().zip(&mut piece.pack) {
+        if p.y > 0.8 && p.z < BACK {
+            p.z = BACK + (p.z - BACK) * 0.12;
+            *pack = true;
+        }
     }
 }
 
@@ -427,6 +453,9 @@ fn blit(atlas: &mut [u8], side: u32, cell: Cell, src: &[u8], w: u32, h: u32) {
     }
 }
 
+/// The class of a texel on a warrior's pack and straps.
+const PACK: u8 = 4;
+
 /// Which body class each texel of an outfit's cell is, from the triangles laid over it.
 fn outfit_classes(piece: &Piece, joint_class: &[u8], side: u32) -> Vec<u8> {
     let mut grid = vec![255u8; (side * side) as usize];
@@ -438,7 +467,13 @@ fn outfit_classes(piece: &Piece, joint_class: &[u8], side: u32) -> Vec<u8> {
     for tri in piece.idx.chunks_exact(3) {
         let (a, b, c) = (tri[0] as usize, tri[1] as usize, tri[2] as usize);
         let classes = [class_of(a), class_of(b), class_of(c)];
-        let class = if classes[1] == classes[2] { classes[1] } else { classes[0] };
+        let class = if piece.pack[a] || piece.pack[b] || piece.pack[c] {
+            PACK
+        } else if classes[1] == classes[2] {
+            classes[1]
+        } else {
+            classes[0]
+        };
         let wrap = |v: usize| Vec2::new(piece.uv[v].x.rem_euclid(1.0), piece.uv[v].y.rem_euclid(1.0)) * side as f32;
         let (pa, pb, pc) = (wrap(a), wrap(b), wrap(c));
         let (lo, hi) = (pa.min(pb).min(pc).floor(), pa.max(pb).max(pc).ceil());
@@ -488,10 +523,12 @@ fn dress(atlas: &[u8], side: u32, cells: &[(Part, Cell)], classes: &[Vec<u8>], l
                 match (part, classes) {
                     (Part::Outfit, Some(classes)) => {
                         let class = classes[(y * cell.side + x) as usize];
-                        let colour = [look.upper, look.lower, look.shin, look.feet].get(class as usize).copied().flatten();
+                        // A pack is plain shirt now, with none of its own shading.
+                        let colour = [look.upper, look.lower, look.shin, look.feet, look.upper].get(class as usize).copied().flatten();
                         if let Some(colour) = colour {
-                            let (sum, n) = mean[class as usize];
-                            let shade = (luma(&out[o..o + 3]) / (sum / n.max(1) as f32).max(0.02)).clamp(0.6, 1.3);
+                            let (sum, n) = mean.get(class as usize).copied().unwrap_or((0.0, 0));
+                            let (lo, hi) = if class == 0 { (0.8, 1.15) } else { (0.6, 1.3) };
+                            let shade = if class == PACK { 0.92 } else { (luma(&out[o..o + 3]) / (sum / n.max(1) as f32).max(0.02)).clamp(lo, hi) };
                             for c in 0..3 {
                                 out[o + c] = (colour[c] as f32 * shade).min(255.0) as u8;
                             }
@@ -528,6 +565,8 @@ pub fn bake(spec: &Spec) -> Result<Baked, String> {
     let mut parts = pieces(doc, blob)?;
     if spec.coats.is_empty() {
         parts.iter_mut().filter(|p| p.part == Part::Outfit).for_each(flatten_pack);
+        let joint_bare: Vec<bool> = joints.iter().map(|j| bare(&skel.names[*j])).collect();
+        parts.iter_mut().filter(|p| p.body).for_each(|p| strip_covered(p, &joint_bare));
     }
     // Biggest first: it gets the big square of the atlas.
     parts.sort_by_key(|p| std::cmp::Reverse(p.idx.len() + if p.part == Part::Outfit { 1 << 24 } else { 0 }));
@@ -546,7 +585,6 @@ pub fn bake(spec: &Spec) -> Result<Baked, String> {
     let images: Vec<gltf::Image> = doc.images().collect();
     let mut cells: Vec<(Part, Cell)> = vec![];
     let (big, small) = (side / 4 * 3, side / 4);
-    let mut decoded: HashMap<usize, Option<(Vec<u8>, u32, u32)>> = HashMap::new();
     for (k, part) in parts.iter().enumerate() {
         let cell = match (k, parts.len()) {
             (_, 1) => Cell { x: 0, y: 0, side },
@@ -554,10 +592,11 @@ pub fn bake(spec: &Spec) -> Result<Baked, String> {
             (k, _) if k <= 4 => Cell { x: big, y: (k as u32 - 1) * small, side: small },
             (k, _) => Cell { x: ((k as u32 - 5) % 3) * small, y: big, side: small },
         };
-        let src = part.image.map(|i| decoded.entry(i).or_insert_with(|| decode(&images[i], blob)));
+        // One image at a time: each is 16 MB, and a model has several.
+        let src = if spec.coats.is_empty() { part.image.and_then(|i| decode(&images[i], blob)) } else { None };
         match src {
-            Some(Some((data, w, h))) => blit(&mut atlas, side, cell, data, *w, *h),
-            _ => {
+            Some((data, w, h)) => blit(&mut atlas, side, cell, &data, w, h),
+            None => {
                 let c = part.colour.map(|v| (v.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0) as u8);
                 for y in 0..cell.side {
                     for x in 0..cell.side {
@@ -569,7 +608,6 @@ pub fn bake(spec: &Spec) -> Result<Baked, String> {
         }
         cells.push((part.part, cell));
     }
-    drop(decoded);
     let classes: Vec<Vec<u8>> = parts.iter().zip(&cells).filter(|(p, _)| p.part == Part::Outfit).map(|(p, (_, c))| outfit_classes(p, &joint_class, c.side)).collect();
     let coats = spec.coats.iter().map(|path| {
         let bytes = read(path)?;

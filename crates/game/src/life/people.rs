@@ -10,6 +10,7 @@ use std::f32::consts::{PI, TAU};
 
 use bevy::camera::primitives::Aabb;
 use bevy::camera::visibility::{NoAutoAabb, VisibilityRange};
+use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
 use shared::map::MapLayout;
@@ -31,13 +32,13 @@ impl Plugin for PeoplePlugin {
         app.init_resource::<Books>()
             .init_resource::<Alarms>()
             .init_resource::<Scares>()
-            .add_systems(Update, (finish_baking, (hear, listen_ring, populate, walk).chain()));
+            .add_systems(Update, (finish_baking, shadows_near, (hear, listen_ring, populate, walk).chain()));
     }
 }
 
 /// The most people near the player, and how far off they stop being drawn.
 const PEOPLE: usize = 16;
-const ANIMALS: usize = 10;
+const ANIMALS: usize = 11;
 /// How big the animals are: a street dog about 52 cm at the shoulder, a cow about 1.3 m.
 const DOG_SCALE: f32 = 0.27;
 const COW_SCALE: f32 = 0.32;
@@ -48,7 +49,15 @@ const GONE: f32 = DRAWN + FADE + 4.0;
 /// A shopper or a stroller this far off and out of view gives way to one nearer.
 const STRAYED: f32 = 56.0;
 /// How far out shoppers are looked for: sixteen people go further the closer they stay.
-const CROWD: f32 = 44.0;
+const CROWD: f32 = 58.0;
+/// How near the centre of the view someone may turn up: past this, in a busy street, nobody sees.
+const SEEN_FROM: f32 = 40.0;
+/// When the bakes start.
+const BAKE_AFTER: f32 = 9.0;
+/// How far off someone still casts a shadow: a blob of a figure past this won't be missed.
+const SHADOW_TO: f32 = 28.0;
+/// The most people moved round to the front of the view each look.
+const MOVED_UP: usize = 2;
 /// How close the player gets before someone starts to move off.
 const KEEP_OFF: f32 = 7.0;
 /// Above the ground, the camera is too far up for any of this.
@@ -192,7 +201,8 @@ fn finish_baking(mut books: ResMut<Books>, time: Res<Time>, mut meshes: ResMut<A
         }
     }
     books.wait += time.delta_secs();
-    if books.wait < 3.0 {
+    // Well after the map has gone to the GPU: a bake's texture reading then adds to no peak.
+    if books.wait < BAKE_AFTER {
         return;
     }
     let all = specs();
@@ -326,9 +336,15 @@ fn listen_ring(zone: Res<Zone>, walkers: Query<&Walker>, mut alarms: ResMut<Alar
     }
 }
 
-/// Whether a person may walk here.
-fn walkable(layout: &MapLayout, floor: &StreetFloor, p: Vec2) -> bool {
-    floor.walkable(p) && !matches!(layout.terrain.ground_at(p.x, p.y), Some(ground::WATER)) && !layout.is_holy(p)
+/// Whether a person may walk here: the row stalls have no collider, but nobody walks through one.
+fn walkable(layout: &MapLayout, floor: &StreetFloor, market: &Market, p: Vec2) -> bool {
+    floor.walkable(p) && !market.stall_at(p) && !matches!(layout.terrain.ground_at(p.x, p.y), Some(ground::WATER)) && !layout.is_holy(p)
+}
+
+/// Whether the straight walk from `a` to `b` is clear.
+fn line_clear(layout: &MapLayout, floor: &StreetFloor, market: &Market, a: Vec2, b: Vec2) -> bool {
+    let steps = a.distance(b).ceil() as usize;
+    floor.line_clear(a, b) && (0..=steps).all(|s| !market.stall_at(a.lerp(b, s as f32 / steps.max(1) as f32))) && walkable(layout, floor, market, b)
 }
 
 fn paved(layout: &MapLayout, p: Vec2) -> bool {
@@ -347,6 +363,25 @@ fn local(yaw: f32, at: Vec3) -> Vec3 {
 /// The yaw that faces along `d`.
 fn facing(d: Vec2) -> f32 {
     (-d.x).atan2(-d.y)
+}
+
+/// Only those near the camera cast a shadow.
+fn shadows_near(mut commands: Commands, time: Res<Time>, mut every: Local<f32>, camera: Query<&GlobalTransform, With<MainCamera>>, q: Query<(Entity, &Walker, Has<NotShadowCaster>)>) {
+    *every -= time.delta_secs();
+    if *every > 0.0 {
+        return;
+    }
+    *every = 0.4;
+    let Ok(camera) = camera.single() else { return };
+    let at = camera.translation().xz();
+    for (e, w, none) in &q {
+        let far = w.pos.distance(at) > SHADOW_TO;
+        if far && !none {
+            commands.entity(e).insert(NotShadowCaster);
+        } else if !far && none {
+            commands.entity(e).remove::<NotShadowCaster>();
+        }
+    }
 }
 
 /// Keeps the street near the player peopled.
@@ -411,23 +446,39 @@ fn populate(
     // into a street from out of the player's view.
     let first = landed.is_none_or(|p| p.distance(at) > 30.0);
     *landed = Some(at);
+    let ahead = |p: Vec2| (p - at).normalize_or_zero().dot(forward);
     let hidden = |p: Vec2| {
         let d = p.distance(at);
-        d >= KEEP_OFF + 1.0 && d < DRAWN + 2.0 && (first || d > DRAWN - 16.0 || (p - at).normalize_or_zero().dot(forward) < 0.1)
+        d >= KEEP_OFF + 1.0 && d < DRAWN + 2.0 && (first || d > SEEN_FROM || ahead(p) < 0.1)
     };
     let inside = |p: Vec2| zone.radius - p.distance(zone.center) > RING_WARNING + 10.0;
-    let free = |p: Vec2| hidden(p) && inside(p) && !scares.scared(p, now) && walkable(&layout, &floor, p);
+    let free = |p: Vec2| hidden(p) && inside(p) && !scares.scared(p, now) && walkable(&layout, &floor, &market, p);
     populate_animals(&mut commands, &books, &layout, &floor, busy, at, &walkers, &mut dice, now, &free);
     let have = have - walkers.iter().filter(|(_, w)| w.role.animal()).count();
     let mut room = want.saturating_sub(have);
+    // Sixteen people are a crowd only if they are where the player is looking: shoppers behind
+    // him go, and turn up ahead.
+    let in_view = walkers.iter().filter(|(_, w)| !w.role.animal() && w.pos.distance(at) < CROWD && ahead(w.pos) > 0.55).count();
+    if in_view < want * 3 / 4 {
+        let behind = walkers.iter().filter(|(_, w)| w.role == Role::Shopper && !matches!(w.doing, Doing::Flee { .. }) && ahead(w.pos) < -0.15 && w.pos.distance(at) > 10.0);
+        for (e, _) in behind.take(MOVED_UP) {
+            commands.entity(e).despawn();
+            room += 1;
+        }
+    }
     if room == 0 {
         *seed = dice.0;
         return;
     }
     // Stalls first, nearest first, a keeper each and up to two at a chai stall.
     let mut near: Vec<u32> = market.stalls_near(at, STRAYED).filter(|id| !stalls_taken.contains(id)).collect();
-    near.sort_by(|a, b| market.stalls[*a as usize].pos.xz().distance_squared(at).total_cmp(&market.stalls[*b as usize].pos.xz().distance_squared(at)));
-    let keepers = (want * 2 / 3).max(1);
+    // The nearest first, and those in view before those behind.
+    let rank = |id: &u32| {
+        let p = market.stalls[*id as usize].pos.xz();
+        p.distance(at) * if ahead(p) > 0.4 { 0.55 } else { 1.3 }
+    };
+    near.sort_by(|a, b| rank(a).total_cmp(&rank(b)));
+    let keepers = (want * 2 / 5).max(1);
     let mut kept = walkers.iter().filter(|(_, w)| !w.role.animal() && w.role != Role::Shopper).count();
     for id in near {
         if room == 0 || kept >= keepers {
@@ -440,7 +491,7 @@ fn populate(
             if !free(spot) {
                 continue;
             }
-            spawn_walker(&mut commands, &books, &mut dice, role, Some(id), spot, yaw, layout.terrain.height(spot.x, spot.y), now);
+            spawn_walker(&mut commands, &books, &mut dice, role, Some(id), true, spot, yaw, layout.terrain.height(spot.x, spot.y), now);
             room -= 1;
             kept += 1;
             any = true;
@@ -448,19 +499,21 @@ fn populate(
         let _ = any;
     }
     // Shoppers at the stalls, in ones and twos: that is what makes a street look like a market.
-    let mut spots: Vec<u32> = market.stalls_near(at, CROWD).filter(|id| matches!(market.stalls[*id as usize].kind, StallKind::Thela | StallKind::Patri | StallKind::Chai)).collect();
+    let mut spots: Vec<u32> = market.stalls_near(at, CROWD).filter(|id| matches!(market.stalls[*id as usize].kind, StallKind::Thela | StallKind::Patri | StallKind::Chai | StallKind::Row | StallKind::Cart)).collect();
     for k in (1..spots.len()).rev() {
         spots.swap(k, (dice.next() * (k + 1) as f32) as usize);
     }
+    spots.sort_by_key(|id| ahead(market.stalls[*id as usize].pos.xz()) < 0.4);
+    let strollers = room / 3;
     for id in spots {
-        if room == 0 {
+        if room <= strollers {
             break;
         }
         let stall = market.stalls[id as usize];
         for _ in 0..1 + (dice.next() * 2.0) as usize {
             let (spot, yaw) = in_front(&stall, &mut dice);
-            if room > 0 && free(spot) {
-                spawn_walker(&mut commands, &books, &mut dice, Role::Shopper, None, spot, yaw, layout.terrain.height(spot.x, spot.y), now);
+            if room > strollers && free(spot) {
+                spawn_walker(&mut commands, &books, &mut dice, Role::Shopper, None, true, spot, yaw, layout.terrain.height(spot.x, spot.y), now);
                 room -= 1;
             }
         }
@@ -469,8 +522,10 @@ fn populate(
     let mut tries = 0;
     while room > 0 && tries < 24 {
         tries += 1;
-        let p = at + Vec2::from_angle(dice.range(0.0, TAU)) * dice.range(KEEP_OFF + 2.0, CROWD);
-        if !free(p) || (!paved(&layout, p) && dice.next() < 0.75) {
+        // Up the street ahead of the player, mostly: a street is a road and the ground by it.
+        let turn = if dice.next() < 0.8 { dice.range(-0.8, 0.8) } else { dice.range(0.0, TAU) };
+        let p = at + Vec2::from_angle(turn).rotate(forward) * dice.range(KEEP_OFF + 2.0, CROWD);
+        if !free(p) {
             continue;
         }
         let group = 1 + (dice.next() * 3.0) as usize;
@@ -478,7 +533,7 @@ fn populate(
         for k in 0..group.min(room) {
             let spot = p + Vec2::from_angle(k as f32 * 2.1 + leader_yaw) * if k == 0 { 0.0 } else { 0.9 };
             if free(spot) {
-                spawn_walker(&mut commands, &books, &mut dice, Role::Shopper, None, spot, leader_yaw, layout.terrain.height(spot.x, spot.y), now);
+                spawn_walker(&mut commands, &books, &mut dice, Role::Shopper, None, false, spot, leader_yaw, layout.terrain.height(spot.x, spot.y), now);
                 room -= 1;
             }
         }
@@ -507,7 +562,7 @@ fn populate_animals(commands: &mut Commands, books: &Books, layout: &MapLayout, 
         }
         let role = if cows < 2 + (want > 6) as usize && dice.next() < 0.35 { Role::Cow } else { Role::Dog };
         let yaw = dice.range(0.0, TAU);
-        spawn_walker(commands, books, dice, role, None, p, yaw, layout.terrain.height(p.x, p.y), now);
+        spawn_walker(commands, books, dice, role, None, true, p, yaw, layout.terrain.height(p.x, p.y), now);
         left -= 1;
     }
 }
@@ -534,11 +589,18 @@ fn stall_people(s: &Stall, dice: &mut Dice) -> Vec<(Role, Vec2, f32)> {
         StallKind::Chairs => vec![(Role::Sitter, at(-0.35, 0.0), s.yaw + PI + 0.3)],
         // On his stool behind the sheet.
         StallKind::Patri => vec![(Role::Seller, at(0.0, 0.98), s.yaw)],
+        // Behind the table, facing the road.
+        StallKind::Row => vec![(Role::Keeper, at(dice.range(-0.7, 0.7), 0.86), s.yaw)],
+        StallKind::Cart => {
+            let side = if dice.next() < 0.5 { 1.05 } else { -1.05 };
+            vec![(Role::Keeper, at(side, 0.0), s.yaw + if side > 0.0 { PI / 2.0 } else { -PI / 2.0 })]
+        }
+        StallKind::Scooters => vec![],
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn spawn_walker(commands: &mut Commands, books: &Books, dice: &mut Dice, role: Role, stall: Option<u32>, spot: Vec2, yaw: f32, y: f32, now: f32) {
+fn spawn_walker(commands: &mut Commands, books: &Books, dice: &mut Dice, role: Role, stall: Option<u32>, at_stall: bool, spot: Vec2, yaw: f32, y: f32, now: f32) {
     let woman = role == Role::Shopper && dice.next() < 0.5;
     let Some(book) = books.of(role, woman) else { return };
     let look = (dice.next() * book.looks.len() as f32) as usize % book.looks.len();
@@ -549,7 +611,8 @@ fn spawn_walker(commands: &mut Commands, books: &Books, dice: &mut Dice, role: R
     };
 
     let Some(clip) = book.clip(clip_name) else { return };
-    let until = now + dice.range(2.0, 9.0);
+    // Those not at a stall are on their way somewhere.
+    let until = now + if role == Role::Shopper && !at_stall { dice.range(0.0, 0.5) } else { dice.range(2.0, 9.0) };
     let phase = dice.next();
     commands.spawn((
         Walker {
@@ -582,8 +645,9 @@ fn spawn_walker(commands: &mut Commands, books: &Books, dice: &mut Dice, role: R
 /// Where a shopper stands to look over a stall, and which way.
 fn in_front(s: &Stall, dice: &mut Dice) -> (Vec2, f32) {
     let (x, z) = match s.kind {
-        StallKind::Thela => (if dice.next() < 0.5 { 1.2 } else { -1.2 }, dice.range(-0.8, 0.8)),
+        StallKind::Thela | StallKind::Cart => (if dice.next() < 0.5 { 1.2 } else { -1.2 }, dice.range(-0.8, 0.8)),
         StallKind::Chai => (dice.range(-0.8, 0.8), -1.7),
+        StallKind::Row => (dice.range(-1.0, 1.0), -1.15),
         _ => (dice.range(-0.9, 0.9), dice.range(-1.2, -1.0)),
     };
     let spot = s.pos.xz() + local(s.yaw, Vec3::new(x, 0.0, z)).xz();
@@ -591,14 +655,14 @@ fn in_front(s: &Stall, dice: &mut Dice) -> (Vec2, f32) {
 }
 
 /// A way to run from `from`, away from `danger`: as far as the street goes that way, up to 40 m.
-fn escape(layout: &MapLayout, floor: &StreetFloor, from: Vec2, danger: Vec2, dice: &mut Dice) -> Vec2 {
+fn escape(layout: &MapLayout, floor: &StreetFloor, market: &Market, from: Vec2, danger: Vec2, dice: &mut Dice) -> Vec2 {
     let away = (from - danger).normalize_or(Vec2::X);
     let mut best = (f32::MIN, from + away * 6.0);
     let start = dice.range(0.0, TAU);
     for k in 0..12 {
         let dir = Vec2::from_angle(start + k as f32 / 12.0 * TAU);
         let mut run = 0.0;
-        while run < 40.0 && walkable(layout, floor, from + dir * (run + 2.0)) {
+        while run < 40.0 && walkable(layout, floor, market, from + dir * (run + 2.0)) {
             run += 2.0;
         }
         if run < 6.0 {
@@ -659,7 +723,7 @@ fn walk(
             }
             let to = {
                 let mut dice = w.dice;
-                let to = escape(&layout, &floor, w.pos, spot, &mut dice);
+                let to = escape(&layout, &floor, &market, w.pos, spot, &mut dice);
                 w.dice = dice;
                 to
             };
@@ -710,7 +774,7 @@ fn walk(
             Doing::Shy { from } => {
                 let away = (w.pos - from).normalize_or(Vec2::X);
                 // Along the wall if the wall's in the way.
-                let dir = [0.0f32, 0.7, -0.7, 1.4, -1.4].iter().map(|a| Vec2::from_angle(*a).rotate(away)).find(|d| walkable(&layout, &floor, w.pos + *d * 1.2));
+                let dir = [0.0f32, 0.7, -0.7, 1.4, -1.4].iter().map(|a| Vec2::from_angle(*a).rotate(away)).find(|d| walkable(&layout, &floor, &market, w.pos + *d * 1.2));
                 let speed = stroll * 1.5;
                 match dir {
                     Some(dir) if dist < KEEP_OFF + 2.0 => {
@@ -737,7 +801,7 @@ fn walk(
                     if d.length() < 0.8 {
                         // The end of that run: on, if there's more street, or gone if out of sight.
                         let mut dice = w.dice;
-                        let next = escape(&layout, &floor, w.pos, player, &mut dice);
+                        let next = escape(&layout, &floor, &market, w.pos, player, &mut dice);
                         w.dice = dice;
                         w.doing = Doing::Flee { to: next, start, began };
                     } else {
@@ -810,7 +874,7 @@ fn next_step(layout: &MapLayout, floor: &StreetFloor, market: &Market, w: &mut W
             if w.dice.next() < 0.5 {
                 for _ in 0..6 {
                     let to = w.pos + Vec2::from_angle(w.dice.range(0.0, TAU)) * w.dice.range(6.0, 26.0);
-                    if walkable(layout, floor, to) && floor.line_clear(w.pos, to) && !paved_only(layout, to) {
+                    if line_clear(layout, floor, market, w.pos, to) && !paved_only(layout, to) {
                         return Doing::Go { to, speed: stroll * w.dice.range(0.85, 1.15), then: w.dice.range(3.0, 16.0), yaw: None };
                     }
                 }
@@ -820,21 +884,21 @@ fn next_step(layout: &MapLayout, floor: &StreetFloor, market: &Market, w: &mut W
         Role::Shopper => {
             // Mostly to the next stall along; now and then just on down the street.
             if w.dice.next() < 0.7 {
-                let stalls: Vec<u32> = market.stalls_near(w.pos, 28.0).filter(|id| market.stalls[*id as usize].kind != StallKind::Chairs).collect();
+                let stalls: Vec<u32> = market.stalls_near(w.pos, 28.0).filter(|id| !matches!(market.stalls[*id as usize].kind, StallKind::Chairs | StallKind::Scooters)).collect();
                 for _ in 0..4 {
                     let Some(id) = stalls.get((w.dice.next() * stalls.len() as f32) as usize) else { break };
                     let stall = market.stalls[*id as usize];
                     let mut dice = w.dice;
                     let (to, yaw) = in_front(&stall, &mut dice);
                     w.dice = dice;
-                    if to.distance(w.pos) > 3.0 && walkable(layout, floor, to) && floor.line_clear(w.pos, to) {
+                    if to.distance(w.pos) > 3.0 && line_clear(layout, floor, market, w.pos, to) {
                         return Doing::Go { to, speed: w.dice.range(1.15, 1.6), then: w.dice.range(4.0, 14.0), yaw: Some(yaw) };
                     }
                 }
             }
             for _ in 0..8 {
                 let to = w.pos + Vec2::from_angle(w.dice.range(0.0, TAU)) * w.dice.range(8.0, 34.0);
-                if walkable(layout, floor, to) && floor.line_clear(w.pos, to) && (paved(layout, to) || w.dice.next() < 0.3) {
+                if line_clear(layout, floor, market, w.pos, to) {
                     return Doing::Go { to, speed: w.dice.range(1.15, 1.6), then: w.dice.range(2.0, 9.0), yaw: None };
                 }
             }
@@ -873,7 +937,7 @@ mod tests {
     #[test]
     fn a_stall_has_its_people_beside_it_and_never_in_it() {
         let mut dice = Dice(7);
-        for kind in [StallKind::Thela, StallKind::Chai, StallKind::Crates, StallKind::Chairs] {
+        for kind in [StallKind::Thela, StallKind::Chai, StallKind::Crates, StallKind::Chairs, StallKind::Row, StallKind::Cart, StallKind::Patri] {
             for yaw in [0.0, 1.0, 2.5] {
                 let stall = Stall { kind, pos: Vec3::new(5.0, 0.0, 9.0), yaw };
                 for (role, spot, _) in stall_people(&stall, &mut dice) {
