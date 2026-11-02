@@ -83,6 +83,8 @@ enum View {
     Range,
     /// The game's own camera (HUD numbers, kick and shake show as a player sees them).
     Player,
+    /// Close on the left hand, from the left (does it hold the fore-end?).
+    Hand,
 }
 
 #[derive(Resource)]
@@ -115,6 +117,7 @@ impl Armoury {
             View::Back => "back",
             View::Range => "range",
             View::Player => "player",
+            View::Hand => "hand",
         };
         let up = if p.pitch > 0.1 { "_up" } else if p.pitch < -0.1 { "_down" } else { "" };
         let at = if p.target.is_some() { format!("_{:.0}ms", p.after * 1000.0) } else { String::new() };
@@ -257,6 +260,11 @@ impl Plugin for AutoshotPlugin {
                 p("katta", Use::Run, View::Side, 0.0),
                 p("katta", Use::Aim, View::Side, 0.0),
                 p("katta", Use::Aim, View::Back, 0.0),
+                p("bandook", Use::Carry, View::Hand, 0.0),
+                p("bandook", Use::Run, View::Hand, 0.0),
+                p("bandook", Use::Aim, View::Hand, 0.0),
+                p("dunali", Use::Carry, View::Hand, 0.0),
+                p("dunali", Use::Aim, View::Hand, 0.0),
                 p("bandook", Use::Carry, View::Side, 0.0),
                 p("bandook", Use::Run, View::Side, 0.0),
                 p("bandook", Use::Run, View::Back, 0.0),
@@ -581,6 +589,8 @@ fn armoury_camera(
         View::Back => Some((chest + Vec3::new(0.9, 0.5, 2.3), chest + Vec3::new(0.0, 0.1, -0.6))),
         View::Range => Some((chest + Vec3::new(far * 0.55 + 2.0, 0.8, -far * 0.5), chest + Vec3::new(0.0, -0.2, -far * 0.5))),
         View::Player => None,
+        // On the fore-end where the left hand should hold it, from the left and a little below.
+        View::Hand => check.1.map(|at| (at + Vec3::new(if std::env::var("VIVAD_HAND_RIGHT").is_ok() { 0.42 } else { -0.42 }, -0.08, 0.05), at)),
     };
     if let Some((eye, look)) = view {
         *ct = Transform::from_translation(eye).looking_at(look, Vec3::Y);

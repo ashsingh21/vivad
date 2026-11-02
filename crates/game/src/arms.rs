@@ -105,7 +105,7 @@ pub struct Body {
 /// The local player's long-gun hold by the numbers, this frame (the armoury logs it with each
 /// shot): see `gun_check`.
 #[derive(Resource, Default)]
-pub struct GunCheck(pub Option<String>);
+pub struct GunCheck(pub Option<String>, pub Option<Vec3>);
 
 /// A hit's recoil on the torso: lean along `dir` (model space), decaying over a fraction of a second.
 #[derive(Component)]
@@ -276,7 +276,8 @@ fn orient_bows(
             let (along, up, right) = (rot * Vec3::NEG_Z, rot * Vec3::Y, rot * Vec3::X);
             // Under the fore-end, the palm up against the wood, the hand angled across the barrel
             // from the left so the fingers come up round its far side.
-            let contact = socket_g.transform_point(Vec3::new(0.0, -0.035, -FOREND));
+            let fore = forend(&rig.model);
+            let contact = socket_g.transform_point(fore);
             let fingers = (along * 0.55 + right * 0.85).normalize();
             let palm = (up - fingers * up.dot(fingers)).normalize();
             // The hand's own frame (knuckle direction, palm) onto those.
@@ -297,7 +298,8 @@ fn orient_bows(
             }
             reach(upper, lower, hand, wrist, Vec3::NEG_Y - right * 0.7, want, &kids, &mut tf);
             if local.contains(wv.sim) {
-                check.0 = Some(gun_check(body, &socket_g, ahead, palm_at(&tf), hand_g.translation(), &tf));
+                check.1 = Some(contact);
+                check.0 = Some(gun_check(body, &socket_g, fore, ahead, palm_at(&tf), hand_g.translation(), &tf));
             }
             // Close the fingers round it: each joint curled toward the palm.
             for &f in &body.fingers_l {
@@ -309,14 +311,26 @@ fn orient_bows(
     }
 }
 
-/// How far ahead of the grip the left hand holds a long gun (m, along the barrel).
-const FOREND: f32 = 0.26;
-/// A long gun's hold in numbers: the left palm in the gun's frame (want x 0, up -0.035, along
-/// -0.32: under the fore-end), the butt from the right shoulder in the body's frame (shouldered:
-/// about level with it and a few cm ahead), the barrel's pitch, and how far below the eye it runs.
-fn gun_check(body: &Body, socket: &GlobalTransform, ahead: Vec3, palm: Vec3, hand_r: Vec3, tf: &Query<(&Transform, &mut GlobalTransform)>) -> String {
+/// Where the left palm meets a long gun, in the gun's frame (its origin the grip, barrel -Z, up
+/// +Y): under the fore-end where the captured left hand closes, 26 cm ahead of the grip, against
+/// its underside (measured from the models: the bandook's handguard bottoms out 7.1 cm above the
+/// grip, the dunali's wooden fore-end 1.3 cm).
+fn forend(model: &str) -> Vec3 {
+    let under = match model {
+        "bandook" => 0.071,
+        _ => 0.013,
+    };
+    Vec3::new(0.0, under, -0.26)
+}
+
+/// A long gun's hold in numbers: the left palm against the gun (its gap below the fore-end's
+/// underside, its offsets across and along from where the hand closes: all near 0 when it holds
+/// it), the butt from the right shoulder in the body's frame (shouldered: about level with it and
+/// a few cm ahead), the barrel's pitch, and how far below the eye it runs.
+#[allow(clippy::too_many_arguments)]
+fn gun_check(body: &Body, socket: &GlobalTransform, fore: Vec3, ahead: Vec3, palm: Vec3, hand_r: Vec3, tf: &Query<(&Transform, &mut GlobalTransform)>) -> String {
     let inv = socket.affine().inverse();
-    let p = inv.transform_point3(palm);
+    let p = inv.transform_point3(palm) - fore;
     let butt = socket.transform_point(Vec3::Z * BUTT);
     let (_, rot, at) = socket.to_scale_rotation_translation();
     let along = rot * Vec3::NEG_Z;
@@ -326,8 +340,8 @@ fn gun_check(body: &Body, socket: &GlobalTransform, ahead: Vec3, palm: Vec3, han
     let h = pos(body.shoulder_r).map(|s| hand_r - s).unwrap_or(Vec3::NAN);
     let eye = pos(body.head).map(|h| h.y + 0.08 - at.y).unwrap_or(f32::NAN);
     format!(
-        "right hand from shoulder (fwd {:+.2} up {:+.2}) | palm on gun (x {:+.3} up {:+.3} along {:+.3}) | butt from right shoulder (fwd {:+.2} up {:+.2} right {:+.2}) | pitch {:+.0} deg | barrel {:.2} below eye",
-        h.dot(ahead), h.y, p.x, p.y, p.z, b.dot(ahead), b.y, b.dot(right), along.y.asin().to_degrees(), eye
+        "right hand from shoulder (fwd {:+.2} up {:+.2}) | left palm off the fore-end (across {:+.3} below {:+.3} along {:+.3}) | butt from right shoulder (fwd {:+.2} up {:+.2} right {:+.2}) | pitch {:+.0} deg | barrel {:.2} below eye",
+        h.dot(ahead), h.y, p.x, -p.y, -p.z, b.dot(ahead), b.y, b.dot(right), along.y.asin().to_degrees(), eye
     )
 }
 
