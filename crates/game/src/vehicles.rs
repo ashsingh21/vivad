@@ -317,10 +317,16 @@ fn seat_riders(
         let Ok(v) = sims.get(ride.0) else { continue };
         let spec = v.kind.spec();
         let body = vv.feel.body();
-        t.translation = vt.translation + vt.rotation * (Vec3::NEG_Y * spec.centre() + body * spec.seat);
+        // An auto's canopy is low: from the sim's seat the head came through it and the hips hung
+        // over the cushion. Only the drawn body sits down; where the warrior is doesn't change.
+        let sunk = if v.kind == VehicleKind::Auto { AUTO_SEAT_SINK } else { 0.0 };
+        t.translation = vt.translation + vt.rotation * (Vec3::NEG_Y * spec.centre() + body * (spec.seat - Vec3::Y * sunk));
         t.rotation = vt.rotation * body;
     }
 }
+
+/// How far a drawn auto driver sits below the sim's seat, metres.
+const AUTO_SEAT_SINK: f32 = 0.09;
 
 /// Bones a seated pose bends.
 #[derive(Component)]
@@ -334,7 +340,7 @@ struct Limbs {
 /// (Thigh raised, knee bent, arms forward, elbows, back forward), radians.
 fn pose_of(kind: VehicleKind) -> (f32, f32, f32, f32, f32) {
     match kind {
-        VehicleKind::Auto => (1.45, 1.5, 0.6, 0.6, 0.05),
+        VehicleKind::Auto => (1.45, 1.5, 0.6, 0.6, 0.38),
         VehicleKind::Scooter => (1.4, 1.45, 0.55, 0.6, 0.05),
         VehicleKind::Commuter => (1.2, 1.2, 0.75, 0.45, 0.28),
         VehicleKind::Bullet => (1.1, 1.1, 0.62, 0.45, 0.12),
