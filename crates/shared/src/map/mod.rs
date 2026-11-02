@@ -13,11 +13,13 @@ pub mod ncr;
 mod ncr_art;
 pub mod terrain;
 
-/// The maps: Panga's four from Delhi, and Vivad's NCR arena.
+/// The maps: the NCR, the game's one final map, and the four small Delhi maps merged into it,
+/// which stay on their own for VIVAD_MAP and the checks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum MapId {
-    /// Connaught Place and the head of Janpath.
-    #[default]
+    /// Connaught Place and the head of Janpath. The browser's default: the NCR takes about 3.7 GB
+    /// on the Mac and has never been tried in a tab.
+    #[cfg_attr(target_arch = "wasm32", default)]
     Cp,
     /// Chandni Chowk's bazaar and the old city's lanes.
     Chandni,
@@ -25,15 +27,14 @@ pub enum MapId {
     HauzKhas,
     /// India Gate, its lawns and canals, Kartavya Path.
     IndiaGate,
-    /// Vivad's modern NCR arena (crate::map::ncr): Delhi, Gurugram, Noida and Ghaziabad across
-    /// the Yamuna, 2.2 km across.
+    /// The one final map (crate::map::compose): the real Delhi NCR, 4 km across, with the other
+    /// maps merged into it. The default everywhere but the browser.
+    #[cfg_attr(not(target_arch = "wasm32"), default)]
     Ncr,
 }
 
 impl MapId {
     pub const ALL: [MapId; 5] = [MapId::Cp, MapId::Chandni, MapId::HauzKhas, MapId::IndiaGate, MapId::Ncr];
-    /// Panga's maps, the ones a room is drawn on.
-    pub const DELHI: [MapId; 4] = [MapId::Cp, MapId::Chandni, MapId::HauzKhas, MapId::IndiaGate];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -52,7 +53,7 @@ impl MapId {
             MapId::Chandni => "Chandni Chowk",
             MapId::HauzKhas => "Hauz Khas",
             MapId::IndiaGate => "India Gate",
-            MapId::Ncr => "NCR / Kali Yuga",
+            MapId::Ncr => "NCR",
         }
     }
 
@@ -68,9 +69,18 @@ impl MapId {
         })
     }
 
-    /// VIVAD_MAP=cp|chandni|hauzkhas|indiagate|ncr, else Connaught Place.
+    /// VIVAD_MAP=cp|chandni|hauzkhas|indiagate|ncr, else the default map.
     pub fn from_env() -> MapId {
         std::env::var("VIVAD_MAP").ok().and_then(|s| MapId::parse(&s)).unwrap_or_default()
+    }
+
+    /// The bots that fill a match offline, unless VIVAD_BOTS says: 64 warriors on the NCR, so the
+    /// first ring is the whole map, and 16 on a small map.
+    pub fn default_bots(self) -> u32 {
+        match self {
+            MapId::Ncr => 63,
+            _ => 15,
+        }
     }
 
     pub fn index(self) -> u8 {
@@ -85,7 +95,7 @@ impl MapId {
 /// Build a map. Every peer in a match builds the same one from the same id and seed.
 pub fn generate(map: MapId, seed: u64) -> MapLayout {
     match map {
-        MapId::Ncr => ncr::generate(seed),
+        MapId::Ncr => compose::generate(seed),
         _ => delhi::generate(map, seed),
     }
 }
@@ -157,6 +167,9 @@ pub struct ChestSpawn {
     pub pos: Vec3,
     pub yaw: f32,
     pub kind: ChestKind,
+    /// The district it belongs to and which of that district's sets it is in: out only in a match
+    /// that draws that set (`sim::loot::chest_sets`). None: out in every match.
+    pub set: Option<(u8, u8)>,
 }
 
 #[derive(Clone, Debug, Reflect)]
@@ -208,6 +221,13 @@ pub struct Footprint {
     pub mat: Mat,
 }
 
+impl MapLayout {
+    /// Whether a point lies in a holy site's circle.
+    pub fn is_holy(&self, p: Vec2) -> bool {
+        self.holy.iter().any(|(c, r)| p.distance(*c) < *r)
+    }
+}
+
 #[derive(Resource, Clone, Debug, Default)]
 pub struct MapLayout {
     pub name: String,
@@ -223,6 +243,8 @@ pub struct MapLayout {
     pub ornaments: Vec<Ornament>,
     pub lamps: Vec<Lamp>,
     pub footprints: Vec<Footprint>,
+    /// Holy sites, as a point and a radius: nothing that draws a fight lies inside one.
+    pub holy: Vec<(Vec2, f32)>,
     /// The street kit's pieces on a city map (crate::map::kit); drawn by the client, merged.
     pub kit: Vec<kit::KitPiece>,
     /// The river across the map, if it has one.
@@ -265,6 +287,17 @@ impl River {
 mod layout_tests {
     use super::*;
 
+    /// The owner's default match: 64 warriors on the NCR, and a small map keeps its own size.
+    #[test]
+    fn the_default_match_is_64_on_the_ncr() {
+        assert_eq!(MapId::Ncr.default_bots() + 1, 64);
+        for map in [MapId::Cp, MapId::Chandni, MapId::HauzKhas, MapId::IndiaGate] {
+            assert_eq!(map.default_bots() + 1, 16, "{map:?}");
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        assert_eq!(MapId::default(), MapId::Ncr);
+    }
+
     /// Blocks, footprints, chests, floor loot, props, kit pieces, POIs and a checksum of their
     /// positions, so a refactor that should change nothing can prove it.
     fn fingerprint(map: MapId) -> (usize, usize, usize, usize, usize, usize, usize, u64) {
@@ -291,7 +324,6 @@ mod layout_tests {
         assert_eq!(fingerprint(MapId::Chandni), (14376, 879, 98, 124, 69, 2371, 11, 10426603982683760837));
         assert_eq!(fingerprint(MapId::HauzKhas), (6431, 134, 81, 81, 350, 479, 2, 3684859097812863807));
         assert_eq!(fingerprint(MapId::IndiaGate), (630, 6, 70, 60, 585, 774, 5, 1864056156504546495));
-        assert_eq!(fingerprint(MapId::Ncr), (18591, 0, 191, 72, 156, 0, 15, 5774487229815900076));
     }
 
     #[test]
@@ -309,9 +341,22 @@ mod layout_tests {
         }
     }
 
+    /// The same two rules across the NCR, whose holy sites come from all its merged districts.
+    #[test]
+    fn ncr_holy_sites_have_no_loot_and_no_names() {
+        let sites = compose::holy();
+        for seed in [1, 7, 23, 99] {
+            let m = generate(MapId::Ncr, seed);
+            for p in m.chests.iter().map(|c| c.pos).chain(m.floor_loot.iter().copied()) {
+                assert!(sites.iter().all(|(c, r)| p.xz().distance(*c) >= *r), "loot at {p}, seed {seed}");
+            }
+            assert!(m.pois.iter().all(|p| !delhi::HOLY_NAMES.contains(&p.name.as_str())));
+        }
+    }
+
     #[test]
     fn river_distance_matches_the_ncr_arena() {
-        let river = generate(MapId::Ncr, 7).river;
+        let river = ncr::generate(7).river;
         for p in [Vec2::ZERO, Vec2::new(300.0, 120.0), Vec2::new(-40.0, 900.0), Vec2::new(30.0, -500.0)] {
             assert!((river.distance(p) - ncr::river_distance(p)).abs() < 1e-3);
         }

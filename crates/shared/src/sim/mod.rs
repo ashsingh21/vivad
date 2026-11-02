@@ -1,6 +1,7 @@
 //! Authoritative game simulation. Runs in `FixedUpdate`, reads `PlayerIntent`, never touches
 //! rendering. A future server runs exactly this plugin; clients only add presentation.
 
+pub mod aim;
 pub mod bots;
 pub mod combat;
 pub mod flow;
@@ -13,7 +14,7 @@ pub mod zone;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use rand::SeedableRng;
-use rand::rngs::SmallRng;
+use crate::SmallRng;
 
 use crate::items::{ItemDb, ItemStack};
 use crate::map::{Block, MapLayout};
@@ -218,18 +219,28 @@ pub struct MapBlock(pub Block);
 #[derive(Component, Clone, Copy, Debug)]
 pub struct OfMap;
 
+/// How many times the map has been swapped for another (`load_map`). This is the signal, not
+/// `MapLayout` itself: `start_match` borrows the layout out of the world and puts it back, and to
+/// Bevy that looks like a fresh insert, which hid a real swap.
+#[derive(Resource, Clone, Copy, Debug, Default)]
+pub struct MapSwaps(pub u32);
+
 /// The map was swapped for another this frame (not its first load): for systems that build from
 /// `MapLayout` at startup to run again.
-pub fn map_reloaded(layout: Res<MapLayout>) -> bool {
-    layout.is_changed() && !layout.is_added()
+pub fn map_reloaded(swaps: Res<MapSwaps>) -> bool {
+    swaps.is_changed() && !swaps.is_added()
 }
 
 /// Puts `map` in place of the current one: its layout, and the world's map entities rebuilt from
-/// it. The client rebuilds its own when it sees `MapLayout` change (`map_reloaded`).
+/// it. The client rebuilds its own when it sees `MapSwaps` change (`map_reloaded`).
 pub fn load_map(world: &mut World, map: crate::map::MapId) {
     let seed = world.resource::<MatchConfig>().map_seed;
     world.resource_mut::<MatchConfig>().map = map;
-    *world.resource_mut::<MapLayout>() = crate::map::generate(map, seed);
+    let layout = crate::map::generate(map, seed);
+    // The route grid is built from the map, so it goes with it (empty on the small maps).
+    world.insert_resource(nav::StreetFloor::new(&layout));
+    *world.resource_mut::<MapLayout>() = layout;
+    world.resource_mut::<MapSwaps>().0 += 1;
     let doomed: Vec<Entity> = world.query_filtered::<Entity, With<OfMap>>().iter(world).collect();
     for e in doomed {
         if let Ok(e) = world.get_entity_mut(e) {
@@ -321,8 +332,8 @@ pub struct MatchConfig {
     pub bot_skill: BotSkill,
     /// Online: no match at startup; the transport starts one when the lobby fills.
     pub online: bool,
-    /// A new map for each match (the one most voted for, else the next in turn): on unless
-    /// VIVAD_ROTATE=0.
+    /// Move to the next map in turn after each match (`flow::ROTATION`, which is the NCR alone for
+    /// now): on unless VIVAD_ROTATE=0.
     pub rotate: bool,
 }
 
@@ -343,7 +354,8 @@ pub struct Hold(pub bool);
 
 impl Default for MatchConfig {
     fn default() -> Self {
-        Self { map: crate::map::MapId::from_env(), map_seed: map_seed(), match_seed: None, bots: 15, autopilot: false, bot_skill: BotSkill::from_env(), online: false, rotate: std::env::var("VIVAD_ROTATE").as_deref() != Ok("0") }
+        let map = crate::map::MapId::from_env();
+        Self { map, map_seed: map_seed(), match_seed: None, bots: map.default_bots(), autopilot: false, bot_skill: BotSkill::from_env(), online: false, rotate: std::env::var("VIVAD_ROTATE").as_deref() != Ok("0") }
     }
 }
 
@@ -388,6 +400,10 @@ pub mod stream {
     pub const VIMANA: u64 = 1;
     pub const NAMES: u64 = 2;
     pub const FLOOR_LOOT: u64 = 3;
+    /// Where the match opens, and its rings planned from there (the NCR).
+    pub const DISC: u64 = 4;
+    /// Which of each district's sets of chests is out (the NCR).
+    pub const CHEST_SETS: u64 = 5;
     /// + the zone phase.
     pub const ZONE: u64 = 0x100;
     /// + the chest's index in `MapLayout::chests`.
@@ -408,8 +424,8 @@ impl Plugin for SimPlugin {
         let db = ItemDb::load_from_str(&self.items_ron).expect("items.ron");
         let config = app.world().get_resource::<MatchConfig>().copied().unwrap_or_default();
         let layout = crate::map::generate(config.map, config.map_seed);
-        // The NCR arena's street router (empty elsewhere; the other maps use nav::NavGrid).
-        app.insert_resource(crate::map::navigation::StreetNav::new(&layout));
+        // The NCR's route grid (empty elsewhere; the other maps use nav::NavGrid).
+        app.insert_resource(nav::StreetFloor::new(&layout));
         app.insert_resource(db)
             .insert_resource(config)
             .insert_resource(layout)
@@ -423,6 +439,7 @@ impl Plugin for SimPlugin {
             .add_message::<RestartMatch>()
             .add_message::<flow::VoteMap>()
             .init_resource::<flow::MapVotes>()
+            .init_resource::<MapSwaps>()
             .configure_sets(
                 FixedUpdate,
                 (
@@ -481,6 +498,12 @@ fn spawn_map(mut commands: Commands, layout: Res<MapLayout>) {
         CollisionLayers::new(Layer::World, LayerMask::ALL),
     ));
     for block in &layout.blocks {
+        // Decoration that nothing collides with is drawn from the layout by the client's batcher
+        // and has no use for an entity; on the NCR that is tens of thousands of them. Only water
+        // is drawn per entity.
+        if !block.collide && (block.mat != crate::map::Mat::Water || !block.visible) {
+            continue;
+        }
         let mut e = commands.spawn((
             MapBlock(block.clone()),
             OfMap,

@@ -6,9 +6,16 @@
 //!   VIVAD_TOUR_DRIFT=m   during a burst, slide the camera sideways m metres per frame.
 //!   VIVAD_TOUR_SETTLE=n  frames to hold each view before its shot; above 120 it prints each view's
 //!                        frame rate (`[tour-fps]`; run with VIVAD_NO_VSYNC=1).
+//!   VIVAD_TOUR_VIEW=1    shoot the 3D view's own image, not the window: no HUD, but it works
+//!                        with the window hidden.
+//! On the NCR map (VIVAD_MAP=ncr) the views come from the map itself: from 500 m up, the bridges,
+//! the ridge, and a street in every district, picked by `street_view`.
+//!
 //! A window that is not on screen (covered by another, on another Space, or on a sleeping or
-//! locked display) is not rendered, and every shot of it comes out black: keep the game window
-//! in view while a capture runs. The recipes also run under `caffeinate -d -i -u`.
+//! locked display) is not rendered, and its shots come out black. Every shot here is checked: a
+//! black one is thrown away and taken again from the 3D view's own image, with a warning, so it
+//! loses the HUD but not the picture. Keep the game window in view when the HUD matters. The
+//! recipes also run under `caffeinate -d -i -u`.
 //!
 //! VIVAD_CLIP=<dir>,<from>,<to>,<fps>  with VIVAD_AUTOPILOT=1: small frames (800 px wide) of the
 //!                        match between two match times at that rate, then exit; `just clip` joins
@@ -17,17 +24,25 @@
 //!                        window hidden.
 //! VIVAD_SHOTS=<dir>     with VIVAD_AUTOPILOT=1: screenshot the match at set times, then exit.
 //!   VIVAD_SHOTS_AT=a,b   at these match times (seconds) instead.
-//!   VIVAD_SHOTS_MATCHES=n then start the next match (the next map in turn) and shoot it too, n
+//!   VIVAD_SHOTS_MATCHES=n then start the next match (on the same map) and shoot it too, n
 //!                        matches in all.
+//!   VIVAD_SHOTS_KEYS=m:40,n:44 press these letter keys at these match times, to shoot what they
+//!                        open, such as the whole map (M) and its zoom (N).
+//!   VIVAD_HUD_IMAGE=1    draw the HUD and the 3D view to an image instead of the window and shoot
+//!                        that: the HUD's shots then work with the window hidden, though the window
+//!                        itself stays empty.
 //! VIVAD_ARMOURY=<dir>   stand the player on open ground and screenshot every item in hand, carried
 //!   and in use (aiming, drawing, swinging, drinking), from the front and the side, then exit.
 //!   VIVAD_ARMOURY_ONLY=a,b only the poses whose names contain one of these. The range poses
 //!   freeze the one bot (VIVAD_BOTS=1) in front as a target and shoot or cut at it.
 
+use bevy::camera::{ImageRenderTarget, RenderTarget};
 use bevy::prelude::*;
+use bevy::render::render_resource::TextureFormat;
 use bevy::render::view::window::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
 use shared::items::{ItemDb, ItemKind, ItemStack, Rarity};
-use shared::map::MapLayout;
+use shared::map::terrain::ground;
+use shared::map::{MapLayout, compose};
 use shared::sim::flow::Match;
 use shared::sim::{Action, HALF_HEIGHT, Health, Inventory, Kinematic, LocalPlayer, MoveMode, PlayerIntent, Warrior, btn};
 
@@ -36,11 +51,14 @@ use crate::camera::MainCamera;
 #[derive(Resource)]
 pub struct Tour {
     dir: String,
-    shots: Vec<(&'static str, Vec3, Vec3)>,
+    /// Name, camera position, the point it looks at.
+    shots: Vec<(String, Vec3, Vec3)>,
     index: usize,
     frames: u32,
     /// When this view's timing window opened (frame 30), for VIVAD_TOUR_SETTLE runs.
     timed_from: f64,
+    /// Shots come from the 3D view's image rather than the window.
+    view: bool,
 }
 
 /// Frames of a match between two match times, for a clip of play.
@@ -66,6 +84,14 @@ pub struct MatchShots {
     /// The match being shot (until the restart we asked for has happened).
     generation: u32,
 }
+
+/// Keys to press during a match, each with the match time to press it at.
+#[derive(Resource)]
+struct KeyPresses(Vec<(KeyCode, f32)>);
+
+/// What VIVAD_HUD_IMAGE draws the HUD to.
+#[derive(Resource)]
+struct HudImage(RenderTarget);
 
 /// One armoury shot: item in hand, what the warrior is doing, and where the camera stands.
 #[derive(Clone, Copy)]
@@ -148,10 +174,7 @@ impl Plugin for AutoshotPlugin {
     fn build(&self, app: &mut App) {
         if let Ok(dir) = std::env::var("VIVAD_TOUR") {
             let v = |x, y, z| Vec3::new(x, y, z);
-            app.insert_resource(Tour {
-                timed_from: 0.0,
-                dir,
-                shots: vec![
+            let shots: Vec<(&str, Vec3, Vec3)> = vec![
                     ("01_overview", v(-60.0, 260.0, 300.0), v(0.0, 0.0, 0.0)),
                     ("02_bazaar_street", v(-45.0, 4.5, 2.0), v(20.0, 3.0, 0.0)),
                     // India Gate (VIVAD_MAP=indiagate): from down Kartavya Path, and from the side.
@@ -224,32 +247,16 @@ impl Plugin for AutoshotPlugin {
                     ("28b_stepwell_figures", v(-112.0, -9.5, 91.0), v(-118.0, -10.5, 85.6)),
                     ("28c_stepwell_wall", v(-97.0, -7.6, 89.5), v(-109.0, -9.2, 85.4)),
                     ("29_shrine_buddha", v(-205.0, 2.0, -16.0), v(-212.0, 2.2, -16.0)),
-                ],
-                index: 0,
-                frames: 0,
-            });
+            ];
+            let view = std::env::var("VIVAD_TOUR_VIEW").is_ok();
+            app.insert_resource(Tour { timed_from: 0.0, dir, shots: shots.into_iter().map(|(n, p, l)| (n.to_owned(), p, l)).collect(), index: 0, frames: 0, view });
             if shared::map::ncr::enabled() {
-                app.world_mut().resource_mut::<Tour>().shots = vec![
-                    ("01_ncr_overview", v(0.0,900.0,250.0), v(0.0,0.0,0.0)),
-                    ("02_ncr_delhi", v(-135.0,120.0,-100.0), v(-235.0,0.0,-235.0)),
-                    ("03_ncr_cyberhub", v(-100.0,100.0,320.0), v(-260.0,20.0,160.0)),
-                    ("04_ncr_noida", v(470.0,130.0,340.0), v(245.0,0.0,170.0)),
-                    ("05_ncr_freight", v(470.0,100.0,-50.0), v(275.0,0.0,-230.0)),
-                    ("06_ncr_metro", v(-120.0,-5.8,0.0), v(-60.0,-6.0,0.0)),
-                    ("07_ncr_arcade", v(-214.0,2.0,-181.0), v(-235.0,3.0,-169.0)),
-                    ("08_ncr_bridge", v(58.0,24.0,320.0), v(0.0,0.0,270.0)),
-                    ("09_ncr_street", v(-310.0,2.0,260.0), v(-287.0,16.0,160.0)),
-                    ("10_ncr_yard_lane", v(225.0,2.0,-285.0), v(305.0,3.0,-280.0)),
-                    ("11_ncr_housing", v(100.0,2.0,-345.0), v(150.0,12.0,-400.0)),
-                    ("12_ncr_market", v(-230.0,1.8,-143.0), v(-235.0,3.0,-169.0)),
-                    ("13_ncr_forecourt", v(-374.0,1.8,135.0), v(-350.0,2.0,105.0)),
-                ];
+                // Built from the map once it exists.
+                app.add_systems(Startup, ncr_views);
+            } else {
+                keep_chosen_views(&mut app.world_mut().resource_mut::<Tour>());
             }
-            if let Ok(only) = std::env::var("VIVAD_TOUR_ONLY") {
-                let keys: Vec<String> = only.split(',').map(str::to_owned).collect();
-                app.world_mut().resource_mut::<Tour>().shots.retain(|s| keys.iter().any(|k| s.0.contains(k.as_str())));
-            }
-            app.add_systems(PostUpdate, run_tour.after(crate::camera::CameraSystems).before(TransformSystems::Propagate));
+            app.add_systems(PostUpdate, run_tour.after(crate::camera::CameraSystems).before(crate::sky::SkyFollow).before(TransformSystems::Propagate));
         }
         if let Ok(dir) = std::env::var("VIVAD_ARMOURY") {
             let p = |item, state, view, pitch| Pose { item, state, view, pitch, target: None, after: 0.17 };
@@ -319,8 +326,182 @@ impl Plugin for AutoshotPlugin {
             let matches = std::env::var("VIVAD_SHOTS_MATCHES").ok().and_then(|n| n.parse().ok()).unwrap_or(1);
             app.insert_resource(MatchShots { dir, times, next: 0, taken_at: -1.0, matches, generation: 1 })
                 .add_systems(Update, match_shots);
+            if let Ok(spec) = std::env::var("VIVAD_SHOTS_KEYS") {
+                let presses = spec.split(',').filter_map(|p| {
+                    let (key, at) = p.split_once(':')?;
+                    Some((letter_key(key.trim())?, at.trim().parse().ok()?))
+                });
+                app.insert_resource(KeyPresses(presses.collect()))
+                    .add_systems(PreUpdate, press_keys.after(bevy::input::InputSystems).before(crate::hud::MapKeys));
+            }
+            if std::env::var("VIVAD_HUD_IMAGE").is_ok() {
+                app.add_systems(Update, hud_to_image.run_if(not(resource_exists::<HudImage>)));
+            }
         }
     }
+}
+
+/// The key for a letter, of the few a shot ever needs.
+fn letter_key(letter: &str) -> Option<KeyCode> {
+    match letter {
+        "m" => Some(KeyCode::KeyM),
+        "n" => Some(KeyCode::KeyN),
+        _ => None,
+    }
+}
+
+/// Presses each key once its time comes, and lets go of it the frame after.
+fn press_keys(mut keys: ResMut<ButtonInput<KeyCode>>, m: Res<Match>, mut presses: ResMut<KeyPresses>, mut down: Local<Vec<KeyCode>>) {
+    for key in down.drain(..) {
+        keys.release(key);
+    }
+    let elapsed = m.elapsed;
+    presses.0.retain(|(key, at)| {
+        let due = elapsed >= *at;
+        if due {
+            keys.press(*key);
+            down.push(*key);
+        }
+        !due
+    });
+}
+
+/// Sends the camera that draws the HUD to an image of the window's size: a hidden window is not
+/// drawn, but an image is.
+fn hud_to_image(mut commands: Commands, mut images: ResMut<Assets<Image>>, window: Query<&Window>, hud: Query<Entity, With<IsDefaultUiCamera>>) {
+    let (Ok(w), Ok(camera)) = (window.single(), hud.single()) else { return };
+    let size = w.physical_size().max(UVec2::ONE);
+    let image = images.add(Image::new_target_texture(size.x, size.y, TextureFormat::Rgba8Unorm, Some(TextureFormat::Rgba8UnormSrgb)));
+    let target = RenderTarget::Image(ImageRenderTarget { handle: image, scale_factor: w.scale_factor() });
+    commands.entity(camera).insert(target.clone());
+    commands.insert_resource(HudImage(target));
+}
+
+/// VIVAD_TOUR_ONLY: drop the views it doesn't name.
+fn keep_chosen_views(tour: &mut Tour) {
+    if let Ok(only) = std::env::var("VIVAD_TOUR_ONLY") {
+        let keys: Vec<String> = only.split(',').map(str::to_owned).collect();
+        tour.shots.retain(|s| keys.iter().any(|k| s.0.contains(k.as_str())));
+    }
+}
+
+/// A street view near `at`: eye height, looking down the longest clear run of road near the
+/// middle of the district. Read from the ground classes, so it follows the map as it changes.
+fn street_view(layout: &MapLayout, at: Vec2) -> Option<(Vec3, Vec3)> {
+    const LATTICE: f32 = 12.0;
+    const TURNS: usize = 16;
+    let t = &layout.terrain;
+    // Some real buildings stand over a road's line; a view from inside one sees only its back faces.
+    let near: Vec<_> = layout.footprints.iter().filter(|f| f.mat != shared::map::Mat::Water && f.pts[0].distance(at) < 400.0).collect();
+    let road = |p: Vec2| t.ground_at(p.x, p.y) == Some(ground::ROAD) && !near.iter().any(|f| shared::map::footprint::contains(&f.pts, p));
+    let mut best: Option<(f32, Vec2, Vec2)> = None;
+    for i in -15..=15 {
+        for j in -15..=15 {
+            let p = at + Vec2::new(i as f32, j as f32) * LATTICE;
+            if !road(p) {
+                continue;
+            }
+            for k in 0..TURNS {
+                let dir = Vec2::from_angle(k as f32 / TURNS as f32 * std::f32::consts::TAU);
+                let mut run = 0.0;
+                while run < 140.0 && road(p + dir * (run + 4.0)) {
+                    run += 4.0;
+                }
+                let score = run - p.distance(at) * 0.2;
+                if best.is_none_or(|b| score > b.0) {
+                    best = Some((score, p, dir));
+                }
+            }
+        }
+    }
+    let (_, p, dir) = best?;
+    let look = p + dir * 60.0;
+    Some((Vec3::new(p.x, t.height(p.x, p.y) + 1.8, p.y), Vec3::new(look.x, t.height(look.x, look.y) + 3.5, look.y)))
+}
+
+/// The tour of the one NCR map, taken from the map: high views, the bridges, the ridge and the
+/// land between districts, then a street in every district.
+fn ncr_views(layout: Res<MapLayout>, mut tour: ResMut<Tour>) {
+    let v = Vec3::new;
+    let ground_at = |p: Vec2, up: f32| v(p.x, layout.terrain.height(p.x, p.y) + up, p.y);
+    let mut shots: Vec<(String, Vec3, Vec3)> = vec![
+        // From 500 m, the height of the drop: over the river, and over each side of it.
+        ("01_500m_river".into(), v(120.0, 500.0, 1000.0), v(120.0, 0.0, -300.0)),
+        ("02_500m_delhi".into(), v(-740.0, 500.0, 250.0), v(-740.0, 0.0, -1000.0)),
+        ("03_500m_gurugram".into(), v(-1100.0, 500.0, 300.0), v(-1500.0, 0.0, 1300.0)),
+        ("04_500m_noida".into(), v(900.0, 500.0, -300.0), v(1300.0, 0.0, 700.0)),
+    ];
+    // The bridges, at eye height down the deck and from the bank; `compose::SPANS` order.
+    for (k, name) in [(0, "signature"), (1, "loha_pul"), (2, "ito"), (3, "dnd"), (4, "okhla"), (6, "hindon")] {
+        let s = &compose::SPANS[k];
+        let dir = (s.c - s.a).normalize();
+        let eye = s.a + dir * 40.0;
+        shots.push((format!("05_bridge_{name}_deck"), v(eye.x, s.top + 1.8, eye.y), v(s.c.x, s.top + 2.5, s.c.y)));
+        let bank = s.a - dir * 60.0 + dir.perp() * 90.0;
+        let mid = s.a.lerp(s.c, 0.4);
+        shots.push((format!("06_bridge_{name}_bank"), ground_at(bank, 6.0), v(mid.x, s.top, mid.y)));
+    }
+    // The DND's toll plaza, walking up to its canopy: it stands 28 m short of the far end.
+    let s = &compose::SPANS[3];
+    let dir = (s.c - s.a).normalize();
+    let (eye, plaza) = (s.c - dir * 75.0, s.c - dir * 28.0);
+    shots.push(("05_bridge_dnd_toll_plaza".to_string(), v(eye.x, s.top + 1.8, eye.y), v(plaza.x, s.top + 3.5, plaza.y)));
+    // The land between the districts.
+    shots.extend([
+        ("07_ridge_pass".to_string(), ground_at(Vec2::new(-1240.0, 60.0), 1.8), ground_at(Vec2::new(-1340.0, 330.0), 3.0)),
+        ("07_ridge_crest".to_string(), ground_at(Vec2::new(-1215.0, -420.0), 1.8), ground_at(Vec2::new(-1000.0, -560.0), 2.0)),
+        ("07_yamuna_bank".to_string(), ground_at(Vec2::new(30.0, -300.0), 1.8), ground_at(Vec2::new(330.0, -350.0), 1.0)),
+        ("07_ring_road".to_string(), ground_at(Vec2::new(-1830.0, -700.0), 1.8), ground_at(Vec2::new(-1600.0, -470.0), 3.0)),
+    ]);
+    // A street in every district.
+    for d in &compose::PLACES {
+        if let Some((eye, look)) = street_view(&layout, d.at) {
+            shots.push((format!("08_street_{}", d.name.to_lowercase().replace(' ', "_")), eye, look));
+        } else {
+            warn!("no street to shoot in {}", d.name);
+        }
+    }
+    // The named spots on the open land, each seen across its yard from a rooftop's height.
+    for spot in layout.pois.iter().filter(|p| !compose::PLACES.iter().any(|d| d.name == p.name) && !compose::BRIDGES.contains(&p.name.as_str())) {
+        let at = spot.center.xz();
+        // From the side the map's middle is on, or the next side round with no building in the way.
+        let eyes = (0..8).map(|k| at + Vec2::from_angle((-at).to_angle() + k as f32 * std::f32::consts::FRAC_PI_4) * 70.0);
+        let blocked = |e: &Vec2| (0..=6).filter(|s| compose::built(&layout, e.lerp(at, *s as f32 / 7.0))).count();
+        let eye = eyes.min_by_key(blocked).unwrap_or(at);
+        shots.push((format!("09_spot_{}", spot.name.to_lowercase().replace(' ', "_")), ground_at(eye, 12.0), ground_at(at, 1.0)));
+    }
+    // The places built by hand, and water that was cut at a district's edge.
+    shots.extend([
+        ("10_red_fort_gate".to_string(), v(-132.0, 3.0, -1350.0), v(-100.0, 11.0, -1410.0)),
+        ("10_red_fort_wall".to_string(), v(-140.0, 2.0, -1610.0), v(-90.0, 8.0, -1420.0)),
+        ("10_blue_line_west".to_string(), v(-125.0, 2.0, -420.0), v(-36.0, 9.0, -470.0)),
+        ("10_blue_line_east".to_string(), v(330.0, 6.0, -420.0), v(384.0, 9.0, -470.0)),
+        ("10_hauz_khas_lake".to_string(), v(-960.0, 40.0, 640.0), v(-1120.0, -1.0, 480.0)),
+        ("10_kartavya_canal".to_string(), v(-690.0, 1.8, -109.0), v(-520.0, -0.5, -109.0)),
+        ("10_anand_vihar_terminal".to_string(), v(800.0, 3.0, -1130.0), v(886.0, 4.0, -1045.0)),
+        ("10_anand_vihar_air".to_string(), v(760.0, 90.0, -1190.0), v(880.0, 0.0, -1040.0)),
+        ("10_badarpur_plant".to_string(), v(120.0, 8.0, 1180.0), v(260.0, 20.0, 1250.0)),
+    ]);
+    tour.shots = shots;
+    keep_chosen_views(&mut tour);
+    info!("tour: {} views of the NCR map", tour.shots.len());
+}
+
+/// Is this shot black? A window that is not on screen gives one of nothing but zeros.
+fn is_black(shot: &Image) -> bool {
+    shot.data.as_ref().is_none_or(|d| d.chunks_exact(4).step_by(7).all(|p| p[0] < 6 && p[1] < 6 && p[2] < 6))
+}
+
+/// Screenshots the window; if that comes back black, takes the 3D view's own image instead.
+fn shoot(commands: &mut Commands, path: String) {
+    commands.spawn(Screenshot::primary_window()).observe(move |shot: On<ScreenshotCaptured>, mut commands: Commands, view: Res<crate::quality::View3d>| {
+        if is_black(&shot.image) {
+            warn!("{path}: the window's shot is black (is the window on screen?); taking the 3D view's own image, without the HUD");
+            commands.spawn(Screenshot::image(view.image.clone())).observe(save_to_disk(path.clone()));
+        } else {
+            save_to_disk(path.clone())(shot);
+        }
+    });
 }
 
 fn run_tour(
@@ -331,9 +512,16 @@ fn run_tour(
     chests: Query<(&shared::sim::loot::Chest, &Transform), Without<MainCamera>>,
     pickups: Query<(&shared::sim::loot::Pickup, &Transform), Without<MainCamera>>,
     time: Res<Time<Real>>,
+    view: Res<crate::quality::View3d>,
+    kit: Res<crate::street::Kit>,
     mut exit: MessageWriter<AppExit>,
 ) {
     let Ok(mut ct) = cam.single_mut() else { return };
+    // The street kit's file comes a while after the first frames, later on a busy machine, and a
+    // first view shot before it has no street life. The limit is for a file that never comes.
+    if tour.index == 0 && !kit.built && time.elapsed_secs() < 60.0 {
+        return;
+    }
     if tour.index >= tour.shots.len() {
         tour.frames += 1;
         if tour.frames > 30 {
@@ -341,7 +529,8 @@ fn run_tour(
         }
         return;
     }
-    let (name, mut pos, mut look) = tour.shots[tour.index];
+    let (name, mut pos, mut look) = tour.shots[tour.index].clone();
+    let name = name.as_str();
     if name == "12_house_interior" {
         // Stand inside the first wooden door's house, looking in.
         if let Some((_, t)) = houses.iter().find(|(b, _)| b.0.mat == shared::map::Mat::Wood && b.0.pos.x.abs() < 60.0 && b.0.pos.z.abs() < 25.0) {
@@ -395,7 +584,11 @@ fn run_tour(
         } else {
             format!("{}/{}.png", tour.dir, name)
         };
-        commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
+        if tour.view {
+            commands.spawn(Screenshot::image(view.image.clone())).observe(save_to_disk(path));
+        } else {
+            shoot(&mut commands, path);
+        }
     }
     if tour.frames >= settle + burst + 10 {
         tour.frames = 0;
@@ -410,6 +603,7 @@ fn match_shots(
     time: Res<Time>,
     mut exit: MessageWriter<AppExit>,
     mut restart: MessageWriter<shared::sim::RestartMatch>,
+    hud: Option<Res<HudImage>>,
 ) {
     let now = time.elapsed_secs();
     if m.generation < shots.generation {
@@ -429,7 +623,14 @@ fn match_shots(
     }
     if m.elapsed >= shots.times[shots.next] {
         let path = format!("{}/match{}_{:02}_{:03.0}s.png", shots.dir, m.generation, shots.next, m.elapsed);
-        commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
+        match hud {
+            Some(hud) => {
+                // The whole target, as the camera has it: a shot of the image alone would be a
+                // target with another scale, which Bevy would leave black.
+                commands.spawn(Screenshot(hud.0.clone())).observe(save_to_disk(path));
+            }
+            None => shoot(&mut commands, path),
+        }
         shots.next += 1;
         shots.taken_at = now;
     }
@@ -595,7 +796,7 @@ fn armoury_camera(
     let at = if pose.state == Use::Strike { STRIKE_AT + pose.after } else { POSE_TIME };
     if arm.t >= at && !arm.shot {
         let path = format!("{}/{}.png", arm.dir, arm.name(&pose));
-        commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
+        shoot(&mut commands, path);
         arm.shot = true;
     }
     if arm.t >= at + 0.25 {

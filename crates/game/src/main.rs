@@ -22,14 +22,14 @@ fn main() {
     check_lfs();
     // Built in, so the browser build needn't fetch it before the app starts.
     let items_ron = include_str!("../../../assets/data/items.ron").to_string();
-    let bots = setting("bots").and_then(|s| s.parse().ok()).unwrap_or(15);
     let autopilot = std::env::var("VIVAD_AUTOPILOT").is_ok();
-    let mut config = MatchConfig { bots, autopilot, ..default() };
+    let mut config = MatchConfig { autopilot, ..default() };
     // In the browser the first map comes from the address: …/?map=chandni.
     #[cfg(target_arch = "wasm32")]
     if let Some(map) = setting("map").and_then(|m| shared::map::MapId::parse(&m)) {
         config.map = map;
     }
+    config.bots = setting("bots").and_then(|s| s.parse().ok()).unwrap_or(config.map.default_bots());
     let mut app = App::new();
     if let Some(lobby) = online(&mut config) {
         app.insert_resource(lobby);
@@ -68,7 +68,8 @@ fn main() {
                         None => TaskPoolOptions::default(),
                     },
                 })
-                .set(AssetPlugin { file_path: ASSET_DIR.into(), meta_check: bevy::asset::AssetMetaCheck::Never, ..default() }),
+                .set(AssetPlugin { file_path: ASSET_DIR.into(), meta_check: bevy::asset::AssetMetaCheck::Never, ..default() })
+                .set(render_settings()),
         )
         .add_plugins(PhysicsPlugins::default())
         .add_plugins(SimPlugin { items_ron })
@@ -102,6 +103,19 @@ fn main() {
         app.add_plugins(bevy::post_process::auto_exposure::AutoExposurePlugin);
     }
     app.run();
+}
+
+/// Bevy turns off wgpu's check of indirect draws in release builds, but leaves it on where DirectX
+/// could be used, which is every native build by default. Metal has no need of it, and it holds
+/// about 100 MB. WGPU_VALIDATION_INDIRECT_CALL=1 turns it back on.
+fn render_settings() -> bevy::render::RenderPlugin {
+    #[allow(unused_mut)]
+    let mut gpu = bevy::render::settings::WgpuSettings::default();
+    #[cfg(target_os = "macos")]
+    if std::env::var_os("WGPU_VALIDATION_INDIRECT_CALL").is_none() {
+        gpu.instance_flags.remove(bevy::render::settings::InstanceFlags::VALIDATION_INDIRECT_CALL);
+    }
+    bevy::render::RenderPlugin { render_creation: gpu.into(), ..default() }
 }
 
 /// A setting, by name ("host", "join", "name", "bots", "lan", "map"): natively from the

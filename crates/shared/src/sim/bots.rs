@@ -4,29 +4,75 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use rand::RngExt;
 
-use super::flow::Match;
+use super::aim::{self, AimSkill, Seen};
+use super::flow::{Match, Rules};
 use super::loot::{Chest, INTERACT_RANGE, Pickup};
 use super::zone::Zone;
 use super::{BotSkill, 
     EYE_OFFSET, Eliminated, HALF_HEIGHT, Health, HitMsg, Inventory, Kinematic, MoveMode, PlayerIntent, SimSet, Warrior, btn, solid_mask,
 };
-use super::movement::{FALL_DAMAGE, GLIDE_FALL, GLIDE_HORIZ, GRAVITY, SAFE_LANDING, WALK_SPEED};
-use super::nav::{NavGrid, NoPath};
+use super::movement::{FALL_DAMAGE, GLIDE_FALL, GLIDE_HORIZ, GRAVITY, OPEN_GLIDE_HEIGHT, SAFE_LANDING, SPRINT_SPEED, WALK_SPEED, dive_reach};
+use super::nav::{NavGrid, NoPath, StreetFloor, on_bridge};
 use crate::items::{AstraEffect, ItemDb, ItemKind};
 use crate::map::MapLayout;
 
-/// How far from the vimana a leap can carry a warrior.
-const GLIDE_REACH: f32 = 110.0;
+/// Whole-map routes worked out in one tick: every bot wanting a new one at the same moment (the
+/// ring moving on) must not stall the tick.
+const ROUTES_PER_TICK: u32 = 2;
+/// Seconds before a route is worked out afresh, the goal being the same.
+const ROUTE_EVERY: f32 = 15.0;
+/// Metres between a route's points.
+const ROUTE_STEP: f32 = 8.0;
+/// Street searches in one tick: a stretch of route is cheap, but a whole lobby at once isn't.
+const STRETCHES_PER_TICK: u32 = 6;
+/// Route points ahead that a stretch aims for, and the shorter stretch tried when that fails.
+const STRETCH: [usize; 2] = [5, 2];
+/// Route points a bot looks ahead of itself to find where it has got to.
+const ROUTE_LOOK: usize = 12;
+/// Seconds before a stretch is planned afresh, though it isn't finished.
+const STRETCH_EVERY: f32 = 2.5;
 /// How much longer the way through the streets is than the straight line, near enough.
 const STREET_DETOUR: f32 = 1.3;
+/// The same on the NCR, most of it open land: `nav_check` measures 1.11 to 1.14 to a ring's centre.
+const OPEN_DETOUR: f32 = 1.15;
+/// How far inside the coming circle's edge a bot on the NCR means to be when the ring gets there,
+/// metres. A share of the radius gave a bot a minute in hand at the big rings, and they never
+/// touched anyone.
+const OPEN_MARGIN: f32 = 15.0;
 /// Bots leaping from the vimana spread out: none makes for a chest this close to another's.
 const CLAIM: f32 = 45.0;
+/// How far through the flight a bot still waits for loot to come within a dive.
+const LAST_LEAP: f32 = 0.92;
 /// Seconds after landing that a bot loots before it hunts: it still fights whoever hits it.
 /// A chill bot takes its time, a sharp one less.
 const LOOT_GRACE: (f32, f32) = (75.0, 30.0);
+/// Seconds a bot keeps the same aim error before it drifts to another.
+const AIM_HOLD: (f32, f32) = (0.3, 0.9);
 /// Below this much health a bot breaks off a fight and runs, unless the ring is at its back:
 /// a fight to the death every time emptied the lobby in four minutes.
 const FLEE_HP: f32 = 40.0;
+/// Seconds to spare at which a bot sets off for the coming circle, and at which one on its way
+/// turns back to looting: apart, so that walking in doesn't undo the decision to walk in.
+const LEAVE_AT: (f32, f32) = (12.0, 30.0);
+/// How much finer than that a bot may cut it (`BotBrain::nerve`), the most careful first.
+const NERVE: (f32, f32) = (-6.0, 24.0);
+/// How far out in the coming circle, as a share of its radius, a bot sets off for its middle, and
+/// how far in it stops: apart for the same reason.
+const CIRCLE_LINE: (f32, f32) = (0.85, 0.7);
+/// Seconds to spare at which the ring is at a bot's back, and at which it no longer is.
+const PRESSED_AT: (f32, f32) = (4.0, 10.0);
+/// Seconds a bot keeps in hand when it fetches something on the way in.
+const FETCH_SPARE: f32 = 8.0;
+/// A bot with no bow takes one this close (metres) whatever the ring is doing: on the NCR a gun in
+/// reach is worth more than a few seconds of the early rings' fire.
+const GRAB_GUN: f32 = 20.0;
+/// How near a door must be for a walled-in bot to leave by it, metres, and for how many seconds it
+/// tries.
+const DOOR_NEAR: f32 = 16.0;
+const DOOR_TRIES: f32 = 8.0;
+/// How far off a bot with no bow makes for one on the NCR, metres: chests are hundreds of metres
+/// apart there, and a bot that landed between them had nothing else to look for.
+const GUN_SIGHT: f32 = 220.0;
 
 #[derive(Component, Clone, Debug)]
 pub struct BotBrain {
@@ -42,6 +88,13 @@ pub struct BotBrain {
     /// Aim error in radians; reaction delay before firing at a new target.
     pub aim_error: f32,
     pub react: f32,
+    /// How this bot turns and sees; what it has seen of its target; where its view points; the
+    /// error it is aiming with, and for how much longer.
+    pub aim: AimSkill,
+    pub memory: Seen,
+    pub view: (f32, f32),
+    pub aim_off: Vec2,
+    pub aim_hold: f32,
     /// How far an archer (or a swordsman) picks a fight, metres.
     pub sight: (f32, f32),
     /// Share of the time spent attacking once engaged (the rest is drawing breath), and this
@@ -78,8 +131,16 @@ pub struct BotBrain {
     pub refuge: Option<(Vec2, Vec3)>,
     /// The ring is at our back: fight on the move, or just run.
     pub pressed: bool,
+    /// We have set off for the coming circle.
+    pub heading_in: bool,
+    /// Seconds this bot cuts the ring finer than it should, or leaves earlier if negative: some
+    /// stay for one more chest, and the ring catches them.
+    pub nerve: f32,
     /// On a roof the grid doesn't cover: the edge we are making for.
     pub way_down: Option<Vec2>,
+    /// Inside a house the floor shows as walled in: the door we are leaving by, and for how much
+    /// longer we try it.
+    pub way_out: Option<(Vec2, f32)>,
     /// Match time we first stood on the ground.
     pub landed: Option<f32>,
     /// Seconds left running from a fight that was going badly.
@@ -102,6 +163,11 @@ impl BotBrain {
             strafe_timer: 0.0,
             aim_error: if chill { rng.random_range(0.06..0.11) } else { rng.random_range(0.025..0.06) },
             react: if chill { rng.random_range(1.0..1.8) } else { rng.random_range(0.35..0.8) },
+            aim: if chill { AimSkill::EASY } else { AimSkill::MEDIUM },
+            memory: Seen::default(),
+            view: (0.0, 0.0),
+            aim_off: Vec2::ZERO,
+            aim_hold: 0.0,
             sight: if chill { (35.0, 7.0) } else { (55.0, 9.0) },
             tempo: (if chill { 0.5 } else { 1.0 }, rng.random_range(0.0..1.0)),
             calm: chill,
@@ -122,7 +188,10 @@ impl BotBrain {
             stuck_for: 0,
             refuge: None,
             pressed: false,
+            heading_in: false,
+            nerve: rng.random_range(NERVE.0..NERVE.1),
             way_down: None,
+            way_out: None,
             landed: None,
             flee: 0.0,
             arrived: false,
@@ -136,6 +205,13 @@ impl Plugin for BotPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(FixedUpdate, (drive_bots, mind_the_drop).chain().in_set(SimSet::Brains));
     }
+}
+
+/// Marks where a bot is making for at once, not next tick: two bots thinking in step each gave way
+/// to the other, and swapped chests for as long as they stayed in step.
+fn claim(claimed: &mut Vec<(Entity, Vec3)>, me: Entity, goal: Option<Vec3>) {
+    claimed.retain(|c| c.0 != me);
+    claimed.extend(goal.map(|g| (me, g)));
 }
 
 /// The longest fall that costs no more than `damage`.
@@ -152,7 +228,9 @@ fn drop_for(damage: f32) -> f32 {
 fn mind_the_drop(
     mut bots: Query<(Entity, &Transform, &mut PlayerIntent, &Kinematic, &Health, &BotBrain), Without<Eliminated>>,
     spatial: SpatialQuery,
+    layout: Res<MapLayout>,
 ) {
+    let rules = Rules::of(layout.style);
     for (me, tf, mut intent, kin, health, brain) in &mut bots {
         let wish = super::movement::wish_dir(&intent);
         if kin.mode != MoveMode::Ground || wish == Vec3::ZERO {
@@ -161,7 +239,15 @@ fn mind_the_drop(
         let ahead = tf.translation + wish * 1.2;
         let filter = SpatialQueryFilter::from_mask(solid_mask()).with_excluded_entities([me]);
         let drop = drop_for(health.hp - if brain.urgent { 15.0 } else { 60.0 });
-        if spatial.cast_ray(ahead, Dir3::NEG_Y, HALF_HEIGHT + drop, true, &filter).is_none() {
+        // A long way down is fine where the glider comes back.
+        let drop = if rules.roof_rescue { drop.min(OPEN_GLIDE_HEIGHT + 1.0) } else { drop };
+        let safe = if rules.roof_rescue {
+            let below = spatial.cast_ray(ahead, Dir3::NEG_Y, HALF_HEIGHT + OPEN_GLIDE_HEIGHT + 1.0, true, &filter);
+            below.is_none_or(|hit| hit.distance <= HALF_HEIGHT + drop)
+        } else {
+            spatial.cast_ray(ahead, Dir3::NEG_Y, HALF_HEIGHT + drop, true, &filter).is_some()
+        };
+        if !safe {
             intent.move_axis = Vec2::ZERO;
         }
     }
@@ -176,14 +262,14 @@ fn yaw_pitch_to(from: Vec3, to: Vec3) -> (f32, f32) {
 
 /// The nearest point to `at` a warrior can come down on: on the grid's streets, with open sky above
 /// and the ground, not a roof, underneath.
-fn open_ground(at: Vec2, reach: f32, nav: &NavGrid, layout: &MapLayout, spatial: &SpatialQuery, filter: &SpatialQueryFilter) -> Option<Vec3> {
+fn open_ground(at: Vec2, reach: f32, walkable: &dyn Fn(Vec2) -> bool, layout: &MapLayout, spatial: &SpatialQuery, filter: &SpatialQueryFilter) -> Option<Vec3> {
     let bearings = 12;
     let mut r: f32 = 0.0;
     while r <= reach {
         for k in 0..if r == 0.0 { 1 } else { bearings } {
             let a = k as f32 / bearings as f32 * std::f32::consts::TAU;
             let p = at + Vec2::from_angle(a) * r;
-            if p.abs().max_element() > layout.half_extent - 8.0 || !nav.walkable(p) {
+            if p.abs().max_element() > layout.half_extent - 8.0 || !walkable(p) {
                 continue;
             }
             let ground = layout.terrain.height(p.x, p.y);
@@ -222,6 +308,100 @@ fn roof_edge(pos: Vec3, goal: Vec3, spatial: &SpatialQuery, filter: &SpatialQuer
     best.map(|b| b.1)
 }
 
+/// What a tick may still spend on finding the way.
+struct Budget {
+    routes: u32,
+    stretches: u32,
+}
+
+/// The way across the NCR: along the floor's routes and over the bridges, the next stretch of it
+/// walked round whatever the floor shows in the way. Off a roof first: the floor doesn't know
+/// roofs. None when the goal is close and can't be reached: it has been dropped.
+#[allow(clippy::too_many_arguments)]
+fn street_heading(
+    brain: &mut BotBrain,
+    pos: Vec3,
+    goal: Vec3,
+    dt: f32,
+    layout: &MapLayout,
+    floor: &StreetFloor,
+    spatial: &SpatialQuery,
+    filter: &SpatialQueryFilter,
+    budget: &mut Budget,
+) -> Option<Vec3> {
+    let ground = layout.terrain.height(pos.x, pos.z);
+    brain.replan -= dt;
+    if let Some((door, left)) = brain.way_out {
+        brain.way_out = (left > dt && !floor.reachable(pos.xz())).then_some((door, left - dt));
+        if brain.way_out.is_some() {
+            // At the door and on through it: its middle is a step short of the street.
+            let past = door + (door - pos.xz()).normalize_or_zero() * 3.0;
+            return Some(Vec3::new(past.x, pos.y, past.y));
+        }
+    }
+    let deck = on_bridge(pos);
+    if pos.y > ground + HALF_HEIGHT + 1.5 && !deck {
+        if brain.way_down.is_none_or(|p| p.distance(pos.xz()) < 0.8) || brain.replan <= 0.0 {
+            brain.way_down = roof_edge(pos, goal, spatial, filter);
+            brain.replan = 2.0;
+        }
+        brain.route_goal = None;
+        brain.path.clear();
+        return Some(brain.way_down.map_or(goal, |p| Vec3::new(p.x, pos.y, p.y)));
+    }
+    brain.way_down = None;
+    brain.route_timer -= dt;
+    if (brain.route_timer <= 0.0 || brain.route_goal.is_none_or(|g| g.distance(goal) > 6.0)) && budget.routes > 0 {
+        budget.routes -= 1;
+        brain.route = floor.route(pos, goal);
+        brain.route_goal = Some(goal);
+        brain.route_timer = ROUTE_EVERY;
+        brain.path_len = brain.route.len() as f32 * ROUTE_STEP;
+        brain.path.clear();
+        brain.replan = 0.0;
+    }
+    // Where we have got to on the route: the point of it nearest us, of those just ahead.
+    let n = brain.route.len();
+    let nearest = (1..=ROUTE_LOOK.min(n)).min_by(|a, b| brain.route[n - a].distance_squared(pos.xz()).total_cmp(&brain.route[n - b].distance_squared(pos.xz())));
+    if let Some(k) = nearest {
+        brain.route.truncate(n - k + 1);
+    }
+    while brain.route.last().is_some_and(|p| p.distance(pos.xz()) < 2.0) {
+        brain.route.pop();
+    }
+    let next = brain.route.last().map_or(goal.xz(), |p| *p);
+    // On a deck there is only its lane to walk.
+    if deck {
+        brain.path.clear();
+        return Some(Vec3::new(next.x, pos.y, next.y));
+    }
+    while brain.path.first().is_some_and(|p| p.distance(pos.xz()) < 1.0) {
+        brain.path.remove(0);
+        if brain.path.is_empty() {
+            brain.replan = 0.0;
+        }
+    }
+    // Not every tick: a search that found nothing waits for the timer like any other.
+    if brain.replan <= 0.0 && budget.stretches > 0 {
+        budget.stretches -= 1;
+        brain.replan = STRETCH_EVERY;
+        let n = brain.route.len();
+        let aim = |k: usize| if n > k { brain.route[n - 1 - k] } else { goal.xz() };
+        // On open land, which is most of the map, the straight line is the way and needs no search.
+        let far = aim(STRETCH[0]);
+        let found = if floor.line_clear(pos.xz(), far) { Some(vec![far]) } else { STRETCH.iter().find_map(|&k| floor.path(pos.xz(), aim(k))) };
+        // The goal itself is in reach and walled off: leave it.
+        if found.is_none() && !brain.urgent && n <= STRETCH[1] && !floor.walkable(goal.xz()) {
+            brain.give_up.push(goal);
+            brain.goal = None;
+            return None;
+        }
+        brain.path = found.unwrap_or_default();
+    }
+    let p = brain.path.first().copied().unwrap_or(next);
+    Some(Vec3::new(p.x, pos.y, p.y))
+}
+
 /// Where to walk this tick to get to `goal`: the next corner of the way there, down from a roof
 /// first. None when there is no reaching it and it isn't worth forcing: the goal has been dropped.
 #[allow(clippy::too_many_arguments)]
@@ -232,24 +412,15 @@ fn heading(
     dt: f32,
     nav: &NavGrid,
     layout: &MapLayout,
-    street: &crate::map::navigation::StreetNav,
+    floor: &StreetFloor,
     spatial: &SpatialQuery,
     filter: &SpatialQueryFilter,
+    budget: &mut Budget,
 ) -> Option<Vec3> {
-    let d = pos.xz().distance(goal.xz());
-    if street.active() && pos.y < 4.0 && pos.y > -2.0 && goal.y > -2.0 && goal.y < 4.0 {
-        // The NCR arena: by its street router, over the bridges rather than into the Yamuna.
-        brain.route_timer -= dt;
-        if brain.route_timer <= 0.0 || brain.route_goal.is_none_or(|g| g.distance(goal) > 6.0) {
-            brain.route = street.route(pos, goal);
-            brain.route_goal = Some(goal);
-            brain.route_timer = 3.0;
-        }
-        while brain.route.last().is_some_and(|p| p.distance(pos.xz()) < 2.0) {
-            brain.route.pop();
-        }
-        return Some(brain.route.last().map_or(goal, |p| Vec3::new(p.x, pos.y, p.y)));
+    if floor.ready() {
+        return street_heading(brain, pos, goal, dt, layout, floor, spatial, filter, budget);
     }
+    let d = pos.xz().distance(goal.xz());
     if !nav.ready() || (d <= 3.0 && (goal.y - pos.y).abs() < 2.6) {
         return Some(goal);
     }
@@ -332,14 +503,22 @@ pub(crate) fn drive_bots(
     mut hits: MessageReader<HitMsg>,
     nav: Res<NavGrid>,
     layout: Res<MapLayout>,
-    street: Res<crate::map::navigation::StreetNav>,
+    floor: Res<StreetFloor>,
 ) {
     let dt = time.delta_secs();
     let mut rng = rand::rng();
+    let rules = Rules::of(layout.style);
+    let mut budget = Budget { routes: ROUTES_PER_TICK, stretches: STRETCHES_PER_TICK };
+    // What the bots know of the ground underfoot, map by map.
+    let mapped = nav.ready() || floor.ready();
+    let walkable = |p: Vec2| if floor.ready() { floor.reachable(p) } else { nav.walkable(p) };
+    let snap = |p: Vec2| if floor.ready() { floor.snap(p, 24.0) } else if nav.ready() { nav.snap(p) } else { None };
+    // On the NCR bots walk the streets: loot upstairs or indoors is for the players who go in.
+    let at_street = |p: Vec3| p.y - layout.terrain.height(p.x, p.z) < 2.5 && floor.walkable(p.xz());
     let hits: Vec<HitMsg> = hits.read().cloned().collect();
     let los_filter = SpatialQueryFilter::from_mask(solid_mask());
     // Where each bot is making for, in the air or on the ground: its patch.
-    let claimed: Vec<(Entity, Vec3)> = bots.iter().filter_map(|(e, _, b, ..)| b.goal.map(|g| (e, g))).collect();
+    let mut claimed: Vec<(Entity, Vec3)> = bots.iter().filter_map(|(e, _, b, ..)| b.goal.map(|g| (e, g))).collect();
     for (me, tf, mut brain, mut intent, kin, inv, health) in &mut bots {
         let pos = tf.translation;
         let eye = pos + Vec3::Y * EYE_OFFSET;
@@ -354,9 +533,9 @@ pub(crate) fn drive_bots(
         if brain.provoked.is_some_and(|p| p.1 <= 0.0) {
             brain.provoked = None;
         }
-        let has_ranged = inv.slots.iter().flatten().any(|s| {
-            matches!(db.get(&s.id).kind, ItemKind::Bow { .. }) && (s.count > 0 || inv.arrows > 0)
-        });
+        let is_bow = |id: &str| matches!(db.get(id).kind, ItemKind::Bow { .. });
+        let holds_bow = inv.slots.iter().flatten().any(|s| is_bow(&s.id));
+        let has_ranged = inv.slots.iter().flatten().any(|s| is_bow(&s.id) && (s.count > 0 || inv.arrows > 0));
         if kin.mode == MoveMode::Ground && brain.landed.is_none() {
             brain.landed = Some(m.elapsed);
         }
@@ -370,15 +549,38 @@ pub(crate) fn drive_bots(
         match kin.mode {
             MoveMode::Vimana => {
                 if m.vimana_t >= brain.drop_at && pos.x.abs() < layout.half_extent - 20.0 && pos.z.abs() < layout.half_extent - 20.0 {
-                    intent.pressed |= btn::JUMP;
-                    if nav.ready() {
-                        // Make for a random chest within a glide, setting down on the open ground
-                        // nearest it: straight at one under a roof would land us on that roof.
-                        let near: Vec<Vec3> = chests
+                    // The NCR's drop is from 500 m: a glide is over a minute in the sky, so ride
+                    // on until there is loot within a dive. The ride's end puts everyone out. It
+                    // is a long list to look through, so not every tick.
+                    if floor.ready() {
+                        brain.think -= dt;
+                        if brain.think > 0.0 {
+                            continue;
+                        }
+                        brain.think = 0.25;
+                    }
+                    let dive = 0.8 * dive_reach(pos.y - layout.terrain.height(pos.x, pos.z));
+                    let dive_goals = |claimed: &[(Entity, Vec3)]| -> Vec<Vec3> {
+                        chests
                             .iter()
                             .map(|(t, _)| t.translation)
-                            .filter(|p| p.xz().distance(pos.xz()) < GLIDE_REACH)
-                            .collect();
+                            .chain(pickups.iter().filter(|(_, p)| matches!(db.get(&p.stack.id).kind, ItemKind::Bow { .. })).map(|(t, _)| t.translation))
+                            .filter(|p| p.xz().distance(pos.xz()) < dive && at_street(*p) && claimed.iter().all(|(e, c)| *e == me || c.xz().distance(p.xz()) > CLAIM))
+                            .collect()
+                    };
+                    let dive_near = if floor.ready() { dive_goals(&claimed) } else { vec![] };
+                    if floor.ready() && dive_near.is_empty() && m.vimana_t < LAST_LEAP {
+                        continue;
+                    }
+                    intent.pressed |= btn::JUMP;
+                    if mapped {
+                        // Make for a random chest within a glide, setting down on the open ground
+                        // nearest it: straight at one under a roof would land us on that roof.
+                        let near: Vec<Vec3> = if !dive_near.is_empty() {
+                            dive_near
+                        } else {
+                            chests.iter().map(|(t, _)| t.translation).filter(|p| p.xz().distance(pos.xz()) < rules.glide_reach).collect()
+                        };
                         // Our own patch: the open ground by a chest that no one else is making
                         // for. Every chest in a block comes down on the same few street cells,
                         // so it is the landing that must be clear of the others, not the chest.
@@ -391,14 +593,15 @@ pub(crate) fn drive_bots(
                             // the same street cell otherwise, and two bots on one cell is a brawl.
                             let aim = near[rng.random_range(0..near.len())].xz()
                                 + Vec2::from_angle(rng.random_range(0.0..std::f32::consts::TAU)) * rng.random_range(0.0..10.0);
-                            let Some(spot) = open_ground(aim, 40.0, &nav, &layout, &spatial, &los_filter) else { continue };
+                            let Some(spot) = open_ground(aim, 40.0, &walkable, &layout, &spatial, &los_filter) else { continue };
                             let clear = claimed.iter().all(|(e, c)| *e == me || c.xz().distance(spot.xz()) > CLAIM);
                             landing = Some(spot);
                             if clear {
                                 break;
                             }
                         }
-                        brain.goal = landing.or_else(|| open_ground(pos.xz(), 40.0, &nav, &layout, &spatial, &los_filter));
+                        brain.goal = landing.or_else(|| open_ground(pos.xz(), 40.0, &walkable, &layout, &spatial, &los_filter));
+                        claim(&mut claimed, me, brain.goal);
                         continue;
                     }
                     // Land near a random chest under open sky: one under a roof (a temple's
@@ -406,7 +609,6 @@ pub(crate) fn drive_bots(
                     let open: Vec<Vec3> = chests
                         .iter()
                         .map(|(t, _)| t.translation)
-                        .filter(|p| !street.active() || p.y < 2.0)
                         .filter(|p| spatial.cast_ray(*p + Vec3::Y * 0.6, Dir3::Y, 40.0, true, &los_filter).is_none())
                         .collect();
                     brain.goal = (!open.is_empty()).then(|| open[rng.random_range(0..open.len())]);
@@ -415,7 +617,7 @@ pub(crate) fn drive_bots(
             }
             MoveMode::Freefall | MoveMode::Gliding => {
                 brain.think -= dt;
-                if brain.think <= 0.0 && nav.ready() {
+                if brain.think <= 0.0 && mapped {
                     brain.think = 0.25;
                     // A roof coming up with the goal beyond reach: slip off to open ground.
                     if let Some(hit) = spatial.cast_ray(pos, Dir3::NEG_Y, 60.0, true, &los_filter) {
@@ -423,18 +625,23 @@ pub(crate) fn drive_bots(
                         let reach = (pos.y - below) / GLIDE_FALL * GLIDE_HORIZ;
                         let far = brain.goal.is_none_or(|g| g.xz().distance(pos.xz()) > reach);
                         if pos.y - hit.distance > below + 2.5 && far {
-                            brain.goal = open_ground(pos.xz(), reach.min(60.0), &nav, &layout, &spatial, &los_filter).or(brain.goal);
+                            brain.goal = open_ground(pos.xz(), reach.min(60.0), &walkable, &layout, &spatial, &los_filter).or(brain.goal);
                         }
                     }
                 }
                 if let Some(g) = brain.goal {
                     let (yaw, _) = yaw_pitch_to(pos, g);
                     intent.yaw = yaw;
-                    intent.move_axis = if pos.xz().distance(g.xz()) > 3.0 { Vec2::Y } else { Vec2::ZERO };
+                    let d = pos.xz().distance(g.xz());
+                    intent.move_axis = if d > 3.0 { Vec2::Y } else { Vec2::ZERO };
                 }
                 continue;
             }
             MoveMode::Ground => {}
+        }
+        // Off a roof's edge with nothing near below: the glider, where the map has that.
+        if rules.roof_rescue && !kin.grounded && kin.velocity.y < -8.0 {
+            intent.pressed |= btn::JUMP;
         }
 
         // ---- perception (every think tick)
@@ -464,28 +671,51 @@ pub(crate) fn drive_bots(
             brain.target = new_target;
 
             // Goals when not fighting: zone first, then chests, then pickups, then wander.
-            // Leave in time to walk in, streets being longer than the straight line.
+            // On the NCR a bot sprints and the ring takes minutes to close, so it stays out until
+            // the last moment it can run in ahead of the ring. A small map's ring is on its heels
+            // from the start: there it leaves in time to walk in before the ring moves. Streets
+            // being longer than the straight line, either way.
             let (left, shrinking) = zone.countdown();
+            let open_land = floor.ready();
+            let (pace, ahead, detour, reach) = if open_land { (SPRINT_SPEED, zone.closes_in(), OPEN_DETOUR, zone.target_radius - OPEN_MARGIN) } else { (WALK_SPEED, left, STREET_DETOUR, zone.target_radius * 0.8) };
+            let run_in = |from: f32| (from - reach).max(0.0) * detour / pace;
             let centre = zone.target_center.distance(pos.xz());
-            let travel_time = (centre - zone.target_radius * 0.8).max(0.0) * STREET_DETOUR / WALK_SPEED;
+            let spare = ahead - run_in(centre);
             // With slack once we have set off: deciding afresh each tick flipped bots between the
             // refuge and the chest behind them, and they looted nothing while they dithered.
-            let must_move = shrinking || left < travel_time + if brain.urgent { 30.0 } else { 12.0 };
+            let nerve = if open_land { brain.nerve } else { 0.0 };
+            let must_move = (shrinking && !open_land) || spare < if brain.heading_in { LEAVE_AT.1 } else { LEAVE_AT.0 } - nerve;
+            brain.heading_in = must_move && centre > zone.target_radius * if brain.heading_in { CIRCLE_LINE.1 } else { CIRCLE_LINE.0 };
             let outside = zone.outside(pos);
-            let zone_goal = (outside || (must_move && centre > zone.target_radius * 0.85)).then(|| {
+            let zone_goal = (outside || brain.heading_in).then(|| {
                 if brain.refuge.is_none_or(|(c, _)| c != zone.target_center) {
                     // A spot of our own well inside, on our side of the circle.
-                    let side = Vec2::from_angle(rng.random_range(-0.7..0.7)).rotate((pos.xz() - zone.target_center).normalize_or(Vec2::X));
-                    let spot = zone.target_center + side * zone.target_radius * rng.random_range(0.2..0.6);
-                    let spot = nav.ready().then(|| nav.snap(spot)).flatten().unwrap_or(spot);
+                    let toward = (pos.xz() - zone.target_center).normalize_or(Vec2::X);
+                    let mut draw = || zone.target_center + Vec2::from_angle(rng.random_range(-0.7..0.7)).rotate(toward) * zone.target_radius * rng.random_range(0.2..0.6);
+                    // Somewhere to stand, not a river or a building, where the map has those.
+                    let spot = (0..6).map(|_| draw()).find(|p| !open_land || floor.reachable(*p)).unwrap_or(zone.target_center);
+                    let spot = snap(spot).unwrap_or(spot);
                     brain.refuge = Some((zone.target_center, spot.extend(0.0).xzy()));
                 }
                 brain.refuge.map_or(Vec3::ZERO, |r| r.1)
             });
-            brain.pressed = outside || (zone_goal.is_some() && left < travel_time + 4.0);
-            // Nothing outside the ring, or outside the coming one once it is nearly on its way.
+            brain.pressed = outside || (zone_goal.is_some() && spare < if brain.pressed { PRESSED_AT.1 } else { PRESSED_AT.0 });
+            // On the way in, a bot with no bow turns aside for what it sees, unless the ring is
+            // at its back: on the NCR a long walk to the circle is most of the early game.
+            let scavenging = open_land && !has_ranged && !brain.pressed;
+            let grabs = |p: Vec3| open_land && !has_ranged && p.distance(pos) < GRAB_GUN;
+            // What there is time for. On the NCR: anything inside this ring that leaves time to go
+            // on into the coming circle afterwards. On a small map: anything inside the ring until
+            // it is nearly on its way, then only what lies inside the coming one, short of the
+            // line that sets a bot heading in, or the two would pull it back and forth.
             let in_time = |p: Vec3| {
-                !zone.outside(p) && ((left > 20.0 && !shrinking) || zone.target_center.distance(p.xz()) < zone.target_radius)
+                let there = zone.target_center.distance(p.xz());
+                let fetch = p.distance(pos) * detour / pace + run_in(there);
+                if open_land {
+                    grabs(p) || (!zone.outside(p) && ahead - fetch > if scavenging { 0.0 } else { FETCH_SPARE - nerve })
+                } else {
+                    !zone.outside(p) && ((!must_move && left > 20.0 && !shrinking) || there < zone.target_radius * CIRCLE_LINE.0)
+                }
             };
             let skip = brain.give_up.clone();
             // While looting, a chest someone else stands by or is making for is theirs: the
@@ -499,12 +729,23 @@ pub(crate) fn drive_bots(
             // for a bot with a minute to get armed.
             let chest_goal = chests
                 .iter()
-                .filter(|(t, c)| !c.opened && t.translation.distance(pos) < 120.0 && in_time(t.translation))
-                .filter(|(t, _)| (!street.active() && !looting) || (t.translation.y - pos.y).abs() < 2.5)
+                .filter(|(t, c)| !c.opened && t.translation.distance(pos) < rules.chest_sight && in_time(t.translation))
+                .filter(|(t, _)| if floor.ready() { at_street(t.translation) } else { !looting || (t.translation.y - pos.y).abs() < 2.5 })
                 .filter(|(t, _)| !skip.iter().any(|g| g.distance(t.translation) < 0.5) && !theirs(t.translation))
                 .min_by(|a, b| a.0.translation.distance(pos).total_cmp(&b.0.translation.distance(pos)))
                 .map(|(t, _)| t.translation);
             let free_slot = inv.slots.iter().any(|s| s.is_none());
+            // In a yard with no way in: not for us, and no looking at it again.
+            let mut if_reachable = |goal: Option<Vec3>| {
+                goal.filter(|p| {
+                    let ok = !floor.ready() || floor.reachable(p.xz());
+                    if !ok {
+                        brain.give_up.push(*p);
+                    }
+                    ok
+                })
+            };
+            let chest_goal = if_reachable(chest_goal);
             let pickup_goal = pickups
                 .iter()
                 .filter(|(t, p)| {
@@ -519,23 +760,43 @@ pub(crate) fn drive_bots(
                     // Weapons: only new kinds, or a strictly better rarity of one we hold.
                     let wanted = stackable
                         || inv.slots.iter().flatten().all(|s| s.id != p.stack.id || s.rarity < p.stack.rarity);
-                    t.translation.distance(pos) < 45.0 && in_time(t.translation) && wanted && (free_slot || p.stack.id == "arrows")
+                    // A first bow is worth a slot, whatever has to go for it (`loot::interact` swaps).
+                    let needed = !holds_bow && matches!(kind, ItemKind::Bow { .. });
+                    let (far, sight) = (t.translation.distance(pos), if floor.ready() && needed { GUN_SIGHT } else { 45.0 });
+                    // As with a chest, a gun a long way off is one bot's: eight bots ran for one
+                    // 200 m away. One close by goes to whoever gets there first.
+                    let spoken_for = floor.ready() && needed && far > 45.0 && theirs(t.translation);
+                    far < sight && !spoken_for && in_time(t.translation) && wanted && (free_slot || needed || p.stack.id == "arrows") && (!floor.ready() || at_street(t.translation))
                 })
                 .filter(|(t, _)| !skip.iter().any(|g| g.distance(t.translation) < 0.5))
                 .min_by(|a, b| a.0.translation.distance(pos).total_cmp(&b.0.translation.distance(pos)))
                 .map(|(t, _)| t.translation);
-            brain.urgent = zone_goal.is_some();
+            let pickup_goal = if_reachable(pickup_goal);
             let previous = brain.goal;
             // Running from a fight: keep running, unless the ring says otherwise.
             let flee_goal = (brain.flee > 0.0 && zone_goal.is_none()).then_some(brain.goal).flatten();
             // A find at our feet is taken on the way; otherwise the chest comes before the
             // find across the street: chests are what move a warrior through the blocks.
-            let near_find = pickup_goal.filter(|p| p.distance(pos) < 14.0);
-            brain.goal = zone_goal.or(flee_goal).or(near_find).or(chest_goal).or(pickup_goal).or_else(|| {
+            // A bot with no bow on the NCR goes for whichever is nearer, the find or the chest:
+            // with a fixed limit, a street that led away from a find flipped it to the chest and
+            // back as it crossed the limit.
+            let find_sight = if has_ranged {
+                14.0
+            } else if floor.ready() {
+                rules.find_sight.max(chest_goal.map_or(GUN_SIGHT, |c| c.distance(pos)))
+            } else {
+                rules.find_sight
+            };
+            let near_find = pickup_goal.filter(|p| p.distance(pos) < find_sight);
+            let aside = near_find.filter(|p| scavenging || grabs(*p)).or(chest_goal.filter(|p| grabs(*p)));
+            brain.urgent = zone_goal.is_some() && aside.is_none();
+            brain.goal = aside.or(zone_goal).or(flee_goal).or(near_find).or(chest_goal).or(pickup_goal).or_else(|| {
                 if brain.goal.is_none_or(|g| g.distance(pos) < 4.0) {
                     let c = zone.target_center;
                     let r = zone.target_radius.max(8.0) * 0.7;
-                    Some(Vec3::new(c.x + rng.random_range(-r..r), 0.0, c.y + rng.random_range(-r..r)))
+                    let spot = Vec2::new(c.x + rng.random_range(-r..r), c.y + rng.random_range(-r..r));
+                    let spot = if floor.ready() { floor.snap(spot, 24.0).unwrap_or(spot) } else { spot };
+                    Some(Vec3::new(spot.x, 0.0, spot.y))
                 } else {
                     brain.goal
                 }
@@ -543,6 +804,7 @@ pub(crate) fn drive_bots(
             if brain.goal.map(|g| g.round()) != previous.map(|g| g.round()) {
                 brain.goal_time = 0.0;
             }
+            claim(&mut claimed, me, brain.goal);
         }
 
         // ---- stuck detection: if we barely moved while trying, jump and sidestep; if that keeps
@@ -553,7 +815,16 @@ pub(crate) fn drive_bots(
                 brain.stuck_for += 1;
                 brain.unstick = if brain.stuck_for % 3 == 0 { 1.8 } else { 0.9 };
                 brain.replan = 0.0;
+                // Something the grids can't see: on to the next route point, and a fresh stretch.
+                brain.route.pop();
+                brain.path.clear();
                 brain.strafe = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
+                // A fight can carry a bot in through a broken door, and the floor knows no way out.
+                if brain.stuck_for >= 2 && brain.way_out.is_none() && floor.ready() && !floor.reachable(pos.xz()) {
+                    let far = |d: &&crate::map::Block| d.pos.xz().distance_squared(pos.xz());
+                    let door = layout.doors.iter().min_by(|a, b| far(a).total_cmp(&far(b)));
+                    brain.way_out = door.map(|d| d.pos.xz()).filter(|d| d.distance(pos.xz()) < DOOR_NEAR).map(|d| (d, DOOR_TRIES));
+                }
                 if brain.stuck_for >= 8 && !brain.urgent {
                     if let Some(g) = brain.goal.take() {
                         brain.give_up.push(g);
@@ -581,7 +852,7 @@ pub(crate) fn drive_bots(
         if let Some((_, ttf, _)) = target.filter(|_| health.hp < FLEE_HP && !brain.pressed && brain.flee <= 0.0 && zone.radius > 60.0) {
             let away = (pos - ttf.translation).xz().normalize_or(Vec2::X);
             let spot = pos.xz() + Vec2::from_angle(rng.random_range(-0.6..0.6)).rotate(away) * 45.0;
-            let spot = nav.ready().then(|| nav.snap(spot)).flatten().unwrap_or(spot);
+            let spot = snap(spot).unwrap_or(spot);
             if zone.target_center.distance(spot) < zone.target_radius * 0.9 && zone.center.distance(spot) < zone.radius * 0.9 {
                 brain.goal = Some(Vec3::new(spot.x, 0.0, spot.y));
                 brain.goal_time = 0.0;
@@ -591,8 +862,16 @@ pub(crate) fn drive_bots(
         }
         let target = target.filter(|_| brain.flee <= 0.0);
         if let Some((_, ttf, tkin)) = target {
+            // A new target: from wherever we were looking, and nothing known of it yet.
+            if brain.seen_for == 0.0 {
+                brain.memory.clear();
+                brain.view = (intent.yaw, intent.pitch);
+            }
             brain.seen_for += dt;
             let dist = ttf.translation.distance(pos);
+            let skill = brain.aim;
+            brain.memory.push(m.elapsed, ttf.translation, tkin.velocity, &skill);
+            let (seen_at, seen_moving) = brain.memory.perceive(&skill).unwrap_or((ttf.translation, tkin.velocity));
             // Weapon choice by range.
             let want = choose_weapon(inv, &db, dist);
             if want != inv.selected {
@@ -604,10 +883,10 @@ pub(crate) fn drive_bots(
                 _ => 0.0,
             };
             // Lead the target and compensate drop.
-            let mut aim_at = ttf.translation + Vec3::Y * 0.35;
+            let mut aim_at = seen_at + Vec3::Y * 0.35;
             if speed > 0.0 {
                 let t = dist / speed;
-                aim_at += tkin.velocity * t + Vec3::Y * 0.5 * 5.0 * t * t;
+                aim_at += seen_moving * t + Vec3::Y * 0.5 * 5.0 * t * t;
             }
             // Shots follow the over-the-shoulder aim ray (like a player's crosshair), not the eye
             // line, so solve the angles from that ray's origin (two fixed-point steps suffice).
@@ -617,9 +896,15 @@ pub(crate) fn drive_bots(
                 let (origin, _) = super::aim_ray(pos, &probe);
                 (yaw, pitch) = yaw_pitch_to(origin, aim_at);
             }
-            let wobble = brain.aim_error * (1.0 + dist / 40.0);
-            intent.yaw = yaw + rng.random_range(-wobble..wobble);
-            intent.pitch = pitch + rng.random_range(-wobble..wobble) * 0.6;
+            // The aim is off by a little, for a little while: a hand drifting, not a shake.
+            brain.aim_hold -= dt;
+            if brain.aim_hold <= 0.0 {
+                brain.aim_hold = rng.random_range(AIM_HOLD.0..AIM_HOLD.1);
+                let wobble = brain.aim_error * (1.0 + dist / 40.0);
+                brain.aim_off = Vec2::new(rng.random_range(-wobble..wobble), rng.random_range(-wobble..wobble) * 0.6);
+            }
+            brain.view = aim::turn(brain.view, (yaw + brain.aim_off.x, pitch + brain.aim_off.y), &skill, dt);
+            (intent.yaw, intent.pitch) = brain.view;
             let on_beat = (m.elapsed * 0.4 + brain.tempo.1).fract() < brain.tempo.0;
             if brain.seen_for > brain.react && on_beat {
                 match held {
@@ -662,7 +947,7 @@ pub(crate) fn drive_bots(
             // The ring won't wait for the fight: keep shooting, but keep walking out of it.
             if brain.pressed {
                 if let Some(goal) = brain.goal {
-                    if let Some(toward) = heading(&mut brain, pos, goal, dt, &nav, &layout, &street, &spatial, &los_filter) {
+                    if let Some(toward) = heading(&mut brain, pos, goal, dt, &nav, &layout, &floor, &spatial, &los_filter, &mut budget) {
                         intent.move_axis = axes_towards(intent.yaw, (toward - pos).xz().normalize_or_zero());
                         brain.walking = true;
                     }
@@ -687,7 +972,7 @@ pub(crate) fn drive_bots(
         if let Some(goal) = brain.goal {
             // Can't reach it in reasonable time (blocked): abandon it, unless it is the way out.
             brain.goal_time += dt;
-            let patience = if street.active() { 90.0 } else { 20.0 + brain.path_len * 0.3 };
+            let patience = 20.0 + brain.path_len * 0.3;
             if brain.goal_time > patience && !brain.urgent {
                 brain.give_up.push(goal);
                 brain.goal = None;
@@ -696,7 +981,7 @@ pub(crate) fn drive_bots(
             let d = pos.xz().distance(goal.xz());
             let near = d <= 1.4 && (goal.y - pos.y).abs() < 2.6;
             // Around buildings and up stairs by the grid's path; down from a roof by its edge.
-            let Some(toward) = heading(&mut brain, pos, goal, dt, &nav, &layout, &street, &spatial, &los_filter) else { continue };
+            let Some(toward) = heading(&mut brain, pos, goal, dt, &nav, &layout, &floor, &spatial, &los_filter, &mut budget) else { continue };
             let (yaw, _) = yaw_pitch_to(pos, toward);
             intent.yaw = yaw;
             intent.pitch = 0.0;

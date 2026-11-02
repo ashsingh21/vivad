@@ -5,9 +5,15 @@
 //!
 //! SIM_SEED=<n> fixes the match seeds (the k-th match runs on n + k), so two runs see the same
 //! vimana paths, Aandhi circles and loot. Bot aim and personalities stay random. SIM_QUIET=1 drops
-//! the feed and the 30 s lines. Each match ends with one line per Aandhi death saying why.
+//! the feed, the 30 s lines and the slow frames. Each match ends with one line per Aandhi death
+//! saying why.
+//!
+//! To look closer: STUCK=1 names each bot going nowhere, INV=<seconds> lists what every bot holds
+//! and wants at that time, TRACE=1 and TRACK=<name> follow bots through the early game. Each match
+//! also reports two things a warrior's position alone can't show: "dither", bots flipping between
+//! two goals (they keep moving, so they never count as stuck), and how much the ring burnt.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use avian3d::prelude::*;
@@ -19,7 +25,7 @@ use shared::sim::flow::{Match, MatchState};
 use shared::sim::loot::{Chest, Pickup};
 use shared::sim::zone::Zone;
 use shared::sim::bots::BotBrain;
-use shared::sim::{HitMsg, Inventory, Eliminated, FeedMsg, Kinematic, MatchConfig, MoveMode, RestartMatch, SimPlugin, Warrior};
+use shared::sim::{DamageCause, DamageMsg, HitMsg, Inventory, Eliminated, FeedMsg, Kinematic, MatchConfig, MoveMode, RestartMatch, SimPlugin, Warrior};
 
 /// Hits landed this match.
 #[derive(Resource, Default)]
@@ -40,6 +46,31 @@ fn count_taken(mut gone: RemovedComponents<Pickup>, m: Res<Match>, mut n: ResMut
     if m.elapsed > 0.5 {
         n.0 += gone;
     }
+}
+
+/// What the ring burnt this match, warrior by warrior.
+#[derive(Resource, Default)]
+struct Burnt(HashMap<Entity, f32>);
+
+fn count_burns(mut hurt: MessageReader<DamageMsg>, mut n: ResMut<Burnt>) {
+    for d in hurt.read().filter(|d| d.cause == DamageCause::Pralaya) {
+        *n.0.entry(d.target).or_default() += d.amount;
+    }
+}
+
+/// A bot's goal changing eight times in ten seconds: it is flipping, and getting nowhere.
+const FLIPS: usize = 8;
+const FLIP_WINDOW: f32 = 10.0;
+
+/// One bot's goal changes: its goal and the last few before it, when they changed, the seconds
+/// spent flipping, and whether this spell has been told.
+#[derive(Default)]
+struct Flips {
+    goal: Option<(i32, i32)>,
+    last: VecDeque<Option<(i32, i32)>>,
+    changes: VecDeque<f32>,
+    secs: f32,
+    told: bool,
 }
 
 /// One warrior's recent history, sampled twice a second, to explain an Aandhi death.
@@ -85,9 +116,10 @@ fn verdict(t: &Track, now: f32) -> &'static str {
 fn main() {
     let mut args = std::env::args().skip(1);
     let matches: u32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(1);
-    let bots: u32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(15);
-    let items = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/data/items.ron")).unwrap();
+    let bots: u32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(shared::map::MapId::from_env().default_bots());
+    let items =std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/data/items.ron")).unwrap();
 
+    let started = Instant::now();
     let mut app = App::new();
     let seed: Option<u64> = std::env::var("SIM_SEED").ok().map(|s| s.parse().expect("SIM_SEED: a number"));
     let quiet = std::env::var("SIM_QUIET").is_ok();
@@ -96,7 +128,7 @@ fn main() {
         .add_plugins(PhysicsPlugins::default())
         .add_plugins(SimPlugin { items_ron: items })
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)));
-    app.init_resource::<Hits>().init_resource::<Taken>().add_systems(FixedUpdate, count_hits).add_systems(Update, count_taken);
+    app.init_resource::<Hits>().init_resource::<Taken>().init_resource::<Burnt>().add_systems(FixedUpdate, (count_hits, count_burns)).add_systems(Update, count_taken);
     // Driving the app by hand: plugins must be finalised as `App::run` would.
     app.finish();
     app.cleanup();
@@ -122,6 +154,7 @@ fn main() {
         })
         .unwrap();
     println!("terrain max mismatch {worst:.2} m");
+    println!("map up and running after {:.1} s", started.elapsed().as_secs_f32());
 
     // The ranged weapons: a warrior holding one of these in a slot (arrows or not) is armed.
     let bows: HashSet<String> = app
@@ -143,6 +176,7 @@ fn main() {
         let mut next_report = 0.0;
         let mut kills_by_weapon = 0;
         let mut kills_by_zone = 0;
+        let mut kills_by_self = 0;
         let mut kills_other = 0;
         let mut tracks: HashMap<Entity, Track> = HashMap::new();
         let mut next_sample = 0.0;
@@ -153,11 +187,29 @@ fn main() {
         // Every warrior of this match, and the match time it first held a bow (None: never did;
         // one that fell unarmed stays None, its slots being emptied as it falls).
         let mut armed_at: HashMap<Entity, Option<f32>> = HashMap::new();
+        let mut landed_at: HashMap<Entity, f32> = HashMap::new();
+        let mut flips: HashMap<Entity, Flips> = HashMap::new();
+        // Seconds that bots asked to walk and went nowhere, in all and by 40 m patch of the map.
+        let mut stuck_secs = 0.0f32;
+        let mut stuck_spots: HashMap<(i32, i32), f32> = HashMap::new();
+        let mut opening_told = false;
+        // Bot-seconds spent on bridge decks, in water, and on high ground, and the bots that
+        // ever stood on a deck.
+        let (mut on_decks, mut in_water, mut on_hills) = (0.0f32, 0.0f32, 0.0f32);
+        let mut crossed: HashSet<Entity> = HashSet::new();
+        // Milliseconds each frame took, for what the bots and physics cost.
+        let mut frame_ms: Vec<f32> = vec![];
         app.world_mut().resource_mut::<Hits>().0 = 0;
         app.world_mut().resource_mut::<Taken>().0 = 0;
+        app.world_mut().resource_mut::<Burnt>().0.clear();
         loop {
+            let frame = Instant::now();
             app.update();
+            frame_ms.push(1000.0 * frame.elapsed().as_secs_f32());
             let world = app.world_mut();
+            if !quiet && frame_ms.last().is_some_and(|ms| *ms > 16.0) {
+                println!("  slow frame: {:.1} ms at t={:.1}", frame_ms[frame_ms.len() - 1], world.resource::<Match>().elapsed);
+            }
             let mut feed: Vec<String> = world.resource_mut::<Messages<FeedMsg>>().drain().map(|f| f.0).collect();
             for f in feed.drain(..) {
                 feed_seen += 1;
@@ -180,17 +232,70 @@ fn main() {
                         );
                         reasons.push((t.name.clone(), why));
                     }
+                } else if f.contains(" hi tapka") {
+                    // A gun that backfired: "... ne X ko hi tapka diya!"
+                    kills_by_self += 1;
                 } else if f.contains("tapka") {
                     kills_by_weapon += 1;
                 } else if !f.contains("jeet") {
                     kills_other += 1;
-                    println!("  [other] {f}");
+                    let t = tracks.values().find(|t| f.starts_with(&format!("{} ", t.name)));
+                    let ground = t.map_or(0.0, |t| world.resource::<shared::map::MapLayout>().terrain.height(t.pos.x, t.pos.z));
+                    println!("  [other] {f}: last seen at {:?}, ground {ground:.1}", t.map(|t| t.pos.round()));
                 }
                 if !quiet {
-                    println!("  [feed] t={elapsed:.0} {f}");
+                    let spot = tracks.values().find(|t| f.contains(&format!(" {} ", t.name))).map(|t| t.pos.round());
+                    println!("  [feed] t={elapsed:.0} {f} {spot:?}");
                 }
             }
             let m = world.resource::<Match>().clone();
+            if m.state == MatchState::InProgress {
+                let zone_now = world.resource::<Zone>().clone();
+                for (e, w, tf, b, k) in world.query_filtered::<(Entity, &Warrior, &Transform, &BotBrain, &Kinematic), Without<Eliminated>>().iter(world) {
+                    if k.mode != MoveMode::Ground {
+                        continue;
+                    }
+                    let f = flips.entry(e).or_default();
+                    let goal = b.goal.map(|g| (g.x.round() as i32, g.z.round() as i32));
+                    if goal != f.goal {
+                        f.last.push_back(f.goal);
+                        if f.last.len() > 3 {
+                            f.last.pop_front();
+                        }
+                        f.goal = goal;
+                        f.changes.push_back(m.elapsed);
+                    }
+                    while f.changes.front().is_some_and(|t| *t < m.elapsed - FLIP_WINDOW) {
+                        f.changes.pop_front();
+                    }
+                    // In a fight a bot's goal means little: it stands and shoots.
+                    if f.changes.len() >= FLIPS && b.target.is_none() {
+                        f.secs += 1.0 / 60.0;
+                        // FLIPS=1 tells what a bot was about when it began to flip.
+                        if !f.told && std::env::var("FLIPS").is_ok() {
+                            f.told = true;
+                            let z = &zone_now;
+                            let ratio = z.target_center.distance(tf.translation.xz()) / z.target_radius.max(1.0);
+                            println!(
+                                "    flips {} t={:.0} at {:.0},{:.0} goal {:?} of {:?} heading_in {} pressed {} urgent {} flee {:.1} target {} unstick {:.1} rest {:.1} centre/r {ratio:.2} closes in {:.0}",
+                                w.name, m.elapsed, tf.translation.x, tf.translation.z, goal, f.last, b.heading_in, b.pressed, b.urgent, b.flee, b.target.is_some(), b.unstick, b.rest, z.closes_in()
+                            );
+                        }
+                    } else {
+                        f.told = false;
+                    }
+                }
+            }
+            if !opening_told && m.vimana_from != Vec3::ZERO {
+                opening_told = true;
+                let (z, a, b) = (world.resource::<Zone>().clone(), m.vimana_from, m.vimana_to);
+                let chests = world.query::<&Chest>().iter(world).count();
+                let pickups = world.query::<&Pickup>().iter(world).count();
+                println!(
+                    "match {}: {} warriors, opens on a disc at {:.0},{:.0} r{:.0}; flight {:.0},{:.0} to {:.0},{:.0} at {:.0} m; {chests} chests, {pickups} pickups",
+                    n + 1, m.total, z.center.x, z.center.y, z.radius, a.x, a.z, b.x, b.z, a.y
+                );
+            }
             if m.elapsed >= next_sample {
                 next_sample += 0.5;
                 let zone = world.resource::<Zone>().clone();
@@ -204,9 +309,32 @@ fn main() {
                     let step = pos.xz().distance(t.pos.xz());
                     t.edge = pos.xz().distance(zone.center) - zone.radius;
                     t.goal = b.goal;
-                    t.path = b.path.len();
+                    t.path = b.path.len().max(b.route.len());
                     t.urgent = b.urgent;
                     t.high = pos.y > 2.5 && k.mode == MoveMode::Ground;
+                    let terrain = &world.resource::<shared::map::MapLayout>().terrain;
+                    if k.mode == MoveMode::Ground {
+                        if shared::sim::nav::on_bridge(pos) {
+                            on_decks += 0.5;
+                            crossed.insert(e);
+                        } else if terrain.ground_at(pos.x, pos.z) == Some(shared::map::terrain::ground::WATER) {
+                            in_water += 0.5;
+                        } else if terrain.height(pos.x, pos.z) > 6.0 {
+                            on_hills += 0.5;
+                        }
+                    }
+                    if b.walking && step < 0.4 && k.mode == MoveMode::Ground && m.state != MatchState::Ended {
+                        stuck_secs += 0.5;
+                        *stuck_spots.entry(((pos.x / 40.0).floor() as i32, (pos.z / 40.0).floor() as i32)).or_default() += 0.5;
+                        // STUCK=1 names each bot that goes nowhere, and what it wanted.
+                        if std::env::var("STUCK").is_ok() && b.stuck_for >= 1 {
+                            println!(
+                                "    stuck {} t={:.0} at {:.1},{:.1},{:.1} goal {:?} next {:?} leg {:?} route {} for {} urgent {} target {}",
+                                w.name, m.elapsed, pos.x, pos.y, pos.z, b.goal.map(|g| g.round()), b.route.last().map(|p| p.round()), b.path.first().map(|p| p.round()),
+                                b.route.len(), b.stuck_for, b.urgent, b.target.is_some()
+                            );
+                        }
+                    }
                     if zone.outside(pos) && m.state == MatchState::InProgress {
                         if t.outside_since.is_none() {
                             t.outside_since = Some(m.elapsed);
@@ -224,6 +352,9 @@ fn main() {
                         t.outside_since = None;
                     }
                     t.pos = pos;
+                    if let Some(at) = b.landed {
+                        landed_at.insert(e, at);
+                    }
                 }
                 for (e, inv, fallen) in world.query_filtered::<(Entity, &Inventory, Has<Eliminated>), With<Warrior>>().iter(world) {
                     let armed = armed_at.entry(e).or_insert(None);
@@ -278,33 +409,52 @@ fn main() {
                     }
                 }
             }
-            if std::env::var("INV").is_ok() && (m.elapsed * 60.0).round() as u32 == 100 * 60 {
-                for inv in world.query_filtered::<&Inventory, Without<Eliminated>>().iter(world) {
-                    let items: Vec<String> = inv.slots.iter().flatten().map(|s| format!("{}x{}", s.id, s.count)).collect();
-                    println!("    inv sel={} arrows={} {items:?}", inv.selected, inv.arrows);
+            if let Some(at) = std::env::var("INV").ok().and_then(|s| s.parse::<u32>().ok()) {
+                if (m.elapsed * 60.0).round() as u32 == at * 60 {
+                    let finds: Vec<Vec3> = world.query::<(&Transform, &Pickup)>().iter(world).filter(|(_, p)| bows.contains(&p.stack.id)).map(|(t, _)| t.translation).collect();
+                    let closed: Vec<Vec3> = world.query::<(&Transform, &Chest)>().iter(world).filter(|(_, c)| !c.opened).map(|(t, _)| t.translation).collect();
+                    for (w, tf, b, inv) in world.query_filtered::<(&Warrior, &Transform, &BotBrain, &Inventory), Without<Eliminated>>().iter(world) {
+                        let items: Vec<String> = inv.slots.iter().flatten().map(|s| format!("{}x{}", s.id, s.count)).collect();
+                        let near = |v: &[Vec3]| v.iter().map(|p| p.distance(tf.translation)).fold(f32::MAX, f32::min);
+                        println!(
+                            "    inv {} at {:.0},{:.0} goal {:?} urgent {} landed {:?} gave_up {} nearest bow {:.0} chest {:.0}: arrows {} {items:?}",
+                            w.name, tf.translation.x, tf.translation.z, b.goal.map(|g| g.round()), b.urgent, b.landed.map(|t| t.round()), b.give_up.len(), near(&finds), near(&closed), inv.arrows
+                        );
+                    }
                 }
             }
-            if m.state == MatchState::Ended || m.elapsed > 1200.0 {
+            if m.state == MatchState::Ended || m.elapsed > 1500.0 {
                 let winner = m.winner.and_then(|w| world.get::<Warrior>(w)).map(|w| (w.name.clone(), w.kills));
                 println!(
                     "match {} on {} ended at {:.0}s sim ({:.1}s wall): winner {:?}, {} weapon kills, {} Aandhi, {} feed lines",
                     n + 1, world.resource::<shared::map::MapLayout>().name, m.elapsed, wall.elapsed().as_secs_f32(), winner, kills_by_weapon, kills_by_zone, feed_seen
                 );
                 // A map swapped in at a restart leaves nothing of the last one behind.
-                let layout = world.resource::<shared::map::MapLayout>().clone();
+                let layout = world.resource::<shared::map::MapLayout>();
+                let want = layout.footprints.iter().filter(|f| f.mat != shared::map::Mat::Water).count();
+                let wanted_props = layout.props.len();
                 let terrains = world.query::<&shared::sim::MapTerrain>().iter(world).count();
                 let footprints = world.query::<&shared::sim::MapFootprint>().iter(world).count();
                 let props = world.query::<&shared::sim::PropIndex>().iter(world).count();
-                let want = layout.footprints.iter().filter(|f| f.mat != shared::map::Mat::Water).count();
-                assert!(terrains == 1 && footprints == want && props == layout.props.len(),
-                    "map entities: {terrains} terrains, {footprints}/{want} footprints, {props}/{} props", layout.props.len());
+                assert!(terrains == 1 && footprints == want && props == wanted_props,
+                    "map entities: {terrains} terrains, {footprints}/{want} footprints, {props}/{wanted_props} props");
                 let (paths, mean_ms, worst_ms, expanded) = world.resource::<shared::sim::nav::NavGrid>().stats();
                 println!("nav paths {paths} ({:.1}/s): mean {mean_ms:.2} ms, worst {worst_ms:.1} ms, mean {expanded:.0} nodes", paths as f32 / m.elapsed.max(1.0));
+                let (paths, mean_ms, worst_ms, expanded) = world.resource::<shared::sim::nav::StreetFloor>().stats();
+                println!("street searches {paths} ({:.1}/s): mean {mean_ms:.2} ms, worst {worst_ms:.1} ms, mean {expanded:.0} nodes", paths as f32 / m.elapsed.max(1.0));
+                let (routes, mean_ms, worst_ms, expanded) = world.resource::<shared::sim::nav::StreetFloor>().route_stats();
+                println!("routes {routes} ({:.1}/s): mean {mean_ms:.2} ms, worst {worst_ms:.1} ms, mean {expanded:.0} nodes", routes as f32 / m.elapsed.max(1.0));
+                frame_ms.sort_by(f32::total_cmp);
+                let at = |q: f32| frame_ms[((frame_ms.len() - 1) as f32 * q) as usize];
+                println!(
+                    "frame ms: mean {:.2}, p50 {:.2}, p99 {:.2}, worst {:.1}",
+                    frame_ms.iter().sum::<f32>() / frame_ms.len().max(1) as f32, at(0.5), at(0.99), at(1.0)
+                );
                 let hits = world.resource::<Hits>().0;
                 let opened = world.query::<&Chest>().iter(world).filter(|c| c.opened).count();
                 println!(
-                    "stats {}: seed {} length {:.0} weapon {} aandhi {} other {} hits {} chests {} first_death {:.0}",
-                    n + 1, m.seed, m.elapsed, kills_by_weapon, kills_by_zone, kills_other, hits, opened, first_death.unwrap_or(0.0)
+                    "stats {}: seed {} length {:.0} weapon {} aandhi {} own_gun {} other {} hits {} chests {} first_death {:.0}",
+                    n + 1, m.seed, m.elapsed, kills_by_weapon, kills_by_zone, kills_by_self, kills_other, hits, opened, first_death.unwrap_or(0.0)
                 );
                 // How soon the warriors found a bow: counts of those armed by 60 s, by 90 s, and by
                 // the time the last one was; the rest never were (fell with none, or outlasted the
@@ -313,8 +463,10 @@ fn main() {
                 let armed: Vec<f32> = armed_at.values().flatten().copied().collect();
                 let by = |t: f32| armed.iter().filter(|a| **a <= t).count();
                 let last = armed.iter().copied().fold(0.0f32, f32::max).ceil();
+                // The fair clock on a big map, where the last bots land after a minute and a half.
+                let soon = armed_at.iter().filter(|(e, a)| a.zip(landed_at.get(*e)).is_some_and(|(a, l)| a - l <= 60.0)).count();
                 println!(
-                    "armed: {}/{warriors} by 60s, {}/{warriors} by 90s, {}/{warriors} by {last:.0}s; never: {}",
+                    "armed: {}/{warriors} by 60s, {}/{warriors} by 90s, {}/{warriors} by {last:.0}s, {soon}/{warriors} within 60s of landing; never: {}",
                     by(60.0), by(90.0), armed.len(), warriors - armed.len()
                 );
                 // The stragglers by name, to trace them.
@@ -333,6 +485,24 @@ fn main() {
                 let chests = world.query::<&Chest>().iter(world).count();
                 println!("chests opened {opened}/{chests} ({:.0}%)", opened as f32 * 100.0 / chests.max(1) as f32);
                 println!("pickups taken {}", world.resource::<Taken>().0);
+                println!(
+                    "ground: {on_decks:.0} bot-seconds on bridges ({} bots), {in_water:.0} in water, {on_hills:.0} on the hills",
+                    crossed.len()
+                );
+                let mut spots: Vec<_> = stuck_spots.iter().map(|(k, s)| (*s, k.0 * 40 + 20, k.1 * 40 + 20)).collect();
+                spots.sort_by(|a, b| b.0.total_cmp(&a.0));
+                let worst: Vec<String> = spots.iter().take(6).map(|s| format!("{:.0}s at {},{}", s.0, s.1, s.2)).collect();
+                println!("stuck {stuck_secs:.0} bot-seconds ({:.1} % of {:.0}); worst: {}", 100.0 * stuck_secs / (m.total as f32 * m.elapsed).max(1.0), m.total as f32 * m.elapsed, worst.join(", "));
+                let flip_secs: Vec<f32> = flips.values().map(|f| f.secs).filter(|s| *s > 1.0).collect();
+                println!(
+                    "dither {:.0} bot-seconds ({} bots, worst {:.0} s)",
+                    flip_secs.iter().fold(0.0, |a, b| a + b), flip_secs.len(), flip_secs.iter().copied().fold(0.0f32, f32::max)
+                );
+                let burnt = world.resource::<Burnt>();
+                println!(
+                    "ring burnt {} warriors, {:.0} damage in all, worst {:.0}",
+                    burnt.0.len(), burnt.0.values().fold(0.0, |a, b| a + b), burnt.0.values().copied().fold(0.0f32, f32::max)
+                );
                 for (name, why) in &reasons {
                     println!("reason {why}: {name}");
                 }
@@ -340,10 +510,14 @@ fn main() {
                 let nav = world.resource::<shared::sim::nav::NavGrid>();
                 let timeline: Vec<String> = deaths.iter().map(|(t, p, r)| format!("{t:.0}s/p{p}/r{r:.0}")).collect();
                 println!("deaths {}: {}", deaths.len(), timeline.join(" "));
+                // The small maps have the street grid to ask; the NCR, its route floor, which knows
+                // a spot a warrior can stand on from one a warrior can get to.
+                let floor = world.resource::<shared::sim::nav::StreetFloor>();
+                let open = |p: Vec2| if floor.ready() { floor.reachable(p) } else { nav.walkable(p) };
                 println!(
                     "zone at end: phase {} radius {:.0} centre {:.0},{:.0} ({}), target r{:.0} centre {:.0},{:.0} ({})",
-                    z.phase, z.radius, z.center.x, z.center.y, if nav.walkable(z.center) { "walkable" } else { "BLOCKED" },
-                    z.target_radius, z.target_center.x, z.target_center.y, if nav.walkable(z.target_center) { "walkable" } else { "BLOCKED" }
+                    z.phase, z.radius, z.center.x, z.center.y, if open(z.center) { "reachable" } else { "BLOCKED" },
+                    z.target_radius, z.target_center.x, z.target_center.y, if open(z.target_center) { "reachable" } else { "BLOCKED" }
                 );
                 results.push((m.elapsed, kills_by_weapon, kills_by_zone, m.state == MatchState::Ended));
                 break;

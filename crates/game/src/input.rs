@@ -262,7 +262,6 @@ fn vote(
     keys: Res<ButtonInput<KeyCode>>,
     m: Res<Match>,
     local: Query<Has<Eliminated>, With<LocalPlayer>>,
-    config: Res<shared::sim::MatchConfig>,
     mut votes: MessageWriter<shared::sim::flow::VoteMap>,
 ) {
     let dead = local.single().unwrap_or(true);
@@ -270,7 +269,7 @@ fn vote(
         return;
     }
     let keys_for = [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4, KeyCode::Digit5];
-    for (map, key) in shared::sim::flow::rotation(config.map).iter().zip(keys_for) {
+    for (map, key) in shared::sim::flow::ROTATION.iter().zip(keys_for) {
         if keys.just_pressed(key) {
             votes.write(shared::sim::flow::VoteMap(*map));
         }

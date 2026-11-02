@@ -8,7 +8,8 @@ use super::flow::Match;
 use super::net::{NetId, NetMsg, Outbox, Remote};
 use super::{Eliminated, Inventory, PlayerIntent, SimSet, Warrior, btn, match_rng, solid_mask, stream};
 use crate::items::{ItemDb, ItemKind, ItemStack, Rarity};
-use crate::map::{ChestKind, MapLayout};
+use crate::map::{ChestKind, ChestSpawn, MapLayout};
+use crate::map::compose::{CHEST_SETS, PLACES};
 
 pub const INTERACT_RANGE: f32 = 2.4;
 
@@ -146,17 +147,51 @@ fn is_consumable(k: &ItemKind) -> bool {
     matches!(k, ItemKind::Consumable { .. })
 }
 
-/// Fresh chests and floor loot for a new match (the same on every peer for the same seed).
-pub fn spawn_loot(commands: &mut Commands, layout: &MapLayout, db: &ItemDb, seed: u64) {
+/// Which of its sets of chests each district has out in this match: every peer draws the same, and
+/// a player who knows the map still has to look.
+pub fn chest_sets(seed: u64) -> [u8; PLACES.len()] {
+    let mut rng = match_rng(seed, stream::CHEST_SETS);
+    std::array::from_fn(|_| rng.random_range(0..CHEST_SETS))
+}
+
+/// Whether a chest is out in a match with these sets.
+pub fn chest_is_out(c: &ChestSpawn, sets: &[u8]) -> bool {
+    c.set.is_none_or(|(district, set)| sets[district as usize] == set)
+}
+
+/// Where a floor bow's quiver lies: beside it, on whichever side isn't in a holy site's circle. One
+/// of the two isn't, a circle being round and the bow outside it; two circles can take both.
+pub fn quiver_spot(layout: &MapLayout, bow: Vec3) -> Option<Vec3> {
+    let beside = Vec3::new(0.7, 0.0, 0.3);
+    [bow + beside, bow - beside].into_iter().find(|p| !layout.is_holy(p.xz()))
+}
+
+/// Where item `i` falls from a chest at `ct` (height aside): in front of it, or behind it or at its
+/// feet if the front is in a holy site's circle.
+pub fn spill_spot(layout: &MapLayout, ct: &Transform, i: usize) -> Vec3 {
+    let (fwd, side) = (ct.rotation * Vec3::Z, ct.rotation * Vec3::X * (i as f32 - 1.0) * 0.7);
+    let spots = [ct.translation + fwd + side, ct.translation - fwd + side];
+    spots.into_iter().find(|p| !layout.is_holy(p.xz())).unwrap_or(ct.translation)
+}
+
+/// Fresh chests and floor loot for a new match (the same on every peer for the same seed). Only
+/// inside `disc`, the circle the match opens on: nobody fights beyond it, and loot past it would
+/// only be entities every bot looks over.
+pub fn spawn_loot(commands: &mut Commands, layout: &MapLayout, db: &ItemDb, seed: u64, disc: (Vec2, f32)) {
     let mut rng = match_rng(seed, stream::FLOOR_LOOT);
+    let inside = |p: Vec3| p.xz().distance(disc.0) <= disc.1;
+    let sets = chest_sets(seed);
     for (index, c) in layout.chests.iter().enumerate() {
+        if !inside(c.pos) || !chest_is_out(c, &sets) {
+            continue;
+        }
         commands.spawn((
             Chest { index, kind: c.kind, opened: false },
             Transform::from_translation(c.pos).with_rotation(Quat::from_rotation_y(c.yaw)),
         ));
     }
     for (k, p) in layout.floor_loot.iter().enumerate() {
-        if !rng.random_bool(0.75) {
+        if !inside(*p) || !rng.random_bool(0.75) {
             continue;
         }
         let rarity = roll_rarity(None, &mut rng);
@@ -167,10 +202,9 @@ pub fn spawn_loot(commands: &mut Commands, layout: &MapLayout, db: &ItemDb, seed
         };
         if let Some(st) = item {
             // Bows on the floor come with a quiver beside them.
-            if matches!(db.get(&st.id).kind, ItemKind::Bow { .. }) {
+            if matches!(db.get(&st.id).kind, ItemKind::Bow { .. }) && let Some(at) = quiver_spot(layout, *p) {
                 let id = PickupId::floor(layout.floor_loot.len() + k);
-                commands.spawn((Pickup { id, stack: make_stack(db, "arrows", Rarity::Common), delay: 0.0 },
-                                Transform::from_translation(*p + Vec3::new(0.7, 0.0, 0.3))));
+                commands.spawn((Pickup { id, stack: make_stack(db, "arrows", Rarity::Common), delay: 0.0 }, Transform::from_translation(at)));
             }
             commands.spawn((Pickup { id: PickupId::floor(k), stack: st, delay: 0.0 }, Transform::from_translation(*p)));
         }
@@ -221,16 +255,14 @@ pub fn give(inv: &mut Inventory, db: &ItemDb, mut st: ItemStack) -> Option<ItemS
 }
 
 /// Opens a chest: its contents spill out in front of it (the same on every peer).
-pub fn open_chest(commands: &mut Commands, spatial: &SpatialQuery, db: &ItemDb, seed: u64, ct: &Transform, c: &mut Chest, gone: &mut Gone) {
+pub fn open_chest(commands: &mut Commands, spatial: &SpatialQuery, db: &ItemDb, layout: &MapLayout, seed: u64, ct: &Transform, c: &mut Chest, gone: &mut Gone) {
     c.opened = true;
-    let fwd = ct.rotation * Vec3::Z;
     for (i, st) in chest_contents(db, seed, c.index, c.kind).into_iter().enumerate() {
         let id = PickupId::chest(c.index, i);
         if gone.0.remove(&id) {
             continue;
         }
-        let side = (i as f32 - 1.0) * 0.7;
-        let mut at = ct.translation + fwd * 1.0 + ct.rotation * Vec3::X * side + Vec3::Y * 0.6;
+        let mut at = spill_spot(layout, ct, i) + Vec3::Y * 0.6;
         let filter = SpatialQueryFilter::from_mask(solid_mask());
         if let Some(hit) = spatial.cast_ray(at, Dir3::NEG_Y, 3.0, true, &filter) {
             at.y -= hit.distance - 0.25;
@@ -246,6 +278,7 @@ fn interact(
     mut chests: Query<(&Transform, &mut Chest), Without<Warrior>>,
     pickups: Query<(Entity, &Transform, &Pickup), Without<Warrior>>,
     db: Res<ItemDb>,
+    layout: Res<MapLayout>,
     m: Res<Match>,
     spatial: SpatialQuery,
     mut outbox: ResMut<Outbox>,
@@ -266,7 +299,7 @@ fn interact(
             .filter(|(t, c)| !c.opened && t.translation.distance(me) < INTERACT_RANGE)
             .min_by(|a, b| a.0.translation.distance(me).total_cmp(&b.0.translation.distance(me)));
         if let Some((ct, mut c)) = chest {
-            open_chest(&mut commands, &spatial, &db, m.seed, ct, &mut c, &mut gone);
+            open_chest(&mut commands, &spatial, &db, &layout, m.seed, ct, &mut c, &mut gone);
             outbox.0.push(NetMsg::ChestOpened { index: c.index });
             continue;
         }
@@ -276,7 +309,8 @@ fn interact(
             .min_by(|a, b| a.1.translation.distance(me).total_cmp(&b.1.translation.distance(me)));
         if let Some((pe, pt, p)) = nearest {
             taken.push(pe);
-            commands.entity(pe).despawn();
+            // The same tick's quiver can go to someone walking over it.
+            commands.entity(pe).try_despawn();
             if let Some(&by) = net_id {
                 outbox.0.push(NetMsg::Took { pickup: p.id, by, at: m.elapsed });
                 claims.0.push(Claim { pickup: p.id, by, at: m.elapsed, stack: p.stack.clone() });
@@ -313,7 +347,7 @@ fn auto_pickup_arrows(
         for (wt, mut inv, net_id) in &mut warriors {
             if wt.translation.distance(pt.translation) < 1.6 {
                 inv.arrows += p.stack.count;
-                commands.entity(pe).despawn();
+                commands.entity(pe).try_despawn();
                 if let Some(&by) = net_id {
                     outbox.0.push(NetMsg::Took { pickup: p.id, by, at: m.elapsed });
                     claims.0.push(Claim { pickup: p.id, by, at: m.elapsed, stack: p.stack.clone() });
@@ -356,5 +390,49 @@ fn prune_gone(mut commands: Commands, q: Query<(Entity, &Pickup)>, mut gone: Res
 fn tick_pickups(mut q: Query<&mut Pickup>, time: Res<Time>) {
     for mut p in &mut q {
         p.delay = (p.delay - time.delta_secs()).max(0.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::map::{MapId, generate};
+
+    /// Nothing a chest or a floor bow drops lands in a holy site's circle, on any map.
+    #[test]
+    fn no_drop_lands_at_a_holy_site() {
+        for (map, seeds) in [(MapId::Ncr, &[7, 90001][..]), (MapId::Cp, &[7][..]), (MapId::Chandni, &[7, 23][..]), (MapId::HauzKhas, &[7][..]), (MapId::IndiaGate, &[7][..])] {
+            for &seed in seeds {
+                let m = generate(map, seed);
+                for c in &m.chests {
+                    let ct = Transform::from_translation(c.pos).with_rotation(Quat::from_rotation_y(c.yaw));
+                    for i in 0..4 {
+                        let at = spill_spot(&m, &ct, i);
+                        assert!(!m.is_holy(at.xz()), "{map:?}, seed {seed}: chest at {} spills to {at}", c.pos);
+                    }
+                }
+                for p in &m.floor_loot {
+                    assert!(quiver_spot(&m, *p).is_none_or(|q| !m.is_holy(q.xz())), "{map:?}, seed {seed}: quiver by {p}");
+                }
+            }
+        }
+    }
+
+    /// A match opens one set of chests in each district, the same on every peer, and the sets move
+    /// from one match to the next.
+    #[test]
+    fn chests_move_between_matches() {
+        assert_eq!(chest_sets(5), chest_sets(5));
+        let picks: Vec<_> = (0..6).map(chest_sets).collect();
+        assert!(picks.windows(2).all(|p| p[0] != p[1]), "{picks:?}");
+        let m = generate(MapId::Ncr, 7);
+        let out = |seed: u64| {
+            let sets = chest_sets(seed);
+            m.chests.iter().filter(|c| chest_is_out(c, &sets)).map(|c| c.pos).collect::<Vec<_>>()
+        };
+        let (a, b) = (out(1), out(2));
+        assert!((130..=160).contains(&a.len()), "{}", a.len());
+        let same = a.iter().filter(|p| b.contains(p)).count();
+        assert!(same < a.len() * 3 / 4, "{same} of {} stayed put", a.len());
     }
 }

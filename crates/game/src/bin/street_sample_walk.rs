@@ -29,6 +29,8 @@ fn main() {
                 1.0 / 60.0,
             )))
             .add_message::<DamageMsg>()
+            // Movement reads the map's rules; an empty layout gives the small maps' ones.
+            .init_resource::<shared::map::MapLayout>()
             .add_plugins(shared::sim::movement::MovementPlugin)
             .add_systems(Startup, spawn_colliders);
         app.finish();

@@ -343,6 +343,7 @@ fn apply_loot(
     mut commands: Commands,
     mut inbox: ResMut<Inbox>,
     db: Res<ItemDb>,
+    layout: Res<crate::map::MapLayout>,
     m: Res<Match>,
     spatial: SpatialQuery,
     mut chests: Query<(&Transform, &mut Chest)>,
@@ -363,7 +364,7 @@ fn apply_loot(
             NetMsg::ChestOpened { index } => {
                 // Both peers opening it at once is harmless: the contents are the same.
                 if let Some((ct, mut c)) = chests.iter_mut().find(|(_, c)| c.index == index && !c.opened) {
-                    open_chest(&mut commands, &spatial, &db, m.seed, ct, &mut c, &mut gone);
+                    open_chest(&mut commands, &spatial, &db, &layout, m.seed, ct, &mut c, &mut gone);
                 }
             }
             NetMsg::Took { pickup, by, at } => {

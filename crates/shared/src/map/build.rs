@@ -273,7 +273,7 @@ impl<'a> Builder<'a> {
     }
 
     pub fn chest(&mut self, f: Frame, local: Vec3, yaw: f32, kind: ChestKind) {
-        self.map.chests.push(ChestSpawn { pos: f.p(local), yaw: f.yaw + yaw, kind });
+        self.map.chests.push(ChestSpawn { pos: f.p(local), yaw: f.yaw + yaw, kind, set: None });
     }
 
     pub fn loot(&mut self, f: Frame, local: Vec3) {

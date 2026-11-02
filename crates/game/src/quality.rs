@@ -1,8 +1,9 @@
 //! Quality levels: how much of the frame goes to resolution, shadows, ambient occlusion,
 //! anti-aliasing and grass. Picked from the GPU at start (a discrete GPU or Apple Silicon gets
-//! Ultra, another integrated one Medium, anything else Low; in the browser, which won't say, by the
-//! frame rate measured on High), forced with VIVAD_QUALITY=low|medium|high|ultra (in the browser
-//! ?quality=, without ultra), and cycled in play with F4. Ultra is the desktop level.
+//! Ultra, or on a big map Apple Silicon gets High, another integrated one Medium, anything else Low;
+//! in the browser, which won't say, by the frame rate measured on High), forced with
+//! VIVAD_QUALITY=low|medium|high|ultra (in the browser ?quality=, without ultra), and cycled in play
+//! with F4. Ultra is the desktop level.
 //!
 //! The 3D view renders into an image no taller than the level allows and is stretched over the
 //! window, so a Retina screen doesn't shade four pixels for every one a 1080p screen does; the HUD
@@ -40,10 +41,13 @@ impl Quality {
     }
 
     /// Most rows of pixels the 3D view is rendered at (None: the window's own).
-    fn max_rows(self) -> Option<u32> {
+    fn max_rows(self, big_map: bool) -> Option<u32> {
         match self {
             Quality::Low => Some(720),
             Quality::Medium => Some(1080),
+            // A big map's every pixel has more behind it. Measured on an M4: 1800 rows take 21 ms
+            // a frame there and 600 MB of render targets, and 1440 rows hold 60 fps in most views.
+            Quality::High if big_map => Some(1440),
             Quality::High => None,
             // Temporal AA and sharpening recover most of the rest; shading a Retina window's every
             // pixel costs an M4 about a third of its frame rate for little that shows.
@@ -75,9 +79,17 @@ impl Quality {
         if self == Quality::Ultra { 14.0 } else { 18.0 }
     }
 
-    /// The camera's far plane: Ultra shows the city out to the skyline's last blocks.
-    fn far_plane(self) -> f32 {
-        if self == Quality::Ultra { 3000.0 } else { 1000.0 }
+    /// The camera's far plane: Ultra shows the city out to the skyline's last blocks. On a big map
+    /// it goes by what the level can afford to draw, and the haze closes just short of it
+    /// (crate::camera::big_map_fog), so nothing shows the line where drawing stops.
+    fn far_plane(self, big_map: bool) -> f32 {
+        match (self, big_map) {
+            (Quality::Ultra, false) => 3000.0,
+            (_, false) => 1000.0,
+            (Quality::Low, true) => 1500.0,
+            (Quality::Medium, true) => 2200.0,
+            (Quality::High | Quality::Ultra, true) => 3000.0,
+        }
     }
 
     /// TAA needs the depth and motion prepass; Low does without it and uses FXAA.
@@ -192,14 +204,19 @@ impl Plugin for QualityPlugin {
             app.insert_resource(Undecided);
         }
         app.add_systems(Startup, spawn_view.after(crate::camera::spawn_camera))
-            .add_systems(Update, (choose.run_if(resource_exists::<Undecided>), settle.run_if(resource_exists::<Settle>), cycle, fit_view, apply.run_if(resource_changed::<Quality>), far_shadows).chain());
+            .add_systems(Update, (choose.run_if(resource_exists::<Undecided>), settle.run_if(resource_exists::<Settle>), cycle, fit_view, apply.run_if(|q: Res<Quality>, swaps: Res<shared::sim::MapSwaps>| q.is_changed() || shared::sim::map_reloaded(swaps)), far_shadows).chain());
         if std::env::var("VIVAD_TRIS").is_ok() {
             app.add_systems(Last, (tri_report, entity_report));
         }
     }
 }
 
-fn choose(mut commands: Commands, info: Option<Res<RenderAdapterInfo>>, mut q: ResMut<Quality>) {
+/// Whether the levels are those of a big map.
+fn is_big(layout: &shared::map::MapLayout) -> bool {
+    layout.terrain.n >= crate::visuals::BIG_TERRAIN
+}
+
+fn choose(mut commands: Commands, info: Option<Res<RenderAdapterInfo>>, layout: Res<shared::map::MapLayout>, mut q: ResMut<Quality>) {
     // A browser doesn't say what GPU it has: start high and let `settle` step down if it's slow.
     let level = if cfg!(target_arch = "wasm32") {
         commands.insert_resource(Settle::default());
@@ -207,9 +224,12 @@ fn choose(mut commands: Commands, info: Option<Res<RenderAdapterInfo>>, mut q: R
     } else {
         let Some(info) = info else { return };
         // Apple Silicon reports itself as integrated, but with the render height capped it
-        // carries the top level.
+        // carries the top level. Not on a big map: with 64 warriors an M4 at High falls to 34-49
+        // fps on the NCR's busiest streets, and Medium holds 60 on most of them.
         match (format!("{:?}", info.device_type).as_str(), format!("{:?}", info.backend).as_str()) {
-            ("DiscreteGpu", _) | ("IntegratedGpu", "Metal") => Quality::Ultra,
+            ("DiscreteGpu", _) => Quality::Ultra,
+            ("IntegratedGpu", "Metal") if is_big(&layout) => Quality::Medium,
+            ("IntegratedGpu", "Metal") => Quality::Ultra,
             ("IntegratedGpu", _) => Quality::Medium,
             _ => Quality::Low,
         }
@@ -302,8 +322,10 @@ fn spawn_view(mut commands: Commands, mut images: ResMut<Assets<Image>>, cam: Qu
 }
 
 /// Keeps the 3D view's image the window's shape, at most as many rows as the level allows.
+#[allow(clippy::too_many_arguments)]
 fn fit_view(
     q: Res<Quality>,
+    layout: Res<shared::map::MapLayout>,
     window: Query<&Window, With<PrimaryWindow>>,
     mut view: ResMut<View3d>,
     mut images: ResMut<Assets<Image>>,
@@ -313,7 +335,7 @@ fn fit_view(
 ) {
     let Ok(w) = window.single() else { return };
     let full = w.physical_size().max(UVec2::ONE);
-    let rows = std::env::var("VIVAD_ROWS").ok().and_then(|s| s.parse().ok()).or(q.max_rows()).map_or(full.y, |m: u32| m.min(full.y));
+    let rows = std::env::var("VIVAD_ROWS").ok().and_then(|s| s.parse().ok()).or(q.max_rows(is_big(&layout))).map_or(full.y, |m: u32| m.min(full.y));
     let size = UVec2::new(((full.x as u64 * rows as u64) / full.y as u64).max(1) as u32, rows);
     scale.0 = w.width() / size.x as f32;
     if size == view.size {
@@ -333,18 +355,32 @@ fn fit_view(
 /// Puts the level's settings on the camera, the sun and the grass. VIVAD_AA, VIVAD_NO_SSAO,
 /// VIVAD_CASCADES, VIVAD_SHADOW_FAR, VIVAD_SHADOW_MAP, VIVAD_GRASS, VIVAD_LOD (and VIVAD_ROWS, in
 /// `fit_view`) still override them, for comparisons.
+#[allow(clippy::too_many_arguments)]
 fn apply(
     mut commands: Commands,
     q: Res<Quality>,
+    layout: Res<shared::map::MapLayout>,
     mut cam: Query<(Entity, &mut Projection), With<MainCamera>>,
     sun: Query<Entity, With<Sun>>,
     mut grass: ResMut<crate::grass::Grass>,
     mut lods: Query<(Entity, &crate::characters::LodRange, &mut bevy::camera::visibility::VisibilityRange, Has<LodShadow>)>,
+    painted: Query<&ChildOf, With<crate::sky::PaintedSky>>,
+    mut transforms: Query<&mut Transform>,
 ) {
     let env = |k: &str| std::env::var(k).ok();
+    let big = is_big(&layout);
+    let far_plane = q.far_plane(big);
+    // The painted dome is a mesh, drawn in front of anything past its radius (a tenth inside
+    // Bevy's default 1000 m far plane), so it has to stand back with the far plane. The clouds and
+    // the sun are on the same rig, and keep their size in the sky.
+    if let Some(rig) = painted.iter().next().map(|c| c.parent())
+        && let Ok(mut t) = transforms.get_mut(rig)
+    {
+        t.scale = Vec3::splat(if big { far_plane / 1000.0 } else { 1.0 });
+    }
     for (e, mut projection) in &mut cam {
         if let Projection::Perspective(p) = projection.as_mut() {
-            p.far = q.far_plane();
+            p.far = far_plane;
         }
         let mut c = commands.entity(e);
         c.remove::<(ScreenSpaceAmbientOcclusion, TemporalAntiAliasing, ContrastAdaptiveSharpening, Smaa, Fxaa)>();
@@ -402,6 +438,12 @@ fn apply(
         }
     }
     crate::ultra::apply(&mut commands, q.is_ultra());
+    // After that, which takes the fog off the camera when the atmosphere comes on.
+    if big {
+        for (e, _) in &cam {
+            commands.entity(e).insert(crate::camera::big_map_fog(far_plane));
+        }
+    }
 }
 
 /// VIVAD_TRIS=1: every 5 s, log the triangles drawn in view and the models they come from.
@@ -464,6 +506,7 @@ fn far_shadows(mut commands: Commands, q: Res<Quality>, added: Query<(Entity, &c
 }
 
 /// VIVAD_TRIS=1 also: how many entities of the kinds that cost CPU every frame.
+#[allow(clippy::too_many_arguments)]
 pub fn entity_report(
     time: Res<Time>,
     mut next: Local<f32>,

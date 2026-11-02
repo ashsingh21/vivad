@@ -101,6 +101,7 @@ upper limb toward the thumb, edge or bow's back along the hand); see `crates/gam
 | Ultra surface scans (plaster, asphalt, concrete and others, listed in `assets/textures/ultra/sources.json`) | [Poly Haven](https://polyhaven.com) | CC0 | Ultra materials on the city maps (`assets/textures/ultra/`) |
 | MPFB (MakeHuman plugin for Blender) | [extensions.blender.org/add-ons/mpfb](https://extensions.blender.org/add-ons/mpfb/) | GPL (tool only); generated humans are CC0 | Character base bodies, rig (`game_engine`) |
 | MakeHuman system assets (`makehuman_system_assets_cc0.zip`, sha256 `b542127a…0107`) | [makehumancommunity.org](https://static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html) | CC0 | Body proxies, skin detail (re-toned), eyes, brows, lashes, hair (long01, short02) |
+| LGDuel's bot aim (`crates/bot/src/lib.rs`), adapted in `crates/shared/src/sim/aim.rs` | [github.com/s0pk/lgduel](https://github.com/s0pk/lgduel) | MIT, notice kept in the file | How bots turn and see: a limited turn speed and a late sight of targets |
 
 All other textures are generated: weapons and characters are baked from procedural Blender
 materials (`tools/blender/lib/`, `tools/blender/characters/finish.py`); leaf and bark textures are
@@ -192,6 +193,63 @@ heights, roads, parks, car parks, trees and place names, converted by `tools/osm
 Database License (ODbL 1.0): https://www.openstreetmap.org/copyright. The game must credit this
 wherever the map is shown (credits screen). The inner circle's blocks are generated at the radii
 and radial-road bearings measured from that data (`crates/shared/src/map/delhi.rs`).
+
+## NCR map data
+
+The NCR districts come from OpenStreetMap, through Geofabrik's Northern Zone and Central Zone extracts
+of India (https://download.geofabrik.de/asia/india.html, read on 31 Oct 2026). `tools/osm/ncr_extract.py`
+cuts them and `tools/osm/ncr.py` converts them to `assets/data/maps/ncr_*.json`.
+
+- Map data © OpenStreetMap contributors, Open Database License 1.0:
+  https://www.openstreetmap.org/copyright
+- Geofabrik's own wording: "Data processed by Geofabrik GmbH and created by OpenStreetMap
+  Contributors". The extracts carry the same ODbL 1.0 licence.
+- Some holy-site positions come from Overture Places, release `2026-10-21.0`, in rows supplied by
+  Meta under CDLA Permissive 2.0 (https://docs.overturemaps.org/attribution/). See
+  `docs/ncr/HOLY-SITES.md`, which also lists the sources used only to find sites.
+
+### What the game must show
+
+Credits screen, or a splash screen, or a menu: OpenStreetMap's guideline accepts any of these for
+games (https://osmfoundation.org/wiki/Licence/Attribution_Guidelines). This wording covers all three
+sources:
+
+    Map data © OpenStreetMap contributors, available under the Open Database License
+    (openstreetmap.org/copyright). OpenStreetMap extracts processed by Geofabrik GmbH.
+    Some place data from Overture Maps Foundation and Meta, CDLA Permissive 2.0.
+
+The full map screen already shows "Map data (c) OpenStreetMap contributors, ODbL 1.0"
+(`crates/game/src/hud.rs`). That covers OpenStreetMap while the map is open. The full wording above
+still needs a home on a credits or splash screen before anyone outside the team plays the game.
+
+### What share-alike means for `ncr_*.json`
+
+This is a plain reading of the ODbL, not legal advice.
+
+`ncr_*.json` and `delhi_*.json` are adapted OpenStreetMap data: a "Derivative Database". Our heights,
+holy lists and other changes in them are part of that database.
+
+- **While the game stays inside the team, nothing has to be shared.** Internal use is not public
+  (ODbL 4.5c).
+- **Once anyone outside the team gets it, these files must stay under ODbL** (4.4), and we must offer
+  a machine-readable copy of them, or of the changes and how to make them, free of charge if it is
+  online (4.6). A link in the credits to the files and `tools/osm/` is the usual way. Anyone may then
+  reuse them, commercial rivals included.
+- **The offer applies even if the files stay hidden inside the game.** A public picture or video made
+  from the data counts too, as ODbL 4.4 and 4.6 include Produced Works.
+- **The game's code, art, models, sound and design are not covered.** Share-alike reaches the
+  database, not what is built with it (4.5b). Keep our own creative data out of these files.
+- **Anything merged into these files joins the database.** Only data we may share this way can go in.
+  Overture's permissive rows can. Google Maps data cannot, and nor can Wikimapia's CC BY-SA 3.0 data.
+  This is why `docs/ncr/HOLY-SITES.md` has its rule for positions.
+- **No locks on the data alone.** Encrypting it is allowed only if an unlocked copy is offered too, at
+  no extra charge and just as easy to get (4.7).
+
+One thing is not settled. OpenStreetMap's guideline says a result meant for extracting the data is a
+database and anything else is a Produced Work, and it says nothing about games
+(https://osmfoundation.org/wiki/Licence/Community_Guidelines/Produced_Work_-_Guideline). The game
+embeds the JSON as plain text in its binary, so the safe reading is that we convey the database
+itself: keep the ODbL notice with it, and publish the files. Ask a lawyer before a commercial release.
 
 ## Shop sign lettering
 

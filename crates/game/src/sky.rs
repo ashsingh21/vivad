@@ -22,11 +22,16 @@ use crate::visuals::Sun;
 
 pub struct SkyPlugin;
 
+/// The dome moving to the camera: a tool that places the camera itself runs before this, or the
+/// sky stays behind with the player.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SkyFollow;
+
 impl Plugin for SkyPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<crate::ultra::UltraSky>()
             .add_systems(Startup, spawn_sky.after(crate::visuals::setup_sky))
-            .add_systems(PostUpdate, follow_camera.after(crate::camera::CameraSystems).before(TransformSystems::Propagate));
+            .add_systems(PostUpdate, follow_camera.in_set(SkyFollow).after(crate::camera::CameraSystems).before(TransformSystems::Propagate));
     }
 }
 

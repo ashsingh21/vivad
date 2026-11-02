@@ -23,7 +23,7 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let n: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(3);
     let bots: u32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(6);
-    let seconds: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(420.0);
+    let seconds: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(1000.0);
     let leave_at: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(90.0);
     let items = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/data/items.ron")).unwrap();
     // Unordered ids, as real endpoint keys would be.

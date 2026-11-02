@@ -14,10 +14,112 @@ use super::{
     MoveMode, PlayerIntent, PosHistory, RestartMatch, SimSet, Warrior, btn,
 };
 use crate::items::ItemDb;
-use crate::map::{MapId, MapLayout};
+use crate::map::compose::{PLACES, Tier};
+use crate::map::{MapId, MapLayout, MapStyle};
 
 pub const VIMANA_HEIGHT: f32 = 120.0;
 pub const VIMANA_SPEED: f32 = 22.0;
+/// The drop on the 4 km NCR: high enough to see where you are going, fast enough to cross the map
+/// in about 70 seconds.
+pub const NCR_VIMANA_HEIGHT: f32 = 500.0;
+pub const NCR_VIMANA_SPEED: f32 = 60.0;
+/// Through the Yamuna, m/s: slow enough that a bridge beats it, and nobody is ever trapped.
+pub const NCR_WADE_SPEED: f32 = 2.4;
+/// Flight on the NCR: how far a line may pass from the disc's middle, by the size of the match,
+/// and how far it starts ahead of the disc so a rider can get their bearings.
+const FLIGHT_OFFSET: [(u32, f32); 3] = [(16, 250.0), (32, 375.0), (u32::MAX, 800.0)];
+const FLIGHT_LEAD_IN: f32 = 250.0;
+/// Rerolls of a flight line that passes too few big districts.
+const FLIGHT_TRIES: usize = 12;
+
+/// How a match runs on a map, where the maps differ. The small maps keep the numbers they always
+/// had; everything here is the same on every peer, as it comes from the map alone.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rules {
+    pub vimana_height: f32,
+    pub vimana_speed: f32,
+    /// Walking pace through water; None: water doesn't slow anyone.
+    pub wade_speed: Option<f32>,
+    /// A warrior falling far off a roof gets its glider back.
+    pub roof_rescue: bool,
+    /// The press that leaves the ride starts a dive; a second press opens the glider. On the small
+    /// maps the one press does both.
+    pub dive_first: bool,
+    /// How far from where it leaps a bot will make for.
+    pub glide_reach: f32,
+    /// How far off a bot on foot goes for a chest.
+    pub chest_sight: f32,
+    /// How near a find on the ground must be for a bot with no bow to take it before a chest.
+    pub find_sight: f32,
+}
+
+impl Rules {
+    pub fn of(style: MapStyle) -> Self {
+        match style {
+            MapStyle::City => Self { vimana_height: VIMANA_HEIGHT, vimana_speed: VIMANA_SPEED, wade_speed: None, roof_rescue: false, dive_first: false, glide_reach: 110.0, chest_sight: 120.0, find_sight: 14.0 },
+            MapStyle::Ncr => Self {
+                vimana_height: NCR_VIMANA_HEIGHT,
+                vimana_speed: NCR_VIMANA_SPEED,
+                wade_speed: Some(NCR_WADE_SPEED),
+                roof_rescue: true,
+                dive_first: true,
+                glide_reach: 0.9 * super::movement::glide_reach(NCR_VIMANA_HEIGHT),
+                chest_sight: 250.0,
+                // Chests are a few hundred metres apart here: anything in sight comes first.
+                find_sight: 45.0,
+            },
+        }
+    }
+}
+
+/// The share of the line from `a` to `b` that lies inside the square of half-size `half`, if any.
+fn clip_to_square(a: Vec2, b: Vec2, half: f32) -> Option<(Vec2, Vec2)> {
+    let (mut t0, mut t1) = (0.0f32, 1.0f32);
+    let d = b - a;
+    for (p, v) in [(a.x, d.x), (a.y, d.y)] {
+        if v.abs() < 1e-6 {
+            if p.abs() > half {
+                return None;
+            }
+            continue;
+        }
+        let (u, w) = ((-half - p) / v, (half - p) / v);
+        t0 = t0.max(u.min(w));
+        t1 = t1.min(u.max(w));
+    }
+    (t0 < t1).then(|| (a + d * t0, a + d * t1))
+}
+
+/// Distance from a point to a straight line between two others.
+fn to_line(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+    let u = b - a;
+    p.distance(a + u * ((p - a).dot(u) / u.length_squared().max(1e-6)).clamp(0.0, 1.0))
+}
+
+/// The NCR's flight: a chord of the start disc, cut to the map, chosen by the seed. It ends where
+/// it leaves the disc (the last riders are put out there), and passes a couple of the big
+/// districts within a dive, so no line is a dull one.
+fn ncr_flight(seed: u64, zone: &Zone, half: f32, height: f32, players: u32) -> (Vec2, Vec2) {
+    let mut path = match_rng(seed, stream::VIMANA);
+    let offset = FLIGHT_OFFSET.iter().find(|o| players <= o.0).map_or(0.0, |o| o.1);
+    let reach = super::movement::dive_reach(height);
+    let mut best: Option<(usize, Vec2, Vec2)> = None;
+    for _ in 0..FLIGHT_TRIES {
+        let dir = Vec2::from_angle(path.random_range(0.0..std::f32::consts::TAU));
+        let off = path.random_range(-offset..offset);
+        let mid = zone.center + dir.perp() * off;
+        let h = (zone.radius * zone.radius - off * off).max(0.0).sqrt();
+        let Some((from, to)) = clip_to_square(mid - dir * h, mid + dir * h, half - 30.0) else { continue };
+        let big = PLACES.iter().filter(|p| matches!(p.tier, Tier::Hot | Tier::Warm) && to_line(p.at, from, to) < reach).count();
+        if best.is_none_or(|b| big > b.0) {
+            best = Some((big, from - dir * FLIGHT_LEAD_IN, to));
+        }
+        if big >= 2 {
+            break;
+        }
+    }
+    best.map_or((zone.center - Vec2::X * half, zone.center), |b| (b.1, b.2))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum MatchState {
@@ -86,15 +188,20 @@ impl MapVotes {
     }
 }
 
-/// The maps that take turns after `current`: Delhi's, in order. The NCR arena stays put.
-pub fn rotation(current: MapId) -> &'static [MapId] {
-    if MapId::DELHI.contains(&current) { &MapId::DELHI } else { &[] }
+impl MapId {
+    /// The maps a room can be on: its code names the map (`net::room_map`), so a host who picks
+    /// any of these gets it.
+    pub const ROOMS: [MapId; 5] = MapId::ALL;
 }
+
+/// The maps that take turns: only the NCR, the one final map. A small map picked with VIVAD_MAP
+/// is not in the turn, so `next_map` keeps it until the game closes.
+pub const ROTATION: [MapId; 1] = [MapId::Ncr];
 
 /// The next match's map: the most voted for, ties going to whichever comes up soonest in turn;
 /// with no votes, the next in turn.
 pub fn next_map(current: MapId, votes: &MapVotes) -> MapId {
-    let pool = rotation(current);
+    let pool = &ROTATION;
     let Some(at) = pool.iter().position(|m| *m == current) else { return current };
     // Turns from now until each map comes up: the current one last.
     let wait = |m: MapId| (pool.iter().position(|p| *p == m).unwrap_or(at) + pool.len() - at - 1) % pool.len();
@@ -109,7 +216,7 @@ fn cast_votes(
     mut outbox: ResMut<Outbox>,
 ) {
     for VoteMap(map) in asked.read() {
-        if !config.rotate || !rotation(config.map).contains(map) || votes.0.get(&peers.local) == Some(map) {
+        if !config.rotate || !ROTATION.contains(map) || votes.0.get(&peers.local) == Some(map) {
             continue;
         }
         votes.0.insert(peers.local, *map);
@@ -138,7 +245,11 @@ fn start_match_on_startup(world: &mut World) {
 pub fn start_match(world: &mut World) {
     // Bot personalities stay local: a bot is only ever run by one peer.
     let mut rng = rand::rng();
-    let half = world.resource::<MapLayout>().half_extent;
+    let (half, style) = {
+        let layout = world.resource::<MapLayout>();
+        (layout.half_extent, layout.style)
+    };
+    let rules = Rules::of(style);
     let config = *world.resource::<super::MatchConfig>();
     let (bots, skill, autopilot) = (config.bots, config.bot_skill, config.autopilot);
     let peers = world.resource::<Peers>().clone();
@@ -146,25 +257,34 @@ pub fn start_match(world: &mut World) {
     let generation = world.resource::<Match>().generation + 1;
     // A rematch with a fixed seed still differs from the last, the same way on every peer.
     let seed = config.match_seed.map(|s| s.wrapping_add(generation as u64)).unwrap_or_else(|| rng.random());
-    // Flight path crosses the map through a random chord.
-    let mut path = match_rng(seed, stream::VIMANA);
-    let a = path.random_range(0.0..std::f32::consts::TAU);
-    let off = path.random_range(-half * 0.24..half * 0.24);
-    let dir = Vec2::new(a.cos(), a.sin());
-    let perp = Vec2::new(-dir.y, dir.x) * off;
-    let from = (-dir * (half + 40.0) + perp).extend(VIMANA_HEIGHT);
-    let to = (dir * (half + 40.0) + perp).extend(VIMANA_HEIGHT);
+    let zone = match style {
+        MapStyle::City => Zone::for_extent(seed, half),
+        MapStyle::Ncr => Zone::for_ncr(seed, humans + bots, world.resource::<MapLayout>(), world.resource::<super::nav::StreetFloor>()),
+    };
+    let (from, to) = match style {
+        // Flight path crosses the map through a random chord.
+        MapStyle::City => {
+            let mut path = match_rng(seed, stream::VIMANA);
+            let a = path.random_range(0.0..std::f32::consts::TAU);
+            let off = path.random_range(-half * 0.24..half * 0.24);
+            let dir = Vec2::new(a.cos(), a.sin());
+            let perp = Vec2::new(-dir.y, dir.x) * off;
+            (-dir * (half + 40.0) + perp, dir * (half + 40.0) + perp)
+        }
+        MapStyle::Ncr => ncr_flight(seed, &zone, half, rules.vimana_height, humans + bots),
+    };
     *world.resource_mut::<Match>() = Match {
         state: MatchState::Flight,
-        vimana_from: Vec3::new(from.x, from.z, from.y),
-        vimana_to: Vec3::new(to.x, to.z, to.y),
+        vimana_from: Vec3::new(from.x, rules.vimana_height, from.y),
+        vimana_to: Vec3::new(to.x, rules.vimana_height, to.y),
         total: humans + bots,
         alive: humans + bots,
         generation,
         seed,
         ..default()
     };
-    world.insert_resource(Zone::for_extent(seed, half));
+    let disc = (zone.center, zone.radius);
+    world.insert_resource(zone);
     world.spawn((Vimana, Transform::default()));
 
     let melee = world.resource::<ItemDb>().default_melee.clone();
@@ -201,7 +321,7 @@ pub fn start_match(world: &mut World) {
             Kinematic { mode: MoveMode::Vimana, ..default() },
             PlayerIntent::default(),
             PosHistory::default(),
-            Transform::from_translation(Vec3::new(0.0, VIMANA_HEIGHT, 0.0)),
+            Transform::from_translation(Vec3::new(0.0, rules.vimana_height, 0.0)),
             RigidBody::Kinematic,
             Collider::capsule(CAPSULE_RADIUS, CAPSULE_LENGTH),
             // Found by spatial queries (shots, sweeps, movement), but never paired for contacts:
@@ -217,11 +337,14 @@ pub fn start_match(world: &mut World) {
             e.insert(LocalPlayer);
         }
     }
-    let layout = world.resource::<MapLayout>().clone();
-    let db = world.resource::<ItemDb>().clone();
-    let mut commands = world.commands();
-    spawn_loot(&mut commands, &layout, &db, seed);
-    world.flush();
+    // By reference: the NCR's layout is far too big to copy for every match.
+    world.resource_scope(|world, layout: Mut<MapLayout>| {
+        world.resource_scope(|world, db: Mut<ItemDb>| {
+            let mut commands = world.commands();
+            spawn_loot(&mut commands, &layout, &db, seed, disc);
+            world.flush();
+        });
+    });
 }
 
 /// A new match, when our player asks for one or another peer has started it. Online, only once
@@ -280,17 +403,27 @@ fn restart(world: &mut World) {
 fn fly_vimana(
     mut m: ResMut<Match>,
     layout: Res<MapLayout>,
-    mut riders: Query<(&mut Transform, &mut Kinematic, &PlayerIntent), (With<Warrior>, Without<Vimana>, Without<Remote>)>,
+    mut riders: Query<(&mut Transform, &mut Kinematic, &mut PlayerIntent), (With<Warrior>, Without<Vimana>, Without<Remote>)>,
     mut vimana: Query<&mut Transform, With<Vimana>>,
     time: Res<Time>,
 ) {
     let dt = time.delta_secs();
+    let rules = Rules::of(layout.style);
     m.elapsed += dt;
     if m.state != MatchState::Flight {
+        // The NCR's flight ends over the map: fly on and out of sight, not hang in the sky.
+        if layout.style == MapStyle::Ncr {
+            for mut t in &mut vimana {
+                let next = t.translation + m.vimana_dir() * rules.vimana_speed * dt;
+                if next.xz().abs().max_element() < layout.half_extent + 40.0 {
+                    t.translation = next;
+                }
+            }
+        }
         return;
     }
     let len = m.vimana_from.distance(m.vimana_to);
-    m.vimana_t += VIMANA_SPEED * dt / len;
+    m.vimana_t += rules.vimana_speed * dt / len;
     let pos = m.vimana_pos();
     let dir = m.vimana_dir();
     for mut t in &mut vimana {
@@ -300,14 +433,17 @@ fn fly_vimana(
     let done = m.vimana_t >= 1.0;
     // Players may only leap once the vimana is over the arena.
     let over_land = pos.x.abs() < layout.half_extent - 10.0 && pos.z.abs() < layout.half_extent - 10.0;
-    for (mut tf, mut kin, intent) in &mut riders {
+    for (mut tf, mut kin, mut intent) in &mut riders {
         if kin.mode != MoveMode::Vimana {
             continue;
         }
         tf.translation = pos - Vec3::Y * 3.0;
         if done || (over_land && intent.pressed(btn::JUMP)) {
             kin.mode = MoveMode::Freefall;
-            kin.velocity = dir * VIMANA_SPEED * 0.5;
+            kin.velocity = dir * rules.vimana_speed * 0.5;
+            if rules.dive_first {
+                intent.pressed &= !btn::JUMP;
+            }
         }
     }
     if done {
@@ -330,6 +466,25 @@ fn check_winner(
         m.winner = alive.iter().next().or_else(|| fallen.iter().find(|(_, e)| e.placement == 1).map(|(e, _)| e));
         if let Some(w) = m.winner.and_then(|e| names.get(e).ok()) {
             feed.write(FeedMsg(if w.name == "You" { "Tumne Panga jeet liya!".to_string() } else { format!("{} ne Panga jeet liya!", w.name) }));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The NCR is the default and the only map in the turn; a small map picked by hand stays, and
+    /// no vote moves a match on to one.
+    #[test]
+    fn the_ncr_is_the_one_map_in_the_turn() {
+        assert_eq!(MapId::default(), MapId::Ncr);
+        let mut votes = MapVotes::default();
+        votes.0.insert(1, MapId::Chandni);
+        assert_eq!(next_map(MapId::Ncr, &votes), MapId::Ncr);
+        assert_eq!(next_map(MapId::Ncr, &MapVotes::default()), MapId::Ncr);
+        for map in [MapId::Cp, MapId::Chandni, MapId::HauzKhas, MapId::IndiaGate] {
+            assert_eq!(next_map(map, &votes), map);
         }
     }
 }

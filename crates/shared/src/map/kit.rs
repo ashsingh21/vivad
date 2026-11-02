@@ -4,9 +4,11 @@
 //! file, merged per chunk (tools/blender/props/street_kit.py, crate::street in the game). The bigger
 //! pieces stand behind invisible colliders, so a parked auto is cover.
 
+use std::collections::{HashMap, HashSet};
+
 use bevy::prelude::*;
 use rand::RngExt;
-use rand::rngs::SmallRng;
+use crate::SmallRng;
 
 use super::build::Builder;
 use super::terrain::ground;
@@ -49,20 +51,77 @@ fn reach(name: &str) -> f32 {
     }
 }
 
-fn place(b: &mut Builder, name: &'static str, pos: Vec3, yaw: f32) {
-    if let Some(shape) = collider(name) {
-        let h = match shape {
-            Shape::Box(s) => s.y,
-            Shape::Cylinder { height, .. } => height,
-            Shape::Sphere(r) => 2.0 * r,
-        };
-        b.push(pos + Vec3::Y * h * 0.5, Quat::from_rotation_y(yaw), shape, Mat::Wood, true, false);
+/// The solid part of a piece standing at `pos`, if it has one: its shape and where its centre is.
+fn body(name: &str, pos: Vec3) -> Option<(Vec3, Shape)> {
+    let shape = collider(name)?;
+    let h = match shape {
+        Shape::Box(s) => s.y,
+        Shape::Cylinder { height, .. } => height,
+        Shape::Sphere(r) => 2.0 * r,
+    };
+    Some((pos + Vec3::Y * h * 0.5, shape))
+}
+
+pub(super) fn place(b: &mut Builder, name: &'static str, pos: Vec3, yaw: f32) {
+    if let Some((at, shape)) = body(name, pos) {
+        b.push(at, Quat::from_rotation_y(yaw), shape, Mat::Wood, true, false);
     }
     b.map.kit.push(KitPiece { name, pos, yaw });
 }
 
+/// Those of `pts`, in order, that stay when none may stand within `gap` of one already kept.
+fn spaced(pts: &[Vec2], gap: f32) -> Vec<usize> {
+    let mut cells: HashMap<(i32, i32), Vec<Vec2>> = HashMap::new();
+    let mut kept = vec![];
+    for (k, p) in pts.iter().enumerate() {
+        let cell = ((p.x / gap).floor() as i32, (p.y / gap).floor() as i32);
+        let crowded = (-1..=1).any(|i| (-1..=1).any(|j| cells.get(&(cell.0 + i, cell.1 + j)).is_some_and(|near| near.iter().any(|q| q.distance(*p) < gap))));
+        if !crowded {
+            cells.entry(cell).or_default().push(*p);
+            kept.push(k);
+        }
+    }
+    kept
+}
+
+/// Cuts a district's kit to about `quota` pieces inside `clip`, spread evenly. Every piece kept
+/// holds the rest a set distance off, so a crowded lane loses most and a lone stall stays. A piece
+/// that goes takes its collider with it.
+pub fn thin(map: &mut MapLayout, clip: f32, quota: usize, rng: &mut SmallRng) {
+    let mut order: Vec<usize> = (0..map.kit.len()).filter(|k| map.kit[*k].pos.xz().abs().max_element() <= clip).collect();
+    super::compose::shuffle(&mut order, rng);
+    let pts: Vec<Vec2> = order.iter().map(|k| map.kit[*k].pos.xz()).collect();
+    // The widest spacing that still leaves enough.
+    let (mut lo, mut hi) = (0.01, 2.0 * clip);
+    for _ in 0..14 {
+        let gap = (lo + hi) * 0.5;
+        if spaced(&pts, gap).len() >= quota {
+            lo = gap;
+        } else {
+            hi = gap;
+        }
+    }
+    let mut stays = vec![false; map.kit.len()];
+    for k in spaced(&pts, lo).into_iter().take(quota) {
+        stays[order[k]] = true;
+    }
+    keep(map, &stays);
+}
+
+/// Keeps the pieces marked, in step with `map.kit`: a piece that goes takes its collider with it.
+pub fn keep(map: &mut MapLayout, stays: &[bool]) {
+    let bits = |p: Vec3| p.to_array().map(f32::to_bits);
+    let gone: HashSet<[u32; 3]> = map.kit.iter().zip(stays).filter(|(_, stay)| !**stay).filter_map(|(k, _)| body(k.name, k.pos)).map(|(at, _)| bits(at)).collect();
+    let mut k = 0;
+    map.kit.retain(|_| {
+        k += 1;
+        stays[k - 1]
+    });
+    map.blocks.retain(|b| b.visible || b.mat != Mat::Wood || !gone.contains(&bits(b.pos)));
+}
+
 /// The yaw that faces the model (-Z forward) along `dir` (x, z).
-fn facing(dir: Vec2) -> f32 {
+pub(super) fn facing(dir: Vec2) -> f32 {
     (-dir.x).atan2(-dir.y)
 }
 

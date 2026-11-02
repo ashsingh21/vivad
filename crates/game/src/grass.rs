@@ -8,7 +8,6 @@
 use std::collections::HashMap;
 use std::f32::consts::TAU;
 
-use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
@@ -104,6 +103,39 @@ pub fn paint_city(x: f32, z: f32, class: u8) -> (LinearRgba, f32) {
     };
     let v = 0.92 + 0.16 * n;
     (LinearRgba::new(c.red * v, c.green * v, c.blue * v, 1.0), cover)
+}
+
+/// The big map's ground: as a city map's in its districts, and between them the rough open land
+/// (dry grass, dust and scrub in patches a hundred metres across and more, so it doesn't read as
+/// one lawn from the air, with thin grass only on the scrub) and the rivers' sand, dark and wet down
+/// at the water. The last of the map turns to the colour of the ground past it (crate::skyline).
+pub fn paint_big(x: f32, z: f32, class: u8, h: f32, edge: f32) -> (LinearRgba, f32) {
+    use shared::map::terrain::ground;
+    /// The ridge's trees and the Ghazipur mound's rubbish stand this high and more over the plain.
+    const HIGH: (f32, f32) = (5.0, 12.0);
+    /// Where the map's paint starts turning to the land past it, in from the terrain's edge.
+    const RIM: f32 = 70.0;
+    let mix = |a: LinearRgba, b: LinearRgba, t: f32| a.mix(&b, t.clamp(0.0, 1.0));
+    let v = 0.92 + 0.16 * fbm(x / 3.0, z / 3.0, 2, 5);
+    let (c, cover) = match class {
+        ground::OPEN => {
+            let (broad, patch) = (fbm(x / 210.0, z / 210.0, 3, 11), fbm(x / 48.0, z / 48.0, 3, 23));
+            let lush = (broad * 1.5 + patch * 0.9 - 1.0).clamp(0.0, 1.0);
+            let dry = mix(lin([0.66, 0.58, 0.42]), lin([0.60, 0.56, 0.36]), fbm(x / 21.0, z / 21.0, 2, 37) * 1.6 - 0.3);
+            let mut c = mix(dry, lin([0.36, 0.42, 0.21]), lush);
+            let high = ((h - HIGH.0) / (HIGH.1 - HIGH.0)).clamp(0.0, 1.0);
+            // East of the river the only high ground is the mound; the ridge is west of it.
+            c = mix(c, if x > 500.0 { lin([0.47, 0.44, 0.38]) } else { lin([0.27, 0.36, 0.17]) }, high);
+            (c * v, 0.15 + 0.6 * lush)
+        }
+        ground::SAND => {
+            let dry = mix(lin([0.78, 0.71, 0.58]), lin([0.72, 0.64, 0.50]), fbm(x / 26.0, z / 26.0, 3, 41) * 1.5 - 0.25);
+            (mix(lin([0.48, 0.44, 0.36]), dry, (h + 0.48) / 0.14) * v, 0.0)
+        }
+        _ => paint_city(x, z, class),
+    };
+    let rim = ((x.abs().max(z.abs()) - (edge - RIM)) / RIM).clamp(0.0, 1.0);
+    (mix(c, lin(crate::skyline::LAND), rim), cover * (1.0 - rim))
 }
 
 /// The NCR arena's ground: muted urban dust, grass only in the parks, on the western ridge and
@@ -329,6 +361,7 @@ fn stream_chunks(
                     MeshMaterial3d(grass.material.clone()),
                     Transform::from_translation(origin),
                     bevy::light::NotShadowCaster,
+                    crate::batch::probe::Tagged("grass"),
                 ))
                 .id(),
             // Bare ground: remember it so it isn't rebuilt every frame.
@@ -395,6 +428,7 @@ fn build_chunk(k: (i32, i32), t: &Terrain, blockers: &Blockers, keep: f32, densi
         let (h, rd) = (on_mesh(t, &t.h, p.x, p.y), on_mesh(t, &t.road_d, p.x, p.y));
         let n = t.normal(p.x, p.y);
         let (ground, cover) = match t.ground_at(p.x, p.y) {
+            Some(class) if t.n >= crate::visuals::BIG_TERRAIN => paint_big(p.x, p.y, class, h, t.size * 0.5),
             Some(class) => paint_city(p.x, p.y, class),
             None if ncr => paint_ncr(p.x, p.y, h, n),
             None => paint(p.x, p.y, h, n, rd),
@@ -441,12 +475,15 @@ fn build_chunk(k: (i32, i32), t: &Terrain, blockers: &Blockers, keep: f32, densi
     if idx.is_empty() {
         return None;
     }
-    let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, crate::buildings::tiers::usage())
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nrm)
         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
         .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, col)
         .with_inserted_indices(Indices::U32(idx));
+    // The two packings the grass shader needn't know about: there is a lot of grass.
+    let _ = mesh.quantize_colors(bevy::mesh::AttributeQuantization::Unorm8);
+    mesh.compress_indices();
     Some((mesh, origin))
 }
 

@@ -215,7 +215,10 @@ fn swing_ribbons(
         if let Some((_, mut r, _)) = ribbons.iter_mut().find(|(_, r, _)| r.of == e) {
             r.samples.push_back((now, base, tip));
         } else {
-            let mesh = meshes.add(Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default()));
+            // One point to start with: Bevy warns about a mesh with no vertices. It draws nothing,
+            // and the ribbon replaces it below.
+            let empty = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default()).with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32; 3]]);
+            let mesh = meshes.add(empty);
             commands.spawn((
                 SwingRibbon { of: e, samples: VecDeque::from([(now, base, tip)]), mesh: mesh.clone() },
                 Mesh3d(mesh),

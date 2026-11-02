@@ -29,7 +29,7 @@ SHOPS = [
     ("LUCKY PHOTOSTAT", None), ("CHHABRA ELECTRICALS", "छाबड़ा इलेक्ट्रिकल्स"), ("JAI MATA DI TENT HOUSE", "जय माता दी टेंट हाउस"),
     ("MONU KIRANA STORE", "मोनू किराना स्टोर"), ("SHIV SHAKTI HARDWARE", "शिव शक्ति हार्डवेयर"), ("RAHUL CYCLE WORKS", "राहुल साइकिल वर्क्स"),
     ("BABLOO PAAN BHANDAR", "बबलू पान भंडार"), ("GARG MEDICOS", "गर्ग मेडिकोज़"), ("OM SAI JEWELLERS", "ओम साईं ज्वैलर्स"),
-    ("PANGA CHAI POINT", "पंगा चाय पॉइंट"), ("KHANNA OPTICALS", None), ("SETHI SAREE CENTRE", "सेठी साड़ी सेंटर"),
+    ("PANGA CHAI", "पंगा चाय"), ("KHANNA OPTICALS", None), ("SETHI SAREE CENTRE", "सेठी साड़ी सेंटर"),
     ("PINKY BEAUTY PARLOUR", "पिंकी ब्यूटी पार्लर"), ("GOLU MOMOS", "गोलू मोमोज़"), ("TIWARI DAIRY", "तिवारी डेयरी"),
     ("NEW DILLI SOUND SERVICE", None), ("ARORA BOOK DEPOT", "अरोड़ा बुक डिपो"), ("MEHTA MITHAI WALA", "मेहता मिठाई वाला"),
     ("SINGH AUTO PARTS", "सिंह ऑटो पार्ट्स"), ("LAXMI BARTAN BHANDAR", "लक्ष्मी बर्तन भंडार"), ("CHOTU KI LASSI", "छोटू की लस्सी"),

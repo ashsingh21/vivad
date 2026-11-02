@@ -98,7 +98,7 @@ arsenal *names:
 # contact sheet: just armoury, or just armoury pinaka,soma
 armoury only="":
     rm -rf previews/armoury && mkdir -p previews/armoury
-    VIVAD_MUTE=1 VIVAD_BOTS=1 VIVAD_ARMOURY=previews/armoury VIVAD_ARMOURY_ONLY="{{only}}" cargo run --release -p game --bin game
+    VIVAD_MAP=cp VIVAD_MUTE=1 VIVAD_BOTS=1 VIVAD_ARMOURY=previews/armoury VIVAD_ARMOURY_ONLY="{{only}}" cargo run --release -p game --bin game
     python3 tools/shots.py sheet previews/armoury -o previews/armoury_sheet.png --cols 4 --width 1600
 
 # Panga's street armoury (bat, katta, tamancha, dunali, gulel): just desi, or just desi katta
@@ -114,11 +114,15 @@ view name:
     cargo run -p game --bin asset_check -- models/weapons/{{name}}.glb previews/{{name}}/bevy_{{name}}.png
 
 
-# Play (release build; first build takes a few minutes). Maps: cp (Connaught Place), chandni
-# (Chandni Chowk), hauzkhas, indiagate, ncr: `just play map=chandni`.
+# Play the NCR, the game's one map, you and 63 bots (release build; first build takes a few minutes).
 # `just play random` for a fresh seed (printed), `just play 1234` to replay one.
-play seed="7" map="cp":
+# VIVAD_BOTS=15 just play for a smaller match; a small map fills to 16.
+play seed="7" map="ncr":
     VIVAD_MAP={{map}} VIVAD_MAP_SEED={{seed}} cargo run --release -p game --bin game
+
+# One of the four small maps on its own: just map chandni (or cp, hauzkhas, indiagate).
+map name seed="7":
+    just play {{seed}} {{name}}
 
 # Two minutes of a match from the player's seat, as an animation the owner can open in a browser:
 # `just clip` records 95-215 s of an autopilot match on Connaught Place at 8 frames a second
@@ -130,8 +134,8 @@ clip from="95" to="215" fps="8" map="cp":
     VIVAD_MAP={{map}} VIVAD_ROTATE=0 VIVAD_AUTOPILOT=1 VIVAD_CLIP=previews/{{map}}_clip,{{from}},{{to}},{{fps}} caffeinate -d -i -u cargo run --release -q -p game --bin game
     python3 tools/clip.py previews/{{map}}_clip {{fps}}
 
-# Headless matches to sanity-check the loop and bots: just sim 5
-sim matches="3" bots="15":
+# Headless matches to sanity-check the loop and bots: just sim 5, or just sim 3 15 for 16 warriors
+sim matches="3" bots="63":
     cargo run --release -p shared --bin sim_check -- {{matches}} {{bots}}
 
 # Peers agree without a host: the same match seed builds the same match in separate processes.
@@ -140,32 +144,37 @@ peers seed="1234":
 
 # Peers in one process over an in-memory pipe, fighting a whole match: roster, ownership, positions, who fell, kills,
 # winner, chests and pickups, a contested pickup, and a peer leaving at `leave` seconds (0: never).
-net peers="3" bots="6" seconds="420" leave="90":
+net peers="3" bots="6" seconds="1000" leave="90":
     cargo run --release -p shared --bin net_check -- {{peers}} {{bots}} {{seconds}} {{leave}}
 
 # The same over real iroh connections on this machine: a lobby hosts, the rest join by code, and the
 # match runs at `speed` times real time (VIVAD_RELAY=1 to go through iroh's relays;
 # VIVAD_NET_SIM=80,30,5 imitates 80 ms latency, 30 ms jitter, 5% loss: use speed=1 with it).
-p2p peers="3" bots="6" seconds="420" speed="4" leave="90" rematch="90":
+p2p peers="3" bots="6" seconds="1000" speed="4" leave="90" rematch="90":
     cargo run --release -p net --bin mesh_check -- {{peers}} {{bots}} {{seconds}} {{speed}} {{leave}} {{rematch}}
 
 # Host an online match: shows the code the others pass to `just join`; Enter starts it (or it starts
 # by itself at `players`, you included). Players only, unless `bots` adds some. lan=1 skips iroh's
 # relays (one machine or a LAN).
-host name="" players="0" bots="0" lan="" map="cp":
+host name="" players="0" bots="0" lan="" map="ncr":
     VIVAD_MAP={{map}} VIVAD_HOST={{players}} VIVAD_NAME="{{name}}" VIVAD_BOTS={{bots}} {{ if lan != "" { "VIVAD_LAN=1" } else { "" } }} cargo run --release -p game --bin game
+
+# The same on a small map: just host-map chandni Arjuna
+host-map map name="" players="0" bots="0" lan="":
+    just host "{{name}}" {{players}} {{bots}} "{{lan}}" {{map}}
 
 # Join an online match by its code (lan=1 if the host used it).
 join code name="" lan="":
     VIVAD_JOIN={{code}} VIVAD_NAME="{{name}}" {{ if lan != "" { "VIVAD_LAN=1" } else { "" } }} cargo run --release -p game --bin game
 
-# Fly the camera over every landmark and screenshot it.
+# Fly the camera over a small map's landmarks and screenshot them (VIVAD_MAP picks it, Connaught
+# Place if unset). `just ncr-tour` is the NCR's.
 tour:
-    mkdir -p previews/graybox && VIVAD_TOUR=previews/graybox cargo run --release -p game --bin game
+    mkdir -p previews/graybox && VIVAD_MAP=${VIVAD_MAP:-cp} VIVAD_TOUR=previews/graybox cargo run --release -p game --bin game
 
-# Frame rate per tour view, uncapped (shots go to previews/perf).
+# Frame rate per tour view, uncapped (shots go to previews/perf). VIVAD_MAP=ncr for the NCR's.
 perf:
-    mkdir -p previews/perf && VIVAD_TOUR=previews/perf VIVAD_TOUR_SETTLE=400 VIVAD_NO_VSYNC=1 cargo run --release -q -p game --bin game 2>/dev/null | grep tour-fps
+    mkdir -p previews/perf && VIVAD_MAP=${VIVAD_MAP:-cp} VIVAD_TOUR=previews/perf VIVAD_TOUR_SETTLE=400 VIVAD_NO_VSYNC=1 cargo run --release -q -p game --bin game 2>/dev/null | grep tour-fps
 
 # Screenshot triage in text (see docs/testing.md): numbers and flags per tour shot.
 shots dir="previews/graybox":
@@ -187,7 +196,7 @@ sheet glob out="previews/sheet.png":
 # Compare render settings with VIVAD_AA=none|smaa, VIVAD_NO_SSAO=1, VIVAD_NO_SHADOWS=1.
 flicker views="haveli_front,bazaar_street,hampi_temple,village_close,stupa":
     rm -rf previews/flicker && mkdir -p previews/flicker
-    VIVAD_TOUR=previews/flicker VIVAD_TOUR_ONLY={{views}} VIVAD_TOUR_FRAMES=8 VIVAD_TOUR_DRIFT=0.004 cargo run --release -p game --bin game
+    VIVAD_MAP=${VIVAD_MAP:-cp} VIVAD_TOUR=previews/flicker VIVAD_TOUR_ONLY={{views}} VIVAD_TOUR_FRAMES=8 VIVAD_TOUR_DRIFT=0.004 cargo run --release -p game --bin game
     python3 tools/shots.py flicker --moving previews/flicker
 
 # Z-fighting: coplanar overlapping faces between map blocks, and between the art models and the
@@ -195,10 +204,10 @@ flicker views="haveli_front,bazaar_street,hampi_temple,village_close,stupa":
 # The map checks over many seeds: block z-fighting and block tops in the ground, per seed.
 seeds n="40":
     cargo build --release -q -p shared --bin zfight_check
-    for s in $(seq 1 {{n}}); do VIVAD_MAP_SEED=$s ./target/release/zfight_check --dump build/zfight_seed.json | sed -n 2p | sed "s/^/seed $s: /"; python3 tools/zfight_models.py build/zfight_seed.json | awk '/block material/{f=1;next} /^$/{f=0} f{a+=$2} END{printf "        block tops in the ground: %.1f m2\n", a}'; done
+    for s in $(seq 1 {{n}}); do VIVAD_MAP=${VIVAD_MAP:-cp} VIVAD_MAP_SEED=$s ./target/release/zfight_check --dump build/zfight_seed.json | sed -n 2p | sed "s/^/seed $s: /"; python3 tools/zfight_models.py build/zfight_seed.json | awk '/block material/{f=1;next} /^$/{f=0} f{a+=$2} END{printf "        block tops in the ground: %.1f m2\n", a}'; done
 
 zfight:
-    cargo run --release -p shared --bin zfight_check -- --dump build/zfight.json
+    VIVAD_MAP=${VIVAD_MAP:-cp} cargo run --release -p shared --bin zfight_check -- --dump build/zfight.json
     python3 tools/zfight_models.py build/zfight.json
     python3 tools/zfight_meshes.py build/zfight.json
 
@@ -210,29 +219,43 @@ mesh +models:
 autoplay:
     mkdir -p previews/graybox/match && VIVAD_AUTOPILOT=1 VIVAD_SHOTS=previews/graybox/match cargo run --release -p game --bin game
 
-# The modern NCR arena (docs/ncr/DESIGN.md), 2.2 km across: `just ncr 42` for another seed's
-# tower heights. Online, both peers must pick it (`just host Arjuna map=ncr`).
+# The one final map: the real Delhi NCR from OpenStreetMap, 4 km across (docs/PLAN.md, Section A).
+# The default map: this is `just play` with the seed first. The layout never changes; `just ncr 42`
+# only picks other loot spots.
 ncr seed="7":
     VIVAD_MAP=ncr VIVAD_MAP_SEED={{seed}} cargo run --release -p game --bin game
 
-# Screenshot the NCR arena's thirteen views into previews/ncr (then `just shots previews/ncr`).
+# Screenshot the NCR map's views into previews/ncr (then `just shots previews/ncr`).
+# VIVAD_TOUR_ONLY=bridge,ridge takes only the views with those words in their names.
 ncr-tour:
     mkdir -p previews/ncr && VIVAD_MAP=ncr VIVAD_TOUR=previews/ncr cargo run --release -p game --bin game
 
-# Physics checks of the NCR bridges, metro exits, stairs and interiors; fails on a stuck walker.
+# Real physics walks on NCR: every bridge both ways, the ridge, the streets from Connaught Place to
+# Chandni Chowk and a district gate; fails on a stuck walker. ONLY=<word> runs the walks with that
+# word in their names, TRACE=<word> prints where those walkers are every 2 game seconds.
 ncr-walk:
     VIVAD_MAP=ncr cargo run --release -p shared --bin ncr_walk_check
 
-# Headless NCR matches: just ncr-sim 1 15
-ncr-sim matches="1" bots="15":
+# What the NCR map holds, and a picture of it from above: just ncr-map-check build/ncr.ppm
+ncr-map-check out="build/ncr.ppm":
+    cargo run --release -p shared --bin ncr_map_check -- {{out}}
+
+# The map on screen in a real match, into previews/ncr_hud: the corner map at each zoom, the whole
+# map at each zoom. It draws to an image, so the game window may be hidden, and stays empty.
+ncr-hud:
+    rm -rf previews/ncr_hud && mkdir -p previews/ncr_hud
+    VIVAD_MAP=ncr VIVAD_MAP_SEED=7 VIVAD_ROTATE=0 VIVAD_MUTE=1 VIVAD_AUTOPILOT=1 VIVAD_HUD_IMAGE=1 VIVAD_SHOTS=previews/ncr_hud VIVAD_SHOTS_AT=10,100,104,108,112,118,122,126,130 VIVAD_SHOTS_KEYS=n:102,n:106,n:110,n:114,m:116,n:120,n:124,m:128 caffeinate -d -i -u cargo run --release -p game --bin game
+
+# Headless NCR matches, the full 64 warriors unless told: just ncr-sim 1 15 for 16
+ncr-sim matches="1" bots="63":
     VIVAD_MAP=ncr cargo run --release -p shared --bin sim_check -- {{matches}} {{bots}}
 
-# Export the NCR arena's tactical atlas from the generated geometry.
+# Draw the NCR map's atlas from the game's own data: districts, bridges, loot, names.
 ncr-atlas out="docs/ncr/map-atlas.svg":
     VIVAD_MAP=ncr cargo run --release -p shared --bin ncr_atlas -- {{out}}
 
-# The 4 km masterplan (docs/ncr/masterplan, a design blueprint, not a playable map): regenerate
-# its atlas and validation data, or only check the blueprint's spatial constraints.
+# The old fictional 4 km blueprint (docs/ncr/masterplan, overridden by the real map, kept for
+# reference): regenerate its atlas and validation data, or only check its spatial constraints.
 ncr-plan:
     python3 tools/maps/ncr_masterplan.py
 ncr-plan-check:

@@ -5,12 +5,12 @@
 Progress is tracked in the checklists here. When a step lands, tick it, note the commit, and keep
 going down the list. If something here turns out wrong, change this file, not a new one.
 
-Owner decisions recorded 31 October 2026:
+Owner decisions recorded 31 October 2026, with later ones added and dated:
 
 1. **Connaught Place first.** Everything below is built and proven on `cp` before any other map
    is touched. After that the work moves to the other maps. The final map is **NCR, built from
-   the current code**, with the current Delhi maps as the Delhi part of it. Details of that phase
-   (size, what happens to the old blockout, Bharat) are still open and not decided.
+   the current code**, with the current Delhi maps as the Delhi part of it. Decision 6 overrides
+   the order here for NCR and settles what was open: size, the old blockout, Bharat.
 2. **Desktop first.** Realistic graphics arrive as a new **Ultra** quality tier. Phone realism is
    wanted too, but comes later as its own phase. Low/Medium/High stay as they are for now. This overrides the "polished stylised, mobile first" decision in
    `docs/rendering-guidelines.md`, which is updated to say so.
@@ -21,37 +21,67 @@ Owner decisions recorded 31 October 2026:
    `docs/references.md`. Each download is confirmed with the owner before fetching.
 5. The project lives at `https://github.com/Apc0015/Panga.git` from now on (remote `panga`).
    `https://github.com/ashsingh21/vivad.git` stays as `origin` for pulling upstream changes.
+6. **NCR is the one final map (1 Nov 2026).** One Delhi NCR map from real OpenStreetMap data, with
+   all the other maps merged into it, buildings sparse, and open space to fight. **This overrides
+   the Phase 0 rule that NCR waits until a stranger has played the prototype twice**, and the
+   fictional-map rule in `docs/ncr/masterplan/MASTERPLAN.md`. The map is 4 km a side. The old 2.2 km
+   blockout is gone from play. Bharat is gone. The four small maps stay as they are. Work like a
+   lazy expert: copy what exists, merge it, improve only what needs it (`docs/ncr/REUSE.md`).
 
 Machine this is built and measured on: MacBook Pro, Apple M4, 16 GB, Blender 5.2 LTS at
 `/Applications/Blender.app`, Python 3.13 (numpy, PIL, scipy, requests), cargo 1.99, git-lfs.
-Not installed: ffmpeg, ImageMagick, wasm-bindgen, any KTX2 encoder. The game currently classes
-the M4 as an integrated GPU and runs at Medium, so step 1 of Phase 1 is the first visible win.
+Not installed: ffmpeg, ImageMagick, wasm-bindgen, any KTX2 encoder. The M4 now runs at Ultra
+(step 1 of Phase 1).
 
 ---
 
-## Where things stand (31 Oct 2026, evening)
+## Where things stand (1 Nov 2026, evening)
 
-- `main` is upstream `6c0c608` plus the uncommitted NCR merge (Step 0 deferred): `MapId::Ncr`, its street router,
-  urban materials and textures, hit-stop, scaled zone, three weapons, street sample, NCR docs.
-  Builds clean, shared tests pass, a headless NCR match finishes. The NCR walk check fails 8 of
-  10 cases on geometry from its earlier 2.2× scale pass (pre-existing, not from the merge).
-- Six maps: `cp` (default), `chandni`, `hauzkhas`, `indiagate` (OpenStreetMap, 500 m, polished),
-  `bharat` (ancient India), `ncr` (2.2 km blockout).
-- Two characters: MakeHuman bodies, one 2K atlas each, 30k triangles, painted clothes, barefoot.
-- Rendering: AgX, bloom, vignette, SSAO on High, TAA, 3 cascades to 200 m, a painted sky dome,
-  baked vertex occlusion, 256² generated facades.
+- `main` is at `743ae0c`, the Phase 0 prototype plus the NCR, Ultra and character work. That is two
+  commits past `origin/main`, and nothing is pushed. The one-map work in Section A is one commit on
+  top of it, on the branch `claude/ncr-final-map`, not merged yet. The workspace builds with zero
+  warnings and its tests pass.
+- Five maps. `ncr`, the one final map (4 km, real OpenStreetMap data), is the default and the only
+  map in the rotation. A match on it is 64 warriors by default, you and 63 bots, so the first ring is
+  the whole map; a small map fills to 16. Online rooms stay players only unless the host adds bots. The four small ones it is built from, `cp`, `chandni`, `hauzkhas` and
+  `indiagate`, stay selectable with `VIVAD_MAP`, and a small map then stays until the game closes.
+  The browser still starts on `cp`: the NCR has never been tried in a tab. Bharat is removed
+  (`ca78f57`).
+- NCR in the real game on the M4, at Medium, which it now picks by itself: 6.6 s from launch to the
+  shaders warmed and the match on screen (8.6 s on the first launch after a build, both measured at
+  High), and six minutes of a 64-warrior autopilot match at a median of 61 fps with 3.90 GB peak memory
+  and 2.47 GB resident. High stays on F4: a whole 64-warrior match ran to its last warrior with no crash,
+  3.96 GB peak, but held only about 44 fps for ten minutes in Chandni Chowk. Uncapped, High gives 34 to
+  49 fps on the five busiest streets and Medium 44 to 60. These ran with iCloud syncing the project. A rematch stays on the map. The 74 tour views are in
+  `previews/ncr_real/`. The corner map, the whole map, their place names and
+  the place banner work in a real autopilot match.
+- Headless on the final map (`sim_check`, 8, 6 and 4 matches, seeds from 201), every match finishes.
+  At 16 warriors: 561 to 663 s, 99 % armed by 90 s, none never armed. At 32: 803 to 884 s, 97 %, none.
+  At 64: 1168 to 1254 s, 70 % by 90 s, as the last bots only land after 80 s, and 88 % within 60 s of
+  landing, 0 to 6 never armed. 534 of 558 deaths are by weapon, 18 by the ring and 6 by a bot's own
+  gun. The ring burnt 3 to 6 warriors a match on average, and bots flipped between goals for 10
+  bot-seconds a match at worst. `nav_check`, `peer_check`, `net_check` and `mesh_check` pass on the default map.
+- `just ncr-walk` passes all 23 walks: every bridge both ways, three ridge passes and the crest, a
+  wade across the Yamuna, the streets from Connaught Place to Chandni Chowk and a district gate. All
+  19 districts can be walked to from Connaught Place.
+- Two characters: MakeHuman bodies split into head, body, outfit and eyes, 4 LODs, new faces.
+  Clothes, hair and the eight looks are not done.
+- Rendering: Low, Medium, High and Ultra. Ultra has the real sky and day and night, and realistic
+  surfaces on Connaught Place (steps 1, 2 and 5 of Phase 1).
 
 ---
 
 ## Step 0. Repo and baseline (deferred by the owner, do later)
 
-Skipped for now, to be done when the owner says so. Until then work stays uncommitted in the
-local tree, nothing is pushed, and `origin` remains the only remote.
+Part done, the rest when the owner says so. Nothing is pushed yet and `origin` is still the only
+remote.
 
 - [ ] Add remote `panga` → `https://github.com/Apc0015/Panga.git`; push `main` and its LFS
       objects; set `panga` as the push default (`git push -u panga main`).
-- [ ] Commit the work as one or more commits on `main`. The stray `* 2.glb` / `* 2.bin` Finder
-      duplicates, `.DS_Store` files and `previews/vivad_current_build.mp4` are left out.
+- [x] Commit the work as one or more commits on `main`: done up to `743ae0c`. The one-map work is
+      on the branch `claude/ncr-final-map`. The stray `* 2.glb` / `* 2.bin` Finder duplicates,
+      `.DS_Store` files, `previews/vivad_current_build.mp4` and the old test frames in
+      `previews/` (`cp_clip`, `cp_clip_test`, `cp_loot`, `cp_pacing`, `cp_bots`, `phase1`) are left out.
 
 Every later step ends with: build clean with zero warnings, its checks green, captures compared
 against the baseline. Once Step 0 is done, each step also gets one commit on `main`, named after
@@ -59,97 +89,131 @@ the step and pushed to `panga`.
 
 ---
 
-## A. Map work (A1 and CP navigation in Phase 1; the rest is a Phase 2 draft, to be rewritten)
+## A. The one NCR map
 
-### Layout (x east, z south, `HALF = 1000`)
+One 4 × 4 km map of the real Delhi NCR, built from OpenStreetMap, with the other maps merged in as
+its Delhi districts, buildings sparse and open land to fight on (owner decision 6, 1 Nov). Code:
+`crates/shared/src/map/compose.rs`. It is the default map: `just play`, or `target/release/game`.
+The older drafts of this section are dropped: the 2 km `Dilli` map,
+`dilli.rs`, `Tile`/`Frame`, `Terrain.gn`, the causeway Yamuna, and the chunked lazy grid.
 
-| Piece | Source | Placement |
+### Layout (x east, z south, `HALF = 2000`, metres from the middle of the map)
+
+The lists themselves live in `compose.rs`; this table only says what they hold.
+
+| Piece | In `compose.rs` | What it is |
 |---|---|---|
-| Connaught Place | `delhi_cp.json` + `cp::build` ring | offset (0, 0) |
-| Chandni Chowk | `delhi_chandni.json` | offset (−60, −600) |
-| India Gate | `delhi_indiagate.json` + `india_gate()` | offset (+430, +600) |
-| Hauz Khas | `delhi_hauzkhas.json` | offset (−470, +600) |
-| Yamuna | new `River::Sine`, x ≈ 700 + 30·sin(z/350), 70 m wide | three at-grade causeways at z = −600, 0, +600 |
-| Noida/Ghaziabad towers | `ncr::tower`/`pavilion` grids from `noida()`, `ghaziabad()`, built 1:1 | x 800..960, z −700..+700 |
-| Gurugram towers | from `gurugram()` | x −960..−780, z −150..+350 |
-| Infill | Lutyens-style plots / bungalow lots, 40–60 m, ≤ 1500 footprints total | the gaps |
-| Connectors | painted ROAD polylines (16 m) along inter-district axes + ring road at ±900 | ground classes, dressed by `kit::streets` |
+| 19 districts | `PLACES` | The four small maps plus 15 new ones in `assets/data/maps/ncr_*.json`, each kept to a square 180 to 250 m out from its middle, at true size, in its true compass direction from Connaught Place (`compass_order_holds`) |
+| Open land | `open_land`, `on_open_land` | All the ground between districts, cut down in distance: rough open ground with thin ribbons of sheds along the roads and a scatter of trees, walls and loot, so nobody crosses more than about 80 m of nothing. The river sand gets berms, scrub and the odd hut |
+| 25 smaller spots | `SPOTS` | Named places on the open land, each with a yard of its own: truck and bus yards, markets, offices, New Delhi Station, Badarpur's power station, the Ghazipur Mound, the Okhla Marsh. Each keeps its true side of its neighbours (`spots_stand_on_the_right_side_of_their_districts`). Nothing here is a temple, mosque, gurdwara or grave |
+| Yamuna | `YAMUNA` | The river's real shape, 200 m of wadeable water inside a 450 m corridor of sand with bunds |
+| Hindon | `HINDON` | 80 m of water, leaving by the east edge |
+| 8 bridges | `SPANS`, `approaches` | Signature, Loha Pul, ITO, DND, Okhla Barrage, and three short ones on the Hindon, each named on the map and underfoot (`BRIDGES`). A deck over the water, earth over the land, and a ramp of about 1 in 13 at each end. South of ITO the Blue Line's viaduct, train only, ends at a station on each bank |
+| Delhi Ridge | `RIDGE` | A green arc screening Delhi from Gurugram, crest up to about 24 m, walkable anywhere, with NH-48, Outer Ring Road and MG Road cut through it. The Ghazipur Mound is the one hill east of the river |
+| 78 roads | `ROADS` | Ring Road, NH-48, Mathura Road, NH-9, Noida Expressway, MG Road, Pushta Road and the short links that carry each district's real road exits on to them |
 
-Tiles stay at real scale, yaw 0, each clipped to |local| ≤ 250 so skyline-only buildings and
-over-run infill lots never overlap a neighbour or a connector.
+At the last count: 1,815 buildings, 146 chests a match out of 373 spots, 32 of them Kalash, 1,600
+floor spots, 5,164 trees and props, and buildings on 3.6 % of the map (`just ncr-map-check`).
 
-### Mechanism
+### How it is built
 
-- New `crates/shared/src/map/dilli.rs`, `pub fn generate(seed) -> MapLayout`. `delhi.rs` is
-  refactored so its stages take a tile and a frame instead of the `HALF` constant:
-  `Tile { data, offset: Vec2, clip: 250, id }`, `Frame { half }`. `delhi::load(id) -> Data`
-  (the `include_str` match) + `Data::shift(offset)` translates every pts/x/z once, drops
-  buildings/trees/pois whose centroid is outside the clip square, clips road polylines at the
-  boundary. `paint_ground`, `water`, `footprints`, `trees`, `street_loot`, `boundary`, `open`,
-  `enterable` then work in world coordinates. `delhi::generate` = `Tile{offset 0}` +
-  `Frame{half 250}` so the four small maps stay identical (a test on block/footprint/chest counts
-  recorded before the refactor proves it).
-- `paint_ground` accumulates: the caller owns the `vec![PAVEMENT; n*n]`; dilli paints areas for
-  every tile, then connectors, then roads for every tile.
-- `cp::build` runs with `ring(cp_offset)`; `india_gate()` with its tile offset. `MAX_HOUSES`
-  becomes an argument: Chandni 60, Hauz Khas 40.
-- Loot: per-tile chest odds stay (~110/tile → ~440); `street_loot` targets ×4 (280 chests, 360
-  floor loot) sampled only on PAVEMENT/PARK/PLAZA cells.
-- Towers: `ncr::tower`, `ncr::pavilion` become `pub(super)` and are called with world frames. No
-  `scale_horizontal`, no NCR block roads, no metro trench, no deck bridges.
-- Terrain (`terrain.rs`): add `gn` (ground samples per side) so `ground` is 1 m (`gn = 2061`,
-  4.2 MB u8) while `h`/`road_d` stay `n = 513` (4 m). `ground_at`, `paint_ground`,
-  `settle_under` use `gn`; existing maps set `gn = n`.
-- River / style fields replace the string check. In `mod.rs`:
-  `enum MapStyle { Bharat, City, Ncr }` and
-  `enum River { None, Straight{x0,x1}, Sine{x0,amp,wavelength,half_width} }` with
-  `River::distance(p)`. `river: Option<(f32,f32)>` → `river: River`; `is_ncr()` deleted.
-  Call sites: `audio::river_distance`, `skyline.rs`, `ambient.rs`, `grass.rs`, `visuals.rs`,
-  `camera.rs`, `sim/nav.rs`. Dilli is `MapStyle::City`, so `paint_city`, kit, skyline ring and
-  the kites apply.
-- Yamuna in City style: channel cells painted WATER and sunk to −1.4 except where a ROAD class
-  was painted (the causeways stay at 0 with 1 m parapet blocks); the surface is
-  `Footprint { mat: Water }` strips of 50 m split at the causeways.
+- **Real data.** `tools/osm/ncr_extract.py` reads Geofabrik's Northern and Central Zone files with
+  pyosmium, offline, and `tools/osm/ncr.py` converts each district to JSON. Credit: OpenStreetMap,
+  ODbL 1.0, on the map screen and in each JSON. `ncr_janakpuri.json` and `ncr_vaishali.json` are
+  converted but not placed.
+- **One layout.** The map is always built from seed 7, so players can learn it. Each district
+  holds three sets of chests, and every match opens one set in each, drawn from the match's seed
+  (`chest_sets`), so a player who knows the map still has to look. The map seed only changes which
+  spots make up the sets.
+- **Districts are copied, not rewritten.** `delhi.rs` builds each one alone, then `add` copies what
+  lies inside its square into the big map. Big footprints always stay; the rest are thinned to the
+  place's `cap`, so streets get open ground between buildings. Loot and street life are cut to the
+  place's `Tier`: hot, warm, quiet or small.
+- **The four small maps stay exactly as they are.** `maps_are_unchanged` must keep passing. Never
+  re-run the converter on `delhi_*.json`.
+- **Open means open.** `map_stays_open` fails if roofs pass 6 % of the map.
+- **Care.** No invented temple, mosque, gurdwara or grave, the skyline's roofs included. No loot at
+  holy sites, at the India Gate arch, by the Red Fort's sealed wall, which has no name, or in the
+  Okhla wetland, and nothing a chest or a bow drops lands in a holy circle either. Each district's
+  JSON brings its `holy` list, and rings keep 120 m clear of those sites. No real brand on screen.
+- **Nothing stands where it can't.** A lake or canal cut off at a district's edge keeps its surface,
+  and its shore frays into the land. A roof mapped with nothing under it stands on columns. No chest
+  or find lies inside a building, no open-land building stands on a road or another building, and
+  no tree stands on a road or in a building (`no_water_is_dry`, `no_roof_hangs_in_the_air`,
+  `no_loot_behind_walls`, `nothing_stands_in_the_way`).
 
-### Navigation (`crates/shared/src/sim/nav.rs`)
+### The match on it
 
-Keep 1 m cells (Chandni's lanes are 2.5 m) but make the grid chunked, lazy and class-seeded:
-`free: Vec<u8>` Unknown/Free/Blocked seeded from `terrain.ground` + footprints; sample up to 2
-64 m chunks per tick, prioritised by distance to bots and pending goals; hierarchical A*: a
-coarse 16 m grid (125²) built once from classes and footprint coverage, then fine A* between
-coarse waypoints within the existing 40k budget, Unknown treated as free. Delete
-`map/navigation.rs` (`StreetNav`), its `insert_resource` in `sim/mod.rs`, the `street` param
-and its filters in `bots.rs`. NCR then also runs on NavGrid.
+- Rules per map style are in `Rules` (`crates/shared/src/sim/flow.rs`): the drop flies at 500 m at
+  60 m/s, wading is 2.4 m/s, and a warrior falling off a tall roof opens the glider (roof rescue).
+- Rings are `NCR_16`, `NCR_32` and `NCR_64` in `zone.rs`: 10:50, 14:30 and 19:50 from the first
+  wait to the last shrink, opening on a 2 km disc, a 3 km disc or the whole map. Rings stay off
+  water, bridges and holy sites, and every ring's centre is ground a warrior can walk to.
+- A bot stays out looting until the last moment it can sprint in ahead of the ring, and a bot with
+  no bow goes for the nearest one in sight. Each decision has two limits, so walking in doesn't undo
+  it: bots no longer flip between two goals, which `sim_check` now counts as "dither". Some bots cut
+  it fine (`BotBrain::nerve`), so the ring catches a few.
+- Whole matches finish at 16, 32 and 64 warriors (`sim_check`). The NCR is the only map in the turn
+  (`flow::ROTATION`), so a rematch stays on it and there is nothing to vote on.
 
-### Pacing, identity, rooms
+### Navigation
 
-- `Zone::for_map(map, seed)` with a per-map phase table: at half 1000 (scale 4) start radius
-  1440 m, `PHASES[0].0` 40 s, `[1].0` 30 s, total ≈ 680 s; zone test extended with half 1000.
-- `vimana_speed(half) = 22·sqrt(half/250).clamp(1,2)` → 44 m/s, chord ≈ 47 s.
-- `MatchConfig::default_bots(map)` → 36 on Dilli, 15 elsewhere.
-- `MapId::Dilli` appended last in `ALL` (ticket-stable index); `#[default]` moves to Dilli;
-  `name "dilli"`, `title "Dilli"`, `parse` adds "delhi". `MapId::DELHI` stays the four tiles;
-  new `MapId::ROOMS = [Dilli]` for `room_map`/`new_room_for`; `rotation(Dilli) = &[Dilli]`.
+A route graph over the whole map (`StreetFloor` in `crates/shared/src/sim/nav.rs`) says which way to
+go: a point every 8 m, each bridge's deck a level of its own joined to the ground at its ends, and
+no way up ground too steep to climb. A half-metre street grid drawn from the map's own shapes says
+how to get along the next stretch of it, and the small maps' full half-metre grid stays as it was.
+Roofs and upstairs are not routed. The old 8 m `StreetNav` grid is no longer built in play; only its
+test `districts_connected_without_wading` still uses it.
 
-### Performance estimate (seed 7)
+### Rendering
 
-~2.4k footprints and trimesh colliders, ~40k blocks → 3–5k chunk meshes, ~6k kit pieces,
-≤ 1500 trees. No streaming: `end_margin` on far facade LOD and kit last LOD at 900 m, trees
-600 m. A 32 m spatial bucket for footprints/kit in `open()`/`street_free()` if generation
-exceeds ~2 s. Connector segments ≤ 50 m.
+Past 192 m the map is drawn as two cheaper shells, one mesh per cell and material
+(`crates/game/src/buildings/tiers.rs`). The ground is one flat sheet with relief patches where the
+land rises (`crates/game/src/visuals/ground.rs`): about 33 draws and 62 MB. `clipmap.rs` and
+`heightmap.rs`, copied from `jackdaw_terrain`, MIT, notice kept, stand unwired, as a clipmap turned
+out not to be needed. Near kit is streamed round the camera (`crates/game/src/batch/near.rs`).
+Meshes and textures live on the GPU only, sent 48 MB a frame (`crates/game/src/batch/upload.rs`).
+
+### Map on screen
+
+`crates/game/src/hud.rs` bakes one picture from `MapLayout` when the map loads (2048 px, about
+75 ms on NCR), so it needs no file and no second camera. The corner map follows the player, and N
+steps its zoom. M opens the whole map with every name, the rings, the drop's line and the way to the
+safe zone: the cursor is free while it is open, the wheel zooms round the cursor, a drag moves the
+map, and N zooms round the player. It carries the OpenStreetMap credit. Names come from `pois` only:
+one by the map's side reads inward, and one that would print over another moves off a line.
+Coming into a place puts its name across the screen. This was written here, not copied: rustcraft's
+map screen (`docs/ncr/reuse/minimap.md`) gave the idea only.
 
 ### Checklist
 
-- [ ] **A1 Style/river refactor** — `MapStyle`, `River`, `Terrain.gn`, delhi.rs `Tile`/`Frame`,
-      count test. No visible change.
-- [ ] **A2 Dilli skeleton** — four tiles, boundary, scaled loot, Yamuna + causeways, behind
-      `VIVAD_MAP=dilli`; bots on the existing NavGrid.
-- [ ] **A3 Navigation** — chunked lazy NavGrid + coarse A*, StreetNav deleted, `sim_check` green.
-- [ ] **A4 Frame content** — connectors, ring road, infill, tower districts, trees, POIs,
-      `crates/shared/src/bin/dilli_walk_check.rs` (causeways, a Chandni house door → roof, CP
-      ring stairs, Hauz Khas tank wade, a Noida tower stair, India Gate plaza).
-- [ ] **A5 Default + pacing** — Dilli default, rooms, zone/vimana/bot tuning.
-- [ ] **A6 Perf pass** — culling ranges, caps, `VIVAD_TRIS`/`just perf` numbers, `docs/dilli.md`.
+Ticked means built and proven by the check named. See "Where things stand" for the latest results.
+
+- [x] **A1 One map from the districts** — `compose.rs`, 19 districts, rivers, ridge, roads,
+      `MapId::Ncr` goes to it, the old blockout's generator is no longer used by the game.
+- [x] **A2 Walkable from end to end** — every bridge both ways, the ridge, a wade, a district gate,
+      and every district reached on foot from Connaught Place (`just ncr-walk`, 23 of 23, seed 7).
+- [x] **A3 Bots at scale** — bots cross bridges and reach chests and rings across the 4 km map
+      (`nav_check`, `sim_check`), 16, 32 and 64. No bot went unarmed at 16 or 32 in the last 14
+      matches, and 0 to 6 did at 64, where some fall before they reach a gun. Still open: bots skip
+      loot upstairs and indoors.
+- [x] **A4 Match pacing** — ring and drop timed on the real map; the final circle lands on open
+      ground a warrior can walk to, in cover; about 96 % of deaths come from fights, and the ring
+      burns a few warriors a match and kills about one.
+- [ ] **A5 Frame rate and memory** — `just perf` on the M4 at or under the budgets in
+      `docs/ncr/masterplan/MASTERPLAN.md` section 6: 800 batches, 2.5M triangles. Peak memory is
+      under 4 GB and Medium, the NCR's level on the M4, holds about 60 fps with 64 warriors. High does
+      not: 34 to 49 fps on the busiest streets, and the busiest is 770 batches and 2.77M triangles.
+      Open until High holds 60, or the budget changes. Karol Bagh is the slowest street at both levels.
+- [x] **A6 Map on screen** — corner map at each zoom, whole map at each zoom, names and the place
+      banner seen in a real autopilot match (`just ncr-hud`). The wheel, the drag and the free
+      cursor pass `cargo test -p game --lib hud`, but nobody has tried them by hand yet.
+- [x] **A7 Default map** — NCR is `MapId`'s default and the only map in `flow::ROTATION`. Rooms take
+      the host's map, so they default to it too. The small maps stay for `VIVAD_MAP`. The browser
+      still starts on `cp` (`the_ncr_is_the_one_map_in_the_turn`, a whole real match on the default).
+- [ ] **A8 Real heights and ground** — Open Buildings 2.5D for heights, WorldCover for open land,
+      as `docs/ncr/REUSE.md` lists them.
+- [ ] **A9 Later** — metro, then vehicles; no ziplines. Roads and rail dressing, landmark art.
 
 ---
 
@@ -369,8 +433,9 @@ both Python and `characters.rs` (the sim knows nothing). Files
 
 **Decision.** Phase 1 pauses after step 5 (C2 of step 6 is landed and stays). The next work is a
 small match that is fun to play against bots on Connaught Place, at the graphics the game already
-has (High/Ultra as built). Hair (C3), clothes and looks (C4, C5), final polish (B5–B7) and
-NCR wait until a stranger has played the prototype twice.
+has (High/Ultra as built). Hair (C3), clothes and looks (C4, C5) and final polish (B5–B7) wait
+until a stranger has played the prototype twice. **NCR no longer waits (decision 6): it is being
+built now, on top of this prototype's bots, guns and loot.**
 
 **Done means.** One match on `cp`, 15 bots, start to result screen and back to the lobby, about
 8 minutes long, where most deaths come from fights, not from the Aandhi, and the player wants to
@@ -422,24 +487,25 @@ Notes for Phase 1:
 
 - Step 5 starts with the surfaces Connaught Place actually uses: white plaster and colonnades,
   asphalt, pavers, shop glass, park ground. Other facade kinds wait for Phase 2.
-- Step 7 is about behaviour on this map, not 2 km scale. A headless match on `cp` (seed 7, 15
-  bots) ended with 8 of the 15 deaths from the Aandhi and 7 from weapons, so bots are losing to
-  the zone more than to each other. The chunked, hierarchical navigation waits for Phase 2.
+- Step 7 is about behaviour on this map. It started from a headless match on `cp` (seed 7, 15
+  bots) that ended with 8 of the 15 deaths from the Aandhi and 7 from weapons. Phase 0's P1 and P2
+  have since fixed that: 15 weapon kills and 0 Aandhi kills on five seeds.
 - Step 3 is limited to `MapStyle` and `River`, replacing the string check. The audit (1 Nov) found
   `Terrain.gn` never reaches the screen and a 250 m tile clip cannot leave the small maps identical,
-  so `gn` and `Tile`/`Frame` are out of Phase 1 and must be redesigned for Phase 2. `dilli.rs` is not
-  started. Audit findings for later steps: SSR cannot reflect the forward-rendered city (step 5 uses
-  the environment map), and the head subdivide and cloth drape designs need rework (steps 6 and 8).
+  so `gn` and `Tile`/`Frame` were dropped. `compose.rs` copies each district whole instead, and
+  `dilli.rs` was never started. Audit findings for later steps: SSR cannot reflect the
+  forward-rendered city (step 5 uses the environment map), and the head subdivide and cloth drape
+  designs need rework (steps 6 and 8).
 
-### Phase 2: the other maps, building NCR (after Phase 1)
+### Phase 2: NCR, the one final map (brought forward, 1 Nov 2026)
 
-Bring the Connaught Place standard to the other Delhi districts, then build NCR from the current
-code with them as its Delhi part: map composition, navigation at scale, frame content, default
-map and pacing (Section A: A2, the rest of A3, A4, A5, A6). Section A was written for a
-stand-alone `Dilli` map beside the old NCR map, so it must be rewritten before Phase 2 starts.
+Decision 6 moved this ahead of the rest of Phase 1. Section A is the plan and its checklist tracks
+the work. Connaught Place's standard still has to reach the other districts over time, but the map
+comes first and art follows where players go.
 
-Open decisions for Phase 2: the final map size, how much of Gurugram, Noida and Ghaziabad are
-full districts, what happens to the old NCR blockout and to Bharat.
+Decided: 4 km a side; all 19 districts and the rivers fit. The old NCR blockout is out of play, and
+`ncr.rs` only lends small helpers (`enabled`, `river_distance`) until someone removes it. Bharat is
+removed. Gurugram, Noida and Ghaziabad are real districts from OpenStreetMap.
 
 ### Phase 3: phones (after Phase 2)
 
@@ -450,7 +516,8 @@ test scene on Mali, Adreno and iPhone hardware before committing. If it fails, r
 
 External downloads (CC0 facade/fabric textures) are each confirmed with the owner before
 fetching, stored under `tools/blender/textures/cc0/` or `assets/textures/facades/`, and credited
-in `docs/references.md`. Overpass is not needed: the four district JSONs are already in the repo.
+in `docs/references.md`. Overpass is not needed: every district's JSON is already in the repo, and
+`tools/osm/ncr_extract.py` reads Geofabrik's files offline.
 
 ## How each step is run
 
@@ -462,22 +529,22 @@ between steps. Commits and pushes start once Step 0 is done.
 ## Verification (end to end)
 
 - `cargo check --workspace --all-targets` clean, zero warnings, after every step.
-- `cargo test -p shared`: delhi refactor count test, `dilli::tests`, zone test at half 1000,
-  NCR tests still green.
-- `VIVAD_MAP=dilli cargo run --release -p shared --bin sim_check -- 3 36`: matches finish, nav
-  grid ≥ 35 % walkable and ready within 20 s, no fall deaths.
-- `crates/shared/src/bin/dilli_walk_check.rs`: all cases pass.
+- `cargo test -p shared`: `maps_are_unchanged`, the `compose` tests, the zone tests. `cargo test -p
+  game --lib hud`: the map's zoom, drag and cursor.
+- `just ncr-sim 1 15`: matches finish, no fall deaths, most deaths from fights.
+- `just ncr-walk`: all walks pass and every district can be walked to.
 - `VIVAD_QUALITY=ultra just perf`: ≥ 60 fps median on every tour view at 1512×982, vsync off;
   `just flicker` no worse than High.
 - Character files pass `tools/check_characters.py`; `just looks` shows eight distinct
   warriors; in-game captures at `CAMERA_DISTANCE` on High and Low confirm the 16 m crossfade.
 - Browser build (`just web serve=no`) still compiles with Ultra excluded.
-- Sheets in `previews/ultra_m<N>.png`, `previews/dilli/`, `previews/characters/looks/`.
+- Sheets in `previews/ultra_m<N>.png`, `previews/ncr/`, `previews/ncr_hud/`,
+  `previews/characters/looks/`.
 
 ## Known trade-offs
 
 - Until Phase 3, Ultra is desktop only. Low/Medium/High keep the stylised dome, baked AO and 256² facades.
-- Section A's causeway Yamuna and its layout are proposals for Phase 2, not decisions.
+- NCR's buildings have guessed heights until real height data lands (A8).
 - Eight looks share one rig per sex, so faces vary by targets and skin, not by body shape.
 - Volumetric haze and PCSS are the first things cut if the M4 misses 60 fps.
 - Character motion (foot IK, turn-in-place, new clips) is the next plan, after this one.
@@ -487,7 +554,7 @@ between steps. Commits and pushes start once Step 0 is done.
 - `~/.claude/plans/pure-twirling-blum.md` "Gaming Quality & Fidelity Roadmap" (31 Oct, morning):
   its phases 1–2 landed in the NCR merge; phase 3 is folded into B4.
 - `~/.claude/plans/hashed-gathering-quill.md`: the draft of this file.
-- `docs/ncr/DESIGN.md`: describes the NCR map as built; reference only.
-- `docs/ncr/masterplan/MASTERPLAN.md` + `ncr-4km.plan.json`: the 4 km blueprint. Its ideas
-  (named destinations, contrasting districts, deliberate rotations) live on in Dilli at 2 km.
+- `docs/ncr/DESIGN.md`: describes the old 2.2 km blockout, which is out of play; reference only.
+- `docs/ncr/masterplan/MASTERPLAN.md` + `ncr-4km.plan.json`: the fictional 4 km blueprint,
+  overridden by decision 6. Its layout rules and budgets still serve as reference for Section A.
 - `docs/agent-briefs/VIVAD_ASSET_REUSE_GUIDE.md`: reference for B4's asset sourcing.

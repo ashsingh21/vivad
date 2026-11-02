@@ -14,13 +14,15 @@
 //! at once instead of by flooding the map.
 
 use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashMap};
 use std::sync::Mutex;
 
 use avian3d::prelude::*;
+use bevy::platform::time::Instant;
 use bevy::prelude::*;
 
 use super::{HALF_HEIGHT, solid_mask};
+use crate::map::compose::{SPANS, Span};
 use crate::map::{Block, Mat, MapLayout, Shape};
 
 pub const CELL: f32 = 0.5;
@@ -253,7 +255,7 @@ impl NavGrid {
         if !self.ready() {
             return Err(NoPath::Here);
         }
-        let t = std::time::Instant::now();
+        let t = Instant::now();
         let (r, expanded) = self.search(from, to);
         let s = t.elapsed().as_secs_f32();
         let mut stats = self.stats.lock().unwrap_or_else(|e| e.into_inner());
@@ -510,6 +512,659 @@ pub enum NoPath {
     There,
 }
 
+// ------------------------------------------------------------------ the NCR's street level
+
+/// Cells a side of the square a street search runs in: 128 m, wider than any stretch of a route.
+const WINDOW: usize = 256;
+/// A warrior's radius, near enough, as the clearance every obstacle is grown by.
+const CLEARANCE: f32 = PROBE_W / 2.0;
+/// How far from a point `StreetFloor::path` looks for a free cell to stand for it, metres.
+const NEAR_START: f32 = 2.0;
+const NEAR_GOAL: f32 = 3.0;
+/// Cells one street search may expand: a stretch of route is short, so a search this long has met
+/// a wall with no way round, and the bot does better to walk on and ask again later.
+const MAX_EXPANDED: usize = 6000;
+/// Steepest ground a warrior can climb, as rise over run (the 48 degrees in `movement`).
+const STEEPEST: f32 = 1.05;
+/// Metres between route points, and how far one shifts to find floor, so that a lane narrower than
+/// the grid still has points down it.
+const LANE: f32 = 8.0;
+const LANE_SNAP: f32 = 5.0;
+/// What a metre of route costs.
+const COST_PER_M: f32 = 10.0 / LANE;
+/// The eight ways out of a route point and what each costs, in opposite pairs.
+const WAYS: [(isize, isize, u32); 8] = [(1, 0, 10), (-1, 0, 10), (0, 1, 10), (0, -1, 10), (1, 1, 14), (-1, -1, 14), (1, -1, 14), (-1, 1, 14)];
+/// How far past its end a deck is reached from, metres: the ramp's foot, on a bridge that has one.
+const DECK_APPROACH: f32 = 6.0;
+/// In route points: how far off a warrior looks for a route point it can walk straight to, and how
+/// far for any at all (the middle of the Yamuna is the worst of it).
+const ENTRY_NEAR: isize = 2;
+const ENTRY_FAR: isize = 24;
+
+/// The bridge whose deck a warrior at `pos` is standing on.
+fn deck_under(pos: Vec3) -> Option<usize> {
+    let on = |s: &Span| {
+        let along = (s.c - s.a).normalize_or_zero();
+        let t = (pos.xz() - s.a).dot(along);
+        (-2.0..s.a.distance(s.c) + 2.0).contains(&t)
+            && (pos.xz() - s.a - along * t).length() < s.width / 2.0 + 1.0
+            && (pos.y - HALF_HEIGHT - s.top).abs() < 1.5
+    };
+    SPANS.iter().position(on)
+}
+
+/// Whether a warrior at `pos` is up on one of the NCR's bridges.
+pub fn on_bridge(pos: Vec3) -> bool {
+    deck_under(pos).is_some()
+}
+
+/// What stands in a warrior's way at street level across the whole NCR, as half-metre cells of one
+/// bit each. The 0.5 m grid above would need a gigabyte and minutes of physics probes for 4 km, so
+/// this one is drawn straight from the map's own shapes when the map loads, at about 8 MB. It has
+/// one level, the street: roofs are left by their edges.
+///
+/// Over it lie the routes, for the long walks: a point every 8 m, joined to a neighbour only where
+/// a straight walk between them is clear, so they know walls and cliffs, and a chain of points
+/// along each bridge's deck, joined to the ground only at its ends, so a route goes over a river
+/// and never along the bed under the deck. `route` says which way to go; `path` says how to get
+/// along the next stretch of that, round the stalls and trees between two route points.
+#[derive(Resource, Default)]
+pub struct StreetFloor {
+    n: usize,
+    half: f32,
+    /// A bit per cell, row by row: set where a warrior can't stand.
+    blocked: Vec<u64>,
+    scratch: Mutex<FloorScratch>,
+    /// Searches run, seconds in all, the longest, nodes expanded in all: for the checks.
+    stats: Mutex<(u32, f32, f32, u64)>,
+    /// Route points a side.
+    m: usize,
+    /// Where each route point stands (NaN: nowhere): the grid's first, then the decks'.
+    points: Vec<Vec2>,
+    /// By grid point: a bit for each of `WAYS` that can be walked straight.
+    ways: Vec<u8>,
+    /// Steps other than to a grid neighbour, with their costs: along a deck, and on and off it.
+    joins: HashMap<u32, Vec<(u32, u32)>>,
+    /// By bridge: its first deck point, and how many it has.
+    decks: Vec<(u32, u32)>,
+    routing: Mutex<FloorScratch>,
+    route_stats: Mutex<(u32, f32, f32, u64)>,
+}
+
+#[derive(Default)]
+struct FloorScratch {
+    /// By window cell or route point: best cost + 1 (0 for unvisited), and where it was reached
+    /// from + 1.
+    best: Vec<u32>,
+    came: Vec<u32>,
+    touched: Vec<u32>,
+}
+
+impl StreetFloor {
+    /// Empty on the small maps, which have the `NavGrid`.
+    pub fn new(map: &MapLayout) -> Self {
+        if map.style != crate::map::MapStyle::Ncr {
+            return Self::default();
+        }
+        let n = (2.0 * map.half_extent / CELL).ceil() as usize;
+        let mut floor = Self { n, half: map.half_extent, blocked: vec![0; (n * n).div_ceil(64)], ..default() };
+        floor.draw_water(map);
+        for f in map.footprints.iter().filter(|f| f.mat != Mat::Water) {
+            floor.draw_building(map, f);
+        }
+        for b in map.blocks.iter().filter(|b| b.collide).chain(&map.doors) {
+            floor.draw_block(map, b);
+        }
+        for p in map.props.iter() {
+            if let Some((r, h)) = p.trunk {
+                floor.draw_block(map, &Block { pos: p.pos + Vec3::Y * h / 2.0, rot: Quat::IDENTITY, shape: Shape::Cylinder { radius: r, height: h }, mat: Mat::Bark, collide: true, visible: false });
+            }
+        }
+        floor.draw_steep(map);
+        floor.lay_routes();
+        floor
+    }
+
+    pub fn ready(&self) -> bool {
+        self.n > 0
+    }
+
+    fn cell(&self, p: Vec2) -> Option<(usize, usize)> {
+        let i = ((p.x + self.half) / CELL).floor();
+        let j = ((p.y + self.half) / CELL).floor();
+        (i >= 0.0 && j >= 0.0 && (i as usize) < self.n && (j as usize) < self.n).then_some((i as usize, j as usize))
+    }
+
+    fn centre(&self, (i, j): (usize, usize)) -> Vec2 {
+        Vec2::new(i as f32 + 0.5, j as f32 + 0.5) * CELL - Vec2::splat(self.half)
+    }
+
+    fn set(&mut self, (i, j): (usize, usize)) {
+        let k = j * self.n + i;
+        self.blocked[k / 64] |= 1 << (k % 64);
+    }
+
+    fn is_blocked(&self, (i, j): (usize, usize)) -> bool {
+        let k = j * self.n + i;
+        self.blocked[k / 64] >> (k % 64) & 1 != 0
+    }
+
+    /// The cells of a box round two corners, cut to the grid.
+    fn span(&self, lo: Vec2, hi: Vec2) -> impl Iterator<Item = (usize, usize)> + use<> {
+        let index = |c: f32, n: usize| (((c + self.half) / CELL).floor().max(0.0) as usize).min(n - 1);
+        let n = self.n;
+        let (i0, i1, j0, j1) = (index(lo.x, n), index(hi.x, n), index(lo.y, n), index(hi.y, n));
+        (j0..=j1).flat_map(move |j| (i0..=i1).map(move |i| (i, j)))
+    }
+
+    /// Water is for wading, not for routes: the streets' way never goes through it.
+    fn draw_water(&mut self, map: &MapLayout) {
+        let t = &map.terrain;
+        let half_step = Vec2::splat(t.step() / 2.0);
+        for i in 0..t.n {
+            for j in 0..t.n {
+                if t.ground[i * t.n + j] == crate::map::terrain::ground::WATER {
+                    let c = Vec2::new(t.coord(i), t.coord(j));
+                    for cell in self.span(c - half_step, c + half_step) {
+                        self.set(cell);
+                    }
+                }
+            }
+        }
+    }
+
+    /// A building: its outline filled, and the outline's edges grown by a warrior's clearance.
+    fn draw_building(&mut self, map: &MapLayout, f: &crate::map::Footprint) {
+        let (lo, hi) = f.pts.iter().fold((Vec2::MAX, Vec2::MIN), |(a, b), p| (a.min(*p), b.max(*p)));
+        let on_the_ground = f.base < map.terrain.height((lo.x + hi.x) / 2.0, (lo.y + hi.y) / 2.0) + 1.0;
+        if !on_the_ground {
+            return;
+        }
+        for cell in self.span(lo, hi) {
+            if crate::map::footprint::contains(&f.pts, self.centre(cell)) {
+                self.set(cell);
+            }
+        }
+        for (a, b) in f.pts.iter().zip(f.pts.iter().cycle().skip(1)) {
+            let steps = (a.distance(*b) / CELL).ceil().max(1.0) as usize;
+            for k in 0..=steps {
+                let p = a.lerp(*b, k as f32 / steps as f32);
+                for cell in self.span(p - Vec2::splat(CLEARANCE), p + Vec2::splat(CLEARANCE)) {
+                    if self.centre(cell).distance(p) < CLEARANCE {
+                        self.set(cell);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Ground too steep to climb stops a warrior as a wall does.
+    fn draw_steep(&mut self, map: &MapLayout) {
+        let t = &map.terrain;
+        let step = t.step();
+        let limit = STEEPEST * step;
+        for i in 0..t.n - 1 {
+            for j in 0..t.n - 1 {
+                let h = t.h[i * t.n + j];
+                if (t.h[(i + 1) * t.n + j] - h).abs() > limit || (t.h[i * t.n + j + 1] - h).abs() > limit {
+                    let c = Vec2::new(t.coord(i), t.coord(j));
+                    for cell in self.span(c, c + Vec2::splat(step)) {
+                        self.set(cell);
+                    }
+                }
+            }
+        }
+    }
+
+    /// A solid block, if it stands in the height a warrior walks through: over a step and under a
+    /// head, as the `NavGrid`'s probe has it. A tilted block is a ramp, and is walked up.
+    fn draw_block(&mut self, map: &MapLayout, b: &Block) {
+        if (b.rot * Vec3::Y).y < 0.99 {
+            return;
+        }
+        let half = match b.shape {
+            Shape::Box(s) => s / 2.0,
+            Shape::Cylinder { radius, height } => Vec3::new(radius, height / 2.0, radius),
+            Shape::Sphere(r) => Vec3::splat(r),
+        };
+        let reach = (b.rot * Vec3::X * half.x).abs() + (b.rot * Vec3::Y * half.y).abs() + (b.rot * Vec3::Z * half.z).abs();
+        let inverse = b.rot.inverse();
+        let grown = reach.xz() + Vec2::splat(CLEARANCE);
+        for cell in self.span(b.pos.xz() - grown, b.pos.xz() + grown) {
+            let p = self.centre(cell);
+            let floor = map.terrain.height(p.x, p.y);
+            if b.pos.y + reach.y < floor + PROBE_FROM || b.pos.y - reach.y > floor + PROBE_TO {
+                continue;
+            }
+            let q = inverse * Vec3::new(p.x - b.pos.x, 0.0, p.y - b.pos.z);
+            let inside = match b.shape {
+                Shape::Box(_) => q.x.abs() < half.x + CLEARANCE && q.z.abs() < half.z + CLEARANCE,
+                _ => q.xz().length() < half.x + CLEARANCE,
+            };
+            if inside {
+                self.set(cell);
+            }
+        }
+    }
+
+    /// Whether a warrior can stand at `p` at street level.
+    pub fn walkable(&self, p: Vec2) -> bool {
+        self.cell(p).is_some_and(|c| !self.is_blocked(c))
+    }
+
+    /// Lays the routes over the finished floor.
+    fn lay_routes(&mut self) {
+        let m = (2.0 * self.half / LANE) as usize;
+        self.m = m;
+        let mut points = vec![Vec2::NAN; m * m];
+        for j in 0..m {
+            for i in 0..m {
+                let c = (Vec2::new(i as f32, j as f32) + 0.5) * LANE - Vec2::splat(self.half);
+                if let Some(cell) = self.cell(c).and_then(|c| self.nearest_free(c, LANE_SNAP)) {
+                    points[j * m + i] = self.centre(cell);
+                }
+            }
+        }
+        let mut ways = vec![0u8; m * m];
+        let side = m as isize;
+        for j in 0..side {
+            for i in 0..side {
+                let k = (j * side + i) as usize;
+                for (w, &(di, dj, _)) in WAYS.iter().enumerate().step_by(2) {
+                    let (x, z) = (i + di, j + dj);
+                    if x < 0 || z < 0 || x >= side || z >= side {
+                        continue;
+                    }
+                    let v = (z * side + x) as usize;
+                    // At half-metre steps: everything drawn is at least a warrior's width across.
+                    let (a, b) = (points[k], points[v]);
+                    let n = (a.distance(b) / CELL).ceil() as usize;
+                    if !a.is_nan() && !b.is_nan() && (0..=n).all(|s| self.walkable(a.lerp(b, s as f32 / n.max(1) as f32))) {
+                        ways[k] |= 1 << w;
+                        ways[v] |= 1 << (w + 1);
+                    }
+                }
+            }
+        }
+        self.points = points;
+        self.ways = ways;
+        for s in &SPANS {
+            let (len, along) = (s.a.distance(s.c), (s.c - s.a).normalize_or_zero());
+            let steps = (len / LANE).ceil().max(1.0) as usize;
+            let first = self.points.len() as u32;
+            self.points.extend((0..=steps).map(|t| s.a.lerp(s.c, t as f32 / steps as f32)));
+            self.decks.push((first, steps as u32 + 1));
+            let cost = (len / steps as f32 * COST_PER_M).ceil() as u32;
+            for t in 0..steps as u32 {
+                self.join(first + t, first + t + 1, cost);
+            }
+            self.join_to_ground(first, s.a - along * DECK_APPROACH);
+            self.join_to_ground(first + steps as u32, s.c + along * DECK_APPROACH);
+        }
+        self.keep_main_region();
+    }
+
+    fn join(&mut self, a: u32, b: u32, cost: u32) {
+        self.joins.entry(a).or_default().push((b, cost));
+        self.joins.entry(b).or_default().push((a, cost));
+    }
+
+    /// Joins a deck's end to the ground points that can walk straight to `foot`, or the nearest.
+    fn join_to_ground(&mut self, end: u32, foot: Vec2) {
+        let mut near = self.grid_points(foot, ENTRY_NEAR + 1);
+        near.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let clear: Vec<u32> = near.iter().filter(|n| self.line_clear(self.points[n.1 as usize], foot)).map(|n| n.1).collect();
+        let to = if clear.is_empty() { near.first().map(|n| n.1).into_iter().collect() } else { clear };
+        let from = self.points[end as usize];
+        for k in to {
+            let cost = (self.points[k as usize].distance(from) * COST_PER_M).ceil() as u32;
+            self.join(end, k, cost);
+        }
+    }
+
+    /// The grid's route points within `reach` points of `p`, with their distances from it.
+    fn grid_points(&self, p: Vec2, reach: isize) -> Vec<(f32, u32)> {
+        let side = self.m as isize;
+        let at = ((p + Vec2::splat(self.half)) / LANE).floor();
+        let (ci, cj) = (at.x as isize, at.y as isize);
+        let mut out = vec![];
+        for j in (cj - reach).max(0)..=(cj + reach).min(side - 1) {
+            for i in (ci - reach).max(0)..=(ci + reach).min(side - 1) {
+                let k = (j * side + i) as usize;
+                if !self.points[k].is_nan() {
+                    out.push((self.points[k].distance(p), k as u32));
+                }
+            }
+        }
+        out
+    }
+
+    /// Calls `step` with each route point `k` joins, and what that step costs.
+    fn each_way(&self, k: u32, mut step: impl FnMut(u32, u32)) {
+        let side = self.m as isize;
+        if (k as usize) < self.ways.len() {
+            let (i, j) = (k as isize % side, k as isize / side);
+            for (w, &(di, dj, cost)) in WAYS.iter().enumerate() {
+                if self.ways[k as usize] >> w & 1 != 0 {
+                    step(((j + dj) * side + i + di) as u32, cost);
+                }
+            }
+        }
+        if let Some(more) = self.joins.get(&k) {
+            for &(next, cost) in more {
+                step(next, cost);
+            }
+        }
+    }
+
+    /// Drops every route point that doesn't join up with the most of them: a yard with no way out
+    /// is no place to send a warrior.
+    fn keep_main_region(&mut self) {
+        let n = self.points.len();
+        let mut region = vec![u32::MAX; n];
+        let mut sizes: Vec<u32> = vec![];
+        let mut stack = vec![];
+        for seed in 0..n {
+            if region[seed] != u32::MAX || self.points[seed].is_nan() {
+                continue;
+            }
+            let id = sizes.len() as u32;
+            region[seed] = id;
+            stack.push(seed as u32);
+            let mut size = 0;
+            while let Some(k) = stack.pop() {
+                size += 1;
+                self.each_way(k, |next, _| {
+                    if region[next as usize] == u32::MAX {
+                        region[next as usize] = id;
+                        stack.push(next);
+                    }
+                });
+            }
+            sizes.push(size);
+        }
+        let main = (0..sizes.len()).max_by_key(|k| sizes[*k]).unwrap_or(0) as u32;
+        for k in 0..n {
+            if region[k] != main {
+                self.points[k] = Vec2::NAN;
+                if k < self.ways.len() {
+                    self.ways[k] = 0;
+                }
+                self.joins.remove(&(k as u32));
+            }
+        }
+    }
+
+    /// The route points kept, of all laid: for the checks.
+    pub fn route_points(&self) -> (usize, usize) {
+        (self.points.iter().filter(|p| !p.is_nan()).count(), self.points.len())
+    }
+
+    /// The route point a warrior at `p` joins the routes by.
+    fn entry(&self, p: Vec3) -> Option<u32> {
+        if let Some(bridge) = deck_under(p) {
+            let (first, count) = self.decks[bridge];
+            let far = |k: &u32| self.points[*k as usize].distance_squared(p.xz());
+            let nearest = (first..first + count).filter(|k| !self.points[*k as usize].is_nan()).min_by(|a, b| far(a).total_cmp(&far(b)));
+            if nearest.is_some() {
+                return nearest;
+            }
+        }
+        let mut near = self.grid_points(p.xz(), ENTRY_NEAR);
+        near.sort_by(|a, b| a.0.total_cmp(&b.0));
+        near.iter()
+            .find(|n| self.line_clear(p.xz(), self.points[n.1 as usize]))
+            .or(near.first())
+            .map(|n| n.1)
+            .or_else(|| self.grid_points(p.xz(), ENTRY_FAR).into_iter().min_by(|a, b| a.0.total_cmp(&b.0)).map(|n| n.1))
+    }
+
+    /// Whether a warrior at `p` could join the routes on foot: not walled up in a yard.
+    pub fn reachable(&self, p: Vec2) -> bool {
+        self.walkable(p) && self.grid_points(p, ENTRY_NEAR).iter().any(|n| self.line_clear(p, self.points[n.1 as usize]))
+    }
+
+    /// The way from one point of the map to another along the routes, as points with the next one
+    /// last, so it is cheap to use up. Empty when there is nothing to walk or no way.
+    pub fn route(&self, from: Vec3, to: Vec3) -> Vec<Vec2> {
+        let t = Instant::now();
+        let (out, expanded) = self.find_route(from, to);
+        let s = t.elapsed().as_secs_f32();
+        let mut stats = self.route_stats.lock().unwrap_or_else(|e| e.into_inner());
+        stats.0 += 1;
+        stats.1 += s;
+        stats.2 = stats.2.max(s);
+        stats.3 += expanded as u64;
+        out
+    }
+
+    /// For the checks: routes worked out so far, their mean and longest milliseconds, mean expansions.
+    pub fn route_stats(&self) -> (u32, f32, f32, f32) {
+        let s = self.route_stats.lock().unwrap_or_else(|e| e.into_inner());
+        (s.0, 1000.0 * s.1 / s.0.max(1) as f32, 1000.0 * s.2, s.3 as f32 / s.0.max(1) as f32)
+    }
+
+    fn find_route(&self, from: Vec3, to: Vec3) -> (Vec<Vec2>, usize) {
+        if !self.ready() {
+            return (vec![], 0);
+        }
+        let (Some(start), Some(end)) = (self.entry(from), self.entry(to)) else { return (vec![], 0) };
+        let goal = self.points[end as usize];
+        // Weighted a little, as `search` is: it heads for the goal rather than sweeping.
+        let h = |k: u32| {
+            let d = (self.points[k as usize] - goal).abs();
+            (1.1 * COST_PER_M * (d.max_element() + 0.4 * d.min_element())) as u32
+        };
+        let mut scratch = self.routing.lock().unwrap_or_else(|e| e.into_inner());
+        if scratch.best.is_empty() {
+            *scratch = FloorScratch { best: vec![0; self.points.len()], came: vec![0; self.points.len()], touched: vec![] };
+        }
+        let FloorScratch { best, came, touched } = &mut *scratch;
+        let mut open = BinaryHeap::new();
+        best[start as usize] = 1;
+        came[start as usize] = start + 1;
+        touched.push(start);
+        open.push(Reverse((h(start), Reverse(0u32), start)));
+        let (mut expanded, mut found) = (0, false);
+        while let Some(Reverse((_, Reverse(g), node))) = open.pop() {
+            if node == end {
+                found = true;
+                break;
+            }
+            let slot = best[node as usize];
+            if slot & CLOSED != 0 || slot != g + 1 {
+                continue;
+            }
+            best[node as usize] = slot | CLOSED;
+            expanded += 1;
+            self.each_way(node, |next, cost| {
+                let ng = g + cost;
+                let slot = best[next as usize];
+                if slot & CLOSED == 0 && (slot == 0 || ng + 1 < slot) {
+                    if slot == 0 {
+                        touched.push(next);
+                    }
+                    best[next as usize] = ng + 1;
+                    came[next as usize] = node + 1;
+                    open.push(Reverse((ng + h(next), Reverse(ng), next)));
+                }
+            });
+        }
+        let mut out = vec![];
+        if found {
+            let mut at = end;
+            while at != start {
+                out.push(self.points[at as usize]);
+                at = came[at as usize] - 1;
+            }
+        }
+        for &k in touched.iter() {
+            best[k as usize] = 0;
+        }
+        touched.clear();
+        (out, expanded)
+    }
+
+    /// The free cell nearest `c`, within `reach` metres.
+    fn nearest_free(&self, c: (usize, usize), reach: f32) -> Option<(usize, usize)> {
+        let (ci, cj) = (c.0 as isize, c.1 as isize);
+        let n = self.n as isize;
+        let free = |i: isize, j: isize| i >= 0 && j >= 0 && i < n && j < n && !self.is_blocked((i as usize, j as usize));
+        (0..=cells(reach)).find_map(|k| {
+            let ring = (-k..=k).flat_map(|d| [(ci + d, cj - k), (ci + d, cj + k), (ci - k, cj + d), (ci + k, cj + d)]);
+            ring.filter(|&(i, j)| free(i, j)).min_by_key(|&(i, j)| (i - ci).pow(2) + (j - cj).pow(2)).map(|(i, j)| (i as usize, j as usize))
+        })
+    }
+
+    /// The street spot nearest `p`, within `reach` metres.
+    pub fn snap(&self, p: Vec2, reach: f32) -> Option<Vec2> {
+        let c = self.cell(p.clamp(Vec2::splat(-self.half), Vec2::splat(self.half - 0.01)))?;
+        self.nearest_free(c, reach).map(|c| self.centre(c))
+    }
+
+    /// Whether a warrior can walk the straight line between two points.
+    pub fn line_clear(&self, a: Vec2, b: Vec2) -> bool {
+        let steps = (a.distance(b) / (CELL * 0.25)).ceil() as usize;
+        (0..=steps).all(|s| self.walkable(a.lerp(b, s as f32 / steps.max(1) as f32)))
+    }
+
+    /// Whether the straight line between two cells crosses only free cells.
+    fn clear(&self, a: (usize, usize), b: (usize, usize)) -> bool {
+        self.line_clear(self.centre(a), self.centre(b))
+    }
+
+    /// A walk from `from` to (near) `to` round whatever is between them, as corner points, or None
+    /// when there is no way within the window. Both must be within about 100 m of each other.
+    pub fn path(&self, from: Vec2, to: Vec2) -> Option<Vec<Vec2>> {
+        let t = Instant::now();
+        let (out, expanded) = self.search(from, to);
+        let s = t.elapsed().as_secs_f32();
+        let mut stats = self.stats.lock().unwrap_or_else(|e| e.into_inner());
+        stats.0 += 1;
+        stats.1 += s;
+        stats.2 = stats.2.max(s);
+        stats.3 += expanded as u64;
+        out
+    }
+
+    /// For the checks: searches run so far, their mean and longest milliseconds, mean expansions.
+    pub fn stats(&self) -> (u32, f32, f32, f32) {
+        let s = self.stats.lock().unwrap_or_else(|e| e.into_inner());
+        (s.0, 1000.0 * s.1 / s.0.max(1) as f32, 1000.0 * s.2, s.3 as f32 / s.0.max(1) as f32)
+    }
+
+    fn search(&self, from: Vec2, to: Vec2) -> (Option<Vec<Vec2>>, usize) {
+        if !self.ready() {
+            return (None, 0);
+        }
+        let start = self.cell(from).and_then(|c| self.nearest_free(c, NEAR_START));
+        let goal = self.cell(to).and_then(|c| self.nearest_free(c, NEAR_GOAL));
+        let (Some(start), Some(goal)) = (start, goal) else { return (None, 0) };
+        // The window, centred between the ends and kept on the map.
+        let w = WINDOW as isize;
+        let origin = |a: usize, b: usize| ((a + b) as isize / 2 - w / 2).clamp(0, self.n as isize - w);
+        let (ox, oz) = (origin(start.0, goal.0), origin(start.1, goal.1));
+        let local = |c: (usize, usize)| {
+            let (x, z) = (c.0 as isize - ox, c.1 as isize - oz);
+            (x >= 0 && z >= 0 && x < w && z < w).then_some((z * w + x) as u32)
+        };
+        let world = |k: u32| (((k as isize % w) + ox) as usize, ((k as isize / w) + oz) as usize);
+        let (Some(first), Some(last)) = (local(start), local(goal)) else { return (None, 0) };
+        let h = |c: (usize, usize)| {
+            let (dx, dz) = (c.0.abs_diff(goal.0) as u32, c.1.abs_diff(goal.1) as u32);
+            // Weighted, as in `NavGrid::search`: it heads for the goal rather than sweeping.
+            14 * dx.max(dz) + 6 * dx.min(dz)
+        };
+        let mut scratch = self.scratch.lock().unwrap_or_else(|e| e.into_inner());
+        if scratch.best.is_empty() {
+            *scratch = FloorScratch { best: vec![0; WINDOW * WINDOW], came: vec![0; WINDOW * WINDOW], touched: vec![] };
+        }
+        let FloorScratch { best, came, touched } = &mut *scratch;
+        let mut open = BinaryHeap::new();
+        best[first as usize] = 1;
+        came[first as usize] = first + 1;
+        touched.push(first);
+        open.push(Reverse((h(start), Reverse(0u32), first)));
+        let mut expanded = 0;
+        let mut found = false;
+        while let Some(Reverse((_, Reverse(g), node))) = open.pop() {
+            if node == last {
+                found = true;
+                break;
+            }
+            if expanded >= MAX_EXPANDED {
+                break;
+            }
+            let slot = best[node as usize];
+            if slot & CLOSED != 0 || slot != g + 1 {
+                continue;
+            }
+            best[node as usize] = slot | CLOSED;
+            expanded += 1;
+            let (ci, cj) = world(node);
+            let (ci, cj) = (ci as isize, cj as isize);
+            let free = |i: isize, j: isize| {
+                i >= 0 && j >= 0 && (i as usize) < self.n && (j as usize) < self.n && !self.is_blocked((i as usize, j as usize))
+            };
+            for (di, dj) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)] {
+                let (ni, nj) = (ci + di, cj + dj);
+                if !free(ni, nj) || (di != 0 && dj != 0 && !(free(ci + di, cj) && free(ci, cj + dj))) {
+                    continue;
+                }
+                let cell = (ni as usize, nj as usize);
+                let Some(next) = local(cell) else { continue };
+                let ng = g + if di != 0 && dj != 0 { 14 } else { 10 };
+                let slot = best[next as usize];
+                if slot & CLOSED == 0 && (slot == 0 || ng + 1 < slot) {
+                    if slot == 0 {
+                        touched.push(next);
+                    }
+                    best[next as usize] = ng + 1;
+                    came[next as usize] = node + 1;
+                    open.push(Reverse((ng + h(cell), Reverse(ng), next)));
+                }
+            }
+        }
+        let mut way = vec![goal];
+        if found {
+            let mut at = last;
+            while came[at as usize] != at + 1 {
+                at = came[at as usize] - 1;
+                way.push(world(at));
+            }
+            way.reverse();
+        }
+        for &k in touched.iter() {
+            best[k as usize] = 0;
+        }
+        touched.clear();
+        drop(scratch);
+        if !found {
+            return (None, expanded);
+        }
+        // Keep only the corners: from each, the farthest cell still in a straight line.
+        let mut out = vec![];
+        let mut at = 0;
+        while at + 1 < way.len() {
+            let mut far = at + 1;
+            let mut stride = 16;
+            while stride > 0 {
+                if far + stride < way.len() && self.clear(way[at], way[far + stride]) {
+                    far += stride;
+                } else {
+                    stride /= 2;
+                }
+            }
+            out.push(self.centre(way[far]));
+            at = far;
+        }
+        if out.is_empty() {
+            out.push(self.centre(goal));
+        }
+        (Some(out), expanded)
+    }
+}
+
 pub struct NavPlugin;
 
 impl Plugin for NavPlugin {
@@ -518,8 +1173,10 @@ impl Plugin for NavPlugin {
     }
 }
 
-fn sample(mut grid: ResMut<NavGrid>, layout: Res<MapLayout>, spatial: SpatialQuery) {
-    if layout.is_changed() {
+fn sample(mut grid: ResMut<NavGrid>, swaps: Res<super::MapSwaps>, layout: Res<MapLayout>, spatial: SpatialQuery) {
+    // By the swap count, not `layout.is_changed()`: every rematch looks like a change to the layout
+    // (`MapSwaps` says why), and the grid would be thrown away for nothing.
+    if swaps.is_changed() && !swaps.is_added() {
         *grid = NavGrid::default();
     }
     if grid.ready() {

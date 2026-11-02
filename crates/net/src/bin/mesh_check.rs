@@ -25,7 +25,7 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let n: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(3);
     let bots: u32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(6);
-    let seconds: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(420.0);
+    let seconds: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(1000.0);
     // Sim seconds per wall second: the network runs in real time, so this sets how many ticks a
     // message can lag behind.
     let speed: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(4.0);
@@ -210,8 +210,8 @@ fn main() {
     }
     // Two players ask for the next match on the same tick: everyone must move on to the same one,
     // with nothing from the last match leaking into it.
-    // They voted for different maps on that same tick, too late to hear each other: the lower
-    // peer's choice must win everywhere.
+    // They voted for maps outside the turn on that same tick: the NCR is the only map in the turn
+    // now, so the votes are dropped and everyone stays on this map.
     let generation = apps[0].world().resource::<Match>().generation;
     for (app, map) in apps.iter_mut().take(2).zip([shared::map::MapId::IndiaGate, shared::map::MapId::HauzKhas]) {
         app.world_mut().write_message(shared::sim::flow::VoteMap(map));

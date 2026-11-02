@@ -76,6 +76,26 @@ pub fn distance_fog(ncr: bool) -> DistanceFog {
     }
 }
 
+/// The haze on a big map: it has to hide the line where the camera stops drawing (`far`) and the
+/// map's own edge. The squared falloff keeps the first few hundred metres clear, thins the middle
+/// distance and is all but solid at the far plane, in the sky's own horizon colour so the city
+/// sinks into the sky with no line between them.
+pub fn big_map_fog(far: f32) -> DistanceFog {
+    let [r, g, b] = crate::sky::HORIZON;
+    DistanceFog {
+        color: Color::srgb(r, g, b),
+        directional_light_color: Color::srgba(1.0, 0.93, 0.82, 0.25),
+        directional_light_exponent: 20.0,
+        falloff: big_map_haze(far),
+    }
+}
+
+/// How thick `big_map_fog` is, for a camera whose far plane is `far`.
+fn big_map_haze(far: f32) -> FogFalloff {
+    const SHARE_OF_FAR: f32 = 0.87;
+    FogFalloff::from_visibility_squared(far * SHARE_OF_FAR)
+}
+
 /// The picture's finish: AgX and a grade below Ultra; TonyMcMapface, near-neutral, on Ultra, where
 /// the light itself is right. Also a soft glow round the sun's glints, lamps and muzzle flashes, and
 /// the frame's edges darkened a little to draw the eye to the middle: cheap, and most of what reads
@@ -182,7 +202,9 @@ fn follow(
     ct.rotation = rot * Quat::from_rotation_x(punch.kick);
     if let Projection::Perspective(p) = proj.as_mut() {
         // Dynamic FOV: scale the base FOV by velocity to increase sensation of speed.
-        let velocity_factor = (speed / 22.0).clamp(0.0, 1.0); // 22.0 is VIMANA_SPEED
+        // The full kick at the small maps' ride speed, on every map: a sprint feels the same
+        // everywhere, and the NCR's faster ride stops at the same kick.
+        let velocity_factor = (speed / shared::sim::flow::VIMANA_SPEED).clamp(0.0, 1.0);
         let speed_fov = velocity_factor * 10.0 * (1.0 - (fov / 180.0));
         let target = fov.to_radians() + speed_fov.to_radians() + if aiming { punch.fov } else { 0.0 };
         p.fov += (target - p.fov) * (1.0 - (-dt * 14.0).exp());
@@ -191,9 +213,10 @@ fn follow(
 
 fn update_fog(
     tod: Res<TimeOfDay>,
-    mut cam_q: Query<&mut DistanceFog>,
+    layout: Res<shared::map::MapLayout>,
+    mut cam_q: Query<(&mut DistanceFog, &Projection)>,
 ) {
-    let Ok(mut fog) = cam_q.single_mut() else { return };
+    let Ok((mut fog, projection)) = cam_q.single_mut() else { return };
 
     let angle = (tod.hour - 6.0) * (std::f32::consts::PI / 12.0);
     let intensity = (angle.sin()).max(0.0);
@@ -207,6 +230,14 @@ fn update_fog(
         fog.color = Color::srgb(0.75, 0.8, 0.85); // Day haze
     } else {
         fog.color = Color::srgb(0.6, 0.4, 0.3); // Evening haze
+    }
+
+    // A big map's haze closes before the map ends at every hour, or its edge would show.
+    if layout.terrain.n >= crate::visuals::BIG_TERRAIN
+        && let Projection::Perspective(p) = projection
+    {
+        fog.falloff = big_map_haze(p.far);
+        return;
     }
 
     // Visibility drops during smoggy hours (morning/evening)

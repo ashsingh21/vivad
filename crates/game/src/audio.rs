@@ -175,7 +175,14 @@ fn surface(spatial: &SpatialQuery, blocks: &Query<&MapBlock>, terrain: &Query<()
             return "water";
         }
         if let Some(class) = layout.terrain.ground_at(p.x, p.y) {
-            return if class == shared::map::terrain::ground::PARK { "grass" } else { "stone" };
+            use shared::map::terrain::ground;
+            return match class {
+                ground::PARK | ground::OPEN => "grass",
+                ground::SAND => "sand",
+                // The NCR's rivers are in its ground, not in `layout.river`.
+                ground::WATER => "water",
+                _ => "stone",
+            };
         }
         // Roads are packed earth; the rest is grass.
         let t = &layout.terrain;
@@ -200,7 +207,12 @@ fn footsteps(
         *n += 1;
         let kind = surface(&spatial, &blocks, &terrain, &layout, s.pos);
         let v = STEP * (0.6 + 0.4 * (s.speed / 7.4).min(1.0));
-        play.at(&format!("step_{kind}_{}", *n % 4), s.pos, v, 35.0);
+        if kind == "sand" {
+            // The dirt step, lower and softer: one recording serves both.
+            play.at_pitched(&format!("step_dirt_{}", *n % 4), s.pos, v * 0.8, 35.0, 0.8);
+        } else {
+            play.at(&format!("step_{kind}_{}", *n % 4), s.pos, v, 35.0);
+        }
     }
 }
 
@@ -316,7 +328,7 @@ fn combat_events(
     stuck.retain(|e| live.contains(e));
     for (e, p, tf) in &arrows {
         if p.stuck && stuck.insert(e) {
-            let soft = matches!(surface(&spatial, &blocks, &terrain, &layout, tf.translation), "wood" | "grass" | "dirt");
+            let soft = matches!(surface(&spatial, &blocks, &terrain, &layout, tf.translation), "wood" | "grass" | "dirt" | "sand");
             let sound = match (crate::visuals::shot_kind(&p.item), soft) {
                 (crate::visuals::Shot::Bullet, true) => "bullet_impact_wood",
                 (crate::visuals::Shot::Bullet, false) => "bullet_impact_stone",

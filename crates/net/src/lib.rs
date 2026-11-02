@@ -273,19 +273,18 @@ fn room_key(room: &str) -> SecretKey {
     SecretKey::from_bytes(&blake3::derive_key("panga 2026-10 room key", room.as_bytes()))
 }
 
-/// Which of Panga's maps a room plays: its code says, so the host draws codes until one lands
-/// on the map it chose (`new_room_for`).
+/// Which map a room plays: its code says, so the host draws codes until one lands on the map it
+/// chose (`new_room_for`).
 pub fn room_map(room: &str) -> MapId {
     let h = blake3::derive_key("panga 2026-10 room map", room.as_bytes());
-    MapId::DELHI[h[0] as usize % MapId::DELHI.len()]
+    MapId::ROOMS[h[0] as usize % MapId::ROOMS.len()]
 }
 
-/// A fresh room code for a match on `map` (one of Panga's Delhi maps; any other gets a room on
-/// whichever the code lands).
+/// A fresh room code for a match on `map`.
 pub fn new_room_for(map: MapId) -> String {
     loop {
         let r = new_room();
-        if room_map(&r) == map || !MapId::DELHI.contains(&map) {
+        if room_map(&r) == map {
             return r;
         }
     }
@@ -994,4 +993,20 @@ fn unbase32(s: &str) -> Option<Vec<u8>> {
         }
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A host who picks a map gets that map, whichever it is, and a joiner reads the same from
+    /// the code.
+    #[test]
+    fn a_room_plays_the_map_its_host_chose() {
+        for map in MapId::ROOMS {
+            for _ in 0..8 {
+                assert_eq!(room_map(&new_room_for(map)), map);
+            }
+        }
+    }
 }

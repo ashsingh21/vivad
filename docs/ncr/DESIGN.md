@@ -1,4 +1,6 @@
 > **Superseded.** The one plan is `docs/PLAN.md` in the vivad repo. This file is kept for reference only.
+>
+> **This describes the old blockout.** Everything below is the 2.2 km authored arena in `crates/shared/src/map/ncr.rs`, which the game no longer plays. Since 1 Nov 2026 `MapId::Ncr` builds the real 4 km map from OpenStreetMap in `crates/shared/src/map/compose.rs`: see `docs/PLAN.md`, Section A. The `just` commands below now run that new map, and the numbers, districts, bridges, metro and checks below do not describe it.
 
 # Vivad — NCR / Kali Yuga
 
@@ -13,7 +15,7 @@ just ncr-tour            # ten clean in-engine captures in previews/ncr
 just ncr-walk            # physics checks of bridges, stairs and interiors
 just ncr-sim 1 15        # complete headless match
 cargo run --release -p shared --bin ncr_atlas
-just play               # Connaught Place (the default map)
+just play               # the NCR, the default map (just play map=cp for Connaught Place alone)
 ```
 
 The new version is selected by `VIVAD_MAP=ncr`. Both online peers must select it; join codes reject a mismatched map choice. Regenerate old invitation codes after this protocol change. No original map assets are overwritten.

@@ -71,7 +71,8 @@ shimmering as the camera drifts, so look at where it is before calling it z-figh
 **Bot skill.** Bots are `chill` by default (loose aim, about a second and a half to react, an
 archer picks fights within 35 m, they attack only half the time once engaged, sidestep lazily,
 walk instead of sprinting unless the zone presses, and stand about 3-9 s wherever they arrive);
-`VIVAD_BOT_SKILL=normal` brings back the sharp ones, `VIVAD_BOTS=n` sets how many. Every bot
+`VIVAD_BOT_SKILL=normal` brings back the sharp ones, `VIVAD_BOTS=n` sets how many (63 on the
+NCR, so a match is 64 warriors, and 15 on a small map). Every bot
 loots first: for 75 s after landing (30 s for the sharp ones) it fights only whoever hits it,
 leaps for a landing no one else is making for, and leaves the chests others stand by; and below
 40 health it breaks off and runs for the far side of a block, unless the ring is at its back or
@@ -79,10 +80,40 @@ too small to run in. That is what makes a sixteen-warrior match on Connaught Pla
 to eight minutes instead of four. Looting itself: a find at a bot's feet (14 m) is taken on the
 way, otherwise the nearest chest comes before any find across the street; goli only while under
 120; no upstairs urns until the grace is over; a jog between chests; one short rest per chest
-(1.5-3.5 s), none at a find, and a stand-about only at a wander spot. `sim` reports it: an
-"armed" line (warriors holding a gun by 60 s and 90 s, the stragglers by name), "chests opened
-N/T", "pickups taken". Connaught Place at map seed 7 has 147 chests (103 ring Peti facing their
+(1.5-3.5 s), none at a find, and a stand-about only at a wander spot. On the NCR a bot stays out
+until the last it can sprint in ahead of the ring, and every decision about the ring has two
+limits, so walking in doesn't undo the decision to walk in. `sim` reports it: an "armed" line
+(warriors holding a gun by 60 s and 90 s and within 60 s of landing, the stragglers by name),
+"chests opened N/T", "pickups taken", "dither" (bots out of a fight whose goal changed 8 times in
+10 s: they keep moving, so "stuck" can't see them; `FLIPS=1` prints what each was about), and "ring
+burnt" (how many warriors the ring touched, and for how much). Deaths are counted as weapon,
+Aandhi or own gun. Connaught Place at map seed 7 has 147 chests (103 ring Peti facing their
 shop fronts, 26 upstairs Kalash, 18 at building feet) and 102 floor-find spots.
+
+**The NCR map.** Text first, as with the rest. `just ncr-walk` walks the warrior's real capsule
+over every bridge both ways, through the ridge's three passes and over its crest, across the
+Yamuna on foot, through the streets from Connaught Place to Chandni Chowk and in by a district's
+gate, in about two minutes, then counts which districts can be walked to from Connaught Place. At
+the top it prints how far each bridge's deck stands over the ground at its ends: a warrior jumps
+1.3 m. `ONLY=bridge just ncr-walk` runs a few walks, `TRACE=<word>` prints those walkers' positions,
+and a failed walk says what stands by its first snag. `just ncr-map-check` prints what the map holds,
+and `cargo run --release -p shared --bin ncr_map_check -- --at x z radius` lists what stands there.
+`just ncr-tour` shoots every view, `VIVAD_TOUR_ONLY=bridge,10_` a few of them, and `just
+ncr-atlas` draws the whole map as an SVG with loot and bridges on it; give it a scratch path while
+checking. `just ncr-sim 1 15` plays a headless match.
+
+The NCR is the default map, so `just sim`, `just peers`, `just net` and `just p2p` run on it; a whole
+NCR match takes up to about 900 game seconds, which is why `net` and `p2p` now allow 1000.
+`just tour`, `perf`, `flicker`, `zfight`, `seeds` and `armoury` stay on Connaught Place unless
+`VIVAD_MAP` says otherwise, because their views and seeds are the small maps'.
+
+**The map on screen.** `cargo test -p game --lib hud` covers the zoom, the drag and the free cursor
+without a game. `just ncr-hud` plays a real autopilot match on NCR and shoots the corner map at each
+zoom and the whole map at each zoom, with the keys pressed for it by `VIVAD_SHOTS_KEYS=m:116,n:120`.
+`VIVAD_HUD_IMAGE=1` draws the HUD to an image instead of the window, so these shots keep the HUD
+even with the window hidden, while the window itself stays empty. The log says how long the picture took to bake (`map picture baked in`)
+and names each place as the player comes into it (`coming into`). Dragging and the wheel by hand are
+for a person to try.
 
 **Map seeds.** `VIVAD_MAP_SEED` (or `just play <seed>`, `just play random`) picks the map; every
 check here takes it too, and seed 7 is the default. The seed changes the hills, groves, villages,

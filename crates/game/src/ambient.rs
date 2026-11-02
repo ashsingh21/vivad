@@ -134,14 +134,21 @@ fn bird_mesh() -> Mesh {
         .with_inserted_indices(Indices::U32(vec![0, 1, 2, 1, 0, 3]))
 }
 
+/// The half size of the map 18 kites and 3 flocks were set for, and the most times over a big map
+/// gets that many.
+const KITE_MAP_HALF: f32 = 250.0;
+const MOST_SKIES: usize = 12;
+
 const KITE_COLOURS: [(f32, f32, f32); 6] = [(0.95, 0.20, 0.25), (0.98, 0.75, 0.10), (0.20, 0.55, 0.95), (0.25, 0.75, 0.30), (0.95, 0.45, 0.10), (0.85, 0.25, 0.75)];
 
 fn spawn_sky(mut commands: Commands, layout: Res<MapLayout>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
-    // Delhi's sky only.
-    if layout.style != shared::map::MapStyle::City || layout.footprints.is_empty() {
+    // Over a city only.
+    if layout.footprints.is_empty() {
         return;
     }
     let half = layout.half_extent;
+    // As many over each part of a big map as over a small one, or nobody would ever see one.
+    let spread = ((half / KITE_MAP_HALF).powi(2).round() as usize).clamp(1, MOST_SKIES);
     let kite = meshes.add(kite_mesh());
     let bird = meshes.add(bird_mesh());
     let mut s = 0x1234_5678u32 ^ layout.name.len() as u32;
@@ -151,10 +158,15 @@ fn spawn_sky(mut commands: Commands, layout: Res<MapLayout>, mut meshes: ResMut<
         s ^= s << 5;
         (s % 10_000) as f32 / 10_000.0
     };
-    for k in 0..18 {
-        let (r, g, b) = KITE_COLOURS[k % KITE_COLOURS.len()];
-        let mat = materials.add(StandardMaterial { base_color: Color::srgb(r, g, b), double_sided: true, cull_mode: None, perceptual_roughness: 0.8, ..default() });
-        let anchor = Vec3::new((rnd() * 2.0 - 1.0) * half, 30.0 + rnd() * 30.0, (rnd() * 2.0 - 1.0) * half);
+    let colours = KITE_COLOURS.map(|(r, g, b)| materials.add(StandardMaterial { base_color: Color::srgb(r, g, b), double_sided: true, cull_mode: None, perceptual_roughness: 0.8, ..default() }));
+    for k in 0..18 * spread {
+        let mat = colours[k % colours.len()].clone();
+        let mut anchor = Vec3::new((rnd() * 2.0 - 1.0) * half, 30.0 + rnd() * 30.0, (rnd() * 2.0 - 1.0) * half);
+        // Flown from roofs: on a big map, over its districts and not its empty land.
+        if spread > 1 {
+            let roof = layout.footprints[(rnd() * layout.footprints.len() as f32) as usize % layout.footprints.len()].pts[0];
+            anchor = Vec3::new(roof.x, anchor.y, roof.y);
+        }
         commands.spawn((
             Kite { anchor, phase: rnd() * TAU, speed: 0.25 + rnd() * 0.3 },
             Mesh3d(kite.clone()),
@@ -165,8 +177,12 @@ fn spawn_sky(mut commands: Commands, layout: Res<MapLayout>, mut meshes: ResMut<
         ));
     }
     let grey = materials.add(StandardMaterial { base_color: Color::srgb(0.32, 0.33, 0.36), double_sided: true, cull_mode: None, perceptual_roughness: 0.9, ..default() });
-    for _ in 0..3 {
-        let centre = Vec3::new((rnd() * 2.0 - 1.0) * half * 0.7, 22.0 + rnd() * 12.0, (rnd() * 2.0 - 1.0) * half * 0.7);
+    for _ in 0..3 * spread {
+        let mut centre = Vec3::new((rnd() * 2.0 - 1.0) * half * 0.7, 22.0 + rnd() * 12.0, (rnd() * 2.0 - 1.0) * half * 0.7);
+        if spread > 1 {
+            let roof = layout.footprints[(rnd() * layout.footprints.len() as f32) as usize % layout.footprints.len()].pts[0];
+            centre = Vec3::new(roof.x, centre.y, roof.y);
+        }
         let (radius, speed) = (14.0 + rnd() * 10.0, 0.35 + rnd() * 0.15);
         for _ in 0..14 {
             commands.spawn((

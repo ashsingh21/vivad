@@ -7,7 +7,7 @@ use std::f32::consts::FRAC_PI_2;
 
 use bevy::prelude::*;
 use rand::RngExt;
-use rand::rngs::SmallRng;
+use crate::SmallRng;
 
 use super::build::{Builder, Frame, Opening};
 use super::{ChestKind, Mat};

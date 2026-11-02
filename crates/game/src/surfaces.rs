@@ -461,7 +461,7 @@ fn ground_mask(t: &Terrain) -> Image {
         for j in 0..n {
             let share = match t.ground.get(i * n + j).copied().unwrap_or(ground::PAVEMENT) {
                 ground::ROAD | ground::PARKING => [255, 0, 0],
-                ground::PARK | ground::PATH | ground::WATER => [0, 0, 255],
+                ground::PARK | ground::PATH | ground::WATER | ground::OPEN | ground::SAND => [0, 0, 255],
                 _ => [0, 255, 0],
             };
             data[(j * n + i) * 4..(j * n + i) * 4 + 3].copy_from_slice(&share);
@@ -502,8 +502,11 @@ fn sync_ground(
                 if state.ground.is_none() {
                     let (Some(t), Some(base)) = (state.textures.as_ref(), standard.get(&plain.0)) else { continue };
                     let mut base = base.clone();
-                    // Its only use is the sampler: see `GroundSurfaces`.
-                    base.base_color_texture = Some(t.white.clone());
+                    // A big map's paint stays (crate::visuals::ground: it has this sampler's
+                    // settings). Otherwise the image's only use is the sampler: see `GroundSurfaces`.
+                    if base.base_color_texture.is_none() {
+                        base.base_color_texture = Some(t.white.clone());
+                    }
                     let extension = GroundSurfaces {
                         place: mask_place(&layout.terrain),
                         mask: images.add(ground_mask(&layout.terrain)),

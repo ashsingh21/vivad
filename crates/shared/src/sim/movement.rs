@@ -3,7 +3,10 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-use super::{CAPSULE_LENGTH, CAPSULE_RADIUS, DamageCause, DamageMsg, Eliminated, Kinematic, MoveMode, PlayerIntent, SimSet, btn, solid_mask};
+use super::flow::Rules;
+use super::{CAPSULE_LENGTH, CAPSULE_RADIUS, DamageCause, DamageMsg, Eliminated, HALF_HEIGHT, Kinematic, MoveMode, PlayerIntent, SimSet, btn, solid_mask};
+use crate::map::MapLayout;
+use crate::map::terrain::ground;
 
 pub const GRAVITY: f32 = 22.0;
 pub const JUMP_SPEED: f32 = 7.6;
@@ -18,6 +21,8 @@ pub const GLIDE_FALL: f32 = 6.5;
 pub const GLIDE_HORIZ: f32 = 14.0;
 /// Glider opens automatically at this height above ground.
 pub const AUTO_GLIDE_HEIGHT: f32 = 40.0;
+/// Above this height a warrior can open the glider by hand.
+pub const OPEN_GLIDE_HEIGHT: f32 = 12.0;
 /// Landing faster than this hurts: a drop of 6.5 m (two storeys) is safe.
 pub const SAFE_LANDING: f32 = 17.0;
 /// Damage per m/s of landing speed over SAFE_LANDING: off a haveli's top roof (11 m) ~30, into
@@ -25,6 +30,25 @@ pub const SAFE_LANDING: f32 = 17.0;
 pub const FALL_DAMAGE: f32 = 6.0;
 /// Steepest walkable slope (cosine of ~48 degrees).
 const MIN_GROUND_NORMAL_Y: f32 = 0.66;
+
+/// How far a warrior carries on the glider alone, opened at `height` above the ground.
+pub fn glide_reach(height: f32) -> f32 {
+    (height - AUTO_GLIDE_HEIGHT).max(0.0) / GLIDE_FALL * GLIDE_HORIZ
+}
+
+/// How far a warrior carries in a dive from `height`, the glider opening by itself at the last.
+pub fn dive_reach(height: f32) -> f32 {
+    let fall = (height - AUTO_GLIDE_HEIGHT).max(0.0);
+    let to_top_speed = FREEFALL_MAX / GRAVITY;
+    let run_up = 0.5 * GRAVITY * to_top_speed * to_top_speed;
+    let seconds = if fall > run_up { to_top_speed + (fall - run_up) / FREEFALL_MAX } else { (2.0 * fall / GRAVITY).sqrt() };
+    seconds * FREEFALL_HORIZ + height.min(AUTO_GLIDE_HEIGHT) / GLIDE_FALL * GLIDE_HORIZ
+}
+
+/// Whether a warrior at `center` has its feet on a river's bed, not on a bridge over it.
+fn wading(layout: &MapLayout, center: Vec3) -> bool {
+    layout.terrain.ground_at(center.x, center.z) == Some(ground::WATER) && center.y - HALF_HEIGHT < layout.terrain.height(center.x, center.z) + 0.5
+}
 
 pub struct MovementPlugin;
 
@@ -75,10 +99,12 @@ fn move_warriors(
     move_and_slide: MoveAndSlide,
     spatial: SpatialQuery,
     time: Res<Time>,
+    layout: Res<MapLayout>,
     mut damage: MessageWriter<DamageMsg>,
 ) {
     let dt = time.delta_secs();
     let config = MoveAndSlideConfig::default();
+    let rules = Rules::of(layout.style);
     for (entity, mut tf, mut kin, intent, collider) in &mut q {
         tf.rotation = intent.body_rotation();
         let wish = wish_dir(intent);
@@ -90,7 +116,7 @@ fn move_warriors(
                 let vy = (kin.velocity.y - GRAVITY * dt).max(-FREEFALL_MAX);
                 kin.velocity = h.with_y(vy);
                 let height = ground_probe(&spatial, tf.translation, entity, 2000.0).map(|h| h.0).unwrap_or(1000.0);
-                if height < AUTO_GLIDE_HEIGHT || (intent.pressed(btn::JUMP) && height > 12.0) {
+                if height < AUTO_GLIDE_HEIGHT || (intent.pressed(btn::JUMP) && height > OPEN_GLIDE_HEIGHT) {
                     kin.mode = MoveMode::Gliding;
                 }
             }
@@ -101,6 +127,14 @@ fn move_warriors(
                 kin.velocity = h.with_y(vy);
             }
             MoveMode::Ground => {
+                // Off a tall roof the glider comes back: by itself when the fall is long, by hand
+                // otherwise. Without it a 60 m tower is a 200 damage death trap.
+                if rules.roof_rescue && !kin.grounded && kin.velocity.y < 0.0 {
+                    let height = ground_probe(&spatial, tf.translation, entity, 2000.0).map_or(1000.0, |h| h.0);
+                    if height > AUTO_GLIDE_HEIGHT || (intent.pressed(btn::JUMP) && height > OPEN_GLIDE_HEIGHT) {
+                        kin.mode = MoveMode::Gliding;
+                    }
+                }
                 let speed = if intent.held(btn::AIM) {
                     AIM_SPEED
                 } else if intent.held(btn::SPRINT) && intent.move_axis.y > 0.3 {
@@ -108,6 +142,7 @@ fn move_warriors(
                 } else {
                     WALK_SPEED
                 };
+                let speed = rules.wade_speed.filter(|_| wading(&layout, tf.translation)).map_or(speed, |w| speed.min(w));
                 let accel = if kin.grounded { GROUND_ACCEL } else { AIR_ACCEL };
                 let h = approach(kin.velocity.with_y(0.0), wish * speed, accel * dt);
                 let mut vy = kin.velocity.y;

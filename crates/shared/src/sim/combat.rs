@@ -571,8 +571,9 @@ fn apply_damage(
         if let Ok(mut door) = doors.get_mut(msg.target) {
             door.hp -= msg.amount;
             outbox.0.push(NetMsg::DoorHit { index: door.index, amount: msg.amount });
+            // Two hits in one tick can both find it broken.
             if door.hp <= 0.0 {
-                commands.entity(msg.target).despawn();
+                commands.entity(msg.target).try_despawn();
             }
             continue;
         }

@@ -1,4 +1,6 @@
 > **Superseded.** The one plan is `docs/PLAN.md` in the vivad repo. This file is kept for reference only.
+>
+> **The fictional-map rule here is overridden (owner, 1 Nov 2026).** NCR is the one final map, built from real OpenStreetMap data, with all the other maps merged in (`docs/PLAN.md`, decision 6 and Section A). Wherever this file says the region is authored, compressed or fictional, or names made-up places such as Ring Bazaar, Meridian Mall or Glass Quarter, read the real map instead. What still holds as reference: the 4 km size, the local layout rules in section 2, the realism targets in section 5 and the budgets in section 6.
 
 # NCR / Kali Yuga — 4 km production map design
 
@@ -6,7 +8,7 @@ Version 1 · 31 October 2026 · **Design blueprint; not integrated into the play
 
 The confirmed brief is a **4,000 × 4,000 metre arena (16 km²)** for Apple Silicon Mac and high-end Android gaming phones. The visual target is grounded contemporary NCR with mythic weapons and readable third-person combat. The map borrows the useful principles of named destinations, contrasting terrain and deliberate rotations from battle royale games; its architecture, routes and artwork are original.
 
-The canonical spatial data is [ncr-4km.plan.json](ncr-4km.plan.json). The [atlas](ncr-4km-atlas.svg) is generated from that data by `tools/maps/ncr_masterplan.py`. It depicts an authored, compressed fictional region, not surveyed city boundaries or the real metro network. All coordinates use metres: east is +X, north is −Z, and the playable bounds are −2,000…+2,000 on each axis.
+The canonical spatial data is [ncr-4km.plan.json](ncr-4km.plan.json). The [atlas](ncr-4km-atlas.svg) is generated from that data by `tools/maps/ncr_masterplan.py`. It depicts an authored, compressed fictional region, not surveyed city boundaries or the real metro network. (Overridden: the map is now real, see the note at the top.) All coordinates use metres: east is +X, north is −Z, and the playable bounds are −2,000…+2,000 on each axis.
 
 ## 1. Scale and match structure
 

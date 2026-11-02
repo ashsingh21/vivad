@@ -2,6 +2,9 @@
 //! (tools/blender/props/street_kit.py) and merged, per 32 m chunk and LOD, into one mesh with one
 //! shared material (the colours are in the vertices). A whole lane of autos, stalls and drums is a
 //! couple of draws (docs/rendering-guidelines.md section 3).
+//!
+//! A big map's kit isn't merged: near the camera each piece is entities sharing the kit's meshes
+//! (crate::batch::near), and past that its cover is boxes in the tiers (crate::buildings::tiers).
 
 use std::collections::HashMap;
 
@@ -11,13 +14,15 @@ use bevy::prelude::*;
 use shared::map::MapLayout;
 use shared::sim::{OfMap, map_reloaded};
 
+use crate::batch::near::{self, Near, NearReset};
+use crate::buildings::tiers;
 use crate::characters::LodRange;
 
 pub struct StreetPlugin;
 
 impl Plugin for StreetPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, load_kit).add_systems(Update, (rebuild.run_if(map_reloaded), build_kit).chain());
+        app.add_systems(Startup, load_kit).add_systems(Update, (rebuild.run_if(map_reloaded), build_kit).chain().after(NearReset));
     }
 }
 
@@ -28,11 +33,11 @@ const SWITCH: f32 = 35.0;
 const FAR: f32 = 140.0;
 
 #[derive(Resource)]
-struct Kit {
+pub(crate) struct Kit {
     file: Handle<Gltf>,
     material: Handle<StandardMaterial>,
     /// Whether this map's pieces have been built.
-    built: bool,
+    pub built: bool,
 }
 
 fn load_kit(mut commands: Commands, assets: Res<AssetServer>, mut materials: ResMut<Assets<StandardMaterial>>) {
@@ -47,13 +52,47 @@ fn rebuild(mut kit: ResMut<Kit>) {
     kit.built = false;
 }
 
-fn build_kit(mut commands: Commands, mut kit: ResMut<Kit>, layout: Res<MapLayout>, gltfs: Res<Assets<Gltf>>, gltf_meshes: Res<Assets<GltfMesh>>, mut meshes: ResMut<Assets<Mesh>>) {
+/// A big map's kit near the camera: LOD1 has no end, as `near` takes the piece away with its cell.
+fn near_kit(near: &mut Near, kit: &Kit, layout: &MapLayout, file: &Gltf, gltf_meshes: &Assets<GltfMesh>) {
+    let mut kinds: HashMap<&str, Option<u32>> = HashMap::new();
+    let ranges = [(0.0..0.0, SWITCH..SWITCH + 6.0), (SWITCH..SWITCH + 6.0, 1.0e5..1.0e5)];
+    for piece in &layout.kit {
+        let kind = *kinds.entry(piece.name).or_insert_with(|| {
+            let parts: Vec<near::Part> = ranges
+                .iter()
+                .enumerate()
+                .filter_map(|(lod, (s, e))| {
+                    let gm = gltf_meshes.get(file.named_meshes.get(format!("{}_LOD{lod}", piece.name).as_str())?)?;
+                    Some(near::Part {
+                        mesh: gm.primitives.first()?.mesh.clone(),
+                        material: kit.material.clone(),
+                        local: Transform::IDENTITY,
+                        range: LodRange(VisibilityRange { start_margin: s.clone(), end_margin: e.clone(), use_aabb: false }, lod),
+                        tag: "near kit",
+                    })
+                })
+                .collect();
+            (!parts.is_empty()).then(|| near.kind(parts))
+        });
+        if let Some(kind) = kind {
+            near.place(kind, Transform::from_translation(piece.pos).with_rotation(Quat::from_rotation_y(piece.yaw)));
+        }
+    }
+    info!("street kit: {} pieces near the camera only", layout.kit.len());
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_kit(mut commands: Commands, mut kit: ResMut<Kit>, layout: Res<MapLayout>, gltfs: Res<Assets<Gltf>>, gltf_meshes: Res<Assets<GltfMesh>>, mut meshes: ResMut<Assets<Mesh>>, mut near: ResMut<Near>) {
     if kit.built {
         return;
     }
     let Some(file) = gltfs.get(&kit.file) else { return };
     kit.built = true;
     if layout.kit.is_empty() {
+        return;
+    }
+    if tiers::big_map(&layout) {
+        near_kit(&mut near, &kit, &layout, file, &gltf_meshes);
         return;
     }
     // Each piece's mesh by name and LOD.

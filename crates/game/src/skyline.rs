@@ -1,5 +1,5 @@
-//! The city past the map's edge: a ring of distant blocks, towers, domes and water tanks on a
-//! ground that runs to the horizon, so a Delhi map looks like part of a city rather than an island
+//! The city past the map's edge: a ring of distant blocks, towers and water tanks on a ground
+//! that runs to the horizon, so a Delhi map looks like part of a city rather than an island
 //! in a desert. One mesh, no shadows: a few thousand triangles for the whole horizon.
 
 use std::f32::consts::TAU;
@@ -8,6 +8,12 @@ use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
 use shared::map::MapLayout;
 use shared::sim::{OfMap, map_reloaded};
+
+/// The ground past the map's edge, sRGB.
+pub(crate) const LAND: [f32; 3] = [0.42, 0.41, 0.40];
+/// How far a big map's ground runs, metres: nearly to the horizon from 500 m up. Further doesn't
+/// help: at 120 km, Ultra's atmosphere tinted the last of it in a purple band along the horizon.
+const HORIZON_RING: f32 = 31_000.0;
 
 pub struct SkylinePlugin;
 
@@ -26,11 +32,12 @@ fn colour(k: usize) -> (f32, f32, f32) {
 }
 
 fn spawn_skyline(mut commands: Commands, layout: Res<MapLayout>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>) {
-    // The India map has its own mountains at the edge.
-    if layout.style != shared::map::MapStyle::City || layout.footprints.is_empty() {
+    // Only a map of buildings stands in a city.
+    if layout.footprints.is_empty() {
         return;
     }
     let t = &layout.terrain;
+    let big = t.n >= crate::visuals::BIG_TERRAIN;
     // The terrain's square ends at its edge: the ground carries on just under its level.
     let edge = t.size * 0.5;
     let mut floor = f32::MAX;
@@ -41,8 +48,12 @@ fn spawn_skyline(mut commands: Commands, layout: Res<MapLayout>, mut meshes: Res
     }
     let floor = floor - 0.4;
     let mut parts: Vec<Mesh> = vec![];
-    let ground = Annulus::new(edge * 0.95, 4000.0).mesh().resolution(96).build();
-    parts.push(paint(ground.rotated_by(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)).translated_by(Vec3::Y * floor), (0.42, 0.41, 0.40)));
+    // On a big map, far enough that from 500 m up its end is all but on the horizon: under the
+    // physical sky of Ultra, what lies past it is the atmosphere's dark underside. It is the one
+    // mesh, and costs no more this wide (the camera's far plane culls whole meshes and cuts none).
+    let ground_ends = if big { HORIZON_RING } else { 4000.0 };
+    let ground = Annulus::new(edge * 0.95, ground_ends).mesh().resolution(96).build();
+    parts.push(paint(ground.rotated_by(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)).translated_by(Vec3::Y * floor), (LAND[0], LAND[1], LAND[2])));
 
     // A cheap seeded random stream, so every peer's horizon is the same.
     let mut s = layout.name.bytes().fold(0x9e37_79b9u32, |h, b| h.rotate_left(5) ^ b as u32);
@@ -55,7 +66,7 @@ fn spawn_skyline(mut commands: Commands, layout: Res<MapLayout>, mut meshes: Res
     // City blocks on a street grid (lanes between them), lower near the map where they fill gaps
     // between its own buildings, taller and sparser farther out where they make the skyline.
     const CELL: f32 = 34.0;
-    let reach = 1100.0;
+    let reach = if big { edge + 1100.0 } else { 1100.0 };
     let cells = (reach / CELL) as i32;
     for gj in -cells..=cells {
         for gi in -cells..=cells {
@@ -84,7 +95,7 @@ fn spawn_skyline(mut commands: Commands, layout: Res<MapLayout>, mut meshes: Res
                     let col = (col.0 + (0.74 - col.0) * k, col.1 + (0.78 - col.1) * k, col.2 + (0.85 - col.2) * k);
                     let base = Vec3::new(c.x, floor, c.y);
                     parts.push(paint_keep_uv(block(w, h, d).translated_by(base), col));
-                    roof_things(&mut parts, &mut rnd, base, w, d, h, col, tall);
+                    roof_things(&mut parts, &mut rnd, base, w, d, h, col);
                 }
             }
         }
@@ -93,6 +104,7 @@ fn spawn_skyline(mut commands: Commands, layout: Res<MapLayout>, mut meshes: Res
     for p in &parts {
         mesh.merge(p).expect("same attributes");
     }
+    mesh.asset_usage = crate::buildings::tiers::usage();
     commands.spawn((
         Mesh3d(meshes.add(mesh)),
         MeshMaterial3d(materials.add(StandardMaterial {
@@ -100,6 +112,7 @@ fn spawn_skyline(mut commands: Commands, layout: Res<MapLayout>, mut meshes: Res
             base_color_texture: Some(images.add({
                 let mut img = crate::buildings::facade_image();
                 crate::buildings::mip_chain(&mut img);
+                img.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
                 img
             })),
             perceptual_roughness: 0.95,
@@ -112,24 +125,14 @@ fn spawn_skyline(mut commands: Commands, layout: Res<MapLayout>, mut meshes: Res
     ));
 }
 
-/// What sits on Delhi's roofs: water tanks, domes and minarets now and then, stair heads.
-#[allow(clippy::too_many_arguments)]
-fn roof_things(parts: &mut Vec<Mesh>, rnd: &mut impl FnMut() -> f32, base: Vec3, w: f32, d: f32, h: f32, col: (f32, f32, f32), tall: bool) {
+/// What sits on Delhi's roofs: water tanks and stair heads. No domes: invented ones read as mosques
+/// and temples that are not there.
+fn roof_things(parts: &mut Vec<Mesh>, rnd: &mut impl FnMut() -> f32, base: Vec3, w: f32, d: f32, h: f32, col: (f32, f32, f32)) {
     let roll = rnd();
     if roll < 0.35 {
         let tank = Cylinder::new(1.2, 2.0).mesh().resolution(8).build();
         let off = Vec3::new((rnd() - 0.5) * w * 0.6, 0.0, (rnd() - 0.5) * d * 0.6);
         parts.push(paint(tank.translated_by(base + off + Vec3::Y * (h + 1.0)), (0.12, 0.12, 0.13)));
-    } else if roll < 0.39 && !tall {
-        let r = w.min(d) * 0.3;
-        let dome = Sphere::new(r).mesh().uv(12, 8);
-        parts.push(paint(dome.scaled_by(Vec3::new(1.0, 1.15, 1.0)).translated_by(base + Vec3::Y * h), (0.86, 0.83, 0.77)));
-        if rnd() < 0.5 {
-            for side in [-1.0, 1.0] {
-                let m = Cylinder::new(0.9, h * 0.7).mesh().resolution(8).build();
-                parts.push(paint(m.translated_by(base + Vec3::new(side * w * 0.45, h * 1.35, 0.0)), (0.80, 0.72, 0.62)));
-            }
-        }
     } else if roll < 0.55 {
         let (pw, pd, ph) = (w * 0.3, d * 0.3, 2.8);
         let off = Vec3::new((rnd() - 0.5) * w * 0.4, 0.0, (rnd() - 0.5) * d * 0.4);

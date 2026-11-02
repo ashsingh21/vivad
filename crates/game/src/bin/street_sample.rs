@@ -117,6 +117,8 @@ fn main() -> AppExit {
         .add_plugins(PhysicsPlugins::default())
         .add_plugins(game::buildings::MaterialMipsPlugin)
         .add_message::<DamageMsg>()
+        // Movement reads the map's rules; an empty layout gives the small maps' ones.
+        .init_resource::<shared::map::MapLayout>()
         .add_plugins(shared::sim::movement::MovementPlugin)
         .add_systems(Startup, (spawn_colliders, setup))
         .add_systems(PreUpdate, input.after(bevy::input::InputSystems))

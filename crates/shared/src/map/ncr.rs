@@ -6,7 +6,8 @@ use super::{
     *,
 };
 use bevy::prelude::*;
-use rand::{RngExt, SeedableRng, rngs::SmallRng};
+use rand::{RngExt, SeedableRng};
+use crate::SmallRng;
 use std::f32::consts::{PI, TAU};
 
 /// Horizontal world scale for the NCR production pass. The original blockout was 1 km
@@ -59,6 +60,7 @@ fn loot(b: &mut Builder, p: Vec3, rare: bool) {
         } else {
             ChestKind::Peti
         },
+        set: None,
     });
 }
 fn line(b: &mut Builder, a: Vec3, c: Vec3, width: f32, height: f32, mat: Mat, solid: bool) {
@@ -90,7 +92,7 @@ fn road(b: &mut Builder, a: Vec2, c: Vec2, width: f32) {
         line(b, (a + roadway_edge).extend(0.075).xzy(), (c + roadway_edge).extend(0.075).xzy(), 0.2, 0.15, Mat::Concrete, false);
 
         // Sidewalk - Clear Path (Concrete) - 2.0m wide
-        let path_offset = roadway_edge + s_dir * (0.2 + 2.0 / 2.0);
+        let path_offset = roadway_edge + s_dir * (0.2 + 1.0);
         line(b, (a + path_offset).extend(0.15).xzy(), (c + path_offset).extend(0.15).xzy(), 2.0, 0.1, Mat::Concrete, false);
 
         // Sidewalk - Furnishing Zone (Concrete) - 1.5m wide

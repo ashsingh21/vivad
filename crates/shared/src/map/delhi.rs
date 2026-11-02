@@ -13,7 +13,7 @@ use std::cmp::Reverse;
 use std::f32::consts::PI;
 
 use bevy::prelude::*;
-use rand::rngs::SmallRng;
+use crate::SmallRng;
 use rand::{RngExt, SeedableRng};
 use serde::Deserialize;
 
@@ -164,18 +164,63 @@ pub(super) fn holy_sites(id: super::MapId) -> &'static [(f32, f32, f32)] {
 pub(super) const HOLY_NAMES: [&str; 5] =
     ["Jain Sweitamna Temple", "Hauz Khas Madrasa West Wing", "Hauz Khas Madrasa North Wing", "Unidentified Tomb", "New City Delhi"];
 
+/// How the NCR map cuts a district down. It is done to the data, before anything is built, so
+/// nothing is left standing on or leaning against a building that is not there.
+pub struct Cut {
+    /// How far out from its middle the district is kept.
+    pub clip: f32,
+    /// At most this many buildings. Those of `big` square metres and up always stay, as they are
+    /// what the place is known by; the rest are thinned so the streets have open ground.
+    pub cap: usize,
+    pub big: f32,
+    /// At most this many houses built to go inside.
+    pub houses: usize,
+    /// About this many street kit pieces.
+    pub kit: usize,
+    /// Loose finds to place.
+    pub floor: usize,
+}
+
+/// One of the four old maps, cut down to a district of the NCR map.
+pub fn generate_cut(id: super::MapId, seed: u64, cut: &Cut) -> MapLayout {
+    generate_from(data(id), Some(id), seed, Some(cut))
+}
+
 pub fn generate(id: super::MapId, seed: u64) -> MapLayout {
-    generate_from(data(id), Some(id), seed)
+    generate_from(data(id), Some(id), seed, None)
 }
 
 /// A district of the NCR map from its converted OpenStreetMap data (tools/osm/ncr.py). It has no
 /// map of its own, so it takes its holy sites from the data.
-pub fn district(json: &str, seed: u64) -> MapLayout {
-    generate_from(json, None, seed)
+pub fn district(json: &str, seed: u64, cut: &Cut) -> MapLayout {
+    generate_from(json, None, seed, Some(cut))
 }
 
-fn generate_from(json: &str, id: Option<super::MapId>, seed: u64) -> MapLayout {
+/// A district's holy sites from its data, as its own x, z and a radius.
+pub(super) fn data_holy(json: &str) -> Vec<(f32, f32, f32)> {
     let data: Data = serde_json::from_str(json).expect("assets/data/maps/*.json");
+    data.holy.iter().map(|s| (s[0], s[1], s[2])).collect()
+}
+
+/// Whole buildings only, as one cut at the edge would show its hollow inside; then the biggest
+/// stay and a seeded draw of the rest.
+fn thin_buildings(data: &mut Data, cut: &Cut, seed: u64) {
+    let area = |b: &Building| {
+        let n = b.pts.len();
+        (0..n).map(|k| v2(&b.pts[k]).perp_dot(v2(&b.pts[(k + 1) % n]))).sum::<f32>().abs() * 0.5
+    };
+    let (mut kept, mut rest): (Vec<Building>, Vec<Building>) = data.buildings.drain(..).filter(|b| b.pts.iter().all(|p| v2(p).abs().max_element() <= cut.clip)).partition(|b| area(b) >= cut.big);
+    super::compose::shuffle(&mut rest, &mut SmallRng::seed_from_u64(seed ^ 0xB11D));
+    rest.truncate(cut.cap.saturating_sub(kept.len()));
+    kept.append(&mut rest);
+    data.buildings = kept;
+}
+
+fn generate_from(json: &str, id: Option<super::MapId>, seed: u64, cut: Option<&Cut>) -> MapLayout {
+    let mut data: Data = serde_json::from_str(json).expect("assets/data/maps/*.json");
+    if let Some(cut) = cut {
+        thin_buildings(&mut data, cut, seed);
+    }
     let mut map = MapLayout { name: data.title.clone().unwrap_or_else(|| "Dilli".into()), half_extent: HALF, ..default() };
     map.terrain = terrain::generate(&TerrainSpec {
         size: 2.0 * HALF + 60.0,
@@ -209,7 +254,10 @@ fn generate_from(json: &str, id: Option<super::MapId>, seed: u64) -> MapLayout {
         }
     }
     water(&mut b, &data);
-    let houses = footprints(&mut b, &mut rng, &data, &ring, id);
+    let houses = footprints(&mut b, &mut rng, &data, &ring, id, cut.map_or(MAX_HOUSES, |c| c.houses));
+    if cut.is_some() {
+        columns(&mut b);
+    }
     trees(&mut b, &mut rng, &data, &ring, &houses);
     let roads: Vec<(Vec<Vec2>, f32, bool)> = data
         .roads
@@ -219,7 +267,11 @@ fn generate_from(json: &str, id: Option<super::MapId>, seed: u64) -> MapLayout {
         .collect();
     super::kit::streets(&mut b, &mut rng, &roads, &houses, HALF);
     super::kit::roofs(&mut b, &mut rng);
-    street_loot(&mut b, &mut rng, &data, &ring, &houses);
+    if let Some(cut) = cut {
+        super::kit::thin(b.map, cut.clip, cut.kit, &mut rng);
+    }
+    let (floor, edge) = cut.map_or((60, HALF), |c| (c.floor, c.clip));
+    street_loot(&mut b, &mut rng, &data, &ring, &houses, floor, edge);
     map.terrain.settle_under(&map.blocks);
     map.pois = data
         .pois
@@ -238,7 +290,26 @@ fn generate_from(json: &str, id: Option<super::MapId>, seed: u64) -> MapLayout {
     let clear = |p: Vec3| sites.iter().all(|&(x, z, r)| p.xz().distance(Vec2::new(x, z)) >= r);
     map.chests.retain(|c| clear(c.pos));
     map.floor_loot.retain(|p| clear(*p));
+    map.holy = sites.iter().map(|&(x, z, r)| (Vec2::new(x, z), r)).collect();
     map
+}
+
+/// Platform canopies come through OpenStreetMap as roofs with nothing under them. Here each stands
+/// on columns, one to every 12 m and one in from each corner.
+fn columns(b: &mut Builder) {
+    const EVERY: f32 = 12.0;
+    let f = Frame::new(Vec3::ZERO, 0.0);
+    let roofs: Vec<(Vec<Vec2>, f32)> = b.map.footprints.iter().filter(|f| f.mat != Mat::Water && f.base > 1.0).map(|f| (f.pts.clone(), f.base)).collect();
+    for (pts, base) in roofs {
+        let (lo, hi) = pts.iter().fold((Vec2::MAX, Vec2::MIN), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+        let c = pts.iter().sum::<Vec2>() / pts.len() as f32;
+        let corners = pts.iter().map(|p| *p + (c - *p).normalize_or_zero() * 0.8);
+        let (nx, nz) = (((hi.x - lo.x) / EVERY) as u32, ((hi.y - lo.y) / EVERY) as u32);
+        let grid = (0..=nx).flat_map(|i| (0..=nz).map(move |j| lo + Vec2::new(i as f32, j as f32) * EVERY));
+        for p in corners.chain(grid).filter(|p| super::footprint::contains(&pts, *p)).collect::<Vec<_>>() {
+            b.cyl(f, Vec3::new(p.x, 0.0, p.y), 0.3, base, Mat::Concrete);
+        }
+    }
 }
 
 /// The water's depth below the street, and where its surface stands.
@@ -383,7 +454,7 @@ fn paint_inner_circle(map: &mut MapLayout, center: Vec2) {
 /// In the old city and the village some of the houses (square ones of up to three storeys) are
 /// built to go inside instead: rooms, stairs to each floor and the roof, a door onto the street
 /// (crate::map::india::house). Their outlines are returned, to keep trees and finds out of them.
-fn footprints(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp::Ring, id: Option<super::MapId>) -> Vec<Vec<Vec2>> {
+fn footprints(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp::Ring, id: Option<super::MapId>, max_houses: usize) -> Vec<Vec<Vec2>> {
     let palette = [Mat::Plaster, Mat::Plaster, Mat::PlasterOchre, Mat::Sandstone, Mat::RedSandstone, Mat::Brick];
     // The old city's and the village's houses: limewashed in white, ochre and blue, or bare brick.
     let houses = [Mat::Plaster, Mat::PlasterOchre, Mat::PlasterBlue, Mat::Brick, Mat::PlasterOchre];
@@ -405,7 +476,7 @@ fn footprints(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp
             && matches!(bld.kind.as_str(), "infill" | "house" | "residential" | "apartments" | "yes")
             && (1..=3).contains(&floors)
             && c.abs().max_element() < HALF - 6.0
-            && entered.len() < MAX_HOUSES
+            && entered.len() < max_houses
             && rng.random_bool(0.4)
             && let Some((front, w, d)) = enterable(&pts, b.map)
         {
@@ -552,7 +623,7 @@ fn trees(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp::Rin
 
 /// Loose finds along the pavements and in the parks, and chests in the open where a map has too
 /// few buildings to stand them by (India Gate's lawns).
-fn street_loot(b: &mut Builder, rng: &mut SmallRng, _data: &Data, ring: &super::cp::Ring, houses: &[Vec<Vec2>]) {
+fn street_loot(b: &mut Builder, rng: &mut SmallRng, _data: &Data, ring: &super::cp::Ring, houses: &[Vec<Vec2>], floor: usize, edge: f32) {
     let w = Frame::new(Vec3::ZERO, 0.0);
     let mut tries = 0;
     while b.map.chests.len() < 70 && tries < 5000 {
@@ -564,9 +635,9 @@ fn street_loot(b: &mut Builder, rng: &mut SmallRng, _data: &Data, ring: &super::
     }
     let mut placed = 0;
     let mut tries = 0;
-    while placed < 60 && tries < 5000 {
+    while placed < floor && tries < 5000 {
         tries += 1;
-        let p = Vec2::new(rng.random_range(-HALF + 6.0..HALF - 6.0), rng.random_range(-HALF + 6.0..HALF - 6.0));
+        let p = Vec2::new(rng.random_range(-edge + 6.0..edge - 6.0), rng.random_range(-edge + 6.0..edge - 6.0));
         if open(b.map, ring, houses, p, 1.0) {
             b.loot(w, Vec3::new(p.x, 0.3, p.y));
             placed += 1;

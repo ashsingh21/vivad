@@ -47,6 +47,10 @@ pub(crate) fn parse_hour(s: &str) -> Option<f32> {
     hour.is_finite().then(|| hour.rem_euclid(24.0))
 }
 
+mod ground;
+
+pub(crate) use ground::BIG_TERRAIN;
+
 pub struct VisualsPlugin;
 
 impl Plugin for VisualsPlugin {
@@ -558,6 +562,7 @@ fn contact_shade(layout: &shared::map::MapLayout) -> Vec<f32> {
     shade
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dress_terrain(
     assets: Res<AssetServer>,
     mut commands: Commands,
@@ -566,6 +571,7 @@ fn dress_terrain(
     scale: Res<crate::quality::LodScale>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     use bevy::asset::RenderAssetUsages;
     use bevy::camera::visibility::VisibilityRange;
@@ -573,6 +579,10 @@ fn dress_terrain(
     for e in &q {
         let t = &layout.terrain;
         let n = t.n;
+        if n >= ground::BIG_TERRAIN {
+            ground::spawn(&mut commands, e, &layout, scale.0, &mut meshes, &mut materials, &mut images);
+            continue;
+        }
         let ncr = layout.style == shared::map::MapStyle::Ncr;
         // The NCR arena's ground is textured (assets/textures/ncr); the rest is vertex-painted only.
         let material = materials.add(StandardMaterial {

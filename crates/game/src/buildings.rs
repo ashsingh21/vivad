@@ -4,7 +4,8 @@
 //! on the simulation's per-block entities.
 //!
 //! Each chunk is built twice: in full, and for past `FAR_CHUNK` with coarser domes and columns and
-//! without the smallest trim blocks.
+//! without the smallest trim blocks. A big map is built differently past its near chunks, in
+//! distance tiers (crate::buildings::tiers).
 //!
 //! The materials made here are the lower levels' look; the ones with an Ultra look are registered
 //! with crate::surfaces, which changes them when that level shows. Every merged mesh has tangents
@@ -20,6 +21,8 @@ use shared::map::{Block, MapLayout, Mat, Shape};
 use shared::sim::{OfMap, map_reloaded};
 
 use crate::surfaces::{Surface, SurfacesPlugin, UltraSurfaces};
+
+pub mod tiers;
 
 const CHUNK: f32 = 64.0;
 /// Where a chunk's coarse LOD takes over, from its centre (scaled by quality: crate::quality::LodScale).
@@ -37,7 +40,8 @@ pub struct MaterialMipsPlugin;
 impl Plugin for MaterialMipsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PendingMips>()
-            .add_systems(Update, (queue_model_mips, mipmap_textures).chain());
+            .add_systems(Update, mipmap_textures)
+            .add_systems(Last, (gpu_only_images, gpu_only_meshes));
     }
 }
 
@@ -45,7 +49,8 @@ impl Plugin for BuildingsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(SurfacesPlugin)
             .add_systems(Startup, build_chunks)
-            .add_systems(Update, (build_chunks.run_if(map_reloaded), queue_model_mips, mipmap_textures).chain());
+            .add_systems(Update, (build_chunks.run_if(map_reloaded), mipmap_textures).chain())
+            .add_systems(Last, (gpu_only_images, gpu_only_meshes));
     }
 }
 
@@ -157,11 +162,27 @@ impl MeshBuf {
 
     /// A box of one colour, for clutter: centre, rotation about Y, full size.
     fn solid_box(&mut self, c: Vec3, rot: Quat, size: Vec3, col: [f32; 4]) {
+        for face in BOX_FACES {
+            self.box_face(c, rot, size, face, col);
+        }
+    }
+
+    /// One face of a box: its normal and the two directions across it.
+    fn box_face(&mut self, c: Vec3, rot: Quat, size: Vec3, (n, u, v): (Vec3, Vec3, Vec3), col: [f32; 4]) {
         let h = size * 0.5;
-        for (n, u, v) in [(Vec3::X, Vec3::NEG_Z, Vec3::Y), (Vec3::NEG_X, Vec3::Z, Vec3::Y), (Vec3::Y, Vec3::X, Vec3::NEG_Z), (Vec3::NEG_Y, Vec3::X, Vec3::Z), (Vec3::Z, Vec3::X, Vec3::Y), (Vec3::NEG_Z, Vec3::NEG_X, Vec3::Y)] {
-            let (cn, eu, ev) = (n * h, u * u.abs().dot(h), v * v.abs().dot(h));
-            let p = [cn - eu - ev, cn + eu - ev, cn + eu + ev, cn - eu + ev].map(|q| c + rot * q);
-            self.quad_col(p, rot * n, [Vec2::ZERO; 4], [col; 4]);
+        let (cn, eu, ev) = (n * h, u * u.abs().dot(h), v * v.abs().dot(h));
+        let p = [cn - eu - ev, cn + eu - ev, cn + eu + ev, cn - eu + ev].map(|q| c + rot * q);
+        self.quad_col(p, rot * n, [Vec2::ZERO; 4], [col; 4]);
+    }
+
+    /// A window's sill or lintel on a big map, which has hundreds of thousands: `prism` without its
+    /// chamfers and without the back against the wall, `out` being the way the wall faces. 20
+    /// vertices to its 48, with the same shaded underside.
+    fn ledge(&mut self, c: Vec3, rot: Quat, size: Vec3, out: Vec3, col: [f32; 4]) {
+        let back = if (rot * Vec3::Z).dot(out) >= 0.0 { Vec3::NEG_Z } else { Vec3::Z };
+        for face in BOX_FACES.into_iter().filter(|f| f.0 != back) {
+            let shade = if face.0 == Vec3::NEG_Y { 0.6 } else { 1.0 };
+            self.box_face(c, rot, size, face, shaded(col, shade));
         }
     }
 
@@ -186,10 +207,7 @@ impl MeshBuf {
             let n = rot * Vec3::new(0.0, -(s1.0 - s0.0), s1.1 - s0.1).normalize();
             // Undersides in their own shadow (baked occlusion): a ledge reads as a ledge.
             let k = if n.y < -0.5 { 0.6 } else if n.y < -0.1 { 0.8 } else { 1.0 };
-            // Warmed a touch as it darkens: lit only by the blue sky, it would read as blue paint.
-            let w = 1.0 - k;
-            let c = [col[0] * k * (1.0 + 0.3 * w), col[1] * k, col[2] * k * (1.0 - 0.4 * w), col[3]];
-            self.quad_col([at(-l, s0), at(l, s0), at(l, s1), at(-l, s1)], n, [Vec2::ZERO; 4], [c; 4]);
+            self.quad_col([at(-l, s0), at(l, s0), at(l, s1), at(-l, s1)], n, [Vec2::ZERO; 4], [shaded(col, k); 4]);
         }
         for (x, n) in [(l, Vec3::X), (-l, Vec3::NEG_X)] {
             let base = self.pos.len() as u32;
@@ -379,8 +397,13 @@ impl MeshBuf {
     fn into_mesh(self) -> (Mesh, Vec3) {
         let (lo, hi) = self.pos.iter().fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| (lo.min(Vec3::from(*p)), hi.max(Vec3::from(*p))));
         let c = (lo + hi) / 2.0;
+        (self.into_mesh_at(c), c)
+    }
+
+    /// The mesh, with its vertices relative to `c`.
+    fn into_mesh_at(self, c: Vec3) -> Mesh {
         let pos: Vec<[f32; 3]> = self.pos.iter().map(|p| (Vec3::from(*p) - c).to_array()).collect();
-        let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        let mut m = Mesh::new(PrimitiveTopology::TriangleList, tiers::usage())
             .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
             .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.nrm)
             .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, self.uv)
@@ -389,7 +412,7 @@ impl MeshBuf {
             m.insert_attribute(Mesh::ATTRIBUTE_COLOR, self.col);
         }
         let _ = m.generate_tangents();
-        (m, c)
+        m
     }
 }
 
@@ -432,6 +455,87 @@ const TRIM_WHITE: [f32; 3] = [0.97, 0.94, 0.88];
 const PARAPET: (f32, f32) = (0.9, 0.3);
 /// Half the width of a corner pilaster: clear of the parapet and coping behind it, so no faces meet.
 const PILASTER: f32 = 0.38;
+
+/// How many storeys up a building's window sills and lintels go on a big map, where they were two
+/// thirds of the whole map's near detail: from the street only the lowest ones show, and the wall's
+/// texture has the rest.
+const SILL_STOREYS: i32 = 4;
+
+/// A box's faces, each a normal and the two directions across it.
+const BOX_FACES: [(Vec3, Vec3, Vec3); 6] = [
+    (Vec3::X, Vec3::NEG_Z, Vec3::Y),
+    (Vec3::NEG_X, Vec3::Z, Vec3::Y),
+    (Vec3::Y, Vec3::X, Vec3::NEG_Z),
+    (Vec3::NEG_Y, Vec3::X, Vec3::Z),
+    (Vec3::Z, Vec3::X, Vec3::Y),
+    (Vec3::NEG_Z, Vec3::NEG_X, Vec3::Y),
+];
+
+/// A colour in shade `k`, warmed a touch as it darkens: lit only by the blue sky, it would read as
+/// blue paint.
+fn shaded(col: [f32; 4], k: f32) -> [f32; 4] {
+    let w = 1.0 - k;
+    [col[0] * k * (1.0 + 0.3 * w), col[1] * k, col[2] * k * (1.0 - 0.4 * w), col[3]]
+}
+
+/// The colour `c` (sRGB) as a vertex colour.
+fn lin(c: [f32; 3]) -> [f32; 4] {
+    let l = Color::srgb(c[0], c[1], c[2]).to_linear();
+    [l.red, l.green, l.blue, 1.0]
+}
+
+/// The colour of a bare brick or stone facade, which is the facade material's own.
+fn bare_tint(m: Mat) -> Color {
+    match m {
+        Mat::PlasterOchre => Color::srgb(0.95, 0.76, 0.48),
+        Mat::Sandstone => Color::srgb(0.85, 0.68, 0.50),
+        Mat::RedSandstone => Color::srgb(0.78, 0.45, 0.36),
+        Mat::Brick => Color::srgb(0.70, 0.40, 0.30),
+        _ => Color::srgb(0.97, 0.95, 0.90),
+    }
+}
+
+/// A brick or stone building keeps its material's own colour; the rest take one from the palette.
+fn bare(m: Mat) -> bool {
+    matches!(m, Mat::Brick | Mat::RedSandstone | Mat::Sandstone)
+}
+
+/// How one building is painted, the same at every distance: each a little different, lighter or
+/// darker, warmer or cooler, picked from where it stands.
+struct Paint {
+    seed: u32,
+    /// Plastered walls take a colour from the palette; brick and stone keep their own (the
+    /// material's tint).
+    wall: [f32; 3],
+    value: f32,
+    /// Trim mostly white; now and then the wall's own colour, deeper.
+    trim: [f32; 4],
+}
+
+impl Paint {
+    /// The paint of a building of material `mat` centred on `c`.
+    fn of(c: Vec2, mat: Mat) -> Self {
+        let seed = (c.x * 7.3 + c.y * 13.1).to_bits();
+        let r = |k: u32| hash01(seed, k, 11);
+        let painted = !bare(mat);
+        let wall = if painted { WALLS[(r(4) * WALLS.len() as f32) as usize % WALLS.len()] } else { [1.0; 3] };
+        let trim = if r(5) < 0.75 || !painted { lin(TRIM_WHITE) } else { lin(wall.map(|c| c * 0.78)) };
+        Paint { seed, wall, value: 0.96 + 0.06 * r(1), trim }
+    }
+
+    /// One of this building's random numbers, 0..1.
+    fn r(&self, k: u32) -> f32 {
+        hash01(self.seed, k, 11)
+    }
+
+    /// The wall's colour at a shade. Darker toward the street, and cooler there, as if in the
+    /// lane's blue shade.
+    fn wall_at(&self, shade: f32) -> [f32; 4] {
+        let cool = (1.0 - shade).max(0.0) * 0.25;
+        let l = Color::srgb(self.wall[0] * self.value * shade, self.wall[1] * self.value * shade, self.wall[2] * self.value * (shade + cool)).to_linear();
+        [l.red, l.green, l.blue, 1.0]
+    }
+}
 
 /// A cheap hash of a few integers to 0..1, for texture detail that doesn't repeat by the pixel.
 fn hash01(a: u32, b: u32, c: u32) -> f32 {
@@ -592,10 +696,12 @@ fn build_footprints(
     roof: Handle<StandardMaterial>,
     signs_tex: Handle<Image>,
     ultra: &mut UltraSurfaces,
-) {
+    scale: f32,
+) -> Option<Handle<Image>> {
     if layout.footprints.is_empty() {
-        return;
+        return None;
     }
+    let big = tiers::big_map(layout);
     let facade = images.add(facade_image());
     let shopfront = images.add(shop_image());
     pending.0.push(facade.clone());
@@ -625,20 +731,9 @@ fn build_footprints(
     }
     let roof_at = |p: Vec2| to_cell(p).map_or(0.0, |k| solid[k]);
     let occupied = |p: Vec2| roof_at(p) > 0.0;
-    let lin = |c: [f32; 3]| {
-        let l = Color::srgb(c[0], c[1], c[2]).to_linear();
-        [l.red, l.green, l.blue, 1.0]
-    };
     let mut clutter: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     let mut trims: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     let mut signs: HashMap<(i32, i32), MeshBuf> = HashMap::new();
-    let tint = |m: Mat| match m {
-        Mat::PlasterOchre => Color::srgb(0.95, 0.76, 0.48),
-        Mat::Sandstone => Color::srgb(0.85, 0.68, 0.50),
-        Mat::RedSandstone => Color::srgb(0.78, 0.45, 0.36),
-        Mat::Brick => Color::srgb(0.70, 0.40, 0.30),
-        _ => Color::srgb(0.97, 0.95, 0.90),
-    };
     let mut walls: HashMap<(i32, i32, Mat, bool), MeshBuf> = HashMap::new();
     let mut roofs: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     let mut water = MeshBuf::default();
@@ -660,22 +755,10 @@ fn build_footprints(
             }
             continue;
         }
-        // Each building a little different: lighter or darker, warmer or cooler.
-        let seed = (c.x * 7.3 + c.y * 13.1).to_bits();
-        let r = |k: u32| hash01(seed, k, 11);
-        // Plastered walls take a colour from the palette; brick and stone keep their own (the
-        // material's tint).
-        let painted = !matches!(fp.mat, Mat::Brick | Mat::RedSandstone | Mat::Sandstone);
-        let wall = if painted { WALLS[(r(4) * WALLS.len() as f32) as usize % WALLS.len()] } else { [1.0; 3] };
-        let v = 0.96 + 0.06 * r(1);
-        // Darker toward the street, and cooler there, as if in the lane's blue shade.
-        let tint_at = |shade: f32| {
-            let cool = (1.0 - shade).max(0.0) * 0.25;
-            let l = Color::srgb(wall[0] * v * shade, wall[1] * v * shade, wall[2] * v * (shade + cool)).to_linear();
-            [l.red, l.green, l.blue, 1.0]
-        };
-        // Trim mostly white; now and then the wall's own colour, deeper.
-        let trim = if r(5) < 0.75 || !painted { lin(TRIM_WHITE) } else { lin(wall.map(|c| c * 0.78)) };
+        let paint = Paint::of(c, fp.mat);
+        let (seed, trim) = (paint.seed, paint.trim);
+        let r = |k: u32| paint.r(k);
+        let tint_at = |shade: f32| paint.wall_at(shade);
         let height = fp.top - fp.base;
         // A row of shops along the street when there's a storey to spare above them.
         let shops = height > STOREY * 1.6 && r(3) < 0.8;
@@ -741,6 +824,7 @@ fn build_footprints(
                 let first = ((along + 0.6) / BAY).ceil() as i32;
                 let last = ((along + len - 0.6) / BAY).floor() as i32;
                 let storeys = ((fp.top - fp.base) / STOREY + 0.01).floor() as i32;
+                let storeys = if big { storeys.min(SILL_STOREYS + 1) } else { storeys };
                 for bay in first..last {
                     let s = (bay as f32 + 0.5) * BAY - along;
                     for st in 1..storeys {
@@ -750,12 +834,18 @@ fn build_footprints(
                         }
                         // The texture's two-by-two repeat: which of its windows this is.
                         let kind = [[0, 2], [3, 1]][(st % 2 == 0) as usize][bay.rem_euclid(2) as usize];
-                        if kind == 3 {
-                            k.prism(at(s, floor + 0.62) + out * 0.27, rot, Vec3::new(2.1, 0.14, 0.6), 0.04, trim);
+                        let (sill, lintel) = if kind == 3 {
+                            ((at(s, floor + 0.62) + out * 0.27, Vec3::new(2.1, 0.14, 0.6)), (at(s, floor + 3.0) + out * 0.06, Vec3::new(1.75, 0.16, 0.2)))
                         } else {
-                            k.prism(at(s, floor + 0.84) + out * 0.08, rot, Vec3::new(1.75, 0.14, 0.24), 0.04, trim);
+                            ((at(s, floor + 0.84) + out * 0.08, Vec3::new(1.75, 0.14, 0.24)), (at(s, floor + 3.0) + out * 0.06, Vec3::new(1.75, 0.16, 0.2)))
+                        };
+                        for (place, size) in [sill, lintel] {
+                            if big {
+                                k.ledge(place, rot, size, out, trim);
+                            } else {
+                                k.prism(place, rot, size, 0.04, trim);
+                            }
                         }
-                        k.prism(at(s, floor + 3.0) + out * 0.06, rot, Vec3::new(1.75, 0.16, 0.2), 0.04, trim);
                     }
                 }
             }
@@ -899,13 +989,13 @@ fn build_footprints(
         }
     }
     let mut facade_mats: HashMap<(Mat, bool), Handle<StandardMaterial>> = HashMap::new();
-    for ((_, _, mat, shop), buf) in walls {
+    for ((cx, cz, mat, shop), buf) in walls {
         let texture = if shop { shopfront.clone() } else { facade.clone() };
         let m = facade_mats
             .entry((mat, shop))
             .or_insert_with(|| {
-                let bare = matches!(mat, Mat::Brick | Mat::RedSandstone | Mat::Sandstone);
-                let handle = materials.add(StandardMaterial { base_color: if bare { tint(mat) } else { Color::WHITE }, base_color_texture: Some(texture), perceptual_roughness: 0.85, ..default() });
+                let bare = bare(mat);
+                let handle = materials.add(StandardMaterial { base_color: if bare { bare_tint(mat) } else { Color::WHITE }, base_color_texture: Some(texture), perceptual_roughness: 0.85, ..default() });
                 // Brick and stone facades wait for the other maps (docs/PLAN.md, phase 2).
                 if shop {
                     ultra.add(handle.clone(), Surface::Shop);
@@ -915,6 +1005,10 @@ fn build_footprints(
                 handle
             })
             .clone();
+        if big {
+            tiers::spawn_near(commands, meshes, buf, m, (cx, cz), scale);
+            continue;
+        }
         let (mesh, centre) = buf.into_mesh();
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(m), Transform::from_translation(centre), OfMap));
     }
@@ -926,27 +1020,35 @@ fn build_footprints(
             continue;
         }
         let range = crate::characters::LodRange(near.clone(), 0);
-        let (mesh, centre) = buf.into_mesh();
-        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(plain.clone()), Transform::from_translation(centre), range.0.clone(), range, OfMap));
+        let (mesh, centre) = if big { buf.into_plain_mesh() } else { buf.into_mesh() };
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(plain.clone()), Transform::from_translation(centre), range.0.clone(), range, crate::batch::probe::Tagged("clutter"), OfMap));
     }
     let lettered = materials.add(StandardMaterial { base_color: Color::WHITE, base_color_texture: Some(signs_tex), perceptual_roughness: 0.6, ..default() });
     for (_, buf) in signs {
         let range = crate::characters::LodRange(near.clone(), 0);
         let (mesh, centre) = buf.into_mesh();
-        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(lettered.clone()), Transform::from_translation(centre), range.0.clone(), range, OfMap));
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(lettered.clone()), Transform::from_translation(centre), range.0.clone(), range, crate::batch::probe::Tagged("signs"), OfMap));
     }
     let mut trim_tris = 0;
     // `plain` by another handle, so Ultra can plaster the trim and leave the clutter painted.
     let trim_mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.7, ..default() });
     ultra.add(trim_mat.clone(), Surface::Plaster);
-    for (_, mut buf) in trims {
+    for ((cx, cz), mut buf) in trims {
         trim_tris += buf.idx.len() / 3;
         buf.box_uv();
+        if big {
+            tiers::spawn_near(commands, meshes, buf, trim_mat.clone(), (cx, cz), scale);
+            continue;
+        }
         let (mesh, centre) = buf.into_mesh();
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(trim_mat.clone()), Transform::from_translation(centre), OfMap));
     }
     info!("city: trim {trim_tris} triangles");
-    for (_, buf) in roofs {
+    for ((cx, cz), buf) in roofs {
+        if big {
+            tiers::spawn_near(commands, meshes, buf, roof.clone(), (cx, cz), scale);
+            continue;
+        }
         let (mesh, centre) = buf.into_mesh();
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(roof.clone()), Transform::from_translation(centre), OfMap));
     }
@@ -965,6 +1067,7 @@ fn build_footprints(
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(m), Transform::from_translation(centre), bevy::light::NotShadowCaster, flowing, OfMap));
     }
     info!("city: {} buildings from footprints", layout.footprints.len());
+    Some(facade)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -976,8 +1079,11 @@ pub(crate) fn build_chunks(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut ultra: ResMut<UltraSurfaces>,
+    lod_scale: Option<Res<crate::quality::LodScale>>,
 ) {
     ultra.clear();
+    let big = tiers::big_map(&layout);
+    let scale = lod_scale.map_or(1.0, |s| s.0);
     let mut pending = PendingMips::default();
     let mut sets = HashMap::new();
     for name in ["sandstone", "plaster", "brick", "granite", "wood", "thatch"] {
@@ -995,12 +1101,8 @@ pub(crate) fn build_chunks(
     let mut groups: HashMap<(i32, i32, Mat, bool), MeshBuf> = HashMap::new();
     for b in layout.blocks.iter().filter(|b| is_static_visual(b)) {
         for coarse in [false, true] {
-            let small = match b.shape {
-                Shape::Box(s) => s.max_element() <= TRIM,
-                Shape::Cylinder { radius, height } => (radius * 2.0).max(height) <= TRIM,
-                Shape::Sphere(r) => r * 2.0 <= TRIM,
-            };
-            if coarse && small {
+            // A big map's distance is drawn by its tiers.
+            if coarse && (big || tiers::extent(b) <= TRIM) {
                 continue;
             }
             let key = ((b.pos.x / CHUNK).floor() as i32, (b.pos.z / CHUNK).floor() as i32, b.mat, coarse);
@@ -1017,8 +1119,15 @@ pub(crate) fn build_chunks(
     // Distances from the chunk's centre, where its mesh's origin is.
     let near = bevy::camera::visibility::VisibilityRange { start_margin: 0.0..0.0, end_margin: FAR_CHUNK..FAR_CHUNK + 10.0, use_aabb: false };
     let far = bevy::camera::visibility::VisibilityRange { start_margin: FAR_CHUNK..FAR_CHUNK + 10.0, end_margin: 1.0e5..1.0e5, use_aabb: false };
-    for ((_, _, mat, coarse), buf) in groups {
+    for ((cx, cz, mat, coarse), buf) in groups {
         let handle = mat_cache.entry(mat).or_insert_with(|| material_for(mat, &sets, &mut materials)).clone();
+        if big {
+            let mut e = tiers::spawn_near(&mut commands, &mut meshes, buf, handle, (cx, cz), scale);
+            if matches!(mat, Mat::Foliage | Mat::Cloth) {
+                e.insert(bevy::light::NotShadowCaster);
+            }
+            continue;
+        }
         let range = crate::characters::LodRange(if coarse { far.clone() } else { near.clone() }, coarse as usize);
         let (mesh, centre) = buf.into_mesh();
         let mut e = commands.spawn((
@@ -1047,25 +1156,53 @@ pub(crate) fn build_chunks(
     }
     let signs_tex = assets.load("textures/panga/signs.png");
     pending.0.push(signs_tex.clone());
-    build_footprints(&mut commands, &layout, &mut meshes, &mut materials, &mut images, &mut pending, roof, signs_tex, &mut ultra);
+    let facade = build_footprints(&mut commands, &layout, &mut meshes, &mut materials, &mut images, &mut pending, roof, signs_tex, &mut ultra, scale);
+    if big {
+        tiers::build(&mut commands, &layout, &mut meshes, &mut materials, facade, &mut ultra, scale);
+    }
     info!("architecture: {} static blocks merged into {} chunk meshes", layout.blocks.iter().filter(|b| is_static_visual(b)).count(), n);
     commands.insert_resource(pending);
 }
 
-/// Model textures (the shared `models/textures/` set the props' glTFs point at) arrive without
-/// mips; queue each one as it loads.
-fn queue_model_mips(mut events: MessageReader<AssetEvent<Image>>, assets: Res<AssetServer>, mut pending: ResMut<PendingMips>) {
+/// Runs after the frame's asset events and before they reach the renderer, so what has just loaded
+/// goes to the GPU once, finished, and leaves main memory as it goes.
+///
+/// The model textures (the shared `models/textures/` set the props' glTFs point at) arrive without
+/// mips, and get them here. An image with no file is left alone: a font atlas has to stay in main
+/// memory to take new letters.
+pub(crate) fn gpu_only_images(mut events: MessageReader<AssetEvent<Image>>, assets: Res<AssetServer>, mut images: ResMut<Assets<Image>>) {
     for ev in events.read() {
-        if let AssetEvent::Added { id } = ev
-            && assets.get_path(*id).is_some_and(|p| p.path().starts_with("models/textures") || p.path().starts_with("models/samples/delhi_street/textures"))
-            && let Some(h) = assets.get_id_handle(*id)
-        {
-            pending.0.push(h);
+        let AssetEvent::Added { id } = ev else { continue };
+        let Some(path) = assets.get_path(*id) else { continue };
+        let Some(img) = images.get_mut_untracked(*id) else { continue };
+        if path.path().starts_with("models/textures") || path.path().starts_with("models/samples/delhi_street/textures") {
+            mip_chain(img);
+        }
+        img.asset_usage = RenderAssetUsages::RENDER_WORLD;
+    }
+}
+
+/// `gpu_only_images` for the models. A tree's and the street kit's meshes stay, to be merged
+/// (crate::batch, crate::street); so does everything while a report reads meshes back.
+pub(crate) fn gpu_only_meshes(mut events: MessageReader<AssetEvent<Mesh>>, assets: Res<AssetServer>, mut meshes: ResMut<Assets<Mesh>>) {
+    if crate::batch::probe::reading_meshes() {
+        return;
+    }
+    for ev in events.read() {
+        let AssetEvent::Added { id } = ev else { continue };
+        let Some(path) = assets.get_path(*id) else { continue };
+        let file = path.path().to_string_lossy();
+        if crate::batch::batched(&file) || file.contains("street_kit") {
+            continue;
+        }
+        if let Some(mesh) = meshes.get_mut_untracked(*id) {
+            mesh.asset_usage = RenderAssetUsages::RENDER_WORLD;
         }
     }
 }
 
-/// Give tiling textures a full mip chain (box-filtered on the CPU) and a repeating, anisotropic sampler.
+/// Give tiling textures a full mip chain (box-filtered on the CPU) and a repeating, anisotropic
+/// sampler, and let them go to the GPU alone. An image another map already sent has nothing to do.
 ///
 /// Cut-out textures (leaf cards, with alpha tested at 0.5) are filtered so they keep their look at
 /// a distance: colour is averaged by alpha, so the empty background doesn't darken the leaves, and
@@ -1073,8 +1210,14 @@ fn queue_model_mips(mut events: MessageReader<AssetEvent<Image>>, assets: Res<As
 /// Plain averaging thins the alpha below the cutoff, so canopies go sparse and leaves blink.
 fn mipmap_textures(mut pending: ResMut<PendingMips>, mut images: ResMut<Assets<Image>>) {
     pending.0.retain(|h| {
-        let Some(mut img) = images.get_mut(h) else { return true };
-        mip_chain(&mut img);
+        let Some(img) = images.get(h) else { return true };
+        if img.data.is_none() {
+            return false;
+        }
+        if let Some(mut img) = images.get_mut(h) {
+            mip_chain(&mut img);
+            img.asset_usage = RenderAssetUsages::RENDER_WORLD;
+        }
         false
     });
 }
@@ -1086,9 +1229,9 @@ pub(crate) fn mip_chain(img: &mut Image) {
     if data.len() != w * hgt * 4 {
         return; // only RGBA8 sources are handled
     }
-    let coverage = |px: &[u8], scale: f32| px.chunks_exact(4).filter(|p| p[3] as f32 * scale >= 127.5).count() as f32 / (px.len() / 4) as f32;
+    let coverage = |px: &[u8], scale: f32| px.as_chunks::<4>().0.iter().filter(|p| p[3] as f32 * scale >= 127.5).count() as f32 / (px.len() / 4) as f32;
     let full = coverage(&data, 1.0);
-    let cutout = full < 0.98 && data.chunks_exact(4).any(|p| p[3] == 0);
+    let cutout = full < 0.98 && data.as_chunks::<4>().0.iter().any(|p| p[3] == 0);
     // `chain` holds the plain filtered levels; `levels` the ones uploaded (alpha rescaled).
     let mut chain: Vec<Vec<u8>> = vec![data.clone()];
     let mut levels: Vec<Vec<u8>> = vec![data];
@@ -1121,7 +1264,7 @@ pub(crate) fn mip_chain(img: &mut Image) {
                 if coverage(&next, mid) < full { lo = mid } else { hi = mid }
             }
             let scale = (lo + hi) * 0.5;
-            for p in out.chunks_exact_mut(4) {
+            for p in out.as_chunks_mut::<4>().0 {
                 p[3] = (p[3] as f32 * scale).min(255.0) as u8;
             }
         }
@@ -1185,6 +1328,28 @@ mod tests {
         buf.prism(Vec3::new(1.0, 4.0, 1.0), rot * Quat::from_rotation_z(std::f32::consts::FRAC_PI_2), Vec3::new(8.0, 0.76, 0.76), 0.08, [1.0; 4]);
         buf.box_uv();
         assert_tangents(&buf.into_mesh().0, "trim");
+    }
+
+    /// A ledge has every face a player can see, none against the wall, and its normals point out,
+    /// whichever way along the wall its bar runs.
+    #[test]
+    fn a_ledge_leaves_out_only_its_back() {
+        for (rot, out) in [(Quat::IDENTITY, Vec3::Z), (Quat::IDENTITY, Vec3::NEG_Z), (Quat::from_rotation_y(2.0), Quat::from_rotation_y(2.0) * Vec3::Z)] {
+            let mut buf = MeshBuf::default();
+            let c = Vec3::new(1.0, 2.0, 3.0);
+            buf.ledge(c, rot, Vec3::new(2.0, 0.14, 0.6), out, [1.0; 4]);
+            assert_eq!(buf.pos.len(), 20);
+            assert_eq!(buf.idx.len(), 30);
+            assert_eq!(buf.col.len(), buf.pos.len());
+            let middle = buf.pos.iter().map(|p| Vec3::from(*p)).sum::<Vec3>() / 20.0;
+            for t in buf.idx.as_chunks::<3>().0 {
+                let [a, b, d] = t.map(|i| Vec3::from(buf.pos[i as usize]));
+                let n = (b - a).cross(d - a).normalize();
+                assert!(n.dot((a + b + d) / 3.0 - middle) > 0.0, "a face looks inward");
+                assert!(n.dot(-out) < 0.99, "the back against the wall is there");
+                assert!(n.dot(Vec3::from(buf.nrm[t[0] as usize])) > 0.99, "a normal isn't its face's");
+            }
+        }
     }
 
     #[test]

@@ -27,6 +27,10 @@ pub mod ground {
     pub const WATER: u8 = 5;
     /// A footpath (a lane in the old city, a path through a park).
     pub const PATH: u8 = 6;
+    /// Rough open land on the NCR map, between its districts: dry grass and bare earth.
+    pub const OPEN: u8 = 7;
+    /// River sand on the NCR map: the banks of the Yamuna and the Hindon.
+    pub const SAND: u8 = 8;
 }
 
 impl Terrain {
