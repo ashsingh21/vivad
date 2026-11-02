@@ -94,6 +94,8 @@ const PLASTER_TINT: Color = Color::srgb(0.90, 0.88, 0.84);
 const OCHRE_TINT: Color = Color::srgb(0.84, 0.70, 0.50);
 const BLUE_TINT: Color = Color::srgb(0.66, 0.73, 0.78);
 const MARBLE_TINT: Color = Color::srgb(0.90, 0.89, 0.87);
+/// The drawn brick is a bright new orange: old Delhi brick is duller and browner.
+const BRICK_TINT: Color = Color::srgb(0.78, 0.86, 0.92);
 
 fn material_for(mat: Mat, sets: &HashMap<&'static str, TexSet>, materials: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
     let textured = |set: &str, tint: Color, rough: f32, materials: &mut Assets<StandardMaterial>| {
@@ -125,7 +127,7 @@ fn material_for(mat: Mat, sets: &HashMap<&'static str, TexSet>, materials: &mut 
         Mat::PlasterOchre => textured("plaster", OCHRE_TINT, 0.9, materials),
         Mat::PlasterBlue => textured("plaster", BLUE_TINT, 0.9, materials),
         Mat::Marble => textured("plaster", MARBLE_TINT, 0.35, materials),
-        Mat::Brick => textured("brick", Color::WHITE, 0.9, materials),
+        Mat::Brick => textured("brick", BRICK_TINT, 0.9, materials),
         Mat::Wood => textured("wood", Color::WHITE, 0.75, materials),
         Mat::Thatch => textured("thatch", Color::WHITE, 0.95, materials),
         Mat::Dirt => textured("sandstone", Color::srgb(0.75, 0.62, 0.48), 0.95, materials),

@@ -31,7 +31,7 @@ use bevy::prelude::*;
 use shared::map::{Block, Footprint, MapLayout, Mat, Shape, footprint};
 use shared::sim::OfMap;
 
-use super::{BAY, BLUE_TINT, MARBLE_TINT, MeshBuf, OCHRE_TINT, PARAPET, PLASTER_TINT, Paint, STOREY, TRIM, bare, bare_tint, is_static_visual, lin, roof_shade};
+use super::{BAY, BLUE_TINT, BRICK_TINT, MARBLE_TINT, MeshBuf, OCHRE_TINT, PARAPET, PLASTER_TINT, Paint, STOREY, TRIM, bare, bare_tint, is_static_visual, lin, roof_shade};
 use crate::batch::batched;
 use crate::batch::probe::{Tagged, reading_meshes};
 use crate::characters::LodRange;
@@ -186,7 +186,10 @@ fn flat_colour(mat: Mat) -> [f32; 4] {
         Mat::RedSandstone => times(SANDSTONE, [0.86, 0.50, 0.40]),
         Mat::Dirt => times(SANDSTONE, [0.75, 0.62, 0.48]),
         Mat::Granite => raw([0.318, 0.26, 0.213]),
-        Mat::Brick => raw([0.351, 0.108, 0.062]),
+        Mat::Brick => {
+            let t = BRICK_TINT.to_linear();
+            raw([0.351 * t.red, 0.108 * t.green, 0.062 * t.blue])
+        }
         Mat::Wood => raw([0.133, 0.058, 0.02]),
         Mat::Bark => times([0.133, 0.058, 0.02], [0.7, 0.65, 0.6]),
         Mat::Thatch => raw([0.348, 0.238, 0.079]),
