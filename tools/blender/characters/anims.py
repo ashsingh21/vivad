@@ -805,7 +805,7 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
 PISTOL_DROP = 0.6
 # A long gun's clips: the rifle pack's own, whole body (its stance puts the left hand on the gun; the
 # game places the gun and brings both hands to it); False: the plain moves under our own carry.
-RIFLE_PACK = True
+RIFLE_PACK = False
 # A long gun carried: the shoulders turned this far (radians), the left one forward.
 RIFLE_TURN = 0.7
 ARM_BONES = ("clavicle", "upperarm", "lowerarm", "hand", "thumb", "index", "middle", "ring", "pinky")

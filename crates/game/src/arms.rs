@@ -336,10 +336,11 @@ fn gun_check(body: &Body, socket: &GlobalTransform, ahead: Vec3, palm: Vec3, han
 
 /// Where a shouldered butt sits from the right shoulder joint (m): ahead, in toward the chest, up.
 const SHOULDER_POCKET: (f32, f32, f32) = (0.07, 0.04, -0.02);
-/// Carried: the butt tucked under the right arm (from the shoulder joint, as above).
-const CARRY_POCKET: (f32, f32, f32) = (-0.03, 0.03, -0.15);
+/// Carried: the butt tucked in under the front of the right shoulder (from the shoulder joint, as
+/// above), the gun across the chest.
+const CARRY_POCKET: (f32, f32, f32) = (-0.02, 0.05, -0.07);
 /// Carried: the barrel's dip below level (radians) and its lean across the body (toward the left).
-const CARRY_TILT: (f32, f32) = (0.4, 0.25);
+const CARRY_TILT: (f32, f32) = (0.14, 0.3);
 
 /// The dunali's butt plate behind the grip (m, its model's +Z extent).
 const BUTT: f32 = 0.43;
