@@ -52,8 +52,8 @@ impl Plugin for VisualsPlugin {
 }
 
 /// Baked models in assets/models/weapons, one per item (the arrow-quiver pickup shows the tarkash).
-pub const WEAPON_MODELS: [&str; 14] = [
-    "bat", "katta", "tamancha", "dunali", "gulel", "chakra", "brahmastra", "arrow", "tarkash", "agneyastra", "vayavyastra", "sanjeevani",
+pub const WEAPON_MODELS: [&str; 15] = [
+    "bat", "katta", "tamancha", "dunali", "bandook", "gulel", "chakra", "brahmastra", "arrow", "tarkash", "agneyastra", "vayavyastra", "sanjeevani",
     "soma", "amrita",
 ];
 
@@ -816,12 +816,12 @@ pub enum Shot {
 
 /// Guns held to the shoulder (the `rifle_aim` clip) rather than out in the hand.
 pub fn long_gun(item: &str) -> bool {
-    item == "dunali"
+    matches!(item, "dunali" | "bandook")
 }
 
 pub fn shot_kind(item: &str) -> Shot {
     match item {
-        "tamancha" | "dunali" | "katta" => Shot::Bullet,
+        "tamancha" | "dunali" | "katta" | "bandook" => Shot::Bullet,
         "gulel" => Shot::Pebble,
         _ => Shot::Arrow,
     }

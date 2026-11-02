@@ -290,6 +290,7 @@ fn combat_events(
                 let heavy = matches!(db.get(&p.item).kind, ItemKind::Bow { charge, .. } if charge > 0.0);
                 let (sound, reach) = match p.item.as_str() {
                     "tamancha" => ("gun_tamancha", 200.0),
+                    "bandook" => ("gun_tamancha", 220.0),
                     "dunali" => ("gun_dunali", 220.0),
                     "katta" => ("gun_katta", 220.0),
                     "gulel" => ("gulel_release", 60.0),

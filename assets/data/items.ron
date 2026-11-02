@@ -30,6 +30,13 @@
                       magazine: 5, reload: 2.4, charge: 0.0, headshot: 1.5),
             drops: [(Common, 8.0), (Rare, 6.0), (Epic, 3.0), (Legendary, 1.0)],
         ),
+        "bandook": (
+            name: "Bandook",
+            lore: "Fauji wali bandook. Tees goli, ek ke baad ek.",
+            kind: Bow(damage: 19.0, interval: 0.14, speed: 150.0, gravity: 2.5, pellets: 1, spread_deg: 1.4,
+                      magazine: 30, reload: 2.3, charge: 0.0, headshot: 1.6),
+            drops: [(Rare, 5.0), (Epic, 3.0), (Legendary, 1.2)],
+        ),
         "gulel": (
             name: "Gulel",
             lore: "Bachpan wali gulel. Poora kheencho, phir dekho kamaal.",

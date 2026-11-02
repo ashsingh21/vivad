@@ -310,7 +310,7 @@ fn orient_bows(
 }
 
 /// How far ahead of the grip the left hand holds a long gun (m, along the barrel).
-const FOREND: f32 = 0.24;
+const FOREND: f32 = 0.26;
 /// A long gun's hold in numbers: the left palm in the gun's frame (want x 0, up -0.035, along
 /// -0.32: under the fore-end), the butt from the right shoulder in the body's frame (shouldered:
 /// about level with it and a few cm ahead), the barrel's pitch, and how far below the eye it runs.
@@ -337,8 +337,9 @@ const SHOULDER_IN_GAME: bool = false;
 /// Where a shouldered butt sits from the right shoulder joint (m): ahead, in toward the chest, up.
 const SHOULDER_POCKET: (f32, f32, f32) = (0.07, 0.04, -0.02);
 
-/// The dunali's butt plate behind the grip (m, its model's +Z extent).
-const BUTT: f32 = 0.43;
+/// The dunali's butt plate behind the grip (m, its model's +Z extent; BUTT in
+/// tools/blender/weapons/desi.py, sized to the rifle the animations were captured with).
+const BUTT: f32 = 0.21;
 
 /// How far each finger joint closes round a fore-end (radians).
 const GRIP_CURL: f32 = 0.55;
