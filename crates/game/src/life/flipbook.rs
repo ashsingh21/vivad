@@ -361,7 +361,8 @@ fn pieces(doc: &gltf::Document, blob: &[u8]) -> Result<Vec<Piece>, String> {
         for prim in mesh.primitives() {
             let material = prim.material();
             let name = material.name().unwrap_or_default().to_lowercase();
-            let part = if name.contains("outfit") {
+            // The shirt of the new characters is a material of its own, on the outfit's mesh.
+            let part = if name.contains("outfit") || name.contains("top") {
                 Part::Outfit
             } else if name.contains("head") || name.contains("body") {
                 Part::Skin
@@ -479,14 +480,8 @@ fn outfit_classes(piece: &Piece, joint_class: &[u8], side: u32) -> Vec<u8> {
     };
     for tri in piece.idx.chunks_exact(3) {
         let (a, b, c) = (tri[0] as usize, tri[1] as usize, tri[2] as usize);
-        let classes = [class_of(a), class_of(b), class_of(c)];
-        let class = if piece.pack[a] || piece.pack[b] || piece.pack[c] {
-            PACK
-        } else if classes[1] == classes[2] {
-            classes[1]
-        } else {
-            classes[0]
-        };
+        // The highest on the body: a cuff weighted to the foot is still trouser, not shoe.
+        let class = if piece.pack[a] || piece.pack[b] || piece.pack[c] { PACK } else { class_of(a).min(class_of(b)).min(class_of(c)) };
         let wrap = |v: usize| Vec2::new(piece.uv[v].x.rem_euclid(1.0), piece.uv[v].y.rem_euclid(1.0)) * side as f32;
         let (pa, pb, pc) = (wrap(a), wrap(b), wrap(c));
         let (lo, hi) = (pa.min(pb).min(pc).floor(), pa.max(pb).max(pc).ceil());
@@ -568,17 +563,19 @@ fn luma(p: &[u8]) -> f32 {
 /// them, and the triangles that fall flat go. A market's people are at least 7 m off, and every
 /// triangle of theirs is paid for in the depth pass and the shadows as well. Returns the triangles
 /// left, and for each vertex the one whose place it takes; a vertex keeps its own texture
-/// coordinates, so a seam in the texture stays closed. Zero leaves the model as it is.
-fn thinned(idx: &[u32], pos: &[Vec3], uv: &[[f32; 2]], cell: f32) -> (Vec<u32>, Vec<u32>) {
+/// coordinates, so a seam in the texture stays closed. Each `group` is thinned on its own: a cube
+/// shared by an eye and the brow would stretch the eye's white across the face, a shared one by
+/// shirt and trousers would tear the hem. Zero leaves the model as it is.
+fn thinned(idx: &[u32], pos: &[Vec3], uv: &[[f32; 2]], group: &[u8], cell: f32) -> (Vec<u32>, Vec<u32>) {
     if cell <= 0.0 {
         return (idx.to_vec(), (0..pos.len() as u32).collect());
     }
-    let mut place: HashMap<(i32, i32, i32), u32> = HashMap::new();
+    let mut place: HashMap<(u8, i32, i32, i32), u32> = HashMap::new();
     let mut same: HashMap<(u32, i32, i32), u32> = HashMap::new();
     let (mut source, mut merged) = (Vec::with_capacity(pos.len()), Vec::with_capacity(pos.len()));
     for (k, p) in pos.iter().enumerate() {
         let c = (*p / cell).floor();
-        let first = *place.entry((c.x as i32, c.y as i32, c.z as i32)).or_insert(k as u32);
+        let first = *place.entry((group[k], c.x as i32, c.y as i32, c.z as i32)).or_insert(k as u32);
         source.push(first);
         // On the same patch of the texture it is one vertex; across a seam it is two, in one place.
         let t = (uv[k][0] * 32.0, uv[k][1] * 32.0);
@@ -677,8 +674,10 @@ pub fn bake(spec: &Spec) -> Result<Baked, String> {
 
     // One vertex list for the whole model.
     let (mut pos, mut nrm, mut uv, mut skin_j, mut skin_w, mut idx) = (vec![], vec![], vec![], vec![], vec![], vec![]);
-    for (part, (_, cell)) in parts.iter().zip(&cells) {
+    let mut group: Vec<u8> = vec![];
+    for (k, (part, (_, cell))) in parts.iter().zip(&cells).enumerate() {
         let base = pos.len() as u32;
+        group.extend(std::iter::repeat_n(k as u8, part.pos.len()));
         pos.extend_from_slice(&part.pos);
         nrm.extend_from_slice(&part.nrm);
         let (at, size) = (Vec2::new(cell.x as f32, cell.y as f32) / side as f32, cell.side as f32 / side as f32);
@@ -692,7 +691,7 @@ pub fn bake(spec: &Spec) -> Result<Baked, String> {
         skin_w.extend_from_slice(&part.weights);
         idx.extend(part.idx.iter().map(|i| i + base));
     }
-    let (idx, source) = thinned(&idx, &pos, &uv, spec.thin);
+    let (idx, source) = thinned(&idx, &pos, &uv, &group, spec.thin);
     let wide = pos.len() > u16::MAX as usize;
     let indices = || if wide { Indices::U32(idx.clone()) } else { Indices::U16(idx.iter().map(|i| *i as u16).collect()) };
 
