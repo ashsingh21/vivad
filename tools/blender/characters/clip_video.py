@@ -1,8 +1,7 @@
 """A video of clips as they play, for looking at motion rather than stills: the animation build's
 rig and body (build/anims_<variant>.blend, saved by anims.py), the bandook on the weapon bone as the
 game hangs it, each clip looped for about four seconds, seen from behind (where the game's camera
-sits) and
-from the side, its name in the corner.
+sits) and from the side, its name in the corner.
 
 blender -b -P tools/blender/characters/clip_video.py -- male out.mp4 [clip,clip,...]
 """
