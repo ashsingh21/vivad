@@ -938,6 +938,40 @@ def carry(rig, name, base, hold, drop=0.0, turn=0.0, upright=None, calm=0.0):
     return f1 - f0
 
 
+# (clip, the clip whose arms it takes): see arms_from.
+HIGH_READY = [*[(f"rifle_run_{d}", f"rifleaim_run_{d}") for d in "fblr"], ("rifle_sprint_f", "rifleaim_run_f")]
+ARM_CHAIN = ("clavicle", "upperarm", "lowerarm", "hand", "thumb", "index", "middle", "ring", "pinky", "weapon")
+
+
+def arms_from(rig, base, hold):
+    """`base` with `hold`'s arms (each arm bone's turn from its parent, from the collarbones out),
+    frame for frame through each one's cycle: the legs, hips and torso its own, the arms riding the
+    chest as `hold` holds them."""
+    sc = bpy.context.scene
+    arm_bones = [pb.name for pb in rig.pb if pb.name.split("_")[0] in ARM_CHAIN]
+
+    def poses(name, only=None):
+        act = bpy.data.actions[name]
+        rig.obj.animation_data.action = act
+        f0, f1 = map(int, act.frame_range)
+        out = []
+        for f in range(f0, f1 + 1):
+            sc.frame_set(f)
+            out.append({n: rig.pb[n].matrix_basis.copy() for n in (only or [pb.name for pb in rig.pb])})
+        return out
+
+    body, arms = poses(base), poses(hold, arm_bones)
+    new_action(rig, base)
+    # Both loops: the last frame is the first again.
+    n, m = len(body) - 1, len(arms) - 1
+    for i, pose in enumerate(body):
+        a = arms[round(i * m / max(n, 1)) % max(m, 1)]
+        for pb in rig.pb:
+            pb.matrix_basis = a.get(pb.name, pose[pb.name])
+        rig.key(i + 1)
+    print(f"[anims] {base}: arms from {hold}")
+
+
 def idle(rig):
     frames = 75
     new_action(rig, "idle")
@@ -1363,6 +1397,11 @@ def main():
             cycles[name] = n
         print(f"[anims] {name} from MoCap Online's {file} ({mfps:.0f} fps)")
         drop_mocap(mobjs, macts, arm)
+    # Running with a long gun, it's held up and pointed ahead (the aim-jog's arms over the run's
+    # legs and torso), not the pack's run's low carry across the hips, barrel down.
+    for run, arms in HIGH_READY:
+        if run in bpy.data.actions and arms in bpy.data.actions:
+            arms_from(rig, run, arms)
     if not os.path.exists(os.path.join(MIXAMO, "Running Slide.fbx")):
         src, objs, acts = load_mocap("ual2")
         bpy.context.view_layer.objects.active = arm
