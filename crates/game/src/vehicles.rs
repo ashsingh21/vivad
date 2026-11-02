@@ -5,7 +5,7 @@
 use std::f32::consts::TAU;
 
 use bevy::asset::RenderAssetUsages;
-use bevy::audio::Volume;
+use bevy::audio::{GlobalVolume, Volume};
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
@@ -482,6 +482,7 @@ fn engine(
     kit: Res<Kit>,
     me: Query<&Riding, With<LocalPlayer>>,
     vehicles: Query<&Vehicle>,
+    global: Res<GlobalVolume>,
     mut running: Query<(Entity, &EngineSound, Option<&mut AudioSink>)>,
     mut note: Local<(f32, f32)>,
     mut told: Local<f32>,
@@ -498,7 +499,8 @@ fn engine(
         note.0 += (rate - note.0) * (dt * 2.5).min(1.0);
         note.1 += (volume - note.1) * (dt * 5.0).min(1.0);
         sink.set_speed(note.0 * engine_of(v.kind).1);
-        sink.set_volume(Volume::Linear(note.1));
+        // A sink's own volume replaces what the pause menu's Awaaz gave it at the start.
+        sink.set_volume(Volume::Linear(note.1 * global.volume.to_linear()));
         if *told + 4.0 < time.elapsed_secs() && std::env::var("VIVAD_AUDIO_LOG").is_ok() {
             *told = time.elapsed_secs();
             info!("engine {:?}: {:.1} m/s, rate {:.2}, volume {:.2}", v.kind, v.speed, sink.speed(), note.1);
@@ -523,6 +525,7 @@ fn passing(
     kit: Res<Kit>,
     me: Query<(&Transform, Option<&Riding>), With<LocalPlayer>>,
     vehicles: Query<(Entity, &Transform, &Vehicle)>,
+    global: Res<GlobalVolume>,
     mut running: Query<(Entity, &PassingEngine, Option<&mut AudioSink>)>,
 ) {
     let Ok((ear, ride)) = me.single() else { return };
@@ -543,7 +546,7 @@ fn passing(
         let (rate, _) = engine_note((n.2.speed.abs() / n.2.kind.spec().law.top).min(1.0), n.2.input.throttle);
         let fade = 1.0 - n.0 / HEARD_TO;
         sink.set_speed(rate * engine_of(n.2.kind).1);
-        sink.set_volume(Volume::Linear(PASSING_LOUD * fade * fade));
+        sink.set_volume(Volume::Linear(PASSING_LOUD * fade * fade * global.volume.to_linear()));
     }
     for n in &near {
         if !running.iter().any(|(_, sound, _)| sound.0 == n.1) {
