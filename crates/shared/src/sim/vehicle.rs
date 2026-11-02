@@ -1,5 +1,6 @@
-//! Vehicles a warrior can drive: an auto, a scooter, a commuter bike, a heavy bike and a small car,
-//! parked along the streets. The interact key gets in and out, the move keys drive (crate::sim::drive),
+//! Vehicles a warrior can drive: an auto, a scooter, a commuter bike, a heavy bike, a small car, an
+//! open jeep, the old white government car, a mini truck and a tractor, parked along the streets.
+//! The interact key gets in and out, the move keys drive (crate::sim::drive),
 //! nobody shoots while driving (`MoveMode::Riding` is not on foot). Moved by collide-and-slide like a
 //! warrior, never by forces, so walls stop a vehicle and it slides along them.
 //!
@@ -12,17 +13,19 @@ use bevy::prelude::*;
 use rand::RngExt;
 use rand::seq::SliceRandom;
 
-use super::bots::BotBrain;
+use super::bots::{BotBrain, axes_towards};
 use super::drive::{DriveInput, Law, step};
 use super::flow::{Match, Rules};
 use super::loot::{Chest, INTERACT_RANGE, Pickup};
 use super::movement::{GRAVITY, wading};
+use super::nav::on_bridge;
 use super::net::{Peers, Remote};
 use super::{
     CAPSULE_LENGTH, CAPSULE_RADIUS, DamageCause, DamageMsg, Eliminated, HALF_HEIGHT, HitMsg, Kinematic, Layer, MatchConfig, MoveMode, PlayerIntent, SimSet,
     Warrior, btn, match_rng, solid_mask, stream, walk_mask,
 };
 use crate::map::MapLayout;
+use crate::map::parking;
 use crate::map::terrain::ground;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -32,6 +35,14 @@ pub enum VehicleKind {
     Commuter,
     Bullet,
     Car,
+    /// The open jeep: Khuli Gaadi. Off the road it loses nothing, and it stands only at yards.
+    Khuli,
+    /// The old white government car.
+    Sarkari,
+    /// The mini truck.
+    ChhotaTruck,
+    /// Slow, and the one thing that wades a river. It stands only at yards.
+    Tractor,
 }
 
 /// One kind's numbers, sizes from its model (tools/blender/props/vehicles.py). Points are from the
@@ -53,6 +64,8 @@ pub struct Spec {
     /// Where damage smokes from.
     pub engine: Vec3,
     pub wheel: f32,
+    /// The rear wheels' radius: a tractor's are half as big again.
+    pub rear: f32,
     /// How far the body leans into a corner at speed, radians.
     pub lean: f32,
 }
@@ -69,11 +82,11 @@ impl Spec {
     }
 }
 
-/// TukTuk.io's numbers: a sluggish three-wheeler, 45 km/h flat out.
+/// TukTuk.io's numbers, a little faster for a 4 km map: a sluggish three-wheeler, 54 km/h flat out.
 const AUTO: Spec = Spec {
     name: "Auto",
     model: "models/vehicles/auto.glb",
-    law: Law { top: 12.5, reverse: 3.2, pull: 3.6, brake: 6.5, drag: 0.0042, turn: 2.0, grip: 3.5, calm: 0.45 },
+    law: Law { top: 15.0, reverse: 3.2, pull: 3.6, brake: 6.5, drag: 0.0036, turn: 2.0, grip: 3.5, calm: 0.45 },
     hp: 260.0,
     size: Vec3::new(1.15, 1.45, 2.7),
     clear: 0.25,
@@ -81,6 +94,7 @@ const AUTO: Spec = Spec {
     seat: Vec3::new(0.0, 0.85, -0.2),
     engine: Vec3::new(0.0, 0.55, 1.05),
     wheel: 0.231,
+    rear: 0.231,
     lean: 0.05,
 };
 const SCOOTER: Spec = Spec {
@@ -94,6 +108,7 @@ const SCOOTER: Spec = Spec {
     seat: Vec3::new(0.0, 0.74, 0.3),
     engine: Vec3::new(0.08, 0.4, 0.45),
     wheel: 0.229,
+    rear: 0.229,
     lean: 0.36,
 };
 const COMMUTER: Spec = Spec {
@@ -107,6 +122,7 @@ const COMMUTER: Spec = Spec {
     seat: Vec3::new(0.0, 0.88, 0.25),
     engine: Vec3::new(0.0, 0.45, -0.1),
     wheel: 0.307,
+    rear: 0.307,
     lean: 0.42,
 };
 /// The heavy bike: not as quick off the line as the commuter, a little faster flat out.
@@ -121,6 +137,7 @@ const BULLET: Spec = Spec {
     seat: Vec3::new(0.0, 0.92, 0.3),
     engine: Vec3::new(0.0, 0.45, -0.05),
     wheel: 0.345,
+    rear: 0.345,
     lean: 0.38,
 };
 const CAR: Spec = Spec {
@@ -134,11 +151,80 @@ const CAR: Spec = Spec {
     seat: Vec3::new(-0.32, 0.52, 0.1),
     engine: Vec3::new(0.0, 0.8, -1.25),
     wheel: 0.3,
+    rear: 0.3,
     lean: 0.04,
+};
+/// The sizes from here on are measured from the models. All three drive from the right.
+const KHULI: Spec = Spec {
+    name: "Khuli Gaadi",
+    model: "models/vehicles/gaadi_khuli.glb",
+    law: Law { top: 22.0, reverse: 5.0, pull: 4.8, brake: 9.0, drag: 0.0030, turn: 1.9, grip: 3.0, calm: 0.5 },
+    hp: 300.0,
+    size: Vec3::new(1.46, 1.2, 3.3),
+    clear: 0.3,
+    round: 0.25,
+    seat: Vec3::new(0.30, 0.95, 0.22),
+    engine: Vec3::new(0.0, 0.95, -1.15),
+    wheel: 0.36,
+    rear: 0.36,
+    lean: 0.05,
+};
+/// Heavy and safe: slower off the line than the small car, and slower to turn.
+const SARKARI: Spec = Spec {
+    name: "Sarkari Gaadi",
+    model: "models/vehicles/gaadi_ambassador.glb",
+    law: Law { top: 20.0, reverse: 5.0, pull: 3.9, brake: 8.0, drag: 0.0029, turn: 1.6, grip: 3.0, calm: 0.5 },
+    hp: 420.0,
+    size: Vec3::new(1.66, 1.42, 4.3),
+    clear: 0.22,
+    round: 0.3,
+    seat: Vec3::new(0.40, 0.74, 0.12),
+    engine: Vec3::new(0.0, 0.9, -1.6),
+    wheel: 0.333,
+    rear: 0.333,
+    lean: 0.06,
+};
+const CHHOTA_TRUCK: Spec = Spec {
+    name: "Chhota Truck",
+    model: "models/vehicles/gaadi_minitruck.glb",
+    law: Law { top: 17.0, reverse: 4.0, pull: 3.4, brake: 7.0, drag: 0.0034, turn: 1.6, grip: 3.0, calm: 0.45 },
+    hp: 480.0,
+    size: Vec3::new(1.52, 1.76, 3.78),
+    clear: 0.24,
+    round: 0.25,
+    seat: Vec3::new(0.31, 1.15, -0.68),
+    engine: Vec3::new(0.0, 0.7, -1.7),
+    wheel: 0.306,
+    rear: 0.306,
+    lean: 0.06,
+};
+const TRACTOR: Spec = Spec {
+    name: "Tractor",
+    model: "models/vehicles/gaadi_tractor.glb",
+    law: Law { top: 9.0, reverse: 3.0, pull: 2.6, brake: 6.0, drag: 0.0080, turn: 1.5, grip: 2.5, calm: 0.3 },
+    hp: 520.0,
+    size: Vec3::new(1.78, 1.86, 3.2),
+    clear: 0.32,
+    round: 0.3,
+    seat: Vec3::new(0.0, 1.5, 0.52),
+    engine: Vec3::new(0.0, 1.35, -0.75),
+    wheel: 0.491,
+    rear: 0.745,
+    lean: 0.03,
 };
 
 impl VehicleKind {
-    pub const ALL: [VehicleKind; 5] = [VehicleKind::Auto, VehicleKind::Scooter, VehicleKind::Commuter, VehicleKind::Bullet, VehicleKind::Car];
+    pub const ALL: [VehicleKind; 9] = [
+        VehicleKind::Auto,
+        VehicleKind::Scooter,
+        VehicleKind::Commuter,
+        VehicleKind::Bullet,
+        VehicleKind::Car,
+        VehicleKind::Khuli,
+        VehicleKind::Sarkari,
+        VehicleKind::ChhotaTruck,
+        VehicleKind::Tractor,
+    ];
 
     pub fn spec(self) -> &'static Spec {
         match self {
@@ -147,7 +233,21 @@ impl VehicleKind {
             VehicleKind::Commuter => &COMMUTER,
             VehicleKind::Bullet => &BULLET,
             VehicleKind::Car => &CAR,
+            VehicleKind::Khuli => &KHULI,
+            VehicleKind::Sarkari => &SARKARI,
+            VehicleKind::ChhotaTruck => &CHHOTA_TRUCK,
+            VehicleKind::Tractor => &TRACTOR,
         }
+    }
+
+    /// Four wheels and a steering rack: the front wheels turn on screen.
+    pub fn steers(self) -> bool {
+        matches!(self, VehicleKind::Car | VehicleKind::Khuli | VehicleKind::Sarkari | VehicleKind::ChhotaTruck | VehicleKind::Tractor)
+    }
+
+    /// Built for rough ground: no price on open land, little on sand, a slope pulls less. Parked at yards.
+    pub fn rough(self) -> bool {
+        matches!(self, VehicleKind::Khuli | VehicleKind::Tractor)
     }
 }
 
@@ -210,7 +310,33 @@ const RAM_HURT: f32 = 7.0;
 const BOARD_REACH: f32 = 1.4;
 /// A wreck's blast: reach and damage at its heart.
 const BLAST: (f32, f32) = (4.0, 45.0);
-/// What is parked, in turn: the roads' own mix.
+/// In a river a vehicle crawls and its engine drowns, health a second: no one crosses the Yamuna
+/// that way. A tractor wades, at no cost.
+const FLOUNDER: f32 = 2.0;
+const DROWN: f32 = 15.0;
+const TRACTOR_WADE: f32 = 3.5;
+/// A slope pulls on a vehicle at this share of gravity, a rough one at less: a climb costs speed.
+const SLOPE_PULL: f32 = 0.5;
+const SLOPE_PULL_ROUGH: f32 = 0.3;
+/// How fast a vehicle sheds speed over what the ground lets it keep, per second.
+const SHED: f32 = 2.5;
+/// How near a moving vehicle a bot gets out of its way, metres; a calm bot leaves it later.
+const DODGE: (f32, f32) = (14.0, 10.0);
+/// What is parked on the NCR in a match, the roads' own mix. It adds up to `Rules::parked`.
+const FLEET: [(VehicleKind, usize); 9] = [
+    (VehicleKind::Commuter, 18),
+    (VehicleKind::Scooter, 16),
+    (VehicleKind::Auto, 14),
+    (VehicleKind::Bullet, 8),
+    (VehicleKind::Car, 4),
+    (VehicleKind::Sarkari, 2),
+    (VehicleKind::ChhotaTruck, 2),
+    (VehicleKind::Khuli, 6),
+    (VehicleKind::Tractor, 2),
+];
+/// With every 420 m square taken, the rest stand at least this far from any other.
+const SPREAD: f32 = 150.0;
+/// On the small maps, what is parked, in turn.
 const ROSTER: [VehicleKind; 8] = [
     VehicleKind::Commuter,
     VehicleKind::Auto,
@@ -240,6 +366,18 @@ impl Plugin for VehiclePlugin {
 /// Single player only for now: a peer would need the vehicles' state from their owners. VIVAD_VEHICLES=0 turns them off.
 pub fn enabled(config: &MatchConfig, peers: &Peers) -> bool {
     !config.online && peers.all.len() == 1 && std::env::var("VIVAD_VEHICLES").as_deref() != Ok("0")
+}
+
+/// The share of its top speed a vehicle can hold on this ground: `ground_at`'s class, None off the map.
+pub fn surface(kind: VehicleKind, class: Option<u8>) -> f32 {
+    match class {
+        Some(ground::PAVEMENT) => 0.9,
+        Some(ground::PATH) => 0.8,
+        Some(ground::OPEN | ground::PARK) if !kind.rough() => 0.7,
+        Some(ground::SAND) if kind.rough() => 0.8,
+        Some(ground::SAND) => 0.45,
+        _ => 1.0,
+    }
 }
 
 /// A vehicle standing at `ground` (a point on the road) facing `heading`.
@@ -293,6 +431,35 @@ fn spots(layout: &MapLayout, parked: usize, rng: &mut crate::SmallRng) -> Vec<(V
     v
 }
 
+/// Where `kind` can really stand at `at`: on level ground, with nothing in the way above it.
+fn stands(spatial: &SpatialQuery, filter: &SpatialQueryFilter, kind: VehicleKind, at: Vec3, yaw: f32) -> Option<Vec3> {
+    let spec = kind.spec();
+    let hit = spatial.cast_ray(at + Vec3::Y * 2.5, Dir3::NEG_Y, 4.0, true, filter)?;
+    let foot = at + Vec3::Y * (2.5 - hit.distance);
+    let clear = spatial.shape_intersections(&spec.collider(), foot + Vec3::Y * spec.centre(), Quat::from_rotation_y(yaw), filter).is_empty();
+    (hit.normal.y >= 0.95 && clear).then_some(foot)
+}
+
+/// The NCR's vehicles: `FLEET`, one to a square of the map's bays, by the match seed, those for the
+/// yards choosing first.
+fn draw(layout: &MapLayout, rng: &mut crate::SmallRng, spatial: &SpatialQuery, filter: &SpatialQueryFilter) -> Vec<(VehicleKind, Vec3, f32)> {
+    let mut bays: Vec<&parking::Bay> = layout.parking.iter().collect();
+    bays.shuffle(rng);
+    let mut fleet: Vec<VehicleKind> = FLEET.iter().flat_map(|&(k, n)| [k].repeat(n)).collect();
+    fleet.shuffle(rng);
+    fleet.sort_by_key(|k| !k.rough());
+    let mut parked: Vec<(VehicleKind, Vec3, f32)> = vec![];
+    for kind in fleet {
+        let open = |b: &&&parking::Bay| b.yard || !kind.rough();
+        let spot = |b: &&parking::Bay| stands(spatial, filter, kind, b.pos, b.yaw).map(|foot| (kind, foot, b.yaw));
+        let free = |b: &&&parking::Bay| parked.iter().all(|p| parking::cell(p.1.xz()) != parking::cell(b.pos.xz()));
+        let far = |b: &&&parking::Bay| parked.iter().all(|p| p.1.xz().distance(b.pos.xz()) >= SPREAD);
+        let found = bays.iter().filter(open).filter(free).find_map(spot).or_else(|| bays.iter().filter(open).filter(far).find_map(spot));
+        parked.extend(found);
+    }
+    parked
+}
+
 /// Once per match, when the world's colliders can be asked about: this match's vehicles.
 #[allow(clippy::too_many_arguments)]
 fn park(
@@ -318,6 +485,14 @@ fn park(
     let mut rng = match_rng(m.seed, stream::VEHICLES);
     let filter = SpatialQueryFilter::from_mask(solid_mask());
     let parked = Rules::of(layout.style).parked;
+    if !layout.parking.is_empty() {
+        let fleet = draw(&layout, &mut rng, &spatial, &filter);
+        info!("vehicles: {} parked of {} bays", fleet.len(), layout.parking.len());
+        for (kind, foot, yaw) in fleet {
+            spawn_vehicle(&mut commands, kind, foot, yaw);
+        }
+        return;
+    }
     let mut taken: Vec<Vec2> = vec![];
     for (at, yaw) in spots(&layout, parked, &mut rng) {
         if taken.len() == parked {
@@ -327,14 +502,7 @@ fn park(
             continue;
         }
         let kind = ROSTER[taken.len() % ROSTER.len()];
-        let spec = kind.spec();
-        // The real ground here: a slab or the terrain, and nothing in the way above it.
-        let Some(hit) = spatial.cast_ray(at + Vec3::Y * 2.5, Dir3::NEG_Y, 4.0, true, &filter) else { continue };
-        let foot = at + Vec3::Y * (2.5 - hit.distance);
-        let rot = Quat::from_rotation_y(yaw);
-        if hit.normal.y < 0.95 || !spatial.shape_intersections(&spec.collider(), foot + Vec3::Y * spec.centre(), rot, &filter).is_empty() {
-            continue;
-        }
+        let Some(foot) = stands(&spatial, &filter, kind, at, yaw) else { continue };
         taken.push(at.xz());
         spawn_vehicle(&mut commands, kind, foot, yaw);
     }
@@ -459,9 +627,25 @@ fn drive(
         let spec = v.kind.spec();
         let (mut speed, mut heading) = (v.speed, v.heading);
         step(&spec.law, &mut speed, &mut heading, v.input, dt);
-        // Water takes a vehicle down to a warrior's wading pace.
-        if let Some(w) = wade.filter(|_| wading(&layout, tf.translation + Vec3::Y * (HALF_HEIGHT - spec.centre()))) {
-            speed = speed.clamp(-w, w);
+        // A climb costs speed and the far side gives it back.
+        if v.grounded && speed.abs() > 0.3 {
+            let share = if v.kind.rough() { SLOPE_PULL_ROUGH } else { SLOPE_PULL };
+            speed -= share * GRAVITY * v.pitch.sin() * dt;
+        }
+        let stood = tf.translation + Vec3::Y * (HALF_HEIGHT - spec.centre());
+        if wade.is_some() && wading(&layout, stood) {
+            // A river stops all but a tractor, and drowns the engine of what tries it.
+            let crawl = if v.kind == VehicleKind::Tractor { TRACTOR_WADE } else { FLOUNDER };
+            speed = speed.clamp(-crawl, crawl);
+            if v.kind != VehicleKind::Tractor && held.is_some() {
+                v.hp -= DROWN * dt;
+            }
+        } else if !on_bridge(stood) {
+            // What the ground lets it keep, shed over a moment, not at the kerb's edge.
+            let limit = spec.law.top * surface(v.kind, layout.terrain.ground_at(stood.x, stood.z));
+            if speed > limit {
+                speed -= (speed - limit) * (1.0 - (-dt * SHED).exp());
+            }
         }
         let yaw = Quat::from_rotation_y(heading);
         let flat = yaw * Vec3::NEG_Z;
@@ -540,6 +724,37 @@ fn drive(
         v.heading = heading;
         tf.rotation = Quat::from_rotation_y(heading) * Quat::from_rotation_x(v.pitch);
         v.now = (tf.translation, tf.rotation);
+    }
+}
+
+/// Bots get off a vehicle's line as it closes on them: with nobody dodging, ramming was free kills.
+#[allow(clippy::type_complexity)]
+pub(super) fn sidestep(
+    vehicles: Query<(&Transform, &Vehicle)>,
+    mut bots: Query<(&Transform, &mut PlayerIntent, &BotBrain, &Kinematic), (Without<Eliminated>, Without<Riding>, Without<Vehicle>)>,
+) {
+    let moving: Vec<(Vec2, Vec2, f32)> = vehicles
+        .iter()
+        .filter(|(_, v)| v.speed.abs() > RAM)
+        .map(|(t, v)| (t.translation.xz(), (t.rotation * Vec3::NEG_Z).xz().normalize_or_zero() * v.speed.signum(), v.kind.spec().size.x / 2.0))
+        .collect();
+    if moving.is_empty() {
+        return;
+    }
+    for (tf, mut intent, brain, kin) in &mut bots {
+        if kin.mode != MoveMode::Ground {
+            continue;
+        }
+        let reach = if brain.calm { DODGE.1 } else { DODGE.0 };
+        for (at, dir, half) in &moving {
+            let to = tf.translation.xz() - *at;
+            let aside = dir.perp().dot(to);
+            if to.length_squared() < reach * reach && dir.dot(to) > 0.0 && aside.abs() < half + 1.5 {
+                intent.move_axis = axes_towards(intent.yaw, dir.perp() * if aside < 0.0 { -1.0 } else { 1.0 });
+                intent.held |= btn::SPRINT;
+                break;
+            }
+        }
     }
 }
 
@@ -673,8 +888,33 @@ mod tests {
         for k in VehicleKind::ALL {
             let s = k.spec();
             assert!(s.seat.z.abs() < s.size.z / 2.0, "{k:?}");
-            assert!(s.law.top > super::super::movement::SPRINT_SPEED * 1.5, "{k:?}");
+            // The tractor is the one thing slower than that: it is there to wade.
+            assert!(k == VehicleKind::Tractor || s.law.top > super::super::movement::SPRINT_SPEED * 1.5, "{k:?}");
             assert!(s.size.min_element() >= 2.0 * s.round, "{k:?}");
+        }
+    }
+
+    /// Each `drag` must leave the engine able to reach `top`: the sum in `drive::step` stays above zero.
+    #[test]
+    fn every_kind_reaches_its_top_speed() {
+        for k in VehicleKind::ALL {
+            let law = k.spec().law;
+            assert!(law.pull * 0.4 - law.drag * law.top * law.top - 0.35 > 0.0, "{k:?}");
+        }
+    }
+
+    #[test]
+    fn the_fleet_adds_up_to_a_match() {
+        assert_eq!(FLEET.iter().map(|f| f.1).sum::<usize>(), Rules::of(crate::map::MapStyle::Ncr).parked);
+        assert_eq!(FLEET.len(), VehicleKind::ALL.len());
+    }
+
+    #[test]
+    fn the_ground_sets_the_pace() {
+        let (car, jeep) = (VehicleKind::Car, VehicleKind::Khuli);
+        for (class, road, rough) in [(ground::ROAD, 1.0, 1.0), (ground::PARKING, 1.0, 1.0), (ground::PLAZA, 1.0, 1.0), (ground::PAVEMENT, 0.9, 0.9), (ground::PATH, 0.8, 0.8), (ground::OPEN, 0.7, 1.0), (ground::SAND, 0.45, 0.8)] {
+            assert_eq!(surface(car, Some(class)), road, "{class}");
+            assert_eq!(surface(jeep, Some(class)), rough, "{class}");
         }
     }
 

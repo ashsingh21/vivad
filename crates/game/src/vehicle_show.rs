@@ -5,15 +5,18 @@
 //!                  (x,z of its centre, default Connaught Place's), get in, drive round it, sound
 //!                  the horn now and then, turn into the ring's outer wall and scrape along it, brake,
 //!                  get out. With VIVAD_CLIP for the frames.
+//! VIVAD_ROAD=<kind>[,<seconds>]  on the NCR, get in at the head of the Ring Road and drive it flat
+//!                  out for that long by the same keys, braking for the bends, then log the frames:
+//!                  mean, 99th percentile, the worst and where. The near tier at road speed.
 //! VIVAD_SHOW=<dir> one picture of each vehicle parked, driven and from the side with its driver, then
 //!                  of health, smoke and a wreck, then exit. VIVAD_SHOW_ONLY=a,b only the pictures whose names
 //!                  hold one of these. VIVAD_SHOW_WINDOW=1 takes the window, HUD and all (keep it
 //!                  in view); otherwise the 3D view.
-//! Kinds: auto, scooter, bike, phatphati, gaadi.
+//! Kinds: auto, scooter, bike, phatphati, gaadi, khuligaadi, sarkarigaadi, chhotatruck, tractor.
 
 use bevy::prelude::*;
 use bevy::render::view::window::screenshot::{Screenshot, save_to_disk};
-use shared::map::MapLayout;
+use shared::map::{MapLayout, compose};
 use shared::sim::flow::Match;
 use shared::sim::vehicle::{Riding, Vehicle, VehicleKind, spawn_vehicle};
 use shared::sim::{HALF_HEIGHT, Health, Kinematic, LocalPlayer, MoveMode};
@@ -33,6 +36,14 @@ impl Plugin for VehicleShowPlugin {
             app.insert_resource(Lap { kind, centre: ring(), radius, seconds, phase: 0, t: 0.0, vehicle: None, horn: 5.0 })
                 .add_systems(PreUpdate, lap.after(bevy::input::InputSystems).before(LocalInput));
         }
+        if let Ok(spec) = std::env::var("VIVAD_ROAD") {
+            let mut parts = spec.split(',');
+            let kind = parts.next().and_then(kind_named).unwrap_or(VehicleKind::Bullet);
+            let seconds = parts.next().and_then(|s| s.trim().parse().ok()).unwrap_or(150.0);
+            let line = compose::network().swap_remove(0).1;
+            app.insert_resource(Road { kind, seconds, line, next: 0, phase: 0, t: 0.0, vehicle: None, frames: vec![], worst: (0.0, Vec2::ZERO, 0.0), top: 0.0 })
+                .add_systems(PreUpdate, road.after(bevy::input::InputSystems).before(LocalInput));
+        }
         if let Ok(dir) = std::env::var("VIVAD_SHOW") {
             std::fs::create_dir_all(&dir).ok();
             let mut list = takes();
@@ -47,7 +58,7 @@ impl Plugin for VehicleShowPlugin {
 }
 
 fn kind_named(s: &str) -> Option<VehicleKind> {
-    VehicleKind::ALL.into_iter().find(|k| k.spec().name.eq_ignore_ascii_case(s.trim()))
+    VehicleKind::ALL.into_iter().find(|k| k.spec().name.replace(' ', "").eq_ignore_ascii_case(s.trim()))
 }
 
 /// VIVAD_RING=x,z: the middle of the road's circle.
@@ -194,6 +205,107 @@ fn lap(
     }
 }
 
+#[derive(Resource)]
+struct Road {
+    kind: VehicleKind,
+    seconds: f32,
+    line: Vec<Vec2>,
+    next: usize,
+    phase: u8,
+    t: f32,
+    vehicle: Option<Entity>,
+    frames: Vec<f32>,
+    /// The worst frame, milliseconds, where it was and at what speed.
+    worst: (f32, Vec2, f32),
+    top: f32,
+}
+
+/// The point `metres` on along `line` from its point `from`.
+fn road_ahead(line: &[Vec2], from: usize, metres: f32) -> Vec2 {
+    let mut left = metres;
+    for s in line[from.min(line.len() - 1)..].windows(2) {
+        let len = s[0].distance(s[1]);
+        if len >= left {
+            return s[0].lerp(s[1], left / len.max(1e-3));
+        }
+        left -= len;
+    }
+    *line.last().unwrap_or(&Vec2::ZERO)
+}
+
+/// Down the Ring Road by the real keys, timing every frame.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn road(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    mut road: ResMut<Road>,
+    m: Res<Match>,
+    layout: Res<MapLayout>,
+    mut me: Query<(&mut Transform, &mut Kinematic, &mut Health, Has<Riding>), With<LocalPlayer>>,
+    vehicles: Query<(&Transform, &Vehicle), Without<LocalPlayer>>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    let Ok((mut tf, mut kin, mut hp, riding)) = me.single_mut() else { return };
+    hp.hp = hp.max_hp;
+    let dt = time.delta_secs();
+    road.t += dt;
+    match road.phase {
+        // After the first seconds' shader warm-up.
+        0 if m.elapsed > 13.0 => {
+            let at = road.line[0];
+            let dir = (road.line[1] - at).normalize();
+            let foot = Vec3::new(at.x, layout.terrain.height(at.x, at.y), at.y);
+            let side = Vec3::new(-dir.y, 0.0, dir.x) * (road.kind.spec().size.x / 2.0 + 0.9);
+            road.vehicle = Some(spawn_vehicle(&mut commands, road.kind, foot, facing(dir)));
+            stand(&mut tf, &mut kin, foot + side, facing(dir));
+            road.phase = 1;
+            road.t = 0.0;
+        }
+        1 if road.t > 0.6 => {
+            kin.grounded = true;
+            tap(&mut keys, KeyCode::KeyE, true);
+            if riding {
+                hold(&mut keys, KeyCode::KeyE, false);
+                road.phase = 2;
+                road.t = 0.0;
+            }
+        }
+        2 => {
+            let Some(Ok((t, v))) = road.vehicle.map(|e| vehicles.get(e)) else { return };
+            let p = t.translation.xz();
+            let next = road.next;
+            let n = road.line.len();
+            road.next = (next..(next + 6).min(n)).min_by(|a, b| road.line[*a].distance_squared(p).total_cmp(&road.line[*b].distance_squared(p))).unwrap_or(next);
+            let aim = road_ahead(&road.line, road.next + 1, (v.speed * 0.5).max(6.0));
+            let off = wrap(facing(aim - p) - v.heading);
+            let far = road_ahead(&road.line, road.next + 1, v.speed * 2.5 + 24.0);
+            let bend = wrap(facing(far - aim) - facing(aim - p)).abs();
+            let slow = (bend > 0.45 || off.abs() > 0.35) && v.speed > 10.0;
+            hold(&mut keys, KeyCode::KeyW, !slow);
+            hold(&mut keys, KeyCode::KeyS, slow);
+            hold(&mut keys, KeyCode::KeyA, off > 0.02);
+            hold(&mut keys, KeyCode::KeyD, off < -0.02);
+            let ms = dt * 1000.0;
+            road.top = road.top.max(v.speed);
+            road.frames.push(ms);
+            // The first second is the vehicle's own shaders settling.
+            if road.t > 1.0 && ms > road.worst.0 {
+                road.worst = (ms, p, v.speed);
+            }
+            if road.t > road.seconds || road.next + 2 >= n {
+                let mut f = road.frames.clone();
+                f.sort_by(f32::total_cmp);
+                let (mean, p99) = (f.iter().sum::<f32>() / f.len().max(1) as f32, f[(f.len() - 1) * 99 / 100]);
+                let (w, at, speed) = road.worst;
+                info!("[road] {:?}: {:.0} s, {} frames, top {:.1} m/s, ended at {:.0},{:.0}, health {:.0}: mean {mean:.1} ms, 1 in 100 over {p99:.1} ms, worst {w:.1} ms at {:.0},{:.0} doing {speed:.1} m/s", road.kind, road.t, f.len(), road.top, p.x, p.y, v.hp, at.x, at.y);
+                exit.write(AppExit::Success);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[derive(Clone)]
 struct Take {
     name: String,
@@ -212,19 +324,20 @@ struct Take {
 
 fn takes() -> Vec<Take> {
     let mut v = vec![];
+    let word = |k: VehicleKind| k.spec().name.to_lowercase().replace(' ', "_");
     let parked = |name: String, kind, view, hp, at| Take { name, kind, aboard: false, driving: false, corner: false, view: Some(view), hp, at };
     let driven = |name: String, kind, hp, at| Take { name, kind, aboard: true, driving: true, corner: false, view: None, hp, at };
     for (i, k) in VehicleKind::ALL.into_iter().enumerate() {
-        v.push(parked(format!("{:02}_{}", i + 1, k.spec().name.to_lowercase()), k, 0.75, 1.0, 2.5));
+        v.push(parked(format!("{:02}_{}", i + 1, word(k)), k, 0.75, 1.0, 2.5));
     }
     for (i, k) in VehicleKind::ALL.into_iter().enumerate() {
-        v.push(driven(format!("{:02}_{}_driven", i + 11, k.spec().name.to_lowercase()), k, 1.0, 5.0));
+        v.push(driven(format!("{:02}_{}_driven", i + 11, word(k)), k, 1.0, 5.0));
     }
     for (i, k) in VehicleKind::ALL.into_iter().enumerate() {
-        v.push(Take { aboard: true, ..parked(format!("{:02}_{}_driver", i + 21, k.spec().name.to_lowercase()), k, 1.75, 1.0, 2.5) });
+        v.push(Take { aboard: true, ..parked(format!("{:02}_{}_driver", i + 21, word(k)), k, 1.75, 1.0, 2.5) });
     }
     for (i, k) in [VehicleKind::Scooter, VehicleKind::Commuter, VehicleKind::Bullet].into_iter().enumerate() {
-        v.push(Take { corner: true, ..driven(format!("{:02}_{}_lean", i + 41, k.spec().name.to_lowercase()), k, 1.0, 5.2) });
+        v.push(Take { corner: true, ..driven(format!("{:02}_{}_lean", i + 41, word(k)), k, 1.0, 5.2) });
     }
     let auto = VehicleKind::Auto;
     v.push(Take { aboard: false, driving: false, ..driven("30_get_in_prompt".into(), auto, 1.0, 2.0) });
