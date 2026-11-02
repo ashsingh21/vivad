@@ -164,3 +164,5 @@ Ajanta.
 centroid and loop-seam size per sound, and `VIVAD_AUDIO_LOG=1` makes the game log how often each
 sound fired and how loud the street's beds are where the player stands (run automated sessions with
 `VIVAD_MUTE=1`). Whether it sounds right needs a listen.
+
+The recipes `street-sounds`, `vehicles`, `vehicle-sounds`, `street-guns` and `rifle-sfx` rebuild assets from raw downloads that are not on `main`. They need the `research/` folders of the `claude/research-*` worktrees. Never run `just anims`, `just assets` or `just pack-guns` without the raw animation packs.

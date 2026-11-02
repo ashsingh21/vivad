@@ -35,6 +35,22 @@ Not installed: ffmpeg, ImageMagick, wasm-bindgen, any KTX2 encoder. The M4 now r
 
 ---
 
+## Merge of the seven parts (2 Nov 2026)
+
+Owner decisions, night of 1 to 2 Nov 2026. These override anything older here, and the "polished stylised" line in `docs/rendering-guidelines.md`:
+
+- Everything merges into `main` in the local folder `/Users/apc/Study/Projects/game`. The coordinator takes every decision. The owner judges the final game.
+- The game must look and feel real on every quality level, not cartoonish. This replaces decision 2's "Low/Medium/High stay as they are".
+- Free CC0 assets may be downloaded without asking, with a credit in `docs/references.md`.
+- E-rickshaw and vehicle loads stay out. Jeep, tractor, Ambassador-style car and mini truck are in.
+- Ashu's work may be used wherever it is better. What goes to Panga `main` needs the owner's yes.
+
+Landed on `main`, one squash commit each, with `research/` left out: Characters, Front door, Delhi words, Hiding, Guns, Fights, Vehicles (tag `parts-done`). The raw research stays on the `claude/research-*` branches, backed up to the private Panga repo.
+
+Final gate on `2c051b7`: 0 warnings, shared 83 and game 40 tests, 3 of 3 matches on `cp`, a full 64-warrior match on NCR, `just net`, `just p2p`, `just sense`, `just vehicle-check`, `just check-characters`, `just ncr-walk` 23 of 23, and a real drive on NCR.
+
+Still open before anyone outside plays: a credits line on Home for OpenStreetMap and the CC-BY models, the ODbL offer in `docs/references.md`, the dhal fetched from its original source, a Delhi reader for `lines.ron`, a person's ear on every sound, and a real play test. Plans for the rest of tonight's work are in `.claude/worktrees/plans/`.
+
 ## Where things stand (1 Nov 2026, evening)
 
 - `main` is at `743ae0c`, the Phase 0 prototype plus the NCR, Ultra and character work. That is two

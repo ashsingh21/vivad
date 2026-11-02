@@ -75,3 +75,6 @@ tools/texpack/target/
 # Raw full-size game shots and clip frames behind the character sheets.
 previews/characters/game_*/
 previews/characters/clip_*/frame_*
+
+# Research downloads live on the claude/research-* branches and worktrees, never on main.
+/research/

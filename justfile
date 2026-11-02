@@ -52,7 +52,7 @@ figures:
 
 # Characters (needs the MPFB extension + MakeHuman CC0 assets, see docs/references.md)
 characters:
-    test -d research/characters/downloads/makehuman || zsh research/characters/scripts/fetch_mh.sh research/characters/downloads/makehuman
+    test -d research/characters/downloads/makehuman || zsh tools/blender/characters/fetch_mh.sh research/characters/downloads/makehuman
     for v in male female; do {{blender}} -b -P tools/blender/characters/human.py -- $v 2>&1 | grep -E '^\[|Error|Traceback' || true; done
     just characters-pack
 

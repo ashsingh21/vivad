@@ -1,5 +1,7 @@
 # References, dimensions and licences
 
+Paths under `research/` below are on the `claude/research-*` branches, not on `main`.
+
 All models are built at real-world scale in metres. Sources are listed per weapon. Museum
 images were used only as visual reference; no museum imagery is redistributed in this repo.
 
@@ -140,7 +142,7 @@ no real person's face or body, warm brown South Asian skin, softer bodies than t
 - Woman: plain magenta kurta (MakeHuman's flapper dress cut at the knee, slit at the sides),
   cream salwar (harem pants tucked in under the kurta), flat shoes, a long plait, kajal.
 - Clothes: MakeHuman community garments fitted by MPFB (`outfits.worn`); they need the packs from
-  `research/characters/scripts/fetch_mh.sh <dest>`, with `research/characters/downloads/makehuman`
+  `tools/blender/characters/fetch_mh.sh <dest>`, with `research/characters/downloads/makehuman`
   as `<dest>`. `finish.fitted_material` recolours them.
 - Faces: MPFB detail targets (narrower nose and nostrils, a slight bridge on the male, finer
   lips, eyes a little larger and more open) over the race macros, in `human.py` VARIANTS.
