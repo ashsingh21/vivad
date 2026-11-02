@@ -149,6 +149,7 @@ fn add_streaks(mut commands: Commands, q: Query<(Entity, &Projectile, &Transform
         let (mat, width, time) = match p.astra.as_ref() {
             Some(_) if p.item == "agneyastra" => (fx.fire_streak.clone(), 0.09, STREAK_TIME),
             Some(_) if p.item == "chakra" => (fx.gold_spark.clone(), 0.06, STREAK_TIME * 1.5),
+            Some(_) if p.item == "chappal" => (fx.streak.clone(), 0.03, STREAK_TIME * 0.6),
             Some(_) if p.item == "brahmastra" => (fx.gold_spark.clone(), 0.12, STREAK_TIME * 2.0),
             Some(_) => (fx.wind_streak.clone(), 0.08, STREAK_TIME),
             None if shot_kind(&p.item) == Shot::Bullet => (fx.tracer.clone(), if p.item == "dunali" { 0.018 } else { 0.03 }, TRACER_TIME),

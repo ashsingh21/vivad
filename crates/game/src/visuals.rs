@@ -88,9 +88,9 @@ impl Plugin for VisualsPlugin {
 }
 
 /// Baked models in assets/models/weapons, one per item (the arrow-quiver pickup shows the tarkash).
-pub const WEAPON_MODELS: [&str; 26] = [
+pub const WEAPON_MODELS: [&str; 27] = [
     "bat", "lathi", "tawa", "hockey_stick", "gada", "talwar", "dhal", "katta", "tamancha", "dunali", "gulel", "chakra", "brahmastra", "arrow", "tarkash", "agneyastra", "vayavyastra", "sanjeevani",
-    "soma", "amrita", "vajra9", "trishul_carbine", "saintalis", "thaana_slr", "thri_not_thri", "toradar",
+    "soma", "amrita", "vajra9", "trishul_carbine", "saintalis", "thaana_slr", "thri_not_thri", "toradar", "chappal",
 ];
 
 /// The chakra model's radius (tools/blender/weapons/desi.py CHAKRA_R): its origin is the rim.
@@ -966,6 +966,14 @@ fn dress_projectiles(mut commands: Commands, q: Query<(Entity, &Projectile), Add
                 c.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(palette.rarity_glow[&Rarity::Divya].clone()),
                          Transform::from_scale(Vec3::new(0.12, 0.03, 0.12)), bevy::light::NotShadowCaster));
                 c.spawn((PointLight { color: Color::srgb(1.0, 0.8, 0.4), intensity: 80_000.0, range: 5.0, ..default() }, Transform::default()));
+            } else if p.item == "chappal" {
+                // Flat, turning end over end about its middle, and no glow: it is only a chappal.
+                if let Some(m) = palette.models.get("chappal") {
+                    c.spawn((ChakraSpin, Transform::from_scale(Vec3::splat(1.5)), Visibility::default())).with_children(|s| {
+                        s.spawn((Mesh3d(m.mesh.clone()), MeshMaterial3d(m.mat.clone()),
+                                 Transform::from_rotation(Quat::from_rotation_x(FRAC_PI_2)).with_translation(Vec3::Z * 0.135)));
+                    });
+                }
             } else if p.astra.is_some() {
                 // The astra itself, point first, wrapped in a small glow of its element.
                 let glow = match p.item.as_str() {

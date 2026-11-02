@@ -221,7 +221,7 @@ mod tests {
         let mut all: Vec<(&'static str, &'static [&'static str])> = vec![
             ("kill", KILL), ("kill.long", KILL), ("kill.bat", KILL), ("kill.katta", KILL), ("kill.tamancha", KILL), ("kill.dunali", KILL),
             ("kill.gulel", KILL), ("kill.vajra9", KILL), ("kill.trishul_carbine", KILL), ("kill.agneyastra", KILL), ("kill.vayavyastra", KILL),
-            ("kill.brahmastra_mk2", KILL), ("kill.chakra", KILL), ("kill.brahmastra", KILL),
+            ("kill.brahmastra_mk2", KILL), ("kill.chakra", KILL), ("kill.chappal", KILL), ("kill.brahmastra", KILL),
             ("down.aandhi", VICTIM), ("down.fall", VICTIM), ("down.self", VICTIM), ("down.self.katta", VICTIM), ("down.self.bomb", VICTIM),
             ("left", VICTIM), ("moment.first", KILL), ("moment.double", KILL), ("moment.triple", KILL), ("moment.last2", &[]), ("moment.leader", KILL),
             ("moment.trade", &[]), ("you.head", &[]), ("you.long", &[]), ("you.kill", &[]),

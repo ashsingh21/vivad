@@ -73,8 +73,8 @@ const NAMES: [&str; 75] = [
 ];
 
 /// The fights' sounds, cut from recordings.
-pub const MELEE_NAMES: [&str; 15] = [
-    "swing_light_0", "swing_light_1", "swing_stick", "swing_heavy", "hit_bat", "hit_stick", "hit_pan", "hit_dhal", "hit_blade", "hit_gada",
+pub const MELEE_NAMES: [&str; 16] = [
+    "swing_light_0", "swing_light_1", "swing_stick", "swing_heavy", "hit_bat", "hit_stick", "hit_pan", "hit_dhal", "hit_blade", "hit_gada", "hit_chappal",
     "guard_wood", "guard_metal", "guard_pan", "break_wood", "break_metal",
 ];
 
@@ -97,6 +97,7 @@ fn blow_sound(item: &str) -> &'static str {
         "dhal" => "hit_dhal",
         "talwar" => "hit_blade",
         "gada" => "hit_gada",
+        "chappal" => "hit_chappal",
         _ => "hit_bat",
     }
 }
@@ -511,7 +512,8 @@ fn combat_events(
         }
     }
     for h in hits.read() {
-        let melee = inv.get(h.attacker).ok().and_then(|i| i.current()).filter(|s| matches!(db.get(&s.id).kind, ItemKind::Melee { .. }));
+        let held = inv.get(h.attacker).ok().and_then(|i| i.current());
+        let melee = held.filter(|s| matches!(db.get(&s.id).kind, ItemKind::Melee { .. }) || s.id == "chappal");
         play.at(melee.map_or(if h.shield { "hit_shield" } else { "hit_flesh" }, |s| blow_sound(&s.id)), h.at, IMPACT, 60.0);
         if Some(h.attacker) == me {
             play.ui(if h.headshot { "hitmarker_head" } else { "hitmarker" }, UI);

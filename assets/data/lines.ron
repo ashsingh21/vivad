@@ -70,6 +70,7 @@
         (id: "hazaari.1", at: ["kill.brahmastra_mk2"], ok: false, check: Plain, text: "{k_ne} {v_ka} raasta band kar diya", mean: "{k} closed {v}'s road.", note: "For the renamed Brahmastra Mk II."),
 
         // chakri
+        (id: "chappal.2", at: ["kill.chappal"], ok: false, check: Read, text: "Chappal chali, {v} gaya ({k})", mean: "The chappal flew, {v} is gone."),
         (id: "chakri.1", at: ["kill.chakra"], ok: false, check: Read, text: "{k_ne} {v_ko} chakkar mein daal diya", mean: "{k} sent {v} into a spin.", note: "For the renamed Sudarshan Chakra."),
         (id: "chakri.2", at: ["kill.chakra"], ok: false, check: Read, text: "Chakri ghoomi, {v} saaf ({k})", mean: "The spinner spun, {v} is wiped out."),
 
@@ -81,7 +82,7 @@
         (id: "rifle.2", at: ["kill.long"], ok: false, check: Decide, text: "Ayi bo! {k_ne} {v_ki} patang kaat di", mean: "The other Delhi kite cry, same line.", note: "Second choice for the native to compare."),
         (id: "rifle.3", at: ["kill.long"], ok: false, check: Read, text: "Door se hi namaste: {k_ne} {v_ko} gira diya", mean: "Greetings from afar: {k} dropped {v}."),
         (id: "ram.1", at: ["later"], ok: false, check: Read, text: "{k_ka} meter {v_par} chal gaya", mean: "{k}'s meter ran on {v}.", note: "For a vehicle ram, once vehicles exist."),
-        (id: "chappal.1", at: ["later"], ok: false, check: Read, text: "{k_ne} {v_ko} chappal se nipta diya", mean: "{k} finished {v} with a slipper.", note: "For the thrown chappal idea."),
+        (id: "chappal.1", at: ["kill.chappal"], ok: false, check: Read, text: "{k_ne} {v_ko} chappal se nipta diya", mean: "{k} finished {v} with a slipper.", note: "For the thrown chappal idea."),
 
         // cause-aandhi
         (id: "aandhi.1", at: ["down.aandhi"], ok: false, check: Plain, text: "Aandhi ne {v_ko} uda diya", mean: "The Aandhi blew {v} away.", note: "In the game today."),
@@ -324,6 +325,7 @@
         (id: "lore.vajra9", at: ["items"], ok: false, check: Plain, text: "Ek baar shuru hui toh rukti nahi", mean: "Once it starts, it does not stop.", note: "Replaces English lore."),
         (id: "lore.trishul", at: ["items"], ok: false, check: Read, text: "Teen tigada, kaam bigada. Par yahan teeno goli lagti hain", mean: "Three spoil the job. But here all three bullets land.", note: "Replaces English lore."),
         (id: "lore.mk2", at: ["items"], ok: false, check: Read, text: "Darwaza roko, gali roko. Hazaar wali ladi", mean: "Block the door, block the lane. The thousand-cracker string.", note: "Replaces English lore."),
+        (id: "lore.chappal", at: ["items"], ok: false, check: Read, text: "Maa ka nishana. Jahan bhi chhupo, dhoondh legi, phir paon mein wapas", mean: "Mum's aim. Hide where you like, it will find you, then it's back on the foot."),
         (id: "lore.chakra", at: ["items"], ok: false, check: Read, text: "Diwali ki chakri. Jo raaste mein aaye, kat jaye; phir laut ke haath mein", mean: "A Diwali spinner. It cuts what it meets, then comes back to the hand.", note: "Same line as today, with Vishnu removed."),
         (id: "lore.brahmastra", at: ["items"], ok: false, check: Plain, text: "Sabse bada dhamaka. Ek baar chalta hai, aur sab kuch badal deta hai", mean: "The biggest bang. It goes once, and changes everything.", note: "Same line as today, without astra. Avoid the word patakha: two filter lists flag it as slang for a woman."),
         (id: "lore.soma", at: ["items"], ok: false, check: Plain, text: "Ek kadak chai, aur thodi himmat", mean: "One strong tea, and a little courage.", note: "Same line as today, without cutting."),

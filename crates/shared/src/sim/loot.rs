@@ -116,12 +116,12 @@ fn roll_rarity(kind: Option<ChestKind>, rng: &mut impl rand::Rng) -> Rarity {
 
 /// Pick an item of the wanted category at (or below) the rolled rarity. Weapons go by the spot they
 /// are found at, if given (`ItemDb::drops`); medicine and goli are the same everywhere.
-fn roll_item(db: &ItemDb, rarity: Rarity, filter: impl Fn(&ItemKind) -> bool, at: Option<Spot>, rng: &mut impl rand::Rng) -> Option<ItemStack> {
+fn roll_item(db: &ItemDb, rarity: Rarity, filter: impl Fn(&str, &ItemKind) -> bool, at: Option<Spot>, rng: &mut impl rand::Rng) -> Option<ItemStack> {
     for r in Rarity::ALL.iter().rev().filter(|r| **r <= rarity) {
         let pool: Vec<(&String, f32)> = db
             .items
             .iter()
-            .filter(|(_, d)| filter(&d.kind))
+            .filter(|(id, d)| filter(id, &d.kind))
             .filter_map(|(id, d)| {
                 let w = match at {
                     Some(at) => db.drops.weight(at, id, d, *r),
@@ -156,13 +156,16 @@ pub fn make_stack(db: &ItemDb, id: &str, rarity: Rarity) -> ItemStack {
     ItemStack { id: id.into(), rarity, count }
 }
 
-fn is_weapon(k: &ItemKind) -> bool {
-    matches!(k, ItemKind::Bow { .. } | ItemKind::Astra { .. })
+/// Thrown, but a thing off the street: it comes on top of the guns, with the lathis and tawas.
+const STREET_THROW: &str = "chappal";
+
+fn is_weapon(id: &str, k: &ItemKind) -> bool {
+    matches!(k, ItemKind::Bow { .. } | ItemKind::Astra { .. }) && id != STREET_THROW
 }
-fn is_melee(k: &ItemKind) -> bool {
-    matches!(k, ItemKind::Melee { .. })
+fn is_melee(id: &str, k: &ItemKind) -> bool {
+    matches!(k, ItemKind::Melee { .. }) || id == STREET_THROW
 }
-fn is_consumable(k: &ItemKind) -> bool {
+fn is_consumable(_: &str, k: &ItemKind) -> bool {
     matches!(k, ItemKind::Consumable { .. })
 }
 
@@ -225,7 +228,7 @@ pub fn spawn_loot(commands: &mut Commands, layout: &MapLayout, db: &ItemDb, seed
         let item = if rng.random_bool(0.55) {
             roll_item(db, rarity, is_weapon, here, &mut rng)
         } else {
-            roll_item(db, rarity, |k| is_consumable(k) || matches!(k, ItemKind::Arrows { .. }), None, &mut rng)
+            roll_item(db, rarity, |_, k| matches!(k, ItemKind::Consumable { .. } | ItemKind::Arrows { .. }), None, &mut rng)
         };
         if let Some(st) = item {
             // Bows on the floor come with a quiver beside them.
@@ -510,7 +513,7 @@ mod tests {
     }
 
     /// `n` rolls of a kind of find at a spot, most found first.
-    fn rolls(db: &ItemDb, at: Spot, filter: fn(&ItemKind) -> bool, n: u32) -> Vec<(String, u32)> {
+    fn rolls(db: &ItemDb, at: Spot, filter: fn(&str, &ItemKind) -> bool, n: u32) -> Vec<(String, u32)> {
         let mut rng = match_rng(7, stream::FLOOR_LOOT);
         let mut seen: std::collections::BTreeMap<String, u32> = Default::default();
         for _ in 0..n {
@@ -559,7 +562,7 @@ mod tests {
         for place in Place::ALL {
             for era in [None, Some(Era::Old), Some(Era::Raj), Some(Era::New)] {
                 let at = Spot { place, era };
-                for (id, d) in db.items.iter().filter(|(_, d)| !d.drops.is_empty() && (is_weapon(&d.kind) || is_melee(&d.kind))) {
+                for (id, d) in db.items.iter().filter(|(id, d)| !d.drops.is_empty() && (is_weapon(id, &d.kind) || is_melee(id, &d.kind))) {
                     assert!(db.drops.odds(at, id) >= 0.25, "{id} at {at:?}");
                     let rolled: f32 = Rarity::ALL.iter().filter_map(|r| db.drops.weight(at, id, d, *r)).sum();
                     assert!(rolled > 0.0, "{id} at {at:?}");

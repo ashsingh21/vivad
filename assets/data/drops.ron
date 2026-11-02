@@ -16,9 +16,9 @@
     step_down: 0.6,
     places: {
         // Dunali. Tamancha and Katta beside it, the Tawa in the kitchen.
-        Room: { "dunali": 5.0, "tamancha": 2.5, "katta": 2.0, "tawa": 3.0, "gada": 1.5, "talwar": 1.5 },
+        Room: { "dunali": 5.0, "tamancha": 2.5, "katta": 2.0, "tawa": 3.0, "chappal": 2.0, "gada": 1.5, "talwar": 1.5 },
         // Ladi-9. Dunali and Teen Tigada beside it, the Talwar on the wall of the shop.
-        Lane: { "vajra9": 6.0, "dunali": 1.4, "trishul_carbine": 2.5, "talwar": 2.5 },
+        Lane: { "vajra9": 6.0, "dunali": 1.4, "trishul_carbine": 2.5, "talwar": 2.5, "chappal": 1.0 },
         // Saintalis. Thaana SLR beside it, and Anaar to close a road.
         Road: { "saintalis": 7.0, "thaana_slr": 3.0, "agneyastra": 1.5, "lathi": 1.5 },
         // Thaana SLR. The long rifle and the quiet shot beside it.
