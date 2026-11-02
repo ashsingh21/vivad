@@ -227,6 +227,8 @@ fn who_got_you(me: Entity, fell: Option<&Eliminated>, last_hit: Option<&DamageCa
     match (last_hit, killer) {
         (Some(DamageCause::Pralaya), _) => (pick("elim.aandhi"), pick("alert.thanks")),
         (Some(DamageCause::Fall), _) => (pick("elim.fall"), String::new()),
+        (Some(DamageCause::Ram), Some(k)) => got_you(k, String::new()),
+        (Some(DamageCause::Ram), None) => (pick("elim.ram"), String::new()),
         (Some(DamageCause::Weapon(id)), Some(k)) => got_you(k, with_weapon(&db.get(id).name)),
         (Some(DamageCause::Weapon(id)), None) => (own_weapon(&db.get(id).name), pick("elim.self")),
         (None, Some(k)) => got_you(k, String::new()),

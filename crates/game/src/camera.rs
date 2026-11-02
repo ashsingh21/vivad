@@ -179,6 +179,7 @@ fn follow(
         MoveMode::Ground if scope.active() => (eye, 0.0, 0.0, scope.fov()),
         MoveMode::Ground if aiming => (eye, ADS_DISTANCE, CAMERA_SHOULDER, 48.0),
         MoveMode::Ground => (eye, CAMERA_DISTANCE, CAMERA_SHOULDER, 70.0),
+        MoveMode::Riding => (body + Vec3::Y * 1.0, 5.4, 0.0, 72.0),
     };
     // Smooth zoom in/out.
     mc.distance += (want_dist - mc.distance) * (1.0 - (-dt * 12.0).exp());
@@ -198,7 +199,7 @@ fn follow(
 
     // Head bob: periodic vertical offset based on movement speed.
     let speed = kin.velocity.length();
-    let bob = if speed > 0.1 {
+    let bob = if speed > 0.1 && kin.mode != MoveMode::Riding {
         let bob_freq = 10.0; // steps per second
         let bob_amp = 0.05 * (speed / 7.4).min(1.0);
         Vec3::Y * (t * bob_freq).sin() * bob_amp

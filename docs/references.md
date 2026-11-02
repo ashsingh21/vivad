@@ -324,6 +324,27 @@ database and anything else is a Produced Work, and it says nothing about games
 embeds the JSON as plain text in its binary, so the safe reading is that we convey the database
 itself: keep the ODbL notice with it, and publish the files. Ask a lawyer before a commercial release.
 
+## Vehicles
+
+The five drivable vehicles (`crates/shared/src/sim/vehicle.rs`). Models come from `research/vehicles/models` on the
+branch `claude/research-vehicles-1a3b7e`, through `tools/blender/props/vehicles.py`; every one is CC-BY, so its line
+below must also go on the game's credits screen.
+
+| Item | Source | Licence | Use |
+|---|---|---|---|
+| Drive law | [TukTuk.io](https://github.com/anjulalk/tuktukio) by Anjula Karunarathne, `client/src/drive/tuk.ts` | MIT | Copied into `crates/shared/src/sim/drive.rs`, notice kept |
+| Body lean, wheel turn, engine pitch | [Starter Kit Racing](https://github.com/KenneyNL/Starter-Kit-Racing) by Kenney | MIT | Adapted in `crates/game/src/vehicle_feel.rs`, notice kept |
+| Auto: "Tuk Tuk Rikshaw" | [alnmathew](https://sketchfab.com/3d-models/tuk-tuk-rikshaw-0bdfdf97a0f248008806840f7188367c) | CC-BY-4.0 | Scaled, wheels reduced, repainted in Delhi's green and yellow |
+| Scooter: "honda-smart-dio-z4-2006-1" | [AlexanderChen394](https://sketchfab.com/3d-models/none-ef6060608fe04cacbf6d4c817f494d6c) | CC-BY | Scaled, reduced, painted (the model had no colour) |
+| Bike: "Pulsar 135 Ls 2" | [EmanuelRestrepoVelez](https://sketchfab.com/3d-models/none-accbf2048c9344718791588b70d2ebf8) | CC-BY | Scaled, reduced, levelled, number plate removed |
+| Phatphati: "Classic Motorcycle" | [DeclanLea14](https://sketchfab.com/3d-models/none-f246ff1a68d3459892f9420b744a58b6) | CC-BY | Scaled, reduced, levelled; two makers' names and a number plate painted out |
+| Gaadi: "Stylized Suzuki Alto Works" | [EddyNL](https://sketchfab.com/3d-models/none-467f2e28ff334919879841216766903b) | CC-BY | Scaled; a maker's badge and a brand's labels painted out |
+| Engine loops (`engine_auto`, `engine_bike`, `engine_thump`) | Freesound: [DavidBlouin 832083](https://freesound.org/people/DavidBlouin/sounds/832083/), [rsn267 274962](https://freesound.org/people/rsn267/sounds/274962/), [ashimda 159326](https://freesound.org/people/ashimda/sounds/159326/) | CC0 | Cut and looped by `tools/audio/vehicles.py` from the public previews |
+| Horns | `tools/audio/vehicles.py` | Ours | Synthesized |
+
+The research behind these choices is in `research/vehicles/README.md`, on the branch
+`claude/research-vehicles-1a3b7e`.
+
 ## Shop sign lettering
 
 `assets/textures/panga/signs.png` (made by `tools/textures/signs.py`) is lettered in Noto Sans

@@ -34,6 +34,19 @@ jugaad:
 street-kit:
     {{blender}} -b --factory-startup -P tools/blender/props/street_kit.py 2>&1 | grep -E '^\[|Error|Traceback' || true
 
+# The drivable vehicles, from the free models in research/vehicles/models (not in git).
+vehicles:
+    {{blender}} -b --factory-startup -P tools/blender/props/vehicles.py 2>&1 | grep -E '^\[done|Error|Traceback' || true
+
+# Vehicles' engine loops, from the recordings in research/vehicles/references/sounds (not in git), and their horns.
+vehicle-sounds:
+    python3 -I tools/audio/vehicles.py
+
+# Vehicles against the real map, headless: parking, walls, sliding, ramming, wrecks, water, on the
+# NCR; VIVAD_MAP=cp just vehicle-check for Connaught Place.
+vehicle-check:
+    cargo run --release -p shared --bin vehicle_check
+
 figures:
     {{blender}} -b -P tools/blender/architecture/figures.py 2>&1 | grep -E '^\[|Error|Traceback' || true
 
@@ -177,8 +190,9 @@ sim matches="3" bots="63":
     cargo run --release -p shared --bin sim_check -- {{matches}} {{bots}}
 
 # Crouching, cover and the bots' senses, proved headless: on Connaught Place, or just sense ncr.
+# No vehicles: a parked one in a staged shot's way proves nothing about senses (just vehicle-check).
 sense map="cp":
-    VIVAD_MAP={{map}} cargo run --release -p shared --bin sense_check
+    VIVAD_VEHICLES=0 VIVAD_MAP={{map}} cargo run --release -p shared --bin sense_check
 
 # The hiding previews from the real game: the crouch pose, the player behind a stall from the bot's
 # eye, the half shutter, the birds, and a clip of a bot losing the player and searching

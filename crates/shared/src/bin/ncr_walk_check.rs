@@ -314,6 +314,7 @@ fn walk(app: &mut App, w: &Walk, trace: bool) -> Run {
         .spawn((
             Transform::from_translation(spawn),
             Kinematic { mode: MoveMode::Ground, ..default() },
+            Action::default(),
             PlayerIntent { move_axis: Vec2::Y, held: btn::SPRINT, ..default() },
             RigidBody::Kinematic,
             Collider::capsule(CAPSULE_RADIUS, CAPSULE_LENGTH),

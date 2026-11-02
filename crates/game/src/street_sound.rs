@@ -180,8 +180,7 @@ fn wind_at(here: f32, up: f32, airborne: bool) -> f32 {
     if airborne {
         return 0.0;
     }
-    let open = 1.0 - here;
-    (open * 0.7).max(((up - 3.0) / 12.0).clamp(0.0, 1.0)).max(0.15 * (1.0 - here))
+    ((1.0 - here) * 0.7).max(((up - 3.0) / 12.0).clamp(0.0, 1.0))
 }
 
 fn nearest(spots: &[Vec3], p: Vec3) -> Option<Vec3> {
@@ -212,12 +211,12 @@ fn listen(
     };
     let p = tf.translation;
     let up = p.y - HALF_HEIGHT - layout.terrain.height(p.x, p.z);
-    let high = if kin.mode == MoveMode::Ground { ((up - 3.0) / 9.0).clamp(0.0, 1.0) } else { 1.0 };
+    let on_street = matches!(kin.mode, MoveMode::Ground | MoveMode::Riding);
+    let high = if on_street { ((up - 3.0) / 9.0).clamp(0.0, 1.0) } else { 1.0 };
     let here = street_here(&layout, p);
     let park = if here < 1.0 { 1.0 } else { 0.0 };
     let filter = SpatialQueryFilter::from_mask(solid_mask()).with_excluded_entities([e]);
-    let ground_level = kin.mode == MoveMode::Ground;
-    let covered = ground_level && spatial.cast_ray(p, Dir3::Y, 12.0, true, &filter).is_some();
+    let covered = on_street && spatial.cast_ray(p, Dir3::Y, 12.0, true, &filter).is_some();
     let roofed = covered && spatial.cast_ray(p, Dir3::Y, ROOM_HIGH, true, &filter).is_some();
     let indoors = roofed && [Dir3::X, Dir3::NEG_X, Dir3::Z, Dir3::NEG_Z].into_iter().filter(|d| spatial.cast_ray(p, *d, ROOM_WIDE, true, &filter).is_some()).count() >= ROOM_WALLS;
     let dull = if indoors { THROUGH_WALLS } else { 1.0 };
@@ -228,7 +227,7 @@ fn listen(
         market: crowd * (1.0 - high) * (1.0 - park) * (0.3 + 0.7 * stall.max(if covered { 0.5 } else { 0.0 })) * dull,
         far: (0.35f32).max(high).max(park).max(1.0 - traffic).max(if indoors { 0.8 } else { 0.0 }) * 0.8,
         park: park * (1.0 - high) * dull,
-        wind: wind_at(here, up, !ground_level) * if roofed { 0.0 } else { 1.0 },
+        wind: wind_at(here, up, !on_street) * if roofed { 0.0 } else { 1.0 },
         river: water_near(&layout, p.xz()) * dull,
         indoors,
     };
