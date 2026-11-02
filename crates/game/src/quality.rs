@@ -146,7 +146,7 @@ impl Quality {
 
     /// Whether characters show their densest LOD up close.
     pub fn character_lod0(self) -> bool {
-        self == Quality::Ultra
+        self != Quality::Low
     }
 
     fn next(self) -> Self {
