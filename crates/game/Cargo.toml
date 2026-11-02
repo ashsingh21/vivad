@@ -11,6 +11,8 @@ avian3d = { workspace = true }
 rand = { workspace = true }
 ron = { workspace = true }
 serde = { workspace = true }
+# Reads the characters' and animals' files to bake flip books (crate::life); Bevy already builds it.
+gltf = { version = "1.4", default-features = false, features = ["names", "utils"] }
 # Online play over iroh (in the browser through its relays).
 net = { path = "../net" }
 

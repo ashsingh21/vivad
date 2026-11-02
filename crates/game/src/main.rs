@@ -79,7 +79,7 @@ fn main() {
             game::rim::RimPlugin,
             game::street::StreetPlugin, game::ambient::AmbientPlugin))
         .add_plugins((game::scope::ScopePlugin, game::fonts::FontsPlugin, game::say::SayPlugin, game::wheel::WheelPlugin, game::stage::StagePlugin,
-            game::brawl::BrawlPlugin, game::vehicles::VehiclesPlugin, game::vehicle_show::VehicleShowPlugin))
+            game::brawl::BrawlPlugin, game::vehicles::VehiclesPlugin, game::vehicle_show::VehicleShowPlugin, game::life::LifePlugin))
         .add_plugins(bevy::diagnostic::LogDiagnosticsPlugin {
             wait_duration: std::time::Duration::from_secs(10),
             filter: std::env::var("VIVAD_PERF_ALL").is_ok().then(|| None).unwrap_or_else(|| std::env::var("VIVAD_PERF_LOG").is_ok().then(|| {
