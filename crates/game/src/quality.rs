@@ -40,6 +40,12 @@ impl Quality {
         self == Quality::Ultra
     }
 
+    /// Whether the real surfaces show (crate::surfaces). Not in the browser, whose WebGPU allows 16
+    /// textures a shader stage, far fewer than the ground's material adds to Bevy's own.
+    pub fn surfaces(self) -> bool {
+        self != Quality::Low && !cfg!(target_arch = "wasm32")
+    }
+
     /// Most rows of pixels the 3D view is rendered at (None: the window's own).
     fn max_rows(self, big_map: bool) -> Option<u32> {
         match self {
@@ -370,9 +376,8 @@ fn apply(
     let env = |k: &str| std::env::var(k).ok();
     let big = is_big(&layout);
     let far_plane = q.far_plane(big);
-    // The painted dome is a mesh, drawn in front of anything past its radius (a tenth inside
-    // Bevy's default 1000 m far plane), so it has to stand back with the far plane. The clouds and
-    // the sun are on the same rig, and keep their size in the sky.
+    // The dome is a mesh, drawn in front of anything past its radius (a tenth inside Bevy's default
+    // 1000 m far plane), so it has to stand back with the far plane.
     if let Some(rig) = painted.iter().next().map(|c| c.parent())
         && let Ok(mut t) = transforms.get_mut(rig)
     {

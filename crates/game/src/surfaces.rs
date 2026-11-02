@@ -1,15 +1,15 @@
-//! The Ultra level's surfaces: real plaster, marble, asphalt, pavers, earth and glass in place of
-//! the painted ones, on Connaught Place and the other city maps. Nothing here runs below Ultra,
-//! and the level can change in play (F4, or the start-up choice a frame in), so each material is
-//! changed where it stands: its handle stays on the meshes, and the textures are only loaded the
-//! first time Ultra is chosen, and only shown once they are all in.
+//! The real surfaces: plaster, marble, asphalt, pavers, earth and glass in place of the painted
+//! ones, from Medium up (`Quality::surfaces`), with the facades' parallax on Ultra alone. The level
+//! can change in play (F4, or the start-up choice a frame in), so each material is changed where it
+//! stands: its handle stays on the meshes, and the textures are only loaded the first time a level
+//! wants them, and only shown once they are all in.
 //!
 //! The textures are in assets/textures/ultra, built by tools/textures/cp_surfaces.py and
 //! tools/texpack (`just textures-pack`) from the CC0 scans listed in sources.json there.
 //!
 //! Switches, for comparisons:
-//!   VIVAD_NO_SURFACES=1  Ultra on the lower levels' surfaces.
-//!   VIVAD_NO_PARALLAX=1  no depth in the facades' windows (their parallax is the costly part).
+//!   VIVAD_NO_SURFACES=1  the painted surfaces on every level.
+//!   VIVAD_NO_PARALLAX=1  no depth in the facades' windows, even on Ultra (the costly part).
 //!
 //! Reflections come from the environment map, not screen-space reflections, and that is a finding
 //! rather than a shortcut. In Bevy 0.20's sources SSR runs after the deferred lighting pass and
@@ -21,7 +21,7 @@
 //! VIVAD_NO_SSR to honour; glass and water are forward, reflect the sky the Ultra level generates
 //! (crate::ultra), and don't reflect the city.
 
-use bevy::asset::{LoadState, uuid_handle};
+use bevy::asset::LoadState;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor};
 use bevy::math::Affine2;
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, ParallaxMappingMethod};
@@ -55,12 +55,11 @@ impl Plugin for SurfacesPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(MaterialPlugin::<GroundMaterial>::default())
             .init_resource::<UltraSurfaces>()
-            .add_systems(Startup, add_shader)
             .add_systems(Update, (sync, sync_ground).chain());
     }
 }
 
-/// How a material changes on Ultra.
+/// How a material changes for the real surfaces.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Surface {
     /// White plaster on a world-mapped block, colonnade or roof.
@@ -77,7 +76,7 @@ pub enum Surface {
     Water,
 }
 
-/// One material with an Ultra look, and its plain self while that is showing.
+/// One material with a real surface, and its plain self while that is showing.
 struct Entry {
     handle: Handle<StandardMaterial>,
     surface: Surface,
@@ -192,6 +191,8 @@ pub struct UltraSurfaces {
     /// Whether the switches allow any of this.
     allowed: bool,
     parallax: bool,
+    /// Whether the facades are dressed with their depth (a level with `Quality::is_ultra`).
+    relief: bool,
 }
 
 impl Default for UltraSurfaces {
@@ -205,6 +206,7 @@ impl Default for UltraSurfaces {
             ground_on: false,
             allowed: std::env::var("VIVAD_NO_SURFACES").is_err(),
             parallax: std::env::var("VIVAD_NO_PARALLAX").is_err(),
+            relief: false,
         }
     }
 }
@@ -216,14 +218,14 @@ impl UltraSurfaces {
         self.ground = None;
     }
 
-    /// Gives a material its Ultra look whenever that level is showing.
+    /// Gives a material its real surface whenever a level shows those.
     pub fn add(&mut self, handle: Handle<StandardMaterial>, surface: Surface) {
         if !self.entries.iter().any(|e| e.handle == handle) {
             self.entries.push(Entry { handle, surface, plain: None });
         }
     }
 
-    /// Whether the Ultra surfaces are what's on screen.
+    /// Whether the real surfaces are what's on screen.
     pub fn showing(&self) -> bool {
         self.on
     }
@@ -242,7 +244,8 @@ impl UltraSurfaces {
             Surface::Facade | Surface::Shop => {
                 let set = if surface == Surface::Facade { &t.facade } else { &t.shop };
                 set.dress(m);
-                if self.parallax {
+                m.depth_map = None;
+                if self.relief {
                     m.depth_map = set.depth.clone();
                     m.parallax_depth_scale = FACADE_DEPTH / FACADE_WIDTH;
                     m.max_parallax_layer_count = PARALLAX_LAYERS;
@@ -264,11 +267,11 @@ impl UltraSurfaces {
     }
 }
 
-/// Starts the textures loading on the first call for Ultra, and flips the materials once they
-/// have all arrived. If one can't be read (a GPU without BC formats, say), Ultra keeps the plain
-/// surfaces and says so once.
+/// Starts the textures loading the first time a level wants them, and flips the materials once
+/// they have all arrived; a change of level dresses them again, for the parallax. If one can't be
+/// read (a GPU without BC formats, say), the level keeps the plain surfaces and says so once.
 fn sync(quality: Res<Quality>, assets: Res<AssetServer>, mut images: ResMut<Assets<Image>>, mut state: ResMut<UltraSurfaces>, mut materials: ResMut<Assets<StandardMaterial>>) {
-    let want = quality.is_ultra() && state.allowed;
+    let want = quality.surfaces() && state.allowed;
     if want && state.textures.is_none() {
         state.textures = Some(Textures::load(&assets, &mut images));
     }
@@ -278,21 +281,28 @@ fn sync(quality: Res<Quality>, assets: Res<AssetServer>, mut images: ResMut<Asse
         });
     if want && !ready {
         if !state.failed && state.textures.as_ref().is_some_and(|t| t.images().any(|h| matches!(assets.get_load_state(h), Some(LoadState::Failed(_))))) {
-            warn!("surfaces: a texture in assets/textures/ultra would not load; Ultra keeps the plain surfaces");
+            warn!("surfaces: a texture in assets/textures/ultra would not load; the plain surfaces stay");
             state.failed = true;
         }
         return;
     }
     let state = &mut *state;
     state.on = want;
+    let relief = quality.is_ultra() && state.parallax;
+    let redress = relief != state.relief;
+    state.relief = relief;
     let mut entries = std::mem::take(&mut state.entries);
     for e in &mut entries {
-        if e.plain.is_some() == want {
+        let shown = e.plain.is_some();
+        let walls = matches!(e.surface, Surface::Facade | Surface::Shop);
+        if shown == want && !(want && redress && walls) {
             continue;
         }
         let Some(mut m) = materials.get_mut(&e.handle) else { continue };
         if want {
-            e.plain = Some(m.clone());
+            if !shown {
+                e.plain = Some(m.clone());
+            }
             state.dress(e.surface, &mut m);
         } else if let Some(plain) = e.plain.take() {
             *m = plain;
@@ -337,120 +347,10 @@ pub struct GroundSurfaces {
     pub soil_orm: Handle<Image>,
 }
 
-const GROUND_SHADER: Handle<Shader> = uuid_handle!("6f0d2a57-3c1e-4a9b-8f64-2b7f1ce0a5d3");
-
 impl MaterialExtension for GroundSurfaces {
     fn fragment_shader() -> ShaderRef {
-        ShaderRef::Handle(GROUND_SHADER)
+        "shaders/ground.wesl".into()
     }
-}
-
-/// In the source rather than assets/shaders so this module stands alone. Same frame as
-/// assets/shaders/rim.wesl: the standard PBR fragment, with its surface swapped before lighting.
-/// The terrain has no tangents; on ground this flat they follow from the normal and world X.
-const GROUND_WESL: &str = r#"
-import bevy_pbr::render::{
-    pbr_bindings::base_color_sampler,
-    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
-    pbr_fragment::pbr_input_from_standard_material,
-    forward_io::{VertexOutput, FragmentOutput},
-};
-
-@if(VISIBILITY_RANGE_DITHER)
-import bevy_pbr::render::pbr_functions::visibility_range_dither;
-
-@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> place: vec4<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(101) var mask: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(102) var asphalt_color: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(103) var asphalt_normal: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(104) var asphalt_orm: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(105) var pavers_color: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(106) var pavers_normal: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(107) var pavers_orm: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(108) var soil_color: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(109) var soil_normal: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(110) var soil_orm: texture_2d<f32>;
-
-// Metres per repeat (tools/textures/cp_surfaces.py).
-const ASPHALT_TILE: f32 = 12.0;
-const PAVERS_TILE: f32 = 6.0;
-const SOIL_TILE: f32 = 6.0;
-
-// Linear colour (as a ratio, 0.5 meaning as painted), normal XY, occlusion and roughness, summed
-// over the surfaces under a pixel.
-struct Layers {
-    color: vec3<f32>,
-    normal: vec2<f32>,
-    occlusion: f32,
-    roughness: f32,
-}
-
-fn add_surface(sum: ptr<function, Layers>, weight: f32, color: texture_2d<f32>, normal: texture_2d<f32>, orm: texture_2d<f32>, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) {
-    let c = textureSampleGrad(color, base_color_sampler, uv, dx, dy).rgb;
-    let n = textureSampleGrad(normal, base_color_sampler, uv, dx, dy).rg * 2.0 - 1.0;
-    let m = textureSampleGrad(orm, base_color_sampler, uv, dx, dy);
-    (*sum).color += c * weight;
-    (*sum).normal += n * weight;
-    (*sum).occlusion += m.r * weight;
-    (*sum).roughness += m.g * weight;
-}
-
-@fragment
-fn fragment(vertex_output: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
-    var in = vertex_output;
-@if(VISIBILITY_RANGE_DITHER)
-    visibility_range_dither(in.position, in.visibility_range_dither);
-
-    var pbr_input = pbr_input_from_standard_material(in, is_front);
-
-    let p = in.world_position.xz;
-    let dx = dpdx(p);
-    let dy = dpdy(p);
-    // The mask is about a metre a texel: a wandering threshold makes its edges a kerb's irregular
-    // line rather than a blur.
-    let wander = sin(p.x * 1.7 + 1.5 * sin(p.y * 2.3)) * sin(p.y * 1.9 + 1.5 * sin(p.x * 1.1));
-    let share = textureSampleLevel(mask, base_color_sampler, (p + place.x) * place.y + place.z, 0.0).rgb;
-    var w = smoothstep(vec3<f32>(0.40), vec3<f32>(0.60), share + 0.1 * wander);
-    let total = w.x + w.y + w.z;
-    if (total < 0.001) {
-        w = share / max(share.x + share.y + share.z, 0.001);
-    } else {
-        w /= total;
-    }
-
-    // Only what's showing is read: most pixels are one surface, and pay for three maps, not nine.
-    var sum = Layers(vec3<f32>(0.0), vec2<f32>(0.0), 0.0, 0.0);
-    if (w.x > 0.004) {
-        add_surface(&sum, w.x, asphalt_color, asphalt_normal, asphalt_orm, p / ASPHALT_TILE, dx / ASPHALT_TILE, dy / ASPHALT_TILE);
-    }
-    if (w.y > 0.004) {
-        add_surface(&sum, w.y, pavers_color, pavers_normal, pavers_orm, p / PAVERS_TILE, dx / PAVERS_TILE, dy / PAVERS_TILE);
-    }
-    if (w.z > 0.004) {
-        add_surface(&sum, w.z, soil_color, soil_normal, soil_orm, p / SOIL_TILE, dx / SOIL_TILE, dy / SOIL_TILE);
-    }
-
-    // The painted colour and baked contact shadow stay; the maps add the grain.
-    let base = pbr_input.material.base_color;
-    pbr_input.material.base_color = vec4<f32>(base.rgb * sum.color * 2.0, base.a);
-    pbr_input.material.perceptual_roughness = sum.roughness;
-    pbr_input.diffuse_occlusion *= sum.occlusion;
-
-    let up = pbr_input.world_normal;
-    let t = normalize(vec3<f32>(1.0, 0.0, 0.0) - up * up.x);
-    let b = cross(up, t);
-    let z = sqrt(saturate(1.0 - dot(sum.normal, sum.normal)));
-    pbr_input.N = normalize(t * sum.normal.x + b * sum.normal.y + up * z);
-
-    var out: FragmentOutput;
-    out.color = apply_pbr_lighting(pbr_input);
-    out.color = main_pass_post_lighting_processing(pbr_input, out.color);
-    return out;
-}
-"#;
-
-fn add_shader(mut shaders: ResMut<Assets<Shader>>) {
-    let _ = shaders.insert(&GROUND_SHADER, Shader::from_wesl(GROUND_WESL, "shaders/ground.wesl"));
 }
 
 /// The mask of which surface covers each terrain sample.
