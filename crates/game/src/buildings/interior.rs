@@ -62,23 +62,25 @@ impl Plugin for InteriorPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Furniture>()
             .init_resource::<Doors>()
-            .add_systems(Update, (reset.run_if(map_reloaded), load_furniture, stream_furniture, swing_doors, place_fills).chain());
+            .add_systems(Update, (reset.run_if(map_reloaded), load_furniture, stream_furniture, swing_doors, place_fills, turn_fans).chain());
         if let Ok(spec) = std::env::var("VIVAD_ROOM_WALK") {
-            let (dir, building) = spec.split_once(',').map_or((spec.as_str(), None), |(d, b)| (d, b.parse().ok()));
-            app.insert_resource(RoomWalk { dir: dir.to_owned(), building, way: vec![], next: 0, wait: 0.0, shot: 0.0, frame: 0, turn: 0.0 })
+            let (dir, which) = spec.split_once(',').map_or((spec.as_str(), ""), |(d, b)| (d, b));
+            app.insert_resource(RoomWalk { dir: dir.to_owned(), building: which.parse().ok(), ring: which == "ring", way: vec![], next: 0, wait: 0.0, shot: 0.0, frame: 0, turn: 0.0 })
                 .add_systems(PreUpdate, walk_player.after(crate::input::LocalInput));
         }
     }
 }
 
-/// VIVAD_ROOM_WALK=<dir>[,<hollow building>]: the proof of the rooms from the player's own seat. The
-/// player is stood in the street outside a Chandni Chowk shop (or that building), and walks in at
-/// the door, through the rooms, up the stairs and out on the roof on its own feet, then turns round
-/// to look: the 3D view is saved every half second, so it works with the window hidden.
+/// VIVAD_ROOM_WALK=<dir>[,<hollow building>|ring]: the proof of the rooms from the player's own seat.
+/// The player is stood in the street outside a Chandni Chowk shop (or that building, or one of
+/// Connaught Place's furnished ring shops), and walks in at the door, through the rooms, up the
+/// stairs and out on the roof on its own feet, then turns round to look: the 3D view is saved every
+/// half second, so it works with the window hidden.
 #[derive(Resource)]
 struct RoomWalk {
     dir: String,
     building: Option<usize>,
+    ring: bool,
     way: Vec<(Vec2, f32)>,
     next: usize,
     wait: f32,
@@ -111,7 +113,12 @@ fn walk_player(
     if walk.way.is_empty() {
         let shop = |r: &&Interior| r.plan == Plan::Shop && r.storeys >= 3 && (r.corner - shared::map::compose::PLACES[1].at).abs().max_element() < 250.0;
         let chosen = walk.building.and_then(|k| layout.rooms.get(k)).or(layout.rooms.iter().find(shop));
-        let Some(way) = chosen.and_then(|r| r.way_up(&floor)) else { return };
+        let ring = layout.ring_pieces.get(12).filter(|_| walk.ring).map(|p| {
+            let out = Quat::from_rotation_y(p.yaw) * Vec3::NEG_Z;
+            let at = |d: f32| ((p.pos + out * d).xz(), p.pos.y);
+            vec![at(11.0), at(2.2)]
+        });
+        let Some(way) = ring.or(chosen.and_then(|r| r.way_up(&floor))) else { return };
         info!("room walk: {} points, {:?}", way.len(), chosen.map(|r| (r.plan, r.corner, r.storeys)));
         walk.way = way;
         walk.next = 1;
@@ -563,9 +570,24 @@ fn stream_furniture(mut commands: Commands, mut f: ResMut<Furniture>, layout: Re
         for p in &f.groups[k as usize].pieces {
             let Some(mesh) = f.meshes.get(p.name) else { continue };
             let tf = Transform::from_translation(p.pos).with_rotation(Quat::from_rotation_y(p.yaw));
-            list.push(commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), tf, NotShadowCaster, Tagged("furniture"), OfMap)).id());
+            let mut e = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), tf, NotShadowCaster, Tagged("furniture"), OfMap));
+            if p.name == "fan" {
+                e.insert(Fan);
+            }
+            list.push(e.id());
         }
         f.live.insert(k, list);
+    }
+}
+
+/// A ceiling fan, going round.
+#[derive(Component)]
+struct Fan;
+
+fn turn_fans(time: Res<Time>, mut fans: Query<&mut Transform, With<Fan>>) {
+    const TURNS: f32 = 7.0;
+    for mut tf in &mut fans {
+        tf.rotate_y(TURNS * time.delta_secs());
     }
 }
 

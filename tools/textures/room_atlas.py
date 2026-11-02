@@ -132,7 +132,11 @@ def tiles():
 
 def marble():
     """Row 4."""
-    return np.clip(scan("floor_tiles_06.jpg", 2) * 1.12, 0, 1)
+    a = scan("floor_tiles_06.jpg", 2)
+    # Polished stone of two near shades: the scan's squares are a chessboard from across a hall.
+    mean = a.mean(axis=(0, 1), keepdims=True)
+    fine = a - blur(a, 12)
+    return np.clip((mean + (a - mean) * 0.34 + fine * 0.7) * np.array([1.2, 1.17, 1.1], dtype=np.float32), 0, 1)
 
 
 def concrete():

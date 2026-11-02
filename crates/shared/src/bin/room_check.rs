@@ -207,12 +207,14 @@ fn main() {
     for _ in 0..3 {
         app.update();
     }
-    println!("map ready in {:.1} s", clock.elapsed().as_secs_f32());
     let args: Vec<String> = std::env::args().collect();
     let map = app.world().resource::<MapLayout>().clone();
     let t = Instant::now();
+    let _ = shared::map::generate(MapId::Ncr, 7);
+    let built = t.elapsed().as_secs_f32();
+    let t = Instant::now();
     let floor = StreetFloor::new(&map);
-    println!("street floor {:.2} s", t.elapsed().as_secs_f32());
+    println!("the map builds in {built:.2} s, its street floor in {:.2} s", t.elapsed().as_secs_f32());
     if let Some(k) = args.iter().position(|a| a == "--plan").and_then(|i| args.get(i + 1)).and_then(|s| s.parse::<usize>().ok()) {
         sketch(&map.rooms[k], &floor);
         return;

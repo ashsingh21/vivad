@@ -1050,7 +1050,7 @@ impl Maker<'_> {
                     }
                     l
                 }
-                Plan::Lobby => vec!["counter", "sofa", "sofa", "plastic_chair", "plastic_chair", "fan"],
+                Plan::Lobby => vec!["counter", "counter", "sofa", "sofa", "plastic_chair", "plastic_chair", "fan"],
             };
             self.furnish(r, &list, rng);
         }
@@ -1127,12 +1127,14 @@ fn island(plan: Plan) -> Option<(&'static [(&'static str, Vec3, Vec2)], Vec2)> {
     const SACKS: [(&str, Vec3, Vec2); 3] = [("sacks", Vec3::new(-0.55, 0.0, 0.0), Vec2::Y), ("sacks", Vec3::new(0.55, 0.0, 0.0), Vec2::X), ("sacks", Vec3::new(-0.55, 0.7, 0.0), Vec2::X)];
     const DESK: [(&str, Vec3, Vec2); 2] = [("desk", Vec3::ZERO, Vec2::NEG_Y), ("plastic_chair", Vec3::new(0.0, 0.0, 0.66), Vec2::NEG_Y)];
     const AISLE: [(&str, Vec3, Vec2); 2] = [("shelf", Vec3::new(-0.47, 0.0, 0.0), Vec2::NEG_Y), ("shelf", Vec3::new(0.47, 0.0, 0.0), Vec2::NEG_Y)];
+    const SEATS: [(&str, Vec3, Vec2); 3] = [("sofa", Vec3::new(0.0, 0.0, 0.62), Vec2::NEG_Y), ("table", Vec3::new(0.0, 0.0, -0.42), Vec2::NEG_Y), ("plastic_chair", Vec3::new(1.2, 0.0, -0.42), Vec2::NEG_X)];
     match plan {
         Plan::Dhaba => Some((&TABLE, Vec2::new(0.6, 1.0))),
         Plan::Godown => Some((&SACKS, Vec2::new(1.1, 0.55))),
         Plan::Office => Some((&DESK, Vec2::new(0.7, 0.85))),
         Plan::Shop => Some((&AISLE, Vec2::new(0.95, 0.25))),
-        _ => None,
+        Plan::Lobby => Some((&SEATS, Vec2::new(1.5, 1.05))),
+        Plan::Flat => None,
     }
 }
 /// A room narrower than this has furniture along one long wall only.
