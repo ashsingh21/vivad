@@ -260,6 +260,54 @@ def paint_car():
     put_pixels(img, a)
 
 
+def paint_ambassador():
+    """The white of a government car in place of a bottle green polished like a mirror, which showed every
+    lump in the model. Old chrome on the bumpers and grille. A maker's mark off the hub caps, and the
+    number plate gone into the paint."""
+    base, maps, bump = image_named("Image_0"), image_named("Image_1"), image_named("Image_2")
+    a, m, n = pixels(base), pixels(maps), pixels(bump)
+    h = a.shape[0]
+    body = next(o for o in meshes() if "blinn1" in o.name and "Body" in o.name)
+    hue, sat, val = hsv_arrays(a[..., :3].reshape(-1, 3).astype(np.float64))
+    green = ((hue > 0.2) & (hue < 0.36) & (sat > 0.5) & (val < 0.35)).reshape(a.shape[:2])
+    plate = texels(base, body, in_box(-0.33, -2.11, 0.47, 0.33, -1.98, 0.81))
+    paint = green | plate
+    a[paint, :3] = np.array((0.76, 0.75, 0.71))[None] * (0.72 + 0.28 * m[paint, 0])[:, None]
+    m[paint, 1], m[paint, 2] = 0.42, 0.0
+    # Door gaps and pressed lines, which the normal map has and the colour had not.
+    def near(x, r=2):
+        c = np.cumsum(np.cumsum(np.pad(x, ((r + 1, r), (r + 1, r))), 0), 1)
+        k = 2 * r + 1
+        return (c[k:, k:] - c[:-k, k:] - c[k:, :-k] + c[:-k, :-k]) / k ** 2
+    lines = np.clip((np.hypot(n[..., 0] - near(n[..., 0]), n[..., 1] - near(n[..., 1])) - 0.08) * 7, 0, 1)
+    a[paint, :3] *= (1 - 0.24 * lines[paint])[:, None]
+    # Its bake leaves the panels lumpy: under a low sun they looked like cloth.
+    n[paint, :3] = n[paint, :3] * 0.45 + np.array((0.5, 0.5, 1.0)) * 0.55
+    road_dust(a, spots(base, body), paint)
+    # Bumpers and their guards, the grille, the strip down the bonnet.
+    chrome = (texels(base, body, in_box(-1, 1.93, 0.27, 1, 2.2, 0.57)) | texels(base, body, in_box(-1, -2.2, 0.22, 1, -1.9, 0.53)) | texels(base, body, in_box(-0.14, 0.9, 0.85, 0.14, 2.0, 1.2))) & ~paint
+    lum = a[..., :3].mean(2)[chrome]
+    a[chrome, :3] = np.clip(0.42 + 0.9 * lum, 0, 0.8)[:, None]
+    m[chrome, 1], m[chrome, 2] = 0.3, 1.0
+    grille = texels(base, body, in_box(-0.62, 1.95, 0.54, 0.62, 2.2, 0.76)) & ~paint
+    a[grille, :3] = np.clip(a[grille, :3] * 2.0, 0, 0.8)
+    m[grille, 1], m[grille, 2] = 0.34, 1.0
+    # The hub cap's mark, in colour and in relief.
+    ys, xs = np.mgrid[0 : h, 0 : h]
+    r = np.hypot(xs - 779.5, h - 1 - ys - 717.5)
+    plain = np.median(a[(r > 33) & (r < 39), :3], axis=0)
+    a[r < 37, :3] = plain
+    k = np.clip((33 - r) / 3, 0, 1)[..., None]
+    n[..., :3] = n[..., :3] * (1 - k) + np.array((0.5, 0.5, 1.0)) * k
+    put_pixels(base, a)
+    put_pixels(maps, m)
+    put_pixels(bump, n)
+    for o in meshes():
+        if "blinn2" in o.name:
+            o.data.materials.clear()
+            o.data.materials.append(glass(alpha=0.55))
+
+
 def paint_scooter():
     """One grey material on the model: a maroon shell, black rubber, dull metal, by part."""
     shell = flat("shell", (0.23, 0.015, 0.03), 0.35)
@@ -334,6 +382,9 @@ CFG = {
     "commuter": dict(src="commuter_bike/pulsar_135_ls_2__accbf2/model.glb", turn=0, length=2.02, body=12000, drop=r"^placa", level=True),
     "bullet": dict(src="heavy_bike/classic_motorcycle__f246ff/model.glb", turn=None, length=2.14, body=14000, paint=paint_bullet, level=True),
     "car": dict(src="small_car/stylized_suzuki_alto_works__467f2e/model.glb", turn=180, length=3.4, body=7000, paint=paint_car),
+    # Modelled a tenth too wide for its length.
+    "gaadi_ambassador": dict(src="small_car/hindustan_ambassador__a84ef7/model.glb", turn=90, length=4.33, narrow=0.9, body=11000, wheels=r"Wheel[LR]_", paint=paint_ambassador,
+                             maps=("Normal", "Metallic", "Roughness"), small=("Image_1",)),
 }
 WHEEL_TRIS = 500
 BOXES = {}

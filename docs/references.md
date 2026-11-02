@@ -351,6 +351,7 @@ The drivable vehicles (`crates/shared/src/sim/vehicle.rs`). Models come from `re
 | Bike: "Pulsar 135 Ls 2" | [EmanuelRestrepoVelez](https://sketchfab.com/3d-models/none-accbf2048c9344718791588b70d2ebf8) | CC-BY | Scaled, reduced, levelled, number plate removed |
 | Phatphati: "Classic Motorcycle" | [DeclanLea14](https://sketchfab.com/3d-models/none-f246ff1a68d3459892f9420b744a58b6) | CC-BY | Scaled, reduced, levelled; two makers' names and a number plate painted out |
 | Gaadi: "Stylized Suzuki Alto Works" | [EddyNL](https://sketchfab.com/3d-models/none-467f2e28ff334919879841216766903b) | CC-BY | Scaled; a maker's badge and a brand's labels painted out |
+| Sarkari Gaadi: "Hindustan Ambassador" | [rSquare](https://sketchfab.com/3d-models/hindustan-ambassador-a84ef7126b2b43adb7b4b28a4d42e5fb) | CC-BY-4.0 | `gaadi_ambassador.glb`. Narrowed to real width, repainted white with dust and chrome, a hub cap mark and the number plate removed, window glass redone, panel maps softened |
 | Engine loops (`engine_auto`, `engine_bike`, `engine_thump`) | Freesound: [DavidBlouin 832083](https://freesound.org/people/DavidBlouin/sounds/832083/), [rsn267 274962](https://freesound.org/people/rsn267/sounds/274962/), [ashimda 159326](https://freesound.org/people/ashimda/sounds/159326/) | CC0 | Cut and looped by `tools/audio/vehicles.py` from the public previews |
 | Horns | `tools/audio/vehicles.py` | Ours | Synthesized |
 
