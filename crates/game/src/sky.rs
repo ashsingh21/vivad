@@ -3,10 +3,12 @@
 //! "at infinity". One draw of a few thousand triangles at any quality: nothing is simulated, which
 //! suits the tile-based phone GPUs (docs/rendering-guidelines.md section 4).
 //!
-//! The photograph takes a moment to load and a GPU without BC formats can't read it, so the dome
-//! starts painted per vertex (warm pale haze at the horizon to blue overhead, a glow round the sun,
-//! a disc for the bloom to catch), and that stays if the image never comes. VIVAD_PAINTED_SKY=1
-//! keeps it, for comparisons.
+//! The photograph takes a moment to load, so the dome starts on one pixel of the haze's colour, in
+//! the same material: bringing the image in then needs no new shader, which would leave the dome
+//! undrawn for as long as that took to compile. If the image never comes (a GPU without BC formats
+//! can't read it), the dome is painted per vertex instead: warm pale haze at the horizon to blue
+//! overhead, a glow round the sun, a disc for the bloom to catch. VIVAD_PAINTED_SKY=1 paints it from
+//! the start, for comparisons.
 //!
 //! Ultra is the exception: it brings the physical atmosphere back (crate::ultra), which hides the
 //! dome. The atmosphere draws its own sun where the clock puts it.
@@ -17,6 +19,7 @@ use bevy::asset::{LoadState, RenderAssetUsages};
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor};
 use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::camera::MainCamera;
 use crate::visuals::Sun;
@@ -59,18 +62,18 @@ struct SkyRig;
 #[require(Visibility)]
 pub struct PaintedSky;
 
-/// The dome, and the sun's disc, which only the painted sky has.
+/// The dome.
 #[derive(Component)]
 struct Dome;
-#[derive(Component)]
-struct SunDisc;
 
-/// The photograph on its way, and what shows it. Gone once it has arrived, or failed.
+/// The photograph on its way, and what to fall back on. Gone once it has arrived, or failed.
 #[derive(Resource)]
 struct Photo {
     image: Handle<Image>,
-    dome: Handle<Mesh>,
     material: Handle<StandardMaterial>,
+    painted: Handle<Mesh>,
+    rig: Entity,
+    to_sun: Vec3,
 }
 
 fn lin(c: [f32; 3]) -> Vec3 {
@@ -78,78 +81,91 @@ fn lin(c: [f32; 3]) -> Vec3 {
     Vec3::new(l.red, l.green, l.blue)
 }
 
-fn spawn_sky(mut commands: Commands, sun: Query<&Transform, With<Sun>>, assets: Res<AssetServer>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+fn spawn_sky(mut commands: Commands, sun: Query<&Transform, With<Sun>>, assets: Res<AssetServer>, mut images: ResMut<Assets<Image>>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
     // Toward the sun: the light shines along its -Z.
     let to_sun = sun.single().map(|t| t.back().as_vec3()).unwrap_or(Vec3::new(0.7, 0.5, 0.3).normalize());
     let rig = commands.spawn((SkyRig, Transform::default(), Visibility::default())).id();
-    // Behind the dome, and what shows for the moment its new shader takes to compile.
-    commands.insert_resource(ClearColor(clear()));
-    let unlit = |materials: &mut Assets<StandardMaterial>, emissive: LinearRgba| {
-        materials.add(StandardMaterial { base_color: Color::WHITE, unlit: true, fog_enabled: false, emissive, ..default() })
-    };
-    let plain = unlit(&mut materials, LinearRgba::BLACK);
     let (painted, photo) = dome(to_sun);
-    commands.spawn((PaintedSky, Dome, Mesh3d(meshes.add(painted)), MeshMaterial3d(plain.clone()), sky_flags(), ChildOf(rig)));
-    // The sun: a disc bright enough to bloom.
+    let painted = meshes.add(painted);
+    if std::env::var("VIVAD_PAINTED_SKY").is_ok() {
+        let material = materials.add(sky_material(None));
+        commands.spawn((PaintedSky, Dome, Mesh3d(painted), MeshMaterial3d(material), sky_flags(), ChildOf(rig)));
+        spawn_sun(&mut commands, rig, to_sun, &mut meshes, &mut materials);
+        return;
+    }
+    let [r, g, b] = HORIZON;
+    let haze = Image::new_fill(
+        Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        &Srgba::new(r, g, b, 1.0).to_u8_array(),
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    let material = materials.add(sky_material(Some(images.add(haze))));
+    commands.spawn((PaintedSky, Dome, Mesh3d(meshes.add(photo)), MeshMaterial3d(material.clone()), sky_flags(), ChildOf(rig)));
+    let image = assets.load_builder().with_settings(|s: &mut ImageLoaderSettings| {
+        s.is_srgb = true;
+        s.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+            // Round and round the sky, but never from the zenith to the horizon.
+            address_mode_u: ImageAddressMode::Repeat,
+            mag_filter: ImageFilterMode::Linear,
+            min_filter: ImageFilterMode::Linear,
+            mipmap_filter: ImageFilterMode::Linear,
+            ..default()
+        });
+    });
+    commands.insert_resource(Photo { image: image.load("textures/sky/sky_basecolor.ktx2"), material, painted, rig, to_sun });
+}
+
+fn sky_material(image: Option<Handle<Image>>) -> StandardMaterial {
+    StandardMaterial { base_color: Color::WHITE, base_color_texture: image, unlit: true, fog_enabled: false, ..default() }
+}
+
+/// The painted sky's sun: a disc bright enough to bloom.
+fn spawn_sun(commands: &mut Commands, rig: Entity, to_sun: Vec3, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
     let disc = Circle::new(26.0).mesh().resolution(32).build();
+    let glow = StandardMaterial { emissive: LinearRgba::rgb(14.0, 12.0, 9.0), ..sky_material(None) };
     commands.spawn((
         PaintedSky,
-        SunDisc,
         Mesh3d(meshes.add(disc)),
-        MeshMaterial3d(unlit(&mut materials, LinearRgba::rgb(14.0, 12.0, 9.0))),
+        MeshMaterial3d(materials.add(glow)),
         Transform::from_translation(to_sun * RADIUS * 0.95).looking_to(-to_sun, Vec3::Y),
         bevy::light::NotShadowCaster,
         bevy::light::NotShadowReceiver,
         ChildOf(rig),
     ));
-    if std::env::var("VIVAD_PAINTED_SKY").is_err() {
-        let image = assets.load_builder().with_settings(|s: &mut ImageLoaderSettings| {
-            s.is_srgb = true;
-            s.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-                // Round and round the sky, but never from the zenith to the horizon.
-                address_mode_u: ImageAddressMode::Repeat,
-                mag_filter: ImageFilterMode::Linear,
-                min_filter: ImageFilterMode::Linear,
-                mipmap_filter: ImageFilterMode::Linear,
-                ..default()
-            });
-        });
-        commands.insert_resource(Photo { image: image.load("textures/sky/sky_basecolor.ktx2"), dome: meshes.add(photo), material: plain });
-    }
 }
 
-/// Puts the photograph on the dome once it's in.
+/// Puts the photograph on the dome once it's in, or paints the dome if it won't come.
 fn show_photo(
     mut commands: Commands,
     assets: Res<AssetServer>,
     images: Res<Assets<Image>>,
     photo: Res<Photo>,
+    mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut dome: Query<&mut Mesh3d, With<Dome>>,
-    disc: Query<Entity, With<SunDisc>>,
 ) {
     match assets.get_load_state(&photo.image) {
-        Some(LoadState::Failed(_)) => warn!("sky: the photograph would not load; the painted sky stays"),
+        Some(LoadState::Failed(_)) => {
+            warn!("sky: the photograph would not load; the dome is painted instead");
+            if let Some(mut m) = materials.get_mut(&photo.material) {
+                m.base_color_texture = None;
+            }
+            for mut mesh in &mut dome {
+                mesh.0 = photo.painted.clone();
+            }
+            spawn_sun(&mut commands, photo.rig, photo.to_sun, &mut meshes, &mut materials);
+        }
         Some(LoadState::Loaded) if images.contains(&photo.image) => {
             if let Some(mut m) = materials.get_mut(&photo.material) {
                 m.base_color = Color::LinearRgba(LinearRgba::rgb(PHOTO_GAIN, PHOTO_GAIN, PHOTO_GAIN));
                 m.base_color_texture = Some(photo.image.clone());
             }
-            for mut mesh in &mut dome {
-                mesh.0 = photo.dome.clone();
-            }
-            for e in &disc {
-                commands.entity(e).despawn();
-            }
         }
         _ => return,
     }
     commands.remove_resource::<Photo>();
-}
-
-/// The sky's colour when there is no dome to draw.
-pub fn clear() -> Color {
-    Color::srgb(HORIZON[0], HORIZON[1], HORIZON[2])
 }
 
 fn sky_flags() -> (Transform, bevy::light::NotShadowCaster, bevy::light::NotShadowReceiver) {
