@@ -978,6 +978,9 @@ fn build_footprints(
                     // Both scaled by the texture's.
                     perceptual_roughness: 1.0,
                     metallic: 1.0,
+                    // Plaster hardly reflects (matte()): at the default, the sky's sheen off the
+                    // normal map's trowel waves blotched shaded walls a deep blue-violet.
+                    reflectance: 0.12,
                     ..default()
                 })
             })
