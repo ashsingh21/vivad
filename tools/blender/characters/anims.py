@@ -354,6 +354,16 @@ TORSO = ["pelvis", "spine_01", "spine_02", "spine_03", "neck_01", "head", "clavi
 TORSO_KEEP = {"spine_01": 0.8, "spine_02": 0.75, "spine_03": 0.75, "neck_01": 0.6, "head": 0.5}
 
 
+def skinning(on):
+    """Every mesh's armature deform on or off. Off while building: each bone turn updates the scene
+    (Rig._apply), and re-skinning the bodies on every one was half the build's time; nothing reads
+    the meshes until the saved file (the export takes the rig alone)."""
+    for o in bpy.data.objects:
+        for m in o.modifiers:
+            if m.type == "ARMATURE":
+                m.show_viewport = on
+
+
 def load_mocap(pack):
     """Import a pack: its armature, the objects and the actions it brought."""
     objs, acts = set(bpy.data.objects), set(bpy.data.actions)
@@ -363,6 +373,7 @@ def load_mocap(pack):
         bpy.ops.import_scene.fbx(filepath=path)
     else:
         bpy.ops.import_scene.gltf(filepath=path)
+    skinning(False)
     new = [o for o in bpy.data.objects if o not in objs]
     return next(o for o in new if o.type == "ARMATURE"), new, [a for a in bpy.data.actions if a not in acts]
 
@@ -456,6 +467,7 @@ def load_mixamo(name, base=None):
     objs, acts = set(bpy.data.objects), set(bpy.data.actions)
     bpy.ops.object.mode_set(mode="OBJECT")
     bpy.ops.import_scene.fbx(filepath=path)
+    skinning(False)
     fps = bpy.context.scene.render.fps / bpy.context.scene.render.fps_base
     bpy.context.scene.render.fps, bpy.context.scene.render.fps_base = FPS, 1.0
     new = [o for o in bpy.data.objects if o not in objs]
@@ -1619,6 +1631,7 @@ def main():
         # everything else goes.
         if o is not arm and not (o.type == "MESH" and not o.name.endswith(("LOD1", "LOD2"))):
             bpy.data.objects.remove(o)
+    skinning(False)
     cycles = {}
     for name, speed, d in (("walk", WALK, None), ("run", RUN, None)):
         cad = 2.7 if speed == WALK else 3.0
@@ -1777,6 +1790,7 @@ def main():
     )
     print(f"[anims] exported {out}: {[a.name for a in bpy.data.actions]}")
     # The rig, its body and every clip, for videos (tools/blender/characters/clip_video.py).
+    skinning(True)
     bpy.ops.wm.save_as_mainfile(filepath=os.path.join(ROOT, "build", f"anims_{variant}.blend"))
 
 

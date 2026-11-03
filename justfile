@@ -69,13 +69,15 @@ face-lab variant opts="":
 
 # Warrior animation clips, per rig (needs build/char_<variant>_final.blend from `just characters`).
 # Prints foot slide per clip; add `-- male --preview DIR --clips run_f,idle` for pose renders.
+# Both bodies at once, one thread each (the build is thousands of tiny scene updates: Blender's
+# threads cost more than they save, 114 s a body threaded, 55 s on one).
 anims:
-    for v in male female; do {{blender}} -b -P tools/blender/characters/anims.py -- $v 2>&1 | grep -E '^\[|Error|Traceback' || true; done
+    for v in male female; do ({{blender}} -b -t 1 -P tools/blender/characters/anims.py -- $v 2>&1 | grep -E '^\[|Error|Traceback' > build/anims_$v.log || true) & done; wait; cat build/anims_male.log build/anims_female.log
 
 # Check every clip by the numbers (feet skating or sinking, knees and elbows, hands, pops), one
 # text line each: just animcheck, or just animcheck female, or just animcheck male run_f,slide
 animcheck variant="male" clips="":
-    {{blender}} -b -P tools/blender/characters/anim_check.py -- {{variant}} {{clips}} 2>&1 | grep -E '^\[check|^clip|^[a-z_]+ +[0-9]|Error|Traceback' || true
+    {{blender}} -b -t 1 -P tools/blender/characters/anim_check.py -- {{variant}} {{clips}} 2>&1 | grep -E '^\[check|^clip|^[a-z_]+ +[0-9]|Error|Traceback' || true
 
 # Every sound effect, synthesized (prints level, length, brightness and loop-seam numbers).
 sfx:
