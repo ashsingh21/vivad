@@ -825,6 +825,16 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
     elif window:
         # A one-way stretch ends on its own last frame, not wrapping back to its first.
         S.append(sample(frames))
+    else:
+        # A loop's last frame should repeat its first, but a source's feet don't always (the rifle
+        # walks' toes are 32 degrees apart across the seam: a snap mid-step once the cycle is turned
+        # to start on a landing): each foot's and toe's mismatch spread evenly over the cycle.
+        end = sample(frames)[0]
+        for n in ("foot_l", "foot_r", "ball_l", "ball_r"):
+            if n in ours:
+                e = S[0][0][n] @ end[n].inverted()
+                for i, x in enumerate(S):
+                    x[0][n] = Quaternion().slerp(e, i / out) @ x[0][n]
     src.animation_data.action = None
     if speed:
         zmin = min(x[2]["l"].z for x in S)
