@@ -160,6 +160,73 @@ def female_street(ctx):
     return items
 
 
+def tactical_kit(ctx, items):
+    """A plate carrier over the modelled top (front and back plates on shoulder straps, wrapping
+    the ribs), three magazine pouches across its front, a rigger's belt, knee pads."""
+    L = Landmarks(ctx)
+    top = L.clav - 0.075
+
+    def carrier(vids):
+        for i in vids:
+            x, y, z = ctx.co[i]
+            if ctx.w(i, "upperarm_l", "upperarm_r", "lowerarm_l", "lowerarm_r", "hand_l", "hand_r") > 0.3:
+                return False
+            if ctx.w(i, *TORSO_GROUPS) < 0.5 or z < L.waist + 0.01:
+                return False
+            # The plates stop below the collarbone (the straps, below, go over the shoulders: grown
+            # from the body there they make slivers Solidify spikes out of).
+            if z > top:
+                return False
+        return True
+
+    # Further out behind, over the modelled shirt's looser back (easing round the ribs).
+    vest = g.shell(ctx, "vest", carrier, lambda co, n: 0.032 + (0.028 + 0.016 * smoothstep(L.waist + 0.12, L.waist + 0.01, co.z)) * smoothstep(-0.2, 0.6, n.y), smooth=8,
+                   thickness=0.012, snap=g.z_snap(L.waist + 0.01, top))
+    items.append((tag(vest, (0.42, 0.35, 0.24)), "cover"))
+    # Shoulder straps: from the front plate's top up over the shoulder to the back plate's, each
+    # point's outward normal turning from the front through up to the back.
+    crest = L.clav + 0.075
+    for side, x in (("l", 0.09), ("r", -0.09)):
+        f, b = L.surface(x, top, front=True, push=0.05), L.surface(x, top, front=False, push=0.075)
+        path, normals = [], []
+        for i in range(9):
+            t = i / 8
+            a = math.pi * t
+            p = f.lerp(b, t)
+            p.z = top + (crest - top) * math.sin(a)
+            path.append(p)
+            normals.append(Vector((0.0, -math.cos(a), math.sin(a))))
+        items.append((tag(g.strip(ctx, f"vest_strap_{side}", path, [0.05] * 9, normals=normals, thickness=0.008), (0.42, 0.35, 0.24)), "accessory"))
+    # Pouches on the front plate's lower half: short, deep boxes standing off it.
+    for k, x in enumerate((-0.075, 0.0, 0.075)):
+        # Each point on the plate's face (the body's surface out by the vest's offset and
+        # thickness), the pouch standing off it by its own depth.
+        path = [L.surface(x, L.waist + 0.17 - 0.10 * t / 4, push=0.044 + 0.015) for t in range(5)]
+        items.append((tag(g.strip(ctx, f"pouch{k}", path, [0.062] * 5, thickness=0.03), (0.38, 0.32, 0.22)), "accessory"))
+    belt = g.shell(ctx, "tac_belt", lambda v: all_in(ctx, v, LEG_GROUPS + ("spine_02",), L.waist - 0.07, L.waist - 0.025),
+                   lambda co, n: 0.022, smooth=4, thickness=0.008, snap=g.z_snap(L.waist - 0.07, L.waist - 0.025))
+    items.append((tag(belt, (0.07, 0.07, 0.07)), "cover"))
+    for side in "lr":
+        items.append((tag(g.band(ctx, f"kneepad_{side}", f"calf_{side}", 0.0, 0.12, 0.024, thickness=0.012), (0.10, 0.10, 0.10)), "accessory"))
+    return items
+
+
+def male_tactical(ctx):
+    """Over the modelled shirt and trousers (retinted charcoal and olive: tools/textures/
+    mh_clothes.py) and boots: the tactical kit, a steel kada."""
+    items = tactical_kit(ctx, [])
+    jewellery(ctx, items, armbands=False, kadas=1, neck=False, metal=STEEL, metal_kind="silver")
+    return items
+
+
+def female_tactical(ctx):
+    """Over the modelled tee and trousers (retinted olive and charcoal) and boots: the tactical
+    kit, two glass bangles."""
+    items = tactical_kit(ctx, [])
+    jewellery(ctx, items, armbands=False, kadas=2, anklets=False, neck=False)
+    return items
+
+
 # ------------------------------------------------------------------ Vivad: the ancient warriors
 
 def male_warrior(ctx):

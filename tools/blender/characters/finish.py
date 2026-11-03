@@ -36,6 +36,11 @@ CLOTH = {
     "salwar": ((0.92, 0.88, 0.78), None, "weave", 0.0),
     "dupatta_fall": ((0.94, 0.70, 0.12), (0.74, 0.10, 0.38), "weave", 0.03),
     "dupatta": ((0.94, 0.70, 0.12), (0.74, 0.10, 0.38), "weave", 0.025),
+    # The tactical kit (outfits.tactical_kit): coyote nylon, black webbing.
+    "vest": ((0.42, 0.35, 0.24), None, "weave", 0.0),
+    "pouch": ((0.36, 0.30, 0.21), None, "weave", 0.0),
+    "tac_belt": ((0.07, 0.07, 0.07), None, "weave", 0.0),
+    "kneepad": ((0.10, 0.10, 0.10), None, "weave", 0.0),
     # Vivad: the ancient warriors' clothes.
     "dhoti_fold": ((0.88, 0.85, 0.77), (0.72, 0.52, 0.18), "weave", 0.012),
     "dhoti": ((0.88, 0.85, 0.77), (0.72, 0.52, 0.18), "weave", 0.035),
