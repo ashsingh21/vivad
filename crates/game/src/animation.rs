@@ -163,6 +163,9 @@ pub struct WarriorAnim {
     /// and gets up (`slide_time`).
     slide_from: Option<f32>,
     slide_end: Option<f32>,
+    /// What's playing: the heaviest whole-body or legs clip, and the arms' action over it (for
+    /// `just gripcheck`).
+    pub showing: (&'static str, &'static str),
 }
 
 fn load_sets(mut commands: Commands, assets: Res<AssetServer>) {
@@ -275,6 +278,7 @@ pub fn bind(commands: &mut Commands, sets: &AnimSets, variant: usize, rig_root: 
         aim_share: 0.0,
         slide_from: None,
         slide_end: None,
+        showing: ("", ""),
     })
 }
 
@@ -579,6 +583,12 @@ fn drive(
         }
 
         // The torso follows the aim fully with a bow up, partly otherwise.
+        // (With an action, every clip plays masked and the action is pushed last.)
+        let top = |w: &[(&'static str, bool, f32, f32)]| w.iter().max_by(|a, b| a.2.total_cmp(&b.2)).map(|w| w.0).unwrap_or("");
+        anim.showing = match want.split_last() {
+            Some((a, legs)) if a.1 => (top(legs), a.0),
+            _ => (top(&want), ""),
+        };
         let raised = want.iter().any(|w| w.0 == "bow_draw" || w.0 == "rifle_aim" || w.0 == "pistol_aim" || w.0.starts_with("rifleaim_") || w.0 == "rifle_slide");
         let share = if elim.is_some() { 0.0 } else if raised { 1.0 } else { 0.45 };
         anim.aim_share += (share - anim.aim_share) * (dt * 8.0).min(1.0);

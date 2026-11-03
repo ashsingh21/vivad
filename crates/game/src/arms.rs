@@ -37,7 +37,8 @@ impl Plugin for ArmsPlugin {
             ron::from_str(include_str!("../../../assets/data/bows.ron")).expect("assets/data/bows.ron");
         app.insert_resource(BowSpecs(specs))
             .init_resource::<GunCheck>()
-            .add_systems(Update, (rig_bows, start_flinches))
+            .init_resource::<GripLog>()
+            .add_systems(Update, (rig_bows, start_flinches, grip_report))
             .add_systems(
                 PostUpdate,
                 (
@@ -108,6 +109,56 @@ pub struct Body {
 /// shot): see `gun_check`.
 #[derive(Resource, Default)]
 pub struct GunCheck(pub Option<String>, pub Option<Vec3>);
+
+/// `just gripcheck`: with VIVAD_GRIPCHECK=<match seconds>, the local player's left hand on a long
+/// gun, logged per clip playing ((legs or whole body, arms' action), as the animation chose them):
+/// frames seen, the clip's own palm off the fore-end (before the hand is pulled on), the palm
+/// after it (what shows), and the barrel's pitch range; printed at that time, then the game quits.
+#[derive(Resource, Default)]
+pub struct GripLog(HashMap<(&'static str, &'static str), Grip>);
+
+#[derive(Default)]
+struct Grip {
+    frames: u32,
+    raw: f32,
+    off: f32,
+    pitch: (f32, f32),
+    /// Match time of the worst `off`, and when first and last seen.
+    at: f32,
+    span: (f32, f32),
+}
+
+/// Off the fore-end by more than this (m) after the left hand is pulled on: it shows.
+const GRIP_OFF: f32 = 0.03;
+
+fn grip_report(m: Option<Res<shared::sim::flow::Match>>, log: Res<GripLog>, mut exit: MessageWriter<AppExit>, mut done: Local<bool>) {
+    let Some(at) = std::env::var("VIVAD_GRIPCHECK").ok().and_then(|t| t.parse::<f32>().ok()) else { return };
+    if *done || m.is_none_or(|m| m.elapsed < at) {
+        return;
+    }
+    *done = true;
+    let mut rows: Vec<_> = log.0.iter().collect();
+    rows.sort_by(|a, b| b.1.off.total_cmp(&a.1.off));
+    println!("[grip] {:38} {:>5} {:>7} {:>7} {:>13} {:>6} {:>11}", "clip (+ action)", "frm", "raw cm", "off cm", "pitch deg", "worst", "seen (s)");
+    for ((legs, act), g) in rows {
+        let name = if act.is_empty() { legs.to_string() } else { format!("{legs} + {act}") };
+        let bad = g.off > GRIP_OFF || g.pitch.0 < -50.0 || g.pitch.1 > 50.0;
+        println!(
+            "[grip] {name:38} {:5} {:7.1} {:7.1} {:+6.0}..{:+4.0} {:6.1} {:5.1}-{:<5.1} {}",
+            g.frames,
+            g.raw * 100.0,
+            g.off * 100.0,
+            g.pitch.0,
+            g.pitch.1,
+            g.at,
+            g.span.0,
+            g.span.1,
+            if bad { "! hand off the gun" } else { "ok" }
+        );
+    }
+    println!("[grip] {} clips seen", log.0.len());
+    exit.write(AppExit::Success);
+}
 
 /// A hit's recoil on the torso: lean along `dir` (model space), decaying over a fraction of a second.
 #[derive(Component)]
@@ -193,6 +244,9 @@ fn orient_bows(
     kids: Query<&Children>,
     local: Query<(), With<shared::sim::LocalPlayer>>,
     mut check: ResMut<GunCheck>,
+    mut grips: ResMut<GripLog>,
+    elapsed: Option<Res<shared::sim::flow::Match>>,
+    shown: Query<&InheritedVisibility>,
     vis: Query<(&WarriorVisual, &WarriorAnim, &Body)>,
     intents: Query<&PlayerIntent>,
     mut tf: Query<(&Transform, &mut GlobalTransform)>,
@@ -313,12 +367,26 @@ fn orient_bows(
             // VIVAD_RAW_HANDS: the clip's own left hand, uncorrected (the armoury's [guncheck] then
             // says how far off the captured hold lands).
             let raw = std::env::var_os("VIVAD_RAW_HANDS").is_some();
+            let gap0 = (palm_at(&tf) - contact).length();
             for _ in 0..(if raw { 0 } else { 2 }) {
                 reach(upper, lower, hand, wrist, Vec3::NEG_Y - right * 0.7, want, &kids, &mut tf);
                 wrist += contact - palm_at(&tf);
             }
             if !raw {
                 reach(upper, lower, hand, wrist, Vec3::NEG_Y - right * 0.7, want, &kids, &mut tf);
+            }
+            // Only while the gun shows (it's put away in the air).
+            if local.contains(wv.sim) && std::env::var_os("VIVAD_GRIPCHECK").is_some() && shown.get(e).is_ok_and(|v| v.get()) {
+                let now = elapsed.as_ref().map_or(0.0, |m| m.elapsed);
+                let g = grips.0.entry(anim.showing).or_insert(Grip { pitch: (f32::MAX, f32::MIN), span: (now, now), ..default() });
+                let (pitch, off) = (along.y.asin().to_degrees(), (palm_at(&tf) - contact).length());
+                g.frames += 1;
+                g.raw = g.raw.max(gap0);
+                if off > g.off {
+                    (g.off, g.at) = (off, now);
+                }
+                g.span.1 = now;
+                g.pitch = (g.pitch.0.min(pitch), g.pitch.1.max(pitch));
             }
             if local.contains(wv.sim) {
                 check.1 = Some(contact);

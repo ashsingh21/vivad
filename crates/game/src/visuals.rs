@@ -573,7 +573,13 @@ pub struct WarriorVisual {
 #[derive(Component)]
 pub struct HeldWeapon {
     showing: Option<String>,
+    /// Seconds on the ground since the last drop or glide (the gun is put away in the air).
+    landed: f32,
 }
+
+/// After landing, the gun comes back once the glide's pose has faded (the animation's FADE_RATE:
+/// down to a few percent), so it never shows in a hand still holding the glider.
+const UNSTOW: f32 = 0.3;
 
 #[derive(Component)]
 pub struct Glider;
@@ -585,7 +591,7 @@ pub struct WeaponSocket(pub Entity);
 fn dress_warriors(mut commands: Commands, q: Query<(Entity, &Warrior, &Transform), Added<Warrior>>, assets: Res<AssetServer>) {
     for (e, w, t) in &q {
         let root = commands.spawn((WarriorVisual { sim: e }, Transform::from_translation(t.translation), Visibility::default())).id();
-        let held = commands.spawn((HeldWeapon { showing: None }, Transform::from_xyz(0.36, 0.15, -0.25), Visibility::default(), ChildOf(root))).id();
+        let held = commands.spawn((HeldWeapon { showing: None, landed: UNSTOW }, Transform::from_xyz(0.36, 0.15, -0.25), Visibility::default(), ChildOf(root))).id();
         // A patang glider (tools/blender/props/glider.py) held overhead while gliding, in one of
         // four colourways by the warrior's look.
         let colourway = ["a", "b", "c", "d"][w.look as usize % 4];
@@ -656,10 +662,11 @@ fn pose_warriors(
     mut commands: Commands,
     sims: Query<(&Kinematic, &Inventory, Has<Eliminated>)>,
     mut vis: Query<(&WarriorVisual, &WeaponSocket, &mut Visibility, &Children, &mut Transform)>,
-    mut weapons: Query<&mut HeldWeapon>,
+    mut weapons: Query<(&mut HeldWeapon, &mut Visibility), (Without<WarriorVisual>, Without<Glider>)>,
     mut gliders: Query<&mut Visibility, (With<Glider>, Without<WarriorVisual>)>,
     palette: Res<Palette>,
     db: Res<ItemDb>,
+    time: Res<Time>,
 ) {
     for (v, socket, mut visibility, children, mut vt) in &mut vis {
         let Ok((kin, inv, dead)) = sims.get(v.sim) else { continue };
@@ -673,7 +680,11 @@ fn pose_warriors(
                 *g = if kin.mode == MoveMode::Gliding && !dead { Visibility::Inherited } else { Visibility::Hidden };
             }
         }
-        if let Ok(mut held) = weapons.get_mut(socket.0) {
+        if let Ok((mut held, mut shown)) = weapons.get_mut(socket.0) {
+            // Put away while skydiving and gliding (the hands are on the glider).
+            let air = matches!(kin.mode, MoveMode::Freefall | MoveMode::Gliding) && !dead;
+            held.landed = if air { 0.0 } else { held.landed + time.delta_secs() };
+            shown.set_if_neq(if held.landed < UNSTOW { Visibility::Hidden } else { Visibility::Inherited });
             let current = inv.current().map(|s| (s.id.clone(), s.rarity));
             let id = current.as_ref().map(|c| c.0.clone());
             if held.showing != id {
