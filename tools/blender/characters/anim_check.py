@@ -186,21 +186,24 @@ def main():
         hands = sorted(apart)[len(apart) // 2]
         if name.startswith(("rifle_", "pistol_")) and hands > (0.6 if name.startswith("rifle_") else 0.2):
             flags.append(f"hands apart {hands:.2f}m")
-        # Back: in the plane of the body's facing (the hips' forward, level).
+        # Back: the lean and arch in the plane of the way the clip faces (-Y: where the game points
+        # the body and the gun; a strafe's hips turn toward the run, and leaning back from the gun
+        # reads as a chest thrown out even when it's forward of them); the hips' tilt about their own.
+        ahead = Vector((0, -1, 0))
         lean, arch, low, tilt = [], [], [], []
         for fr in frames:
             p = fr["p"]
             side = (p["thigh_l"] - p["thigh_r"]).normalized()
             fwd = side.cross(Vector((0, 0, 1))).normalized()  # left is +X, facing -Y
-            pitch = lambda a, b: math.degrees(math.atan2((p[b] - p[a]).dot(fwd), (p[b] - p[a]).z))
+            pitch = lambda a, b: math.degrees(math.atan2((p[b] - p[a]).dot(ahead), (p[b] - p[a]).z))
             lean.append(pitch("pelvis", "neck_01"))
             arch.append(pitch("pelvis", "spine_02") - pitch("spine_02", "neck_01"))
             low.append(pitch("pelvis", "spine_02"))
             ax = fr["q"]["pelvis"] @ Vector((0, 1, 0))
             tilt.append(math.degrees(math.atan2(ax.dot(fwd), ax.z)) - rest_tilt)
         lean_m, arch_m, low_m, tilt_m = sum(lean) / n, max(arch), sum(low) / n, sum(tilt) / n
-        # A standing move (not crouched, lying or in the air) leaning back, or bent back at the waist.
-        if not upper and not air and "crouch" not in name and (lean_m < -3 or arch_m > 12):
+        # A standing move (not crouched, lying or in the air) leaning back (but a backpedal), or bent back at the waist.
+        if not upper and not air and "crouch" not in name and ((lean_m < -3 and not name.endswith("_b")) or arch_m > 12):
             flags.append(f"back arched (lean {lean_m:+.0f}, arch {arch_m:+.0f})")
         head = [fr["p"]["head"].z - ground for fr in frames]
         hips = [fr["p"]["pelvis"].z - ground for fr in frames]

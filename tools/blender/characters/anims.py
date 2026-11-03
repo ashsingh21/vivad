@@ -1020,8 +1020,8 @@ def stand_up(rig, name, lean, tuck, face):
 
 # Runs whose back bends backward at the waist (stand_up straightened the spine over hips still tipped
 # forward with the stride: chest out, seat back), lined up again.
-STRAIGHT = ("run_f", "run_l", "run_r", "sprint_f", *(f"rifle_run_{d}" for d in "fblr"), "rifle_sprint_f",
-            *(f"rifleaim_run_{d}" for d in "fblr"), *(f"rifleaim_walk_{d}" for d in "fblr"))
+STRAIGHT = ("walk_f", "run_f", "run_l", "run_r", "sprint_f", *(f"rifle_run_{d}" for d in "fblr"), "rifle_sprint_f",
+            *(f"rifleaim_run_{d}" for d in "fblr"), *(f"rifleaim_walk_{d}" for d in "fblr"), "rifle_walk_l", "rifle_walk_r")
 BACK = ("pelvis", "spine_01", "spine_02", "spine_03")
 # A straightened back's lean at most (degrees forward from its rest), and how much of it the hips
 # take: tipped with the whole lean, the hips stick out behind and the chest out in front (a
@@ -1032,7 +1032,7 @@ HIPS_SHARE = 0.25
 
 def straighten(rig, name, k=1.0):
     """Take `k` of the bend out of `name`'s torso, frame by frame: each spine bone pitched (from
-    its rest) to the hips-to-neck line's lean (at most LEAN_MAX), the hips to HIPS_SHARE of it, so
+    its rest) to the hips-to-neck line's lean (at most LEAN_MAX, and none back but in a backpedal), the hips to HIPS_SHARE of it, so
     the back runs straight over level hips; the legs (the feet where they were), the arms (and so
     a gun's hold) and the head kept as they were."""
     sc = bpy.context.scene
@@ -1066,7 +1066,8 @@ def straighten(rig, name, k=1.0):
         was = {n: rig.world_rot(n) for n in keep}
         feet = rig.head("foot_l") + rig.head("foot_r")
         t = line() - rest_line
-        lean = min(t, math.radians(LEAN_MAX))
+        # Never back from upright (a chest thrown out), but in a backpedal.
+        lean = min(t, math.radians(LEAN_MAX)) if name.endswith("_b") else max(0.0, min(t, math.radians(LEAN_MAX)))
         want = {n: lean * (HIPS_SHARE if n == "pelvis" else 1.0) for n in BACK}
         before.append(max(abs(pitch(n) - rest[n] - want[n]) for n in BACK))
         for n in BACK:
