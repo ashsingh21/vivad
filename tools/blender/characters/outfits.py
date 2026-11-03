@@ -179,8 +179,9 @@ def tactical_kit(ctx, items):
                 return False
         return True
 
-    # Further out behind, over the modelled shirt's looser back (easing round the ribs).
-    vest = g.shell(ctx, "vest", carrier, lambda co, n: 0.032 + (0.028 + 0.016 * smoothstep(L.waist + 0.12, L.waist + 0.01, co.z)) * smoothstep(-0.2, 0.6, n.y), smooth=8,
+    # Further out behind, over the modelled shirt's looser back (easing round the ribs), most at the
+    # small of the back, where the shirt bunches as he leans into a run.
+    vest = g.shell(ctx, "vest", carrier, lambda co, n: 0.032 + (0.028 + 0.026 * smoothstep(L.waist + 0.16, L.waist + 0.01, co.z)) * smoothstep(-0.2, 0.6, n.y), smooth=8,
                    thickness=0.012, snap=g.z_snap(L.waist + 0.01, top))
     items.append((tag(vest, (0.42, 0.35, 0.24)), "cover"))
     # Shoulder straps: from the front plate's top up over the shoulder to the back plate's, each
