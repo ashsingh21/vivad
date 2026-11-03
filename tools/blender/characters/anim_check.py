@@ -14,6 +14,11 @@ For each clip, sampled frame by frame on the exported rig (assets/models/charact
   pops   the biggest jump in any bone's turn from one frame to the next, against the median
          (a pop or a bad loop seam stands out as a large ratio)
   height the head's and hips' range (a slump, a crouch that's too deep, a pose that's flying)
+  back   the torso's lean (the hips-to-neck line from upright, degrees, + forward: a run leans
+         into it, a lean back reads as the chest thrown out) and its arch (the chest's line,
+         spine_02 to neck, bent back from the waist's, pelvis to spine_02: + a swayback), and the
+         hips' tip forward from the rig's rest (not a natural stance: idle sits near +30, so
+         compare clips by it, it isn't flagged)
 
 Lines with a problem end in `!` and the flags; the rest end `ok`. Thresholds are rough: a flag
 means look at that clip (a picture of just it), not that it's wrong.
@@ -71,11 +76,14 @@ def main():
         b.matrix_basis.identity()
     bpy.context.view_layer.update()
     ground = min(P("ball_l").z, P("ball_r").z)
+    # The hips' own pitch at rest (its bone's axis, forward +), to measure a clip's tip from.
+    ax = (W @ pb["pelvis"].matrix).to_quaternion() @ Vector((0, 1, 0))
+    rest_tilt = math.degrees(math.atan2(ax.dot(Vector((0, -1, 0))), ax.z))
     # The ankle over a flat foot: lower than this, the heel is in the ground.
     ankle = min(P("foot_l").z, P("foot_r").z)
     torso = ("pelvis", "spine_01", "spine_02", "spine_03", "neck_01", "head")
     print(f"[check] {variant}: {len(bpy.data.actions)} clips; ground at ball height {ground:.3f} m")
-    print(f"{'clip':22s} {'frm':>3s} {'feet x':>6s} {'sink':>5s} {'float':>5s} {'skid':>4s} {'hands':>5s} {'pop':>5s} {'head':>9s} {'hips':>9s}")
+    print(f"{'clip':22s} {'frm':>3s} {'feet x':>6s} {'sink':>5s} {'float':>5s} {'skid':>4s} {'hands':>5s} {'pop':>5s} {'head':>9s} {'hips':>9s} {'lean':>7s} {'arch':>7s} {'waist':>6s} {'hips':>6s}")
     names = sorted(a.name for a in bpy.data.actions)
     for name in names:
         if only and name not in only:
@@ -90,7 +98,7 @@ def main():
             sc.frame_set(f)
             frames.append({
                 "p": {n: P(n) for n in ("pelvis", "head", "spine_03", "thigh_l", "thigh_r", "calf_l", "calf_r", "foot_l", "foot_r",
-                                        "ball_l", "ball_r", "upperarm_l", "upperarm_r", "lowerarm_l", "lowerarm_r", "hand_l", "hand_r")},
+                                        "ball_l", "ball_r", "spine_02", "neck_01", "upperarm_l", "upperarm_r", "lowerarm_l", "lowerarm_r", "hand_l", "hand_r")},
                 "q": {b.name: (W @ b.matrix).to_quaternion() for b in pb},
             })
         n = len(frames)
@@ -178,11 +186,27 @@ def main():
         hands = sorted(apart)[len(apart) // 2]
         if name.startswith(("rifle_", "pistol_")) and hands > (0.6 if name.startswith("rifle_") else 0.2):
             flags.append(f"hands apart {hands:.2f}m")
+        # Back: in the plane of the body's facing (the hips' forward, level).
+        lean, arch, low, tilt = [], [], [], []
+        for fr in frames:
+            p = fr["p"]
+            side = (p["thigh_l"] - p["thigh_r"]).normalized()
+            fwd = side.cross(Vector((0, 0, 1))).normalized()  # left is +X, facing -Y
+            pitch = lambda a, b: math.degrees(math.atan2((p[b] - p[a]).dot(fwd), (p[b] - p[a]).z))
+            lean.append(pitch("pelvis", "neck_01"))
+            arch.append(pitch("pelvis", "spine_02") - pitch("spine_02", "neck_01"))
+            low.append(pitch("pelvis", "spine_02"))
+            ax = fr["q"]["pelvis"] @ Vector((0, 1, 0))
+            tilt.append(math.degrees(math.atan2(ax.dot(fwd), ax.z)) - rest_tilt)
+        lean_m, arch_m, low_m, tilt_m = sum(lean) / n, max(arch), sum(low) / n, sum(tilt) / n
+        # A standing move (not crouched, lying or in the air) leaning back, or bent back at the waist.
+        if not upper and not air and "crouch" not in name and (lean_m < -3 or arch_m > 12):
+            flags.append(f"back arched (lean {lean_m:+.0f}, arch {arch_m:+.0f})")
         head = [fr["p"]["head"].z - ground for fr in frames]
         hips = [fr["p"]["pelvis"].z - ground for fr in frames]
         fmt = lambda x: "  -  " if x != x else f"{x:5.2f}"
         print(f"{name:22s} {n:3d} {fmt(feet_x):>6s} {fmt(sink * 100 if sink == sink else sink):>5s} {fmt(flt * 100 if flt == flt else flt):>5s} "
-              f"{fmt(skid)[1:]:>4s} {hands:5.2f} {pop:5.1f} {min(head):4.2f}-{max(head):4.2f} {min(hips):4.2f}-{max(hips):4.2f} "
+              f"{fmt(skid)[1:]:>4s} {hands:5.2f} {pop:5.1f} {min(head):4.2f}-{max(head):4.2f} {min(hips):4.2f}-{max(hips):4.2f} {lean_m:+7.1f} {arch_m:+7.1f} {low_m:+6.1f} {tilt_m:+6.1f} "
               + ("! " + "; ".join(flags) if flags else "ok"))
 
 

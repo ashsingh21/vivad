@@ -126,6 +126,19 @@ struct Grip {
     /// Match time of the worst `off`, and when first and last seen.
     at: f32,
     span: (f32, f32),
+    /// The torso: its lean (spine_01 to neck, degrees from upright, + forward), summed for the
+    /// mean, and the most its chest (spine_03 to neck) bent back from its waist (spine_01 to
+    /// spine_03), + a swayback.
+    lean: f32,
+    arch: f32,
+}
+
+/// The torso's (lean, arch) in degrees, from the bones as posed (`Grip`).
+fn back_of(body: &Body, facing: Vec3, tf: &Query<(&Transform, &mut GlobalTransform)>) -> Option<(f32, f32)> {
+    let p = |i: usize| tf.get(body.spine[i]).ok().map(|(_, g)| g.translation());
+    let (a, c, n) = (p(0)?, p(2)?, p(3)?);
+    let pitch = |d: Vec3| d.dot(facing).atan2(d.y).to_degrees();
+    Some((pitch(n - a), pitch(c - a) - pitch(n - c)))
 }
 
 /// Off the fore-end by more than this (m) after the left hand is pulled on: it shows.
@@ -139,12 +152,13 @@ fn grip_report(m: Option<Res<shared::sim::flow::Match>>, log: Res<GripLog>, mut 
     *done = true;
     let mut rows: Vec<_> = log.0.iter().collect();
     rows.sort_by(|a, b| b.1.off.total_cmp(&a.1.off));
-    println!("[grip] {:38} {:>5} {:>7} {:>7} {:>13} {:>6} {:>11}", "clip (+ action)", "frm", "raw cm", "off cm", "pitch deg", "worst", "seen (s)");
+    println!("[grip] {:38} {:>5} {:>7} {:>7} {:>13} {:>6} {:>11} {:>5} {:>5}", "clip (+ action)", "frm", "raw cm", "off cm", "pitch deg", "worst", "seen (s)", "lean", "arch");
     for ((legs, act), g) in rows {
         let name = if act.is_empty() { legs.to_string() } else { format!("{legs} + {act}") };
-        let bad = g.off > GRIP_OFF || g.pitch.0 < -50.0 || g.pitch.1 > 50.0;
+        let arched = !legs.contains("crouch") && !legs.contains("slide") && !legs.contains("jump") && !legs.contains("fall") && (g.lean / g.frames.max(1) as f32) < -3.0 || g.arch > 12.0;
+        let bad = g.off > GRIP_OFF || g.pitch.0 < -50.0 || g.pitch.1 > 50.0 || arched;
         println!(
-            "[grip] {name:38} {:5} {:7.1} {:7.1} {:+6.0}..{:+4.0} {:6.1} {:5.1}-{:<5.1} {}",
+            "[grip] {name:38} {:5} {:7.1} {:7.1} {:+6.0}..{:+4.0} {:6.1} {:5.1}-{:<5.1} {:+5.0} {:+5.0} {}",
             g.frames,
             g.raw * 100.0,
             g.off * 100.0,
@@ -153,7 +167,14 @@ fn grip_report(m: Option<Res<shared::sim::flow::Match>>, log: Res<GripLog>, mut 
             g.at,
             g.span.0,
             g.span.1,
-            if bad { "! hand off the gun" } else { "ok" }
+            g.lean / g.frames.max(1) as f32,
+            g.arch,
+            match (g.off > GRIP_OFF || g.pitch.0 < -50.0 || g.pitch.1 > 50.0, arched) {
+                (true, true) => "! hand off the gun; back arched",
+                (true, false) => "! hand off the gun",
+                (false, true) => "! back arched",
+                _ => "ok",
+            }
         );
     }
     println!("[grip] {} clips seen", log.0.len());
@@ -386,6 +407,10 @@ fn orient_bows(
                     (g.off, g.at) = (off, now);
                 }
                 g.span.1 = now;
+                if let Some((lean, arch)) = back_of(body, facing, &tf) {
+                    g.lean += lean;
+                    g.arch = g.arch.max(arch);
+                }
                 g.pitch = (g.pitch.0.min(pitch), g.pitch.1.max(pitch));
             }
             if local.contains(wv.sim) {
