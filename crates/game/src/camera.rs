@@ -105,11 +105,19 @@ fn follow(
     time: Res<Time>,
     punch: Res<crate::fx::CameraPunch>,
     ride: Res<crate::visuals::DropRide>,
+    mut orbit: Local<Option<f32>>,
 ) {
     let Ok((mut ct, mut proj, mut mc)) = cam.single_mut() else { return };
     let Ok((me, intent, kin)) = local.single() else { return };
     let Some(body) = visuals.iter().find(|(v, _)| v.sim == me).map(|(_, t)| t.translation) else { return };
-    let rot = intent.aim_rotation();
+    // For recordings: VIVAD_CAM_ORBIT=<degrees per second> circles the view round the player on the
+    // ground (their aim, and so the body and controls, untouched), to see a move from every side.
+    let orbit = *orbit.get_or_insert_with(|| std::env::var("VIVAD_CAM_ORBIT").ok().and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0));
+    let rot = if kin.mode == MoveMode::Ground && orbit != 0.0 {
+        Quat::from_rotation_y((orbit * m.elapsed).to_radians()) * intent.aim_rotation()
+    } else {
+        intent.aim_rotation()
+    };
     let aiming = intent.held(btn::AIM) && kin.mode == MoveMode::Ground;
     let dt = time.delta_secs();
     mc.eye += (shared::sim::eye_offset(intent) - mc.eye) * (1.0 - (-dt * 10.0).exp());
