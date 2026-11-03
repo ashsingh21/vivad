@@ -844,6 +844,11 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
         end = sample(frames)[0]
         for n in ("foot_l", "foot_r", "ball_l", "ball_r"):
             if n in ours:
+                # Or the first frame is off on its own (the rifle crouch backpedal's toes: 60
+                # degrees on it, 92 on every frame after, to the end): from its neighbours.
+                ang = lambda a, b: a.rotation_difference(b).angle
+                if ang(S[0][0][n], S[1][0][n]) > math.radians(15) and ang(end[n], S[1][0][n]) < ang(S[0][0][n], S[1][0][n]) / 2:
+                    S[0][0][n] = end[n].slerp(S[1][0][n], 0.5)
                 e = S[0][0][n] @ end[n].inverted()
                 for i, x in enumerate(S):
                     x[0][n] = Quaternion().slerp(e, i / out) @ x[0][n]
