@@ -1247,7 +1247,7 @@ def arms_from(rig, base, hold, name=None):
 # Carrying a long gun on the move (not aiming): the chest turns with each stride, the way a runner's
 # shoulders counter the hips, so the gun swings across the body to one side and back to the other
 # (held dead still in front, it read as a statue's arms on running legs). Degrees of turn each way.
-GUN_SWAY = {**{f"rifle_walk_{d}": 4.0 for d in "fblr"}, **{f"rifle_run_{d}": 10.0 for d in "fblr"}, "rifle_sprint_f": 14.0}
+GUN_SWAY = {**{f"rifle_walk_{d}": 4.0 for d in "fblr"}, **{f"rifle_run_{d}": 10.0 for d in "fblr"}, "rifle_sprint_f": 10.0}
 
 
 def gun_sway(rig, name, deg):
