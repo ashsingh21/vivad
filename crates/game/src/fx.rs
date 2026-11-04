@@ -25,6 +25,7 @@ impl Plugin for FxPlugin {
         app.init_resource::<CameraPunch>()
             .add_systems(Startup, setup)
             .add_systems(Update, (add_streaks, muzzle_flash, misfire_smoke, blast_shake, hit_sparks, arrow_dust, landing_dust, fly_sparks, punch_camera, hit_stop))
+            .add_systems(Update, (slide_dust, fly_puffs))
             .add_systems(Update, (gadget_trails, gadget_blasts, mirchi_clouds))
             .add_systems(PostUpdate, (update_streaks, swing_ribbons).after(TransformSystems::Propagate));
     }
@@ -54,12 +55,16 @@ struct FxAssets {
     gold_spark: Handle<StandardMaterial>,
     gulal: Handle<StandardMaterial>,
     dust: Handle<StandardMaterial>,
+    /// Soft dust: a camera-facing quad and the puff's material at each step of its fade.
+    quad: Handle<Mesh>,
+    puff: Vec<Handle<StandardMaterial>>,
     smoke: Handle<StandardMaterial>,
     steam: Handle<StandardMaterial>,
     mirchi: Handle<StandardMaterial>,
 }
 
-fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>) {
+fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>) {
+    let puff_tex = images.add(puff_image());
     let glow = |mats: &mut Assets<StandardMaterial>, c: Color, e: LinearRgba, a: f32| {
         mats.add(StandardMaterial {
             base_color: c.with_alpha(a),
@@ -72,6 +77,18 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: Res
     commands.insert_resource(FxAssets {
         sphere: meshes.add(Sphere::new(1.0).mesh().ico(1).unwrap()),
         cylinder: meshes.add(Cylinder::new(0.5, 1.0).mesh().resolution(6)),
+        quad: meshes.add(Rectangle::new(1.0, 1.0)),
+        puff: (0..PUFF_STEPS)
+            .map(|k| {
+                mats.add(StandardMaterial {
+                    base_color: Color::srgba(0.90, 0.84, 0.74, PUFF_ALPHA * (1.0 - k as f32 / PUFF_STEPS as f32)),
+                    base_color_texture: Some(puff_tex.clone()),
+                    alpha_mode: AlphaMode::Blend,
+                    unlit: true,
+                    ..default()
+                })
+            })
+            .collect(),
         streak: glow(&mut mats, Color::srgb(1.0, 0.93, 0.78), LinearRgba::rgb(0.6, 0.5, 0.3), 0.6),
         tracer: glow(&mut mats, Color::srgb(1.0, 0.8, 0.45), LinearRgba::rgb(8.0, 4.5, 1.2), 0.8),
         flash: glow(&mut mats, Color::srgb(1.0, 0.75, 0.35), LinearRgba::rgb(20.0, 11.0, 3.0), 1.0),
@@ -349,6 +366,129 @@ fn hit_sparks(mut commands: Commands, mut hits: MessageReader<HitMsg>, fx: Res<F
 #[derive(Component)]
 struct Puffed;
 
+// ------------------------------------------------------------------ soft dust
+
+/// A puff's strongest opacity, and the steps it fades through (a material each: a shared handle
+/// swapped as it thins, never a material written every frame).
+const PUFF_ALPHA: f32 = 0.55;
+const PUFF_STEPS: usize = 6;
+
+/// A lump of dust: a round soft-edged cloud, lumpy at its rim, white (tinted by the material).
+fn puff_image() -> Image {
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    let n = 64usize;
+    let mut data = Vec::with_capacity(n * n * 4);
+    for y in 0..n {
+        for x in 0..n {
+            let d = Vec2::new(x as f32 + 0.5, y as f32 + 0.5) / n as f32 * 2.0 - Vec2::ONE;
+            let a = d.y.atan2(d.x);
+            // A rim of soft lobes, and some mottling inside.
+            let rim = 0.78 + 0.1 * (a * 5.0).sin() + 0.06 * (a * 9.0 + 1.3).sin();
+            let k = (1.0 - d.length() / rim).clamp(0.0, 1.0);
+            let mottle = 0.8 + 0.2 * ((d.x * 9.0).sin() * (d.y * 7.0 + 0.5).sin());
+            let alpha = k * k * (3.0 - 2.0 * k) * mottle;
+            let shade = 0.82 + 0.18 * (1.0 - d.y) * 0.5;
+            data.extend_from_slice(&[(shade * 255.0) as u8, (shade * 255.0) as u8, (shade * 255.0) as u8, (alpha.clamp(0.0, 1.0) * 255.0) as u8]);
+        }
+    }
+    Image::new(Extent3d { width: n as u32, height: n as u32, depth_or_array_layers: 1 }, TextureDimension::D2, data,
+               TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD)
+}
+
+#[derive(Component)]
+struct Puff {
+    vel: Vec3,
+    life: f32,
+    max: f32,
+    size: f32,
+    spin: f32,
+    step: usize,
+}
+
+/// Puffs of dust at `at`, thrown toward `toward` (spread round it) at up to `speed`, `size` across
+/// when they start (they swell to about three times that), living about `life` seconds.
+fn kick_dust(commands: &mut Commands, fx: &FxAssets, at: Vec3, toward: Vec3, spread: f32, n: usize, speed: f32, size: f32, life: f32) {
+    let mut rng = rand::rng();
+    for _ in 0..n {
+        let r = Vec3::new(rng.random_range(-1.0..1.0), rng.random_range(0.0..0.6), rng.random_range(-1.0..1.0));
+        let vel = (toward + r * spread).normalize_or(Vec3::Y) * speed * rng.random_range(0.4..1.0);
+        let max = life * rng.random_range(0.7..1.3);
+        commands.spawn((
+            Puff { vel, life: max, max, size: size * rng.random_range(0.7..1.3), spin: rng.random_range(-1.5..1.5), step: 0 },
+            Mesh3d(fx.quad.clone()),
+            MeshMaterial3d(fx.puff[PUFF_STEPS - 1].clone()),
+            Transform::from_translation(at + Vec3::Y * size * 0.4).with_scale(Vec3::splat(size)),
+            bevy::light::NotShadowCaster,
+        ));
+    }
+}
+
+/// Puffs drift, slow, rise a little and swell; turned to face the camera, they fade in quickly and
+/// thin away through the fade's steps.
+fn fly_puffs(
+    mut commands: Commands,
+    time: Res<Time>,
+    fx: Res<FxAssets>,
+    cam: Query<&GlobalTransform, With<crate::camera::MainCamera>>,
+    mut q: Query<(Entity, &mut Puff, &mut Transform, &mut MeshMaterial3d<StandardMaterial>)>,
+) {
+    let dt = time.delta_secs();
+    let eye = cam.single().map(|g| g.translation()).unwrap_or(Vec3::Y * 100.0);
+    for (e, mut p, mut t, mut mat) in &mut q {
+        p.life -= dt;
+        if p.life <= 0.0 {
+            commands.entity(e).despawn();
+            continue;
+        }
+        p.vel *= 1.0 - (3.0 * dt).min(1.0);
+        p.vel.y += 0.25 * dt;
+        t.translation += p.vel * dt;
+        let age = 1.0 - p.life / p.max;
+        t.scale = Vec3::splat(p.size * (1.0 + 2.2 * age.powf(0.6)));
+        // Face the camera (the quad's front is +Z), turning slowly about that axis.
+        let to_eye = (eye - t.translation).normalize_or(Vec3::Z);
+        t.rotation = Quat::from_rotation_arc(Vec3::Z, to_eye) * Quat::from_rotation_z(p.spin * age);
+        // In over the first tenth, out over the rest.
+        let a = (age / 0.1).min(1.0) * (1.0 - age).powf(0.8);
+        let step = (((1.0 - a) * PUFF_STEPS as f32) as usize).min(PUFF_STEPS - 1);
+        if step != p.step {
+            p.step = step;
+            mat.0 = fx.puff[step].clone();
+        }
+    }
+}
+
+/// A slide kicks up a trail of dust from the heels, thicker the faster it goes, and a last puff
+/// as it stops.
+fn slide_dust(
+    mut commands: Commands,
+    time: Res<Time>,
+    q: Query<(Entity, &shared::sim::Kinematic, &Transform)>,
+    mut owed: Local<std::collections::HashMap<Entity, (f32, bool)>>,
+    fx: Res<FxAssets>,
+) {
+    let dt = time.delta_secs();
+    for (e, kin, t) in &q {
+        let (due, was) = owed.get(&e).copied().unwrap_or((0.0, false));
+        let feet = t.translation - Vec3::Y * (shared::sim::HALF_HEIGHT - 0.05);
+        let v = kin.velocity.with_y(0.0);
+        let sliding = kin.sliding && kin.grounded && v.length() > 1.5;
+        let mut due = due;
+        if sliding {
+            due += dt * (8.0 + v.length() * 2.5);
+            let back = -v.normalize_or(Vec3::Z);
+            while due >= 1.0 {
+                due -= 1.0;
+                kick_dust(&mut commands, &fx, feet + back * 0.3, back * 0.5 + Vec3::Y * 0.6, 0.8, 1, 0.8 + v.length() * 0.12, 0.35, 0.9);
+            }
+        } else if was {
+            kick_dust(&mut commands, &fx, feet + v.normalize_or(Vec3::Z) * 0.4, Vec3::Y * 0.4 + v.normalize_or(Vec3::Z), 1.0, 6, 1.4, 0.4, 1.0);
+        }
+        owed.insert(e, (due, sliding));
+    }
+    owed.retain(|e, _| q.contains(*e));
+}
+
 /// A ring of dust kicked up where a warrior lands hard (a jump off a roof, the end of a glide).
 fn landing_dust(
     mut commands: Commands,
@@ -361,7 +501,7 @@ fn landing_dust(
         if !grounded && kin.grounded && vy < -6.0 {
             let n = (6.0 + -vy).min(20.0) as usize;
             let feet = t.translation - Vec3::Y * shared::sim::HALF_HEIGHT + Vec3::Y * 0.1;
-            billow(&mut commands, &fx, &fx.dust, feet, Vec3::NEG_Y * 0.5, n, 1.2 + -vy * 0.05, 0.12);
+            kick_dust(&mut commands, &fx, feet, Vec3::Y * 0.15, 1.0, n, 2.0 + -vy * 0.08, 0.4, 1.1);
         }
         was.insert(e, (kin.grounded, kin.velocity.y));
     }

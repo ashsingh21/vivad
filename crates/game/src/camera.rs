@@ -18,6 +18,9 @@ pub struct MainCamera {
     distance: f32,
     /// The eye's height over the body, eased as the player crouches and stands.
     eye: f32,
+    /// How far back the walls let the camera stand: in at once when something comes between it
+    /// and the player, eased back out (a column or trunk passing snapped the view in and out).
+    room: f32,
 }
 
 pub struct CameraPlugin;
@@ -32,7 +35,7 @@ impl Plugin for CameraPlugin {
 pub fn spawn_camera(mut commands: Commands) {
     // Ambient occlusion and anti-aliasing are the quality level's (crate::quality).
     commands.spawn((
-        MainCamera { distance: CAMERA_DISTANCE, eye: EYE_OFFSET },
+        MainCamera { distance: CAMERA_DISTANCE, eye: EYE_OFFSET, room: CAMERA_DISTANCE },
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection { fov: 70f32.to_radians(), near: 0.05, ..default() }),
         tonemapping(),
@@ -138,9 +141,9 @@ fn follow(
     // Pull the camera in front of walls.
     if let Ok((dir, len)) = Dir3::new_and_length(offset) {
         let filter = SpatialQueryFilter::from_mask(solid_mask()).with_excluded_entities([me]);
-        if let Some(hit) = spatial.cast_ray(pivot, dir, len, true, &filter) {
-            pos = pivot + dir * (hit.distance - 0.25).max(0.2);
-        }
+        let free = spatial.cast_ray(pivot, dir, len, true, &filter).map_or(len, |hit| (hit.distance - 0.25).max(0.2));
+        mc.room = if free < mc.room { free } else { mc.room + (free - mc.room) * (1.0 - (-dt * 4.0).exp()) };
+        pos = pivot + dir * mc.room.min(len);
     }
     // Punches (crate::fx): bow kick tips the view up, hits shake it, a charging bow zooms in.
     let t = time.elapsed_secs();
