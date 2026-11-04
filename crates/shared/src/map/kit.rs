@@ -52,6 +52,7 @@ fn collider(name: &str) -> Option<Shape> {
         "fridge" => Shape::Box(Vec3::new(0.62, 1.56, 0.64)),
         "desk" => Shape::Box(Vec3::new(1.4, 0.76, 0.7)),
         "stove" => Shape::Box(Vec3::new(1.6, 0.86, 0.62)),
+        "rack_kirana" | "rack_bartan" | "rack_kapda" | "rack_dabba" => Shape::Box(Vec3::new(1.2, 2.0, 0.4)),
         _ => return None,
     })
 }
@@ -85,6 +86,25 @@ pub(super) fn place(b: &mut Builder, name: &'static str, pos: Vec3, yaw: f32) {
         let model = if (pos.x.abs() as i32 + pos.z.abs() as i32) % 3 == 0 { super::india::BUSH_LANTANA } else { super::india::BUSH_BOUGAINVILLEA };
         b.map.props.push(super::Prop { model, pos: pos + Vec3::Y * 0.6, yaw: yaw * 1.7, scale: 0.5, trunk: None });
     }
+}
+
+/// A shop's trades, a rack each (tools/blender/props/street_kit.py RACKS).
+const RACKS: [&str; 4] = ["rack_kirana", "rack_bartan", "rack_kapda", "rack_dabba"];
+const RACK_W: f32 = 1.2;
+
+/// A wall's span of shelving: as many stocked racks of one trade (by `seed`) as fit in `width`,
+/// side by side, their backs on the wall's foot at `back` (its middle, at floor height), facing
+/// `facing` (x, z). Returns how many.
+pub(super) fn shelving(b: &mut Builder, back: Vec3, facing: Vec2, width: f32, seed: u32) -> usize {
+    let n = ((width + 0.02) / (RACK_W + 0.02)).floor() as usize;
+    let out = Vec3::new(facing.x, 0.0, facing.y).normalize_or(Vec3::Z);
+    let along = out.cross(Vec3::Y);
+    let name = RACKS[(seed.wrapping_mul(2654435761) >> 16) as usize % RACKS.len()];
+    for k in 0..n {
+        let x = (k as f32 - (n as f32 - 1.0) / 2.0) * (RACK_W + 0.02);
+        place(b, name, back + out * 0.21 + along * x, super::kit::facing(facing));
+    }
+    n
 }
 
 /// The yaw that faces the model (-Z forward) along `dir` (x, z).

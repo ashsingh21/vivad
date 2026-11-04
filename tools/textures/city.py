@@ -15,8 +15,6 @@ Near-white where the wall is, so the game's vertex colours tint each building.
   wear (512): grime and scratches for the street kit.
   stucco, stone (512): Connaught Place's clean white walls and its stone-tiled verandahs.
   limewash (512): mottled near-white under the shops' paint colours (Mat::Paint).
-  goods (2048 x 1024): stock on shop shelves, a trade a column (kirana, bartan, kapda, dabba), two
-      stockings each.
 
 python3 tools/textures/city.py   -> assets/textures/panga/{facade,shop,roof}_{basecolor,normal,mr}.png,
                                     assets/textures/panga/ground_detail.png
@@ -494,49 +492,7 @@ def rustic():
     L.save("rustic", 1.6)
 
 
-# Goods on shop shelves (crate::buildings SignKind::Shelves): an atlas of square cells, a trade a
-# column, two stockings of it a row. Each cell a shelf unit 2.2 m square: a back board, four
-# wooden shelves, the stock standing on them lit from above, shadowed under the shelf over it.
-GOODS_TRADES = ("kirana", "bartan", "kapda", "dabba")
-GOODS_CELL = 512
-
-
-def goods():
-    rng = np.random.default_rng(61)
-    S = GOODS_CELL
-    L = Layer(2 * S, len(GOODS_TRADES) * S, rng)
-    grain = periodic_noise(2 * S, len(GOODS_TRADES) * S, rng, 3, 24)
-    L.col = np.dstack([0.16 + 0.04 * grain, 0.11 + 0.03 * grain, 0.07 + 0.02 * grain]).astype(np.float32)
-    L.hgt[:] = -2.0
-    L.rough[:] = 0.85
-    rows = 4
-    for ti, trade in enumerate(GOODS_TRADES):
-        for vi in range(2):
-            ox, oy = ti * S, vi * S
-            r = np.random.default_rng(100 + ti * 7 + vi)
-            pitch = S / rows
-            for k in range(rows):
-                top, base = int(oy + k * pitch), int(oy + (k + 1) * pitch)
-                board = int(pitch * 0.07)
-                # Shadow under the shelf above, fading down the back board.
-                ys = np.arange(top, base)
-                sh = np.clip((ys - top) / (pitch * 0.5), 0, 1)[:, None, None]
-                L.col[top:base, ox:ox + S] *= 0.55 + 0.45 * sh
-                stock(L, r, trade, ox + 6, ox + S - 6, top + int(pitch * 0.12), base - board)
-                # The shelf board: wood grain, a lit front edge, a dark line under it.
-                b0 = base - board
-                g = grain[b0:base, ox:ox + S]
-                L.col[b0:base, ox:ox + S] = np.dstack([0.42 + 0.08 * g, 0.29 + 0.06 * g, 0.17 + 0.04 * g])
-                L.col[b0:b0 + 2, ox:ox + S] *= 1.35
-                L.hgt[b0:base, ox:ox + S] = 3.0
-                L.rough[b0:base, ox:ox + S] = 0.7
-            # Uprights at the sides.
-            for x0 in (ox, ox + S - 6):
-                L.col[oy:oy + S, x0:x0 + 6] = np.array(lin([0.36, 0.25, 0.15]))
-                L.hgt[oy:oy + S, x0:x0 + 6] = 3.5
-    L.save("goods", 2.0)
-
-
+# Stock on a shop's shelves, painted (the open shops on the city facades).
 def stock(L, r, trade, x0, x1, top, floor):
     """One shelf's worth of `trade`, standing on `floor` (pixel row), no higher than `top`."""
     x = x0 + int(r.integers(0, 6))
@@ -690,7 +646,7 @@ def carton(L, r, x, w, y0, y1):
     L.rough[y0:y1, x:x + w] = 0.85
 
 
-JOBS = {f.__name__: f for f in (facade, shop, rustic, limewash, stucco, stone, roof, ground, wear, goods)}
-# All of them, or just those named: python3 tools/textures/city.py goods
+JOBS = {f.__name__: f for f in (facade, shop, rustic, limewash, stucco, stone, roof, ground, wear)}
+# All of them, or just those named: python3 tools/textures/city.py shop
 for job in sys.argv[1:] or JOBS:
     JOBS[job]()

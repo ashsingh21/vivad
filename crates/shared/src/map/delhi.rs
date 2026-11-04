@@ -639,7 +639,8 @@ fn hall(b: &mut Builder, rng: &mut SmallRng, pts: &[Vec2], others: &[Vec<Vec2>])
             let k = ((len - 1.0) / 3.5).floor() as usize;
             for j in 0..k {
                 let p = a + dir * (len * 0.5 + (j as f32 - (k as f32 - 1.0) * 0.5) * 3.5) - out * (T * 0.5 + 0.02);
-                b.map.signs.push(super::ShopSign { pos: Vec3::new(p.x, 1.3, p.y), facing: -out, width: 3.2, height: 2.4, kind: super::SignKind::Shelves });
+                let floor = b.map.terrain.height(p.x, p.y);
+                super::kit::shelving(b, Vec3::new(p.x, floor, p.y), -out, 3.2, (p.x * 7.0 + p.y * 13.0) as i32 as u32);
             }
         }
     }
@@ -693,12 +694,11 @@ fn hall(b: &mut Builder, rng: &mut SmallRng, pts: &[Vec2], others: &[Vec<Vec2>])
     for (k, p) in free.iter().enumerate() {
         match (k + rng.random_range(0..3)) % 5 {
             0 => b.bx(Frame::new(Vec3::new(p.x, 0.0, p.y), yaw_u), Vec3::new(0.0, 0.5, 0.0), Vec3::new(2.4, 1.0, 0.8), Mat::Wood),
-            // A rack stocked both sides, head high: cover to duck round.
+            // Racks back to back, stocked both sides: cover to duck round.
             3 => {
-                b.bx(Frame::new(Vec3::new(p.x, 0.0, p.y), yaw_u), Vec3::new(0.0, 0.9, 0.0), Vec3::new(2.4, 1.8, 0.6), Mat::Wood);
+                let floor = b.map.terrain.height(p.x, p.y);
                 for side in [-1.0f32, 1.0] {
-                    let f = *p + v * side * 0.31;
-                    b.map.signs.push(super::ShopSign { pos: Vec3::new(f.x, 0.9, f.y), facing: v * side, width: 2.3, height: 1.7, kind: super::SignKind::Shelves });
+                    super::kit::shelving(b, Vec3::new(p.x, floor, p.y), v * side, 2.5, k as u32 * 31 + side as u32);
                 }
             }
             1 => super::kit::place(b, ["crates", "drum", "cooler", "chairs"][rng.random_range(0..4)], Vec3::new(p.x, 0.0, p.y), rng.random_range(0.0..std::f32::consts::TAU)),

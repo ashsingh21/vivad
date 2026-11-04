@@ -198,14 +198,8 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                         height: front.top - front.bottom,
                         kind: SignKind::Glass,
                     });
-                    // A display of goods just behind the glass, lit (the shelves' texture).
-                    b.map.signs.push(super::ShopSign {
-                        pos: r.at(rad - toward * 0.35, am, (front.bottom + front.top) / 2.0),
-                        facing: out_dir(am) * toward,
-                        width: front.width,
-                        height: front.top - front.bottom,
-                        kind: SignKind::Shelves,
-                    });
+                    // A rack of goods just behind the glass, seen from the verandah.
+                    super::kit::shelving(b, r.at(rad - toward * 0.62, am, 0.03 + lift / 2.0), out_dir(am) * toward, front.width, (blk * 97 + i * 13) as u32 + toward as u32);
                 }
             }
             // The back-to-back wall between the two rows of shops, limewashed a shop's colour (Delhi's
@@ -234,7 +228,7 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
             if split {
                 // A wall of goods across the back, a tube light down the middle of the ceiling.
                 for (rad, toward, front) in [(mid - 0.16, -1.0f32, core0), (mid + 0.16, 1.0, core1)] {
-                    b.map.signs.push(super::ShopSign { pos: r.at(rad, am, 1.4), facing: out_dir(am) * toward, width: chord_at(rad) * 0.96, height: 2.5, kind: SignKind::Shelves });
+                    super::kit::shelving(b, r.at(rad, am, 0.03 + lift / 2.0), out_dir(am) * toward, chord_at(rad) * 0.96, (blk * 97 + i * 13 + 5) as u32 + toward as u32);
                     b.map.signs.push(super::ShopSign {
                         pos: r.at((front + mid) / 2.0, am, r.g - SLAB - 0.03),
                         facing: out_dir(am),
@@ -306,8 +300,8 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                         let span = (r1 - r0) * 0.5;
                         let tangent = Vec2::new(-col.sin(), col.cos());
                         for side in [-1.0f32, 1.0] {
-                            let pos = r.at(rm, col, 1.4) + Vec3::new(tangent.x, 0.0, tangent.y) * side * 0.16;
-                            b.map.signs.push(super::ShopSign { pos, facing: tangent * side, width: span, height: 2.5, kind: SignKind::Shelves });
+                            let back = r.at(rm, col, 0.03) + Vec3::new(tangent.x, 0.0, tangent.y) * side * 0.15;
+                            super::kit::shelving(b, back, tangent * side, span, (blk * 97 + i * 13 + 9) as u32 + side as u32);
                         }
                     }
                 }
@@ -323,15 +317,12 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 let (p, q) = (xz(r.ri + 0.36, s0), xz(r.ro - 0.36, s0));
                 let room = (blk * 5 + i) % 7;
                 b.wall(w, p, q, r.g + lift, r.u - SLAB, 0.2, Mat::Paint(room as u8), &[Opening::door(p.distance(q) * 0.35), Opening::door(p.distance(q) * 0.65)]);
-                // A storeroom's racks on both faces, between and beside the doorways.
+                // A storeroom's racks on both faces, between the doorways.
                 let tangent = Vec2::new(-s0.sin(), s0.cos());
-                let span = p.distance(q);
-                for (t, width) in [(0.17, span * 0.28), (0.5, span * 0.22), (0.83, span * 0.28)] {
-                    let at = p.lerp(q, t);
-                    for side in [-1.0f32, 1.0] {
-                        let f = at + tangent * side * 0.11;
-                        b.map.signs.push(super::ShopSign { pos: Vec3::new(f.x, r.g + lift + 1.2, f.y), facing: tangent * side, width, height: 2.2, kind: SignKind::Shelves });
-                    }
+                let at = p.lerp(q, 0.5);
+                for side in [-1.0f32, 1.0] {
+                    let f = at + tangent * side * 0.1;
+                    super::kit::shelving(b, Vec3::new(f.x, r.g + lift, f.y), tangent * side, p.distance(q) * 0.22, (blk * 97 + i * 13 + 3) as u32 + side as u32);
                 }
             }
             // Upstairs, a ceiling fan in the bays between the lit ones.

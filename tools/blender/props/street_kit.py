@@ -50,6 +50,10 @@ C = {
 }
 
 
+# Surfaces a piece's parts can be marked as (Piece.made_of), for furniture.py's materials.
+SURFACES = (None, "glass", "print", "kraft", "metal", "cotton", "wood", "plastic")
+
+
 def lin(rgb):
     return tuple(c ** 2.2 for c in rgb) + (1.0,)
 
@@ -65,12 +69,17 @@ class Piece:
         self.bw = self.bm.edges.layers.float.new("bevel_weight_edge")
         # Faces shaded smooth whatever their angles (foliage), not split at sharp edges.
         self.soft = self.bm.faces.layers.int.new("soft")
+        # What the faces painted next are made of, for a baked texture (furniture.py): an index
+        # into SURFACES, 0 to leave it to their colour.
+        self.surface = self.bm.faces.layers.int.new("surface")
+        self.made_of = None
 
     def paint(self, colour, round=False):
         """`colour`: a name in C, or an sRGB triple."""
         c = lin(C[colour] if isinstance(colour, str) else colour)
         for f in self.bm.faces:
             if not f.tag:
+                f[self.surface] = SURFACES.index(self.made_of) if self.made_of else 0
                 for loop in f.loops:
                     loop[self.col] = c
                     if round:
@@ -776,6 +785,159 @@ def stove():
 
 
 FURNITURE = (charpai, almirah, dining, sofa, tv, fridge, fan, dari, desk, stove)
+
+
+# ------------------------------------------------------------------ shop racks
+# A shop's shelving, stocked: 1.2 m of rack 2.0 m high and 0.4 deep, its back on the wall (-Y),
+# the stock facing the shop (+Y). One per trade; each seeded, so a rack looks the same each build.
+RACKS = ("kirana", "bartan", "kapda", "dabba")
+RACK_W, RACK_D, RACK_H, SHELF_Z = 1.2, 0.4, 2.0, (0.08, 0.5, 0.92, 1.34, 1.76)
+
+
+def rack_frame(p, wood):
+    hw, d = RACK_W / 2, RACK_D
+    frame = "wood" if wood else (0.42, 0.44, 0.46)
+    p.made_of = "wood" if wood else "metal"
+    for x in (-hw, hw - 0.04):
+        for y in (-d / 2, d / 2 - 0.04):
+            p.box((x, y, 0), (x + 0.04, y + 0.04, RACK_H), frame, round=False)
+    for z in SHELF_Z:
+        p.box((-hw, -d / 2, z - 0.025), (hw, d / 2, z), frame if wood else (0.5, 0.52, 0.54), round=False)
+    # The back panel, plywood.
+    p.made_of = "wood"
+    p.box((-hw, -d / 2, 0), (hw, -d / 2 + 0.01, RACK_H), (0.45, 0.33, 0.22), round=False)
+    p.made_of = None
+
+
+def rack(trade):
+    rnd = random.Random(f"rack_{trade}")
+    p = Piece(f"rack_{trade}")
+    rack_frame(p, trade in ("kapda", "kirana"))
+    hw, d = RACK_W / 2 - 0.05, RACK_D / 2
+    for k in range(len(SHELF_Z) - 1):
+        z0, z1 = SHELF_Z[k], SHELF_Z[k + 1] - 0.04
+        x = -hw + rnd.uniform(0.0, 0.03)
+        while True:
+            if trade == "kirana":
+                kind = rnd.choice(["jar", "jar", "bottle", "packet", "packet", "tin"])
+                if kind == "jar":
+                    r, h = rnd.uniform(0.045, 0.065), rnd.uniform(0.14, 0.22)
+                    if x + 2 * r > hw:
+                        break
+                    for row in (0.06, -0.08):
+                        fill = rnd.choice([(0.92, 0.72, 0.22), (0.95, 0.93, 0.86), (0.72, 0.16, 0.08), (0.55, 0.36, 0.20), (0.36, 0.50, 0.20)])
+                        p.made_of = "glass"
+                        p.cyl((x + r, row, z0), (x + r, row, z0 + h), r, fill, 10)
+                        p.made_of = "plastic"
+                        p.cyl((x + r, row, z0 + h), (x + r, row, z0 + h + 0.025), r * 0.85, rnd.choice(["red", "blue", "auto_yellow"]), 10)
+                        p.made_of = "print"
+                        p.cyl((x + r, row, z0 + h * 0.35), (x + r, row, z0 + h * 0.7), r * 1.01, "white", 10)
+                    x += 2 * r + 0.01
+                elif kind == "bottle":
+                    r, h = rnd.uniform(0.028, 0.038), rnd.uniform(0.24, 0.32)
+                    if x + 2 * r > hw:
+                        break
+                    fill = rnd.choice([(0.95, 0.78, 0.22), (0.22, 0.42, 0.20), (0.55, 0.12, 0.08)])
+                    p.made_of = "glass"
+                    p.cyl((x + r, 0.07, z0), (x + r, 0.07, z0 + h * 0.65), r, fill, 8)
+                    p.cyl((x + r, 0.07, z0 + h * 0.65), (x + r, 0.07, z0 + h), r * 0.4, fill, 8, r * 0.3)
+                    p.made_of = "print"
+                    p.cyl((x + r, 0.07, z0 + h * 0.2), (x + r, 0.07, z0 + h * 0.45), r * 1.02, "cream", 8)
+                    x += 2 * r + 0.008
+                elif kind == "tin":
+                    r, h = rnd.uniform(0.04, 0.06), rnd.uniform(0.08, 0.13)
+                    if x + 2 * r > hw:
+                        break
+                    for row in (0.07, -0.07):
+                        p.made_of = "metal"
+                        p.cyl((x + r, row, z0), (x + r, row, z0 + h), r, "tin", 10)
+                        p.made_of = "print"
+                        p.cyl((x + r, row, z0 + h * 0.2), (x + r, row, z0 + h * 0.8), r * 1.01, rnd.choice(["red", "blue", "leaf", "saffron"]), 10)
+                    x += 2 * r + 0.01
+                else:
+                    w, h, dd = rnd.uniform(0.07, 0.13), rnd.uniform(0.14, 0.3), rnd.uniform(0.04, 0.08)
+                    if x + w > hw:
+                        break
+                    p.made_of = "print"
+                    c = rnd.choice([(0.80, 0.22, 0.14), (0.93, 0.72, 0.16), (0.22, 0.42, 0.68), (0.28, 0.55, 0.28), (0.92, 0.90, 0.82), (0.55, 0.20, 0.40)])
+                    for row in range(3):
+                        y = d - 0.02 - dd / 2 - row * (dd + 0.01)
+                        p.box((x, y - dd / 2, z0), (x + w, y + dd / 2, z0 + min(h, z1 - z0)), c, round=False)
+                    x += w + 0.006
+            elif trade == "bartan":
+                kind = rnd.choice(["plates", "plates", "glasses", "pot", "cooker"])
+                if kind == "plates":
+                    r = rnd.uniform(0.11, 0.15)
+                    if x + 2 * r > hw:
+                        break
+                    n = rnd.randint(6, 14)
+                    p.made_of = "metal"
+                    for j in range(n):
+                        p.cyl((x + r, 0.0, z0 + j * 0.012), (x + r, 0.0, z0 + j * 0.012 + 0.01), r - (j % 2) * 0.004, "steel", 14)
+                    x += 2 * r + 0.015
+                elif kind == "glasses":
+                    r = 0.038
+                    if x + 2 * r > hw:
+                        break
+                    p.made_of = "metal"
+                    for row in (0.08, -0.04):
+                        n = rnd.randint(2, 5)
+                        p.cyl((x + r, row, z0), (x + r, row, z0 + 0.11 + 0.025 * n), r, "steel", 10, r * 0.85)
+                    x += 2 * r + 0.01
+                elif kind == "pot":
+                    r, h = rnd.uniform(0.09, 0.14), rnd.uniform(0.09, 0.16)
+                    if x + 2 * r > hw:
+                        break
+                    c = "steel" if rnd.random() < 0.75 else (0.72, 0.42, 0.24)
+                    p.made_of = "metal"
+                    p.cyl((x + r, 0.0, z0), (x + r, 0.0, z0 + h), r * 0.9, c, 14, r)
+                    p.cyl((x + r, 0.0, z0 + h), (x + r, 0.0, z0 + h + 0.012), r * 1.05, c, 14)
+                    x += 2 * r + 0.012
+                else:
+                    r, h = 0.1, 0.16
+                    if x + 2 * r > hw:
+                        break
+                    p.made_of = "metal"
+                    p.cyl((x + r, 0.0, z0), (x + r, 0.0, z0 + h), r, "steel", 14)
+                    p.made_of = "plastic"
+                    p.cyl((x + r, 0.0, z0 + h), (x + r, 0.0, z0 + h + 0.03), r * 0.95, "black", 14)
+                    p.box((x + r - 0.01, 0.0, z0 + h + 0.01), (x + r + 0.01, 0.2, z0 + h + 0.03), "black", round=False)
+                    p.cyl((x + r, 0.0, z0 + h + 0.03), (x + r, 0.0, z0 + h + 0.07), 0.015, "black", 6)
+                    x += 2 * r + 0.015
+            elif trade == "kapda":
+                w = rnd.uniform(0.26, 0.36)
+                if x + w > hw:
+                    break
+                zz = z0
+                p.made_of = "cotton"
+                while zz < z1 - 0.06:
+                    hh = rnd.uniform(0.035, 0.06)
+                    c = rnd.choice([(0.72, 0.10, 0.22), (0.92, 0.60, 0.12), (0.14, 0.38, 0.44), (0.88, 0.84, 0.74), (0.38, 0.14, 0.42),
+                                    (0.20, 0.32, 0.62), (0.80, 0.34, 0.16), (0.30, 0.48, 0.24), (0.10, 0.10, 0.12)])
+                    o = rnd.uniform(-0.012, 0.012)
+                    p.box((x + o, -d + 0.03, zz), (x + w + o, d - 0.02, zz + hh), c)
+                    zz += hh + 0.002
+                x += w + rnd.uniform(0.01, 0.03)
+            else:
+                w, h = rnd.uniform(0.2, 0.36), rnd.uniform(0.18, z1 - z0 - 0.02)
+                if x + w > hw:
+                    break
+                p.made_of = "kraft"
+                kraft = tuple(c * rnd.uniform(0.85, 1.1) for c in (0.62, 0.47, 0.30))
+                p.box((x, -d + 0.03, z0), (x + w, d - 0.02, z0 + h), kraft, round=False)
+                # The printed panel on its front, and the tape over the flaps.
+                p.made_of = "print"
+                p.box((x + w * 0.2, d - 0.02, z0 + h * 0.3), (x + w * 0.8, d - 0.017, z0 + h * 0.7), rnd.choice(["white", "red", "blue", "cream"]), round=False)
+                p.made_of = "kraft"
+                p.box((x + w * 0.45, -d + 0.03, z0 + h), (x + w * 0.55, d - 0.02, z0 + h + 0.003), tuple(c * 1.15 for c in kraft), round=False)
+                x += w + rnd.uniform(0.006, 0.02)
+    p.made_of = None
+    return p.finish(0.0)
+
+
+def racks():
+    return [o for t in RACKS for o in rack(t)]
+
 
 
 def main():

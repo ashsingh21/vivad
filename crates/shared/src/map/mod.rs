@@ -210,8 +210,6 @@ pub struct Lamp {
 pub enum SignKind {
     /// A lettered signboard.
     Board,
-    /// A wall of shelves stacked with goods.
-    Shelves,
     /// A glowing tube light under a ceiling, facing down; `facing` is the way it runs.
     Light,
     /// A shop window's glass.

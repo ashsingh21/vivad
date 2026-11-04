@@ -73,7 +73,7 @@ struct Kit {
 fn load_kit(mut commands: Commands, assets: Res<AssetServer>, mut materials: ResMut<Assets<StandardMaterial>>) {
     commands.insert_resource(Kit {
         file: assets.load("models/props/street_kit.glb"),
-        textured: vec![assets.load("models/props/auto.glb"), assets.load("models/props/furniture.glb")],
+        textured: vec![assets.load("models/props/auto.glb"), assets.load("models/props/furniture.glb"), assets.load("models/props/racks.glb")],
         material: materials.add(StandardMaterial {
             // The wear texture is 0.8 where clean.
             base_color: Color::linear_rgb(1.25, 1.25, 1.25),
@@ -133,9 +133,13 @@ fn build_kit(
     let mut templates: HashMap<(&str, usize), Option<(Mesh, Option<Handle<StandardMaterial>>)>> = HashMap::new();
     let mut chunks: HashMap<(i32, i32, usize, Option<AssetId<StandardMaterial>>), Mesh> = HashMap::new();
     let mut own_materials: HashMap<AssetId<StandardMaterial>, Handle<StandardMaterial>> = HashMap::new();
+    // Indoor pieces the shops are lined with: drawn near only (no far band) and casting no
+    // shadow (they stand under roofs), apart from the rest.
+    let indoor = |name: &str| name.starts_with("rack_");
+    let mut indoor_mats: std::collections::HashSet<AssetId<StandardMaterial>> = std::collections::HashSet::new();
     for piece in &layout.kit {
         let key = ((piece.pos.x / CHUNK).floor() as i32, (piece.pos.z / CHUNK).floor() as i32);
-        for lod in 0..3 {
+        for lod in 0..if indoor(piece.name) { 2 } else { 3 } {
             // The far band: LOD2 where the piece has one, else its LOD1.
             let have = templates.entry((piece.name, lod)).or_insert_with(|| mesh_of(piece.name, lod)).is_some();
             let from = if lod == 2 && !have { 1 } else { lod };
@@ -143,6 +147,9 @@ fn build_kit(
             let mut placed = template.clone().transformed_by(Transform::from_translation(piece.pos).with_rotation(Quat::from_rotation_y(piece.yaw)));
             let mat = own.as_ref().map(|h| {
                 own_materials.insert(h.id(), h.clone());
+                if indoor(piece.name) {
+                    indoor_mats.insert(h.id());
+                }
                 h.id()
             });
             if mat.is_none() {
@@ -177,15 +184,12 @@ fn build_kit(
         let material = mat.and_then(|id| own_materials.get(&id).cloned()).unwrap_or_else(|| kit.material.clone());
         let (s, e) = ranges[lod].clone();
         let range = LodRange(VisibilityRange { start_margin: s, end_margin: e, use_aabb: false }, lod);
-        commands.spawn((
-            Mesh3d(meshes.add(mesh)),
-            MeshMaterial3d(material),
-            Transform::from_translation(centre),
-            range.0.clone(),
-            range,
-            crate::quality::LodShadow,
-            OfMap,
-        ));
+        let mut piece = commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(material), Transform::from_translation(centre), range.0.clone(), range, OfMap));
+        if mat.is_some_and(|m| indoor_mats.contains(&m)) {
+            piece.insert(bevy::light::NotShadowCaster);
+        } else {
+            piece.insert(crate::quality::LodShadow);
+        }
     }
     let mut counts: Vec<(&str, usize)> = vec![];
     for piece in &layout.kit {

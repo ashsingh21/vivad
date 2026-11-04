@@ -4,7 +4,7 @@ material by what it's made of (wood grain, velvet, rope webbing, cotton weave, e
 chrome, black plastic, glazed tiles, the stove's black stone), baked to one texture set, then
 split back into its pieces. One material for all of them, so a room of it merges into one draw.
 
-blender -b --factory-startup -P tools/blender/props/furniture.py   -> assets/models/props/furniture.glb
+blender -b --factory-startup -P tools/blender/props/furniture.py   -> assets/models/props/{furniture,racks}.glb
 (<piece>_LOD0, <piece>_LOD1; drawn merged per chunk by crate::street like the kit, with this material)
 """
 
@@ -23,17 +23,21 @@ import export  # noqa: E402
 import street_kit  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
-OUT = os.path.join(ROOT, "assets", "models", "props", "furniture.glb")
+PROPS = os.path.join(ROOT, "assets", "models", "props")
 TEX = os.path.join(ROOT, "build", "furniture_tex")
 RES = 2048
 
 # What each piece is mostly made of; its wood, metal and black parts are found by their colour.
 BODY = {"charpai": "wood", "almirah": "enamel", "dining": "wood", "sofa": "velvet", "tv": "wood", "fridge": "enamel",
-        "fan": "enamel", "dari": "cotton", "desk": "laminate", "stove": "tile"}
+        "fan": "enamel", "dari": "cotton", "desk": "laminate", "stove": "tile",
+        "rack_kirana": "print", "rack_bartan": "metal", "rack_kapda": "cotton", "rack_dabba": "kraft"}
 
 
-def kind(piece, rgb):
-    """A face's material from its piece and its (linear) vertex colour."""
+def kind(piece, rgb, made_of=0):
+    """A face's material: what the piece marked it as (Piece.made_of), else from its piece and
+    its (linear) vertex colour."""
+    if made_of:
+        return street_kit.SURFACES[made_of]
     near = lambda name: all(abs(a - b) < 0.02 for a, b in zip(rgb, street_kit.lin(street_kit.C[name])))  # noqa: E731
     if near("chrome") or near("steel") or near("kettle"):
         return "metal"
@@ -142,6 +146,27 @@ def material(name):
         shade(maths("ADD", maths("MULTIPLY", n.outputs["Fac"], 0.3), maths("MULTIPLY", s.outputs["Fac"], 0.7)), 0.88, 1.06)
         relief(n.outputs["Fac"], 0.05)
         rough = 0.32
+    elif name == "glass":
+        # Glass over what's in the jar: glossy, a faint streak of reflection, the contents grainy.
+        n = tex("ShaderNodeTexNoise", 150.0)
+        shade(n.outputs["Fac"], 0.8, 1.1)
+        relief(n.outputs["Fac"], 0.1)
+        rough = 0.06
+    elif name == "print":
+        # Printed card and plastic: fine bands of lettering and a mottle of ink.
+        w = tex("ShaderNodeTexWave", 90.0, wave_type="BANDS", bands_direction="Z", Distortion=2.0)
+        n = tex("ShaderNodeTexNoise", 25.0)
+        shade(maths("ADD", maths("MULTIPLY", w.outputs["Fac"], 0.5), maths("MULTIPLY", n.outputs["Fac"], 0.5)), 0.78, 1.08)
+        rough = 0.35
+    elif name == "kraft":
+        # Corrugated card: its fibres, flutes showing faintly, scuffs.
+        f = tex("ShaderNodeTexNoise", 220.0, **{"Detail": 4.0})
+        w = tex("ShaderNodeTexWave", 160.0, wave_type="BANDS", bands_direction="Z")
+        s = tex("ShaderNodeTexNoise", 5.0)
+        mix = maths("ADD", maths("ADD", maths("MULTIPLY", f.outputs["Fac"], 0.4), maths("MULTIPLY", w.outputs["Fac"], 0.15)), maths("MULTIPLY", s.outputs["Fac"], 0.45))
+        shade(mix, 0.78, 1.1)
+        relief(w.outputs["Fac"], 0.15)
+        rough = 0.9
     elif name == "metal":
         n = tex("ShaderNodeTexNoise", 120.0)
         shade(n.outputs["Fac"], 0.9, 1.05)
@@ -170,15 +195,18 @@ def material(name):
     return m
 
 
-def build():
-    """All the furniture as one unwrapped, textured object, its faces tagged with their piece."""
+def build(makers, prefix):
+    """The pieces `makers` build, as one unwrapped object baked to one texture set (`prefix`),
+    split back into their pieces."""
     bake.setup_cycles(16)
     pieces = []
-    for make in street_kit.FURNITURE:
-        lod0, *rest = make()
-        for o in rest:
-            bpy.data.objects.remove(o, do_unlink=True)
-        pieces.append(lod0)
+    for make in makers:
+        made = make()
+        for o in made:
+            if o.name.endswith("_LOD0"):
+                pieces.append(o)
+            else:
+                bpy.data.objects.remove(o, do_unlink=True)
     names = [o.name.replace("_LOD0", "") for o in pieces]
     mats = {}
     for i, o in enumerate(pieces):
@@ -188,11 +216,12 @@ def build():
         bm = bmesh.new()
         bm.from_mesh(me)
         layer = bm.loops.layers.float_color["Col"]
+        surface = bm.faces.layers.int.get("surface")
         tag = bm.faces.layers.int.new("piece")
         kinds = []
         for f in bm.faces:
             rgb = tuple(sum(lp[layer][c] for lp in f.loops) / len(f.loops) for c in range(3))
-            k = kind(piece, rgb)
+            k = kind(piece, rgb, f[surface] if surface else 0)
             if k not in kinds:
                 kinds.append(k)
             f.material_index = kinds.index(k)
@@ -208,16 +237,16 @@ def build():
     bpy.context.view_layer.objects.active = pieces[0]
     bpy.ops.object.join()
     whole = pieces[0]
-    whole.name = whole.data.name = "furniture_LOD0"
+    whole.name = whole.data.name = f"{prefix}_LOD0"
     bpy.ops.object.mode_set(mode="EDIT")
     bpy.ops.mesh.select_all(action="SELECT")
     bpy.ops.uv.smart_project(angle_limit=1.15, island_margin=0.003)
     bpy.ops.object.mode_set(mode="OBJECT")
     whole.data.uv_layers[0].name = "UVMap"
     export.pack_uvs(whole)
-    images = bake.bake_texture_set(whole, TEX, "furniture", res=RES)
+    images = bake.bake_texture_set(whole, TEX, prefix, res=RES)
     whole.data.materials.clear()
-    whole.data.materials.append(export.game_material("furniture", images))
+    whole.data.materials.append(export.game_material(prefix, images))
     for p in whole.data.polygons:
         p.material_index = 0
     export.strip_bake_data(whole)
@@ -243,12 +272,15 @@ def build():
 
 
 def main():
-    export.reset_scene()
-    lods = []
-    for lod0 in build():
-        lods += export.make_lods(lod0, (0.4,))
-    tris = export.export_glb(lods, OUT)
-    print(f"[furniture] {OUT}: {tris}")
+    # The furniture, and the shops' racks apart (drawn near only and casting no shadow: crate::street).
+    for makers, prefix in ((street_kit.FURNITURE, "furniture"), ((street_kit.racks,), "racks")):
+        export.reset_scene()
+        lods = []
+        for lod0 in build(makers, prefix):
+            lods += export.make_lods(lod0, (0.4,))
+        out = os.path.join(PROPS, f"{prefix}.glb")
+        tris = export.export_glb(lods, out)
+        print(f"[furniture] {out}: {tris}")
 
 
 if __name__ == "__main__":
