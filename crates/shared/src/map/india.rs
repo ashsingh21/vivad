@@ -632,13 +632,19 @@ fn house_with(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, flo
         // Slab above, with the whole flight's footprint open for headroom.
         let hole = (Vec2::new(sx - 0.05, lz - lane_w / 2.0 - 0.05), Vec2::new(sx + run + 0.05, lz + lane_w / 2.0 + 0.05));
         b.slab_with_hole(f, Vec2::new(-hw, -hd), Vec2::new(hw, hd), y0 + FLOOR_H, 0.25, Some(hole), mat);
+        // Furnished as a home: a room a floor, kept off the stairs, the doorway and the front
+        // corners (where a chest may stand).
+        let floor = if k == 0 { 0.06 } else { y0 };
+        let stairs_end = -hd + t + 0.15 + 2.0 * lane_w + 0.4;
+        let table = furnish(b, rng, f, hw - t, stairs_end, hd - t - 2.2, floor, y0 + FLOOR_H - 0.25, k);
         // Loot: a chest in a front corner, floor loot mid-room.
         if rng.random_bool(0.55) {
             let cx = if rng.random_bool(0.5) { -hw + 1.2 } else { hw - 1.2 };
             b.chest(f, Vec3::new(cx, y0, hd - 1.1), PI, ChestKind::Peti);
         }
         if rng.random_bool(0.5) {
-            b.loot(f, Vec3::new(rng.random_range(-hw + 1.5..hw - 1.5), y0 + 0.3, 0.8));
+            // Mid-room, or nearer the front where a table stands there.
+            b.loot(f, Vec3::new(rng.random_range(-hw + 1.5..hw - 1.5), y0 + 0.3, if table { hd - t - 1.7 } else { 0.8 }));
         }
     }
     // Roof: parapet with kangura merlons over a bracketed chhajja eave; plinth band at the base.
@@ -678,6 +684,68 @@ fn house_with(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, flo
     if rng.random_bool(0.3) {
         b.loot(f, Vec3::new(0.0, ry + 0.3, 0.0));
     }
+}
+
+/// One floor of a house furnished, by which floor it is: a living room (sofa, TV, dari), a
+/// bedroom (charpai, almirah, dari), a kitchen (stove and fridge, the dining table); a ceiling
+/// fan in each; whether a table takes the middle. Pieces stand against the side walls (`half` in from the middle line) between
+/// `z0` and `z1` along them, the dari and table between; `floor` and `ceiling` heights.
+fn furnish(b: &mut Builder, rng: &mut SmallRng, f: Frame, half: f32, z0: f32, z1: f32, floor: f32, ceiling: f32, k: u32) -> bool {
+    use super::kit::place;
+    let len = z1 - z0;
+    if len < 2.2 || half < 2.2 {
+        return false;
+    }
+    let zc = (z0 + z1) / 2.0;
+    // Each wall's pieces in turn: (piece, its depth off the wall, its width along it).
+    // A living room, a bedroom or a kitchen, mostly by floor.
+    let walls: [[(&'static str, f32, f32); 2]; 2] = match (k + rng.random_range(0..2)) % 3 {
+        0 => [[("sofa", 0.86, 2.0), ("chairs", 0.6, 1.3)], [("tv", 0.45, 1.4), ("almirah", 0.52, 0.95)]],
+        1 => [[("charpai", 0.95, 1.95), ("cooler", 0.64, 0.9)], [("almirah", 0.52, 0.95), ("charpai", 0.95, 1.95)]],
+        _ => [[("fridge", 0.64, 0.62), ("stove", 0.62, 1.6)], [("almirah", 0.52, 0.95), ("crates", 0.42, 1.24)]],
+    };
+    let mut left_over = vec![];
+    for (pieces, side) in walls.into_iter().zip([-1.0f32, 1.0]) {
+        // Packed along the wall from a random end, half a metre between, while they fit.
+        let total: f32 = pieces.iter().map(|p| p.2).sum::<f32>() + 0.5;
+        let (mut at, dir) = if rng.random_bool(0.5) { (z0, 1.0f32) } else { (z1, -1.0) };
+        let slack = (len - total).max(0.0);
+        at += dir * rng.random_range(0.0..slack.max(0.01)) * 0.5;
+        for (name, depth, width) in pieces {
+            if (at + dir * width - z0).min(z1 - (at + dir * width)) < -0.01 {
+                left_over.push((name, depth, width));
+                continue;
+            }
+            // Against the wall, facing into the room (the kit's models face -Z).
+            let c = Vec3::new(side * (half - depth / 2.0 - 0.03), floor, at + dir * width / 2.0);
+            place(b, name, f.p(c), f.yaw + side * FRAC_PI_2);
+            at += dir * (width + 0.5);
+        }
+    }
+    // What didn't fit stands along the front wall, facing in: either side of the doorway (or of
+    // the middle, upstairs), short of the corners where a chest may stand.
+    let front = z1 + 2.2 - 0.03;
+    let reach = half - 1.9;
+    if k == 0 {
+        for ((name, depth, width), side) in left_over.into_iter().zip([-1.0f32, 1.0]) {
+            if reach - 1.3 >= width {
+                let x = side * rng.random_range(1.3 + width / 2.0..=reach - width / 2.0);
+                place(b, name, f.p(Vec3::new(x, floor, front - depth / 2.0)), f.yaw);
+            }
+        }
+    } else if let Some(&(name, depth, width)) = left_over.iter().max_by(|a, b| a.2.total_cmp(&b.2)).filter(|p| p.2 <= 2.0 * reach) {
+        place(b, name, f.p(Vec3::new(rng.random_range(-(reach - width / 2.0)..=reach - width / 2.0), floor, front - depth / 2.0)), f.yaw);
+    }
+    let room = walls[0];
+    let middle = half * 2.0 - 0.86 - 0.64 - 1.2;
+    let table = room[0].0 == "fridge" && middle > 1.6 && len > 1.7;
+    if table {
+        place(b, "dining", f.p(Vec3::new(0.0, floor, zc)), f.yaw + if rng.random_bool(0.5) { 0.0 } else { PI });
+    } else if middle > 1.4 {
+        place(b, "dari", f.p(Vec3::new(0.0, floor + 0.002, zc)), f.yaw + FRAC_PI_2);
+    }
+    place(b, "fan", f.p(Vec3::new(0.0, ceiling, zc)), f.yaw + rng.random_range(0.0..PI));
+    table
 }
 
 /// A rooftop room (barsati) with its back-left corner at `corner`: a door and a window onto the

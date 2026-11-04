@@ -150,6 +150,12 @@ impl Plugin for AutoshotPlugin {
                     ("ch_house_s", v(-2.0, 2.0, -55.0), v(-2.0, 3.5, -45.0)),
                     ("ch_inside_n", v(-2.0, 1.6, -44.6), v(-2.0, 1.5, -40.0)),
                     ("ch_inside_s", v(-2.0, 1.6, -50.2), v(-2.0, 1.5, -55.0)),
+                    // A first-floor kitchen (seed 7), both ways.
+                    ("ch_kitchen", v(-18.2, 5.0, 61.4), v(-20.0, 3.9, 64.4)),
+                    ("ch_kitchen_b", v(-19.8, 5.0, 62.5), v(-18.0, 3.9, 57.5)),
+                    // A furnished living room (seed 7): toward its sofa, and from the sofa across.
+                    ("ch_room", v(12.6, 1.6, -104.4), v(5.2, 0.6, -106.5)),
+                    ("ch_room_tv", v(6.4, 1.5, -106.2), v(14.4, 0.8, -103.9)),
                     ("ch_air", v(-25.0, 30.0, -25.0), v(-2.0, 0.0, -47.0)),
                     // Down Chandni's lanes and a road, at eye height.
                     ("ch_lane", v(52.1, 1.8, 4.5), v(49.7, 4.0, 34.5)),

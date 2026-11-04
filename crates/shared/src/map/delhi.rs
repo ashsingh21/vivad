@@ -128,9 +128,6 @@ pub fn generate(id: super::MapId, seed: u64) -> MapLayout {
     let cp = Vec3::new(0.0, 0.0, -data.south_shift);
     // Only Connaught Place has the ring; elsewhere a ring of no size keeps nothing out.
     let ring = if id == super::MapId::Cp { ring(cp) } else { super::cp::Ring { ri: 0.0, ro: 0.0, ..self::ring(Vec3::new(1.0e5, 0.0, 1.0e5)) } };
-    if id == super::MapId::Cp {
-        super::cp::paint(&mut map.terrain, &ring);
-    }
     let made = if id == super::MapId::Cp { CP_HILLS.iter().map(|h| h.at(&ring)).collect() } else { vec![] };
     hills(&mut map, &data, &ring, &made, seed as u32);
     let mut rng = SmallRng::seed_from_u64(seed);
@@ -138,7 +135,6 @@ pub fn generate(id: super::MapId, seed: u64) -> MapLayout {
     boundary(&mut b);
     if id == super::MapId::Cp {
         super::cp::build(&mut b, &mut rng, &ring);
-        super::cp::markings(&mut b, &ring);
         dress_hills(&mut b, &mut rng, &made);
     }
     for l in &data.landmarks {
@@ -148,6 +144,12 @@ pub fn generate(id: super::MapId, seed: u64) -> MapLayout {
     }
     water(&mut b, &data);
     let houses = footprints(&mut b, &mut rng, &data, &ring, id);
+    // The ring's roads, now the buildings round it are known (the outer circle stops at them).
+    let outer = super::cp::OuterClear::new(b.map, &ring);
+    if id == super::MapId::Cp {
+        super::cp::paint(&mut b.map.terrain, &ring, &outer);
+        super::cp::markings(&mut b, &ring, &outer);
+    }
     trees(&mut b, &mut rng, &data, &ring, &houses);
     // No trees on the made hills' tops: they're for seeing from.
     b.map.props.retain(|p| !made.iter().any(|h| p.pos.xz().distance(h.center) < h.plateau + 3.0));
@@ -161,7 +163,7 @@ pub fn generate(id: super::MapId, seed: u64) -> MapLayout {
     super::kit::open_spaces(&mut b, &mut rng, &houses, HALF);
     super::kit::roofs(&mut b, &mut rng);
     if id == super::MapId::Cp {
-        super::cp::dress(&mut b, &mut rng, &ring);
+        super::cp::dress(&mut b, &mut rng, &ring, &outer);
     }
     street_loot(&mut b, &mut rng, &data, &ring, &houses);
     map.terrain.settle_under(&map.blocks);
@@ -665,6 +667,9 @@ fn hall(b: &mut Builder, rng: &mut SmallRng, pts: &[Vec2], others: &[Vec<Vec2>])
             if clear(p, 2.0) {
                 b.bx(Frame::new(Vec3::new(p.x, 0.0, p.y), yaw_u), Vec3::new(0.0, HALL * 0.5, 0.0), Vec3::new(0.6, HALL, 0.6), Mat::Stucco);
                 let l = at(x + grid * 0.5, y);
+                if k % 2 == 1 && clear(l, 1.0) {
+                    super::kit::place(b, "fan", Vec3::new(l.x, HALL, l.y), rng.random_range(0.0..std::f32::consts::TAU));
+                }
                 if k % 2 == 0 && clear(l, 1.0) {
                     b.map.signs.push(super::ShopSign { pos: Vec3::new(l.x, HALL - 0.03, l.y), facing: v, width: 0.14, height: 1.2, kind: super::SignKind::Light });
                     let y = b.map.terrain.height(l.x, l.y) + 0.03;

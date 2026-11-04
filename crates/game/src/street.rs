@@ -62,9 +62,9 @@ fn project_uvs(mesh: &mut Mesh) {
 #[derive(Resource)]
 struct Kit {
     file: Handle<Gltf>,
-    /// Pieces with a baked texture of their own (tools/blender/props/auto.py), merged per chunk
-    /// apart from the rest, with their material.
-    textured: Handle<Gltf>,
+    /// Pieces with a baked texture of their own (tools/blender/props/auto.py, furniture.py),
+    /// merged per chunk apart from the rest, with their material.
+    textured: Vec<Handle<Gltf>>,
     material: Handle<StandardMaterial>,
     /// Whether this map's pieces have been built.
     built: bool,
@@ -73,7 +73,7 @@ struct Kit {
 fn load_kit(mut commands: Commands, assets: Res<AssetServer>, mut materials: ResMut<Assets<StandardMaterial>>) {
     commands.insert_resource(Kit {
         file: assets.load("models/props/street_kit.glb"),
-        textured: assets.load("models/props/auto.glb"),
+        textured: vec![assets.load("models/props/auto.glb"), assets.load("models/props/furniture.glb")],
         material: materials.add(StandardMaterial {
             // The wear texture is 0.8 where clean.
             base_color: Color::linear_rgb(1.25, 1.25, 1.25),
@@ -104,21 +104,30 @@ fn build_kit(
     if kit.built {
         return;
     }
-    let (Some(file), Some(textured)) = (gltfs.get(&kit.file), gltfs.get(&kit.textured)) else { return };
+    let Some(file) = gltfs.get(&kit.file) else { return };
+    let Some(textured) = kit.textured.iter().map(|h| gltfs.get(h)).collect::<Option<Vec<&Gltf>>>() else { return };
     kit.built = true;
     if layout.kit.is_empty() {
         return;
     }
-    // Each piece's mesh by name and LOD: from the textured file when it's there (with its own
-    // material), else the kit's.
+    // Each piece's mesh by name and LOD: from a textured file when one has it (with its own
+    // material, one per file's material however many pieces share it), else the kit's.
+    let mut file_mats: HashMap<AssetId<bevy::gltf::GltfMaterial>, Handle<StandardMaterial>> = HashMap::new();
     let mut mesh_of = |name: &str, lod: usize| -> Option<(Mesh, Option<Handle<StandardMaterial>>)> {
         let label = format!("{name}_LOD{lod}");
-        let (gm, own) = match textured.named_meshes.get(label.as_str()) {
+        let (gm, own) = match textured.iter().find_map(|t| t.named_meshes.get(label.as_str())) {
             Some(h) => (gltf_meshes.get(h)?, true),
             None => (gltf_meshes.get(file.named_meshes.get(label.as_str())?)?, false),
         };
         let prim = gm.primitives.first()?;
-        let own = if own { prim.material.as_ref().and_then(|m| gltf_mats.get(m)).map(|gm| materials.add(bevy::pbr::gltf::standard_material_from_gltf_material(gm))) } else { None };
+        let own = if own {
+            prim.material.as_ref().and_then(|m| {
+                let gm = gltf_mats.get(m)?;
+                Some(file_mats.entry(m.id()).or_insert_with(|| materials.add(bevy::pbr::gltf::standard_material_from_gltf_material(gm))).clone())
+            })
+        } else {
+            None
+        };
         Some((meshes.get(&prim.mesh)?.clone(), own))
     };
     let mut templates: HashMap<(&str, usize), Option<(Mesh, Option<Handle<StandardMaterial>>)>> = HashMap::new();

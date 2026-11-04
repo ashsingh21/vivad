@@ -43,6 +43,15 @@ fn collider(name: &str) -> Option<Shape> {
         "umbrella" => Shape::Box(Vec3::new(1.3, 0.8, 0.7)),
         "bin" => Shape::Cylinder { radius: 0.29, height: 1.0 },
         "drum" => Shape::Cylinder { radius: 0.3, height: 0.95 },
+        // Furniture indoors (crate::map::india houses, the halls, Connaught Place's upstairs).
+        "charpai" => Shape::Box(Vec3::new(1.95, 0.45, 0.95)),
+        "almirah" => Shape::Box(Vec3::new(0.95, 1.9, 0.52)),
+        "dining" => Shape::Box(Vec3::new(1.45, 0.78, 1.6)),
+        "sofa" => Shape::Box(Vec3::new(2.0, 0.86, 0.86)),
+        "tv" => Shape::Box(Vec3::new(1.4, 0.5, 0.45)),
+        "fridge" => Shape::Box(Vec3::new(0.62, 1.56, 0.64)),
+        "desk" => Shape::Box(Vec3::new(1.4, 0.76, 0.7)),
+        "stove" => Shape::Box(Vec3::new(1.6, 0.86, 0.62)),
         _ => return None,
     })
 }
