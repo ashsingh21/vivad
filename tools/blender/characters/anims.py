@@ -1027,7 +1027,7 @@ def carry(rig, name, base, hold, drop=0.0, turn=0.0, upright=None, calm=0.0):
 # winging out 20 cm, and the slide sideways (chest 45 degrees round); the rifle pack's run leans 15.
 POSTURE = [
     ("idle", 4, 8, False), ("walk_f", 6, 10, False),
-    *[(f"run_{d}", 12, 18, False) for d in "flr"], ("run_b", 12, 6, False), ("sprint_f", 16, 18, False),
+    *[(f"run_{d}", 12, 18, False) for d in "flr"], ("run_b", 12, 6, False), ("sprint_f", 16, 18, False), ("sprint_1h", 16, 18, False),
     ("crouch_idle", 22, 0, False), *[(f"crouch_{d}", 24, 0, False) for d in "fblr"],
 ]
 
@@ -1104,7 +1104,7 @@ def stand_up(rig, name, lean, tuck, face):
 
 # Runs whose back bends backward at the waist (stand_up straightened the spine over hips still tipped
 # forward with the stride: chest out, seat back), lined up again.
-STRAIGHT = ("walk_f", "run_f", "run_l", "run_r", "sprint_f", *(f"rifle_run_{d}" for d in "fblr"), "rifle_sprint_f",
+STRAIGHT = ("walk_f", "run_f", "run_l", "run_r", "sprint_f", "sprint_1h", *(f"rifle_run_{d}" for d in "fblr"), "rifle_sprint_f",
             *(f"rifleaim_run_{d}" for d in "fblr"), *(f"rifleaim_walk_{d}" for d in "fblr"), "rifle_walk_l", "rifle_walk_r")
 BACK = ("pelvis", "spine_01", "spine_02", "spine_03")
 # A straightened back's lean at most (degrees forward from its rest), and how much of it the hips
@@ -1211,7 +1211,7 @@ def look_ahead(rig, name):
 
 
 # (clip, the clip whose arms it takes): see arms_from.
-HIGH_READY = [*[(f"rifle_run_{d}", f"rifleaim_run_{d}") for d in "fblr"], ("rifle_sprint_f", "rifleaim_run_f")]
+HIGH_READY = [*[(f"rifle_run_{d}", f"rifleaim_run_{d}") for d in "fblr"]]
 ARM_CHAIN = ("clavicle", "upperarm", "lowerarm", "hand", "thumb", "index", "middle", "ring", "pinky", "weapon")
 
 
@@ -1247,7 +1247,7 @@ def arms_from(rig, base, hold, name=None):
 # Carrying a long gun on the move (not aiming): the chest turns with each stride, the way a runner's
 # shoulders counter the hips, so the gun swings across the body to one side and back to the other
 # (held dead still in front, it read as a statue's arms on running legs). Degrees of turn each way.
-GUN_SWAY = {**{f"rifle_walk_{d}": 4.0 for d in "fblr"}, **{f"rifle_run_{d}": 10.0 for d in "fblr"}, "rifle_sprint_f": 14.0}
+GUN_SWAY = {**{f"rifle_walk_{d}": 4.0 for d in "fblr"}, **{f"rifle_run_{d}": 10.0 for d in "fblr"}}
 
 
 def gun_sway(rig, name, deg):
@@ -1273,6 +1273,61 @@ def gun_sway(rig, name, deg):
         # And a little roll, the leading shoulder dropping.
         rig.rotate("spine_03", FWD, -a * 0.25)
         rig.key(i + 1)
+
+
+# The one-handed sprint's gun: the barrel up and ahead, a little across toward the left shoulder.
+ONE_HAND_BARREL = Vector((0.2, -0.55, 0.8)).normalized()
+# How far the gun arm is held to its most forward pose (1: still; 0: pumping as the free arm).
+ONE_HAND_HOLD = 0.65
+
+
+def one_hand(rig, name, src, ref):
+    """`src` (a sprint, both arms pumping) as `name`, a long gun carried in the right fist: the
+    weapon bone turned every frame so the barrel points up and ahead (ONE_HAND_BARREL), the top of
+    the gun back toward the body, the fingers closed on the grip. The gun's axes come from `ref`
+    (an aim, the barrel straight ahead). The game lets go of the fore-end while it plays."""
+    sc = bpy.context.scene
+    rig.obj.animation_data.action = bpy.data.actions[ref]
+    sc.frame_set(int(bpy.data.actions[ref].frame_range[0]))
+    w = rig.world_rot("weapon_r").to_matrix()
+    near = lambda d: max((Vector(a) * k for a in ((1, 0, 0), (0, 1, 0), (0, 0, 1)) for k in (1, -1)), key=lambda a: (w @ a).dot(d))
+    barrel, top = near(FWD), near(UP)
+    local = Matrix((barrel, top, barrel.cross(top))).transposed()
+    d = ONE_HAND_BARREL
+    u = (UP - d * UP.dot(d)).normalized()
+    want = (Matrix((d, u, d.cross(u))).transposed() @ local.inverted()).to_quaternion()
+    act = bpy.data.actions[src]
+    rig.obj.animation_data.action = act
+    f0, f1 = map(int, act.frame_range)
+    poses = []
+    for f in range(f0, f1 + 1):
+        sc.frame_set(f)
+        poses.append({pb.name: pb.matrix_basis.copy() for pb in rig.pb})
+    # The gun arm swings far less than the free one: held near its most forward (the gun up in
+    # front, not behind the hip as the arm swings back), a third of its pump left.
+    def ahead(pose):
+        for pb in rig.pb:
+            pb.matrix_basis = pose[pb.name]
+        bpy.context.view_layer.update()
+        return rig.head("hand_r").dot(FWD)
+    front = poses[max(range(len(poses)), key=lambda i: ahead(poses[i]))]
+    gun_arm = ("clavicle_r", "upperarm_r", "lowerarm_r", "hand_r")
+    if name in bpy.data.actions:
+        bpy.data.actions.remove(bpy.data.actions[name])
+    new_action(rig, name)
+    for i, pose in enumerate(poses):
+        for pb in rig.pb:
+            pb.matrix_basis = pose[pb.name]
+            if pb.name in gun_arm:
+                q = pose[pb.name].to_quaternion().slerp(front[pb.name].to_quaternion(), ONE_HAND_HOLD)
+                pb.matrix_basis = Matrix.Translation(pose[pb.name].to_translation()) @ q.to_matrix().to_4x4()
+        bpy.context.view_layer.update()
+        # Closed further than the sprint's loose fist, round the grip.
+        relax_fingers(rig, "r", 0.4)
+        rig.set_world_rot("weapon_r", want)
+        rig.key(i + 1)
+    bpy.data.actions.remove(act)
+    print(f"[anims] {name}: {src}, the gun in the right hand")
 
 
 def idle(rig):
@@ -1750,6 +1805,10 @@ def main():
     # The sprint's steps are a runner's; only its bounce (14 cm) calmed, to about 9.
     cycles["run_f"] = mocap(rig, src, acts, "run_f", "Jog_Fwd_Loop", RUN, stride=0.72, calm=0.35, ball=True, kick=0.9, lift=0.05)
     cycles["sprint_f"] = transfer(rig, src, acts, "sprint_f", "Sprint_Loop", SPRINT, keep=TORSO_KEEP, calm=0.65)
+    # Sprinting with a long gun, as in Fortnite: the gun in the right fist, both arms pumping (the
+    # sprint's own), at the rifle sprint's speed in a runner's steps (shortened, not slowed: at its
+    # own stride, 6.2 m/s is 120 bounding steps a minute). Becomes rifle_sprint_f (`one_hand`).
+    cycles["sprint_1h"] = mocap(rig, src, acts, "sprint_1h", "Sprint_Loop", RIFLE_SPRINT, stride=0.75, calm=0.6, ball=True, lift=0.03)
     transfer(rig, src, acts, "idle", "Idle_Loop", 0.0, keep=TORSO_KEEP)
     # A stroll, its steps a little longer than the clip's (it walks slowly).
     cycles["walk_f"] = mocap(rig, src, acts, "walk_f", "Walk_Loop", WALK, stride=1.4)
@@ -1845,6 +1904,8 @@ def main():
     if "slide" in bpy.data.actions and "rifleaim_idle" in bpy.data.actions:
         arms_from(rig, "slide", "rifleaim_idle", "rifle_slide")
         level_gun(rig, "rifle_slide", "rifleaim_idle")
+    if "sprint_1h" in bpy.data.actions and "rifleaim_idle" in bpy.data.actions:
+        one_hand(rig, "rifle_sprint_f", "sprint_1h", "rifleaim_idle")
     for name, deg in GUN_SWAY.items():
         if name in bpy.data.actions:
             gun_sway(rig, name, deg)

@@ -182,6 +182,9 @@ pub struct WarriorAnim {
     /// Weight of the upper-body action laid over the legs (`UPPER_BODY`): how far the torso is
     /// held to the action's own posture over the legs' hips (`crate::arms::pose_torso`).
     pub upper: f32,
+    /// Weight of the one-handed sprint (rifle_sprint_f: the gun in the right fist, both arms
+    /// pumping): how far the left hand lets go of the fore-end (`crate::arms::orient_bows`).
+    pub one_hand: f32,
     /// Seconds since this warrior's pose was last updated (see `due`).
     since_pose: f32,
     /// How much of the aim pitch the torso takes (eased with the held item).
@@ -304,6 +307,7 @@ pub fn bind(commands: &mut Commands, sets: &AnimSets, variant: usize, rig_root: 
         swing_lag: 0.0,
         bow_weight: 0.0,
         upper: 0.0,
+        one_hand: 0.0,
         since_pose: 0.0,
         aim_share: 0.0,
         slide_from: None,
@@ -686,6 +690,7 @@ fn drive(
         all.dedup();
         anim.bow_weight = 0.0;
         anim.upper = 0.0;
+        anim.one_hand = 0.0;
         // The rifle's aiming set raises the gun as the aim layer does: its clips' summed weight.
         let mut aim_set = 0.0f32;
         for node in all {
@@ -699,6 +704,9 @@ fn drive(
                 continue;
             }
             let w = w.clamp(0.0, 1.0);
+            if set.nodes.get("rifle_sprint_f").is_some_and(|n| n.0 == node || n.1 == Some(node)) {
+                anim.one_hand = (anim.one_hand + w).min(1.0);
+            }
             if UPPER_BODY.iter().chain(OPTIONAL_UPPER.iter()).any(|c| set.nodes.get(c).is_some_and(|n| n.1 == Some(node))) {
                 anim.upper = (anim.upper + w).min(1.0);
             }
