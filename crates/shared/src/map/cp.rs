@@ -125,6 +125,14 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                     height: (c1 - c0) * 0.5,
                     kind: SignKind::Light,
                 });
+                // Its light on the marble below (the floor's top is 3 cm up).
+                b.map.signs.push(super::ShopSign {
+                    pos: r.at((c0 + c1) / 2.0, am, 0.045 + lift / 2.0),
+                    facing: Vec2::new(am.cos(), am.sin()),
+                    width: 3.6,
+                    height: c1 - c0 + 1.0,
+                    kind: SignKind::Pool,
+                });
             }
             // Columns at the start of each segment (and the block's last), on both faces.
             for (col, last) in [(s0, false), (s1, true)] {
@@ -190,6 +198,14 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                         height: front.top - front.bottom,
                         kind: SignKind::Glass,
                     });
+                    // A display of goods just behind the glass, lit (the shelves' texture).
+                    b.map.signs.push(super::ShopSign {
+                        pos: r.at(rad - toward * 0.35, am, (front.bottom + front.top) / 2.0),
+                        facing: out_dir(am) * toward,
+                        width: front.width,
+                        height: front.top - front.bottom,
+                        kind: SignKind::Shelves,
+                    });
                 }
             }
             // The back-to-back wall between the two rows of shops, limewashed a shop's colour (Delhi's
@@ -225,6 +241,13 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                         width: 0.12,
                         height: (mid - front) * 0.55,
                         kind: SignKind::Light,
+                    });
+                    b.map.signs.push(super::ShopSign {
+                        pos: r.at((front + mid) / 2.0, am, 0.045 + lift / 2.0),
+                        facing: out_dir(am),
+                        width: 3.4,
+                        height: mid - front,
+                        kind: SignKind::Pool,
                     });
                 }
             }

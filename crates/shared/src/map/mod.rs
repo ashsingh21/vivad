@@ -216,6 +216,8 @@ pub enum SignKind {
     Light,
     /// A shop window's glass.
     Glass,
+    /// A tube light's glow on the floor under it, facing up; `facing` is the way its length runs.
+    Pool,
     /// A small lettered board hung between columns, always red.
     Hanging,
 }

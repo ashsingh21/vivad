@@ -94,7 +94,8 @@ fn material_for(mat: Mat, sets: &HashMap<&'static str, TexSet>, materials: &mut 
         Mat::Thatch => textured("thatch", Color::WHITE, 0.95, materials),
         Mat::Stucco => matte(textured("stucco", Color::WHITE, 0.92, materials), materials),
         Mat::Stone => textured("stone", Color::WHITE, 0.6, materials),
-        Mat::Rustic => matte(textured("rustic", Color::WHITE, 0.9, materials), materials),
+        // Cream, as the ring's limewash weathers (pure white read blue-grey in the verandahs' shade).
+        Mat::Rustic => matte(textured("rustic", Color::srgb(1.0, 0.95, 0.86), 0.9, materials), materials),
         Mat::Paint(k) => {
             // Over the limewash's near-white mottle (tools/textures/city.py).
             let c = shared::map::PAINT[k as usize % shared::map::PAINT.len()];
@@ -916,6 +917,9 @@ fn build_footprints(
     let mut shelves: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     let mut lights: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     let mut glass: HashMap<(i32, i32), MeshBuf> = HashMap::new();
+    // The tube lights' glow where it falls: a soft warm pool on the ceiling round each tube and on
+    // the floor under it (SignKind::Pool) (the verandahs and shops are lit by the sky alone, cool blue-grey).
+    let mut pools: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     for (n, sg) in layout.signs.iter().enumerate() {
         let key = ((sg.pos.x / CHUNK).floor() as i32, (sg.pos.z / CHUNK).floor() as i32);
         let out = Vec3::new(sg.facing.x, 0.0, sg.facing.y).normalize_or(Vec3::X);
@@ -927,6 +931,16 @@ fn build_footprints(
             let across = Vec3::Y.cross(out) * (sg.width * 0.5);
             let p = sg.pos;
             lights.entry(key).or_default().quad([p - along - across, p - along + across, p + along + across, p + along - across], Vec3::NEG_Y, [Vec2::ZERO; 4]);
+            let uv = [Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(1.0, 1.0), Vec2::new(0.0, 1.0)];
+            let (l, a) = (out * (sg.height * 0.5 + 1.0), Vec3::Y.cross(out) * 1.4);
+            let c = p + Vec3::Y * 0.02;
+            pools.entry(key).or_default().quad([c - l - a, c - l + a, c + l + a, c + l - a], Vec3::NEG_Y, uv);
+            continue;
+        }
+        if sg.kind == shared::map::SignKind::Pool {
+            let (l, a, f) = (out * (sg.height * 0.5), Vec3::Y.cross(out) * (sg.width * 0.5), sg.pos);
+            let uv = [Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(1.0, 1.0), Vec2::new(0.0, 1.0)];
+            pools.entry(key).or_default().quad([f - l + a, f - l - a, f + l - a, f + l + a], Vec3::Y, uv);
             continue;
         }
         if sg.kind == shared::map::SignKind::Glass {
@@ -1009,6 +1023,10 @@ fn build_footprints(
         let (set, mr) = &shopfront;
         let stock = materials.add(StandardMaterial {
             base_color_texture: Some(set.base.clone()),
+            // Lit inside: the goods glow a little under the shop's tubes, bright through the door
+            // against the shaded verandah.
+            emissive: LinearRgba::rgb(0.5, 0.42, 0.3),
+            emissive_texture: Some(set.base.clone()),
             normal_map_texture: Some(set.normal.clone()),
             metallic_roughness_texture: Some(mr.clone()),
             perceptual_roughness: 1.0,
@@ -1053,6 +1071,29 @@ fn build_footprints(
             let range = crate::characters::LodRange(near.clone(), 0);
             let (mesh, centre) = buf.into_mesh();
             commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(glow.clone()), Transform::from_translation(centre), range.0.clone(), range, bevy::light::NotShadowCaster, OfMap));
+        }
+    }
+    if !pools.is_empty() {
+        // A round falloff, added over what's there: no light sources, no shadows, one draw a chunk.
+        let n = 64usize;
+        let fall = image_from(n, n, |x, y| {
+            let d = Vec2::new(x as f32 + 0.5, y as f32 + 0.5) / n as f32 * 2.0 - Vec2::ONE;
+            let k = (1.0 - d.length()).clamp(0.0, 1.0);
+            [k * k * (3.0 - 2.0 * k); 3]
+        });
+        let warm = materials.add(StandardMaterial {
+            base_color: Color::srgba(1.0, 0.76, 0.48, 0.5),
+            base_color_texture: Some(assets.add(fall)),
+            alpha_mode: AlphaMode::Add,
+            unlit: true,
+            double_sided: true,
+            cull_mode: None,
+            ..default()
+        });
+        for (_, buf) in pools {
+            let range = crate::characters::LodRange(near.clone(), 0);
+            let (mesh, centre) = buf.into_mesh();
+            commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(warm.clone()), Transform::from_translation(centre), range.0.clone(), range, bevy::light::NotShadowCaster, OfMap));
         }
     }
     // Trim is chunky and many-sided: drawn to TRIM_FAR (scaled by quality), past which the plain
