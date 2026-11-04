@@ -485,7 +485,7 @@ def drop_mocap(objs, acts, arm):
 
 
 def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, bend=0.0, swing=1.0, spread=0.0, bones=None, src_fps=FPS,
-          relax=None):
+          relax=None, calm=1.0, ball=False, kick=1.0):
     """Retarget the mocap `clip` onto our rig as `name`, a locomotion cycle at `speed` (m/s; 0 for
     one standing still, or in place). The torso's and head's rotations are copied; the arms aim along
     the source's bones (whatever the two rigs' rest poses and rolls); the legs are put by IK where the
@@ -503,7 +503,12 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, be
     than an A_TPose clip; `src_fps` is the source's frame rate. A clip that travels (not "in place")
     has its travel taken out. `relax` (default: when `bend` is set) poses the arms hanging relaxed,
     swinging gently against the legs, instead of the source's (a rifle clip's legs, empty-handed).
-    `stride="auto"` meets the game's speed half by longer steps and half by quicker ones."""
+    `stride="auto"` meets the game's speed half by longer steps and half by quicker ones. `calm`
+    scales the hips' rise and fall about their middle (the feet keep their heights). `ball`: the
+    ball of the foot is what's planted and locked (a run lands on it, the heel rolling up over it),
+    not the ankle: with the steps shortened, a locked ankle left the ball sliding. `kick` scales how
+    high the feet rise off the ground (shorter steps lift less: at the jog's full kick, a shortened
+    stride folded the trailing shin under the body, its knee nearly on the ground)."""
     keep = {**TORSO_KEEP, **(keep or {})}
     if bones:
         bone = lambda n: src.pose.bones.get(bones.get(n, n))
@@ -631,6 +636,9 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, be
     for s in "lr":
         rel = [(rec[s]["ankle"] - src_pelvis) * r for rec in S]
         us = [u(p) * (stride if speed else 1.0) for p in rel]
+        # The ball's lead over the ankle along the ground (the foot's own length, unscaled by stride).
+        toe = [(u(rec[s]["ball"]) - u(rec[s]["ankle"])) * r if ball else 0.0 for rec in S]
+        us = [x + toe[j] for j, x in enumerate(us)]
         if speed:
             locked = list(us)
             for a, n in runs(down[s]):
@@ -644,12 +652,18 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, be
                     if not down[s][j]:
                         locked[j] = us[j] + gap * (1.0 - smooth(k / max(1.0, air * 0.6)))
             us = locked
+        us = [x - toe[j] for j, x in enumerate(us)]
         path[s] = [Vector((p.x, p.y, 0.0)) - back * u(p) + back * us[j] for j, p in enumerate(rel)]
     new_action(rig, name)
+    mid_z = sum((rec["pelvis"].z - src_pelvis.z) * r for rec in S) / len(S)
+    # The swing's lift scaled by `kick`; the stance's (up to a heel raised on the forefoot) kept.
+    lifted = lambda dz: dz if dz <= 0.06 else 0.06 + (dz - 0.06) * kick
     for i in range(out + 1):
         rec = S[i % out]
         rig.rest()
-        rig.move("pelvis", rig.pelvis_rest + (rec["pelvis"] - src_pelvis) * r + UP * lift - rig.head("pelvis"))
+        off = (rec["pelvis"] - src_pelvis) * r
+        off.z = mid_z + (off.z - mid_z) * calm
+        rig.move("pelvis", rig.pelvis_rest + off + UP * lift - rig.head("pelvis"))
         for n in TORSO:
             if n in rec["rot"] and n in rig.pb:
                 # The source's turn from its rest, on our bone's rest.
@@ -689,8 +703,11 @@ def mocap(rig, src, acts, name, clip, speed, stride=1.0, keep=None, lift=0.0, be
             side = 1 if s == "l" else -1
             g = path[s][i % out]
             ankle = Vector((g.x + rig.pelvis_rest.x + side * spread, g.y + rig.pelvis_rest.y,
-                            rig.ankle_z[s] + (m["ankle"].z - src_ankle_z) * r))
+                            rig.ankle_z[s] + lifted((m["ankle"].z - src_ankle_z) * r)))
             pole = m["knee"] - (m["hip"] + m["ankle"]) * 0.5 + Vector((side * spread * 0.4, 0, 0))
+            if ball and pole.dot(FWD) < 0.3 * pole.length:
+                # A run's knee always bends forward; near straight, the source's says little.
+                pole = FWD
             rig.leg_ik(s, ankle, pole.normalized() if pole.length > 1e-4 else FWD)
             rig.aim(f"foot_{s}", m["foot"])
             rig.aim(f"ball_{s}", m["toe"])
@@ -1227,6 +1244,37 @@ def arms_from(rig, base, hold, name=None):
     print(f"[anims] {name or base}: {base} with the arms from {hold}")
 
 
+# Carrying a long gun on the move (not aiming): the chest turns with each stride, the way a runner's
+# shoulders counter the hips, so the gun swings across the body to one side and back to the other
+# (held dead still in front, it read as a statue's arms on running legs). Degrees of turn each way.
+GUN_SWAY = {**{f"rifle_walk_{d}": 4.0 for d in "fblr"}, **{f"rifle_run_{d}": 10.0 for d in "fblr"}, "rifle_sprint_f": 14.0}
+
+
+def gun_sway(rig, name, deg):
+    """Turn `name`'s chest side to side over its cycle by `deg`: furthest left (the right shoulder
+    and the gun forward and across) as the left foot lands, which is where every cycle starts."""
+    sc = bpy.context.scene
+    act = bpy.data.actions[name]
+    rig.obj.animation_data.action = act
+    f0, f1 = map(int, act.frame_range)
+    poses = []
+    for f in range(f0, f1 + 1):
+        sc.frame_set(f)
+        poses.append({pb.name: pb.matrix_basis.copy() for pb in rig.pb})
+    new_action(rig, name)
+    for i, pose in enumerate(poses):
+        for pb in rig.pb:
+            pb.matrix_basis = pose[pb.name]
+        bpy.context.view_layer.update()
+        c = math.cos(2 * math.pi * i / (len(poses) - 1))
+        a = math.radians(deg) * c
+        rig.rotate("spine_02", UP, a * 0.4)
+        rig.rotate("spine_03", UP, a * 0.6)
+        # And a little roll, the leading shoulder dropping.
+        rig.rotate("spine_03", FWD, -a * 0.25)
+        rig.key(i + 1)
+
+
 def idle(rig):
     frames = 75
     new_action(rig, "idle")
@@ -1697,8 +1745,10 @@ def main():
     src, objs, acts = load_mocap("ual")
     bpy.context.view_layer.objects.active = arm
     bpy.ops.object.mode_set(mode="POSE")
-    # Both bounce far more than a real run (24 and 14 cm a stride): calmed to about 9.
-    cycles["run_f"] = transfer(rig, src, acts, "run_f", "Jog_Fwd_Loop", RUN, keep=TORSO_KEEP, calm=0.37)
+    # The library's jog is a bounding stride, 2.8 m a step at 120 a minute (a runner at this speed
+    # takes about 2 m at 170): its steps shortened, quicker, by IK, and its 24 cm bounce calmed.
+    # The sprint's steps are a runner's; only its bounce (14 cm) calmed, to about 9.
+    cycles["run_f"] = mocap(rig, src, acts, "run_f", "Jog_Fwd_Loop", RUN, stride=0.72, calm=0.35, ball=True, kick=0.9, lift=0.05)
     cycles["sprint_f"] = transfer(rig, src, acts, "sprint_f", "Sprint_Loop", SPRINT, keep=TORSO_KEEP, calm=0.65)
     transfer(rig, src, acts, "idle", "Idle_Loop", 0.0, keep=TORSO_KEEP)
     # A stroll, its steps a little longer than the clip's (it walks slowly).
@@ -1795,6 +1845,9 @@ def main():
     if "slide" in bpy.data.actions and "rifleaim_idle" in bpy.data.actions:
         arms_from(rig, "slide", "rifleaim_idle", "rifle_slide")
         level_gun(rig, "rifle_slide", "rifleaim_idle")
+    for name, deg in GUN_SWAY.items():
+        if name in bpy.data.actions:
+            gun_sway(rig, name, deg)
     # Last, over everything moving: the head looking ahead.
     for act in list(bpy.data.actions):
         if not act.name.startswith(LOOK_FREE):
