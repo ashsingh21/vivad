@@ -15,6 +15,8 @@ Near-white where the wall is, so the game's vertex colours tint each building.
   wear (512): grime and scratches for the street kit.
   stucco, stone (512): Connaught Place's clean white walls and its stone-tiled verandahs.
   limewash (512): mottled near-white under the shops' paint colours (Mat::Paint).
+  goods (2048 x 1024): stock on shop shelves, a trade a column (kirana, bartan, kapda, dabba), two
+      stockings each.
 
 python3 tools/textures/city.py   -> assets/textures/panga/{facade,shop,roof}_{basecolor,normal,mr}.png,
                                     assets/textures/panga/ground_detail.png
@@ -309,17 +311,11 @@ def shop():
     L.hgt = L.hgt * (1 - shop) + shop * -4.0
     s = ((v - 0.22) / 0.52 * 4)
     shelf = (s % 1 < 0.08) & (s >= 0) & (s < 4)
-    goods = (s % 1 > 0.25) & (s >= 0) & (s < 4)
-    item_w = 0.035
-    col_id = np.floor((u - 0.08) / item_w).astype(int)
-    hsh = (np.sin(col_id * 12.9898 + np.floor(s) * 78.233) * 43758.5453) % 1
-    palette = np.array([lin(c) for c in [[0.80, 0.22, 0.18], [0.95, 0.72, 0.18], [0.20, 0.45, 0.75], [0.90, 0.88, 0.82], [0.25, 0.60, 0.30], [0.85, 0.40, 0.60]]], np.float32)
-    gcol = palette[(hsh * 5.99).astype(int)]
-    top = (s % 1) > (0.25 + 0.35 * ((hsh * 7) % 1))
-    gm = (goods & top & (((u - 0.08) / item_w) % 1 > 0.1)).astype(np.float32) * shop * (v < 0.74)
-    lit = (0.55 + 0.45 * (1 - (s % 1))) [..., None]
-    L.paint(gm, col=gcol * lit * 0.8, rough=0.6)
-    L.hgt += gm * 1.5
+    # Stocked as the shelves in the hand-built shops are (goods()): a grocer's, in the dim.
+    for k in range(4):
+        top, floor = int((0.22 + 0.13 * k) * N) + 6, int((0.22 + 0.13 * (k + 1)) * N)
+        stock(L, rng, "kirana" if k % 2 == 0 else "dabba", N + int(0.08 * N), N + int(0.92 * N), top, floor)
+    L.col[:, N:] = L.col[:, N:] * (1 - 0.35 * shop[:, N:, None])
     sm = shelf.astype(np.float32) * shop * (v < 0.76)
     L.paint(sm, col=lin([0.42, 0.32, 0.22]), rough=0.7)
     L.hgt += sm * 2.0
@@ -498,12 +494,203 @@ def rustic():
     L.save("rustic", 1.6)
 
 
-facade()
-shop()
-rustic()
-limewash()
-stucco()
-stone()
-roof()
-ground()
-wear()
+# Goods on shop shelves (crate::buildings SignKind::Shelves): an atlas of square cells, a trade a
+# column, two stockings of it a row. Each cell a shelf unit 2.2 m square: a back board, four
+# wooden shelves, the stock standing on them lit from above, shadowed under the shelf over it.
+GOODS_TRADES = ("kirana", "bartan", "kapda", "dabba")
+GOODS_CELL = 512
+
+
+def goods():
+    rng = np.random.default_rng(61)
+    S = GOODS_CELL
+    L = Layer(2 * S, len(GOODS_TRADES) * S, rng)
+    grain = periodic_noise(2 * S, len(GOODS_TRADES) * S, rng, 3, 24)
+    L.col = np.dstack([0.16 + 0.04 * grain, 0.11 + 0.03 * grain, 0.07 + 0.02 * grain]).astype(np.float32)
+    L.hgt[:] = -2.0
+    L.rough[:] = 0.85
+    rows = 4
+    for ti, trade in enumerate(GOODS_TRADES):
+        for vi in range(2):
+            ox, oy = ti * S, vi * S
+            r = np.random.default_rng(100 + ti * 7 + vi)
+            pitch = S / rows
+            for k in range(rows):
+                top, base = int(oy + k * pitch), int(oy + (k + 1) * pitch)
+                board = int(pitch * 0.07)
+                # Shadow under the shelf above, fading down the back board.
+                ys = np.arange(top, base)
+                sh = np.clip((ys - top) / (pitch * 0.5), 0, 1)[:, None, None]
+                L.col[top:base, ox:ox + S] *= 0.55 + 0.45 * sh
+                stock(L, r, trade, ox + 6, ox + S - 6, top + int(pitch * 0.12), base - board)
+                # The shelf board: wood grain, a lit front edge, a dark line under it.
+                b0 = base - board
+                g = grain[b0:base, ox:ox + S]
+                L.col[b0:base, ox:ox + S] = np.dstack([0.42 + 0.08 * g, 0.29 + 0.06 * g, 0.17 + 0.04 * g])
+                L.col[b0:b0 + 2, ox:ox + S] *= 1.35
+                L.hgt[b0:base, ox:ox + S] = 3.0
+                L.rough[b0:base, ox:ox + S] = 0.7
+            # Uprights at the sides.
+            for x0 in (ox, ox + S - 6):
+                L.col[oy:oy + S, x0:x0 + 6] = np.array(lin([0.36, 0.25, 0.15]))
+                L.hgt[oy:oy + S, x0:x0 + 6] = 3.5
+    L.save("goods", 2.0)
+
+
+def stock(L, r, trade, x0, x1, top, floor):
+    """One shelf's worth of `trade`, standing on `floor` (pixel row), no higher than `top`."""
+    x = x0 + int(r.integers(0, 6))
+    while x < x1 - 8:
+        room = floor - top
+        if trade == "kirana":
+            kind = r.choice(["jar", "jar", "bottle", "packet", "packet", "tin"])
+            if kind == "jar":
+                w, h = int(r.integers(26, 40)), int(room * r.uniform(0.55, 0.8))
+                fill = lin([[0.92, 0.75, 0.25], [0.95, 0.93, 0.85], [0.70, 0.18, 0.10], [0.55, 0.38, 0.22], [0.30, 0.50, 0.22]][r.integers(0, 5)])
+                cylinder(L, x, w, floor - h, floor, fill, gloss=0.25, rough=0.15)
+                cap = lin([[0.85, 0.15, 0.12], [0.15, 0.35, 0.70], [0.95, 0.85, 0.25]][r.integers(0, 3)])
+                cylinder(L, x - 1, w + 2, floor - h - 6, floor - h, cap, gloss=0.3, rough=0.4)
+                label(L, r, x + 4, w - 8, floor - int(h * 0.65), floor - int(h * 0.35))
+            elif kind == "bottle":
+                w, h = int(r.integers(14, 20)), int(room * r.uniform(0.7, 0.92))
+                fill = lin([[0.95, 0.78, 0.20], [0.25, 0.45, 0.20], [0.55, 0.12, 0.08]][r.integers(0, 3)])
+                cylinder(L, x, w, floor - int(h * 0.7), floor, fill, gloss=0.35, rough=0.1)
+                cylinder(L, x + w // 3, max(w // 3, 4), floor - h, floor - int(h * 0.7), fill, gloss=0.35, rough=0.1)
+                label(L, r, x + 2, w - 4, floor - int(h * 0.5), floor - int(h * 0.25))
+            elif kind == "tin":
+                w, h = int(r.integers(22, 32)), int(room * r.uniform(0.35, 0.5))
+                cylinder(L, x, w, floor - h, floor, lin([0.70, 0.70, 0.68]), gloss=0.5, rough=0.3, metal=1.0)
+                label(L, r, x, w, floor - int(h * 0.8), floor - int(h * 0.2))
+            else:
+                w, h = int(r.integers(20, 34)), int(room * r.uniform(0.4, 0.75))
+                packet(L, r, x, w, floor - h, floor)
+            x += w + int(r.integers(1, 5))
+        elif trade == "bartan":
+            kind = r.choice(["plates", "glasses", "pot", "pot", "plates"])
+            steel = np.array(lin([0.74, 0.74, 0.72]))
+            if kind == "plates":
+                w, n = int(r.integers(50, 70)), int(r.integers(6, 14))
+                for j in range(n):
+                    yy = floor - 4 * (j + 1)
+                    cylinder(L, x, w, yy, yy + 4, steel * (0.85 + 0.15 * (j % 2)), gloss=0.6, rough=0.2, metal=1.0)
+            elif kind == "glasses":
+                w = int(r.integers(16, 22))
+                for j in range(int(r.integers(2, 4))):
+                    cylinder(L, x, w, floor - int(room * 0.45) - j * 8, floor - j * 8, steel, gloss=0.7, rough=0.15, metal=1.0)
+            else:
+                w, h = int(r.integers(44, 70)), int(room * r.uniform(0.4, 0.7))
+                col = steel if r.random() < 0.7 else np.array(lin([0.72, 0.45, 0.25]))
+                cylinder(L, x, w, floor - h, floor, col, gloss=0.7, rough=0.2, metal=1.0)
+                cylinder(L, x - 3, w + 6, floor - h - 3, floor - h + 2, col * 1.05, gloss=0.7, rough=0.2, metal=1.0)
+            x += w + int(r.integers(2, 6))
+        elif trade == "kapda":
+            # Folded cloth in a pile: soft-edged slabs, each its own colour, a border or a stripe.
+            w = int(r.integers(54, 80))
+            yy = floor
+            while yy - top > 14:
+                hh = int(r.integers(9, 15))
+                c = lin([[0.75, 0.10, 0.25], [0.95, 0.62, 0.10], [0.12, 0.40, 0.45], [0.90, 0.85, 0.75], [0.40, 0.15, 0.45], [0.20, 0.35, 0.65],
+                         [0.85, 0.35, 0.15], [0.30, 0.50, 0.25]][r.integers(0, 8)])
+                cloth(L, r, x + int(r.integers(-2, 3)), w, yy - hh, yy, c)
+                yy -= hh
+            x += w + int(r.integers(3, 8))
+        else:
+            # Cartons, kraft brown, printed panels, sometimes two stacked.
+            w, h = int(r.integers(40, 70)), int(room * r.uniform(0.45, 0.95))
+            if r.random() < 0.35 and h > room * 0.6:
+                h1 = h // 2
+                carton(L, r, x, w, floor - h1, floor)
+                carton(L, r, x + 3, w - 6, floor - h, floor - h1)
+            else:
+                carton(L, r, x, w, floor - h, floor)
+            x += w + int(r.integers(2, 6))
+
+
+def _region(L, x, w, y0, y1):
+    x, w = max(x, 0), min(w, L.w - max(x, 0))
+    y0, y1 = max(int(y0), 0), min(int(y1), L.h)
+    return x, w, y0, y1
+
+
+def cylinder(L, x, w, y0, y1, col, gloss=0.3, rough=0.4, metal=0.0):
+    """An upright round thing seen side on: shaded across its width, a highlight left of middle."""
+    x, w, y0, y1 = _region(L, x, w, y0, y1)
+    if w <= 1 or y1 <= y0:
+        return
+    t = (np.arange(w) + 0.5) / w * 2 - 1
+    shade = np.sqrt(np.clip(1 - t * t, 0, 1)) * 0.7 + 0.3
+    hi = np.exp(-((t + 0.35) / 0.12) ** 2) * gloss
+    c = np.asarray(col, np.float32)[None, None, :] * shade[None, :, None] + hi[None, :, None]
+    L.col[y0:y1, x:x + w] = np.clip(c, 0, 1)
+    L.hgt[y0:y1, x:x + w] = 2.0 + 2.0 * shade[None, :]
+    L.rough[y0:y1, x:x + w] = rough
+    L.metal[y0:y1, x:x + w] = metal
+
+
+def label(L, r, x, w, y0, y1):
+    """A printed label: a pale band, a coloured stripe and a line of 'lettering'."""
+    x, w, y0, y1 = _region(L, x, w, y0, y1)
+    if w <= 2 or y1 <= y0 + 2:
+        return
+    L.col[y0:y1, x:x + w] = L.col[y0:y1, x:x + w] * 0.3 + 0.7 * np.array(lin([0.93, 0.90, 0.82]))
+    m = (y0 + y1) // 2
+    L.col[m - 1:m + 1, x + 2:x + w - 2] = np.array(lin([[0.80, 0.15, 0.10], [0.10, 0.30, 0.65], [0.15, 0.50, 0.20]][r.integers(0, 3)]))
+    L.metal[y0:y1, x:x + w] = 0.0
+
+
+def packet(L, r, x, w, y0, y1):
+    c = np.array(lin([[0.85, 0.25, 0.15], [0.95, 0.75, 0.15], [0.25, 0.50, 0.75], [0.30, 0.60, 0.30], [0.90, 0.88, 0.80], [0.60, 0.20, 0.45]][r.integers(0, 6)]))
+    x, w, y0, y1 = _region(L, x, w, y0, y1)
+    if w <= 2 or y1 <= y0:
+        return
+    h = y1 - y0
+    v = (np.arange(h) / h)[:, None, None]
+    L.col[y0:y1, x:x + w] = c * (0.8 + 0.25 * (1 - v))
+    L.col[y0:y1, x:x + 2] *= 0.7
+    L.col[y0:y1, x + w - 2:x + w] *= 0.6
+    L.hgt[y0:y1, x:x + w] = 3.0
+    L.rough[y0:y1, x:x + w] = 0.5
+    label(L, r, x + 3, w - 6, y0 + int(h * 0.3), y0 + int(h * 0.55))
+
+
+def cloth(L, r, x, w, y0, y1, col):
+    x, w, y0, y1 = _region(L, x, w, y0, y1)
+    if w <= 2 or y1 <= y0:
+        return
+    h = y1 - y0
+    v = (np.arange(h) + 0.5) / h
+    bulge = (np.sin(v * np.pi) * 0.35 + 0.65)[:, None, None]
+    c = np.asarray(col, np.float32) * bulge
+    L.col[y0:y1, x:x + w] = c
+    if r.random() < 0.6:
+        b = max(1, h // 5)
+        L.col[y0 + b:y0 + 2 * b, x:x + w] = np.array(lin([0.95, 0.80, 0.35])) * 0.9
+    L.col[y0:y1, x:x + 2] *= 0.75
+    L.hgt[y0:y1, x:x + w] = 2.0 + bulge[..., 0] * 1.5
+    L.rough[y0:y1, x:x + w] = 0.95
+
+
+def carton(L, r, x, w, y0, y1):
+    x, w, y0, y1 = _region(L, x, w, y0, y1)
+    if w <= 4 or y1 <= y0 + 4:
+        return
+    kraft = np.array(lin([0.62, 0.47, 0.30])) * r.uniform(0.85, 1.1)
+    L.col[y0:y1, x:x + w] = kraft
+    # Tape across the top flap seam, and a printed panel with a logo bar.
+    m = y0 + (y1 - y0) // 6
+    L.col[m - 1:m + 2, x:x + w] = kraft * 1.15
+    px0, px1 = x + w // 5, x + w - w // 5
+    py0, py1 = y0 + (y1 - y0) // 3, y0 + (y1 - y0) * 2 // 3
+    if px1 > px0 + 2 and py1 > py0 + 2:
+        L.col[py0:py1, px0:px1] = np.array(lin([[0.90, 0.88, 0.82], [0.80, 0.15, 0.12], [0.15, 0.30, 0.60]][r.integers(0, 3)]))
+        L.col[py0 + 2:py0 + 4, px0 + 2:px1 - 2] = np.array(lin([0.10, 0.10, 0.10]))
+    L.col[y0:y1, x:x + 2] *= 0.7
+    L.col[y0:y1, x + w - 2:x + w] *= 0.6
+    L.hgt[y0:y1, x:x + w] = 3.0
+    L.rough[y0:y1, x:x + w] = 0.85
+
+
+JOBS = {f.__name__: f for f in (facade, shop, rustic, limewash, stucco, stone, roof, ground, wear, goods)}
+# All of them, or just those named: python3 tools/textures/city.py goods
+for job in sys.argv[1:] or JOBS:
+    JOBS[job]()

@@ -411,6 +411,9 @@ const PARAPET: (f32, f32) = (0.9, 0.3);
 const PILASTER: f32 = 0.46;
 
 /// A cheap hash of a few integers to 0..1, for texture detail that doesn't repeat by the pixel.
+/// The goods atlas's trades (tools/textures/city.py GOODS_TRADES), a column each.
+const GOODS_TRADES: u32 = 4;
+
 fn hash01(a: u32, b: u32, c: u32) -> f32 {
     let mut h = a.wrapping_mul(0x9e37_79b1) ^ b.wrapping_mul(0x85eb_ca77) ^ c.wrapping_mul(0xc2b2_ae3d);
     h ^= h >> 15;
@@ -539,6 +542,7 @@ fn build_footprints(
     // so glass and steel catch the sun.
     let facade = (load_set(assets, pending, "panga/facade"), load_linear(assets, pending, "textures/panga/facade_mr.png"));
     let shopfront = (load_set(assets, pending, "panga/shop"), load_linear(assets, pending, "textures/panga/shop_mr.png"));
+    let goods = (load_set(assets, pending, "panga/goods"), load_linear(assets, pending, "textures/panga/goods_mr.png"));
     let roof_tex = (load_set(assets, pending, "panga/roof"), load_linear(assets, pending, "textures/panga/roof_mr.png"));
     let signs_tex: Handle<Image> = assets.load("textures/panga/signs.png");
     pending.0.push(signs_tex.clone());
@@ -948,12 +952,23 @@ fn build_footprints(
             continue;
         }
         if sg.kind == shared::map::SignKind::Shelves {
+            // One trade a wall (the goods atlas's columns: kirana, bartan, kapda, dabba), in
+            // square bays as tall as the wall, each one of its two stockings.
             let face = sg.pos + out * 0.005;
-            shelves.entry(key).or_default().quad(
-                [face - right - up, face + right - up, face + right + up, face - right + up],
-                out,
-                [Vec2::new(0.54, 0.74), Vec2::new(0.96, 0.74), Vec2::new(0.96, 0.22), Vec2::new(0.54, 0.22)],
-            );
+            let trade = (hash01(n as u32, 5, 71) * GOODS_TRADES as f32) as u32 % GOODS_TRADES;
+            let bays = (sg.width / sg.height).round().max(1.0) as usize;
+            let along = right * (2.0 / bays as f32);
+            for k in 0..bays {
+                let a = face - right + along * k as f32;
+                let row = (hash01(n as u32, k as u32, 72) * 2.0) as u32 % 2;
+                let (u0, u1) = (trade as f32 / GOODS_TRADES as f32, (trade + 1) as f32 / GOODS_TRADES as f32);
+                let (v0, v1) = (row as f32 * 0.5, row as f32 * 0.5 + 0.5);
+                shelves.entry(key).or_default().quad(
+                    [a - up, a + along - up, a + along + up, a + up],
+                    out,
+                    [Vec2::new(u0, v1), Vec2::new(u1, v1), Vec2::new(u1, v0), Vec2::new(u0, v0)],
+                );
+            }
             continue;
         }
         let mut shop = (hash01(n as u32, 17, 23) * SIGN_BOARDS as f32) as usize % SIGN_BOARDS;
@@ -1020,7 +1035,7 @@ fn build_footprints(
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(lettered.clone()), Transform::from_translation(centre), range.0.clone(), range, OfMap));
     }
     if !shelves.is_empty() {
-        let (set, mr) = &shopfront;
+        let (set, mr) = &goods;
         let stock = materials.add(StandardMaterial {
             base_color_texture: Some(set.base.clone()),
             // Lit inside: the goods glow a little under the shop's tubes, bright through the door
