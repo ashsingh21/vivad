@@ -324,8 +324,13 @@ fn dress_hills(b: &mut Builder, rng: &mut SmallRng, made: &[Hill]) {
         let top = Vec3::new(h.center.x, ground(b, h.center), h.center.y);
         match h.crown {
             Crown::Lookout => {
-                b.chhatri(w, top, 4.2, Mat::Sandstone);
-                b.chest(w, top, rng.random_range(0.0..std::f32::consts::TAU), ChestKind::Tijori);
+                // Its platform sunk into the hilltop, the floor a step (12 cm) above the ground: drawn
+                // above it, the floor hid the feet of anyone standing there (it has no collider,
+                // and is a high step). A flat floor to stand on (and to keep the grass off it).
+                let lift = 0.12;
+                b.chhatri(w, top - Vec3::Y * (Builder::chhatri_floor(4.2) - lift), 4.2, Mat::Sandstone);
+                b.push(top + Vec3::Y * (lift - 0.15), Quat::IDENTITY, super::Shape::Box(Vec3::new(4.2 * 1.1, 0.3, 4.2 * 1.1)), Mat::Sandstone, true, false);
+                b.chest(w, top + Vec3::Y * lift, rng.random_range(0.0..std::f32::consts::TAU), ChestKind::Tijori);
             }
             Crown::Rocks => {
                 for k in 0..4 {

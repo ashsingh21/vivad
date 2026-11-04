@@ -631,7 +631,8 @@ fn perf(
         let fps = diag.get(&FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()).unwrap_or(0.0);
         let ms = diag.get(&FrameTimeDiagnosticsPlugin::FRAME_TIME).and_then(|d| d.smoothed()).unwrap_or(0.0);
         let ents = diag.get(&EntityCountDiagnosticsPlugin::ENTITY_COUNT).and_then(|d| d.value()).unwrap_or(0.0);
-        let mut line = format!("{fps:.0} fps   {ms:.2} ms   {ents:.0} entities   {quality:?} quality (F4)", quality = *quality);
+        // Padded to a fixed width (the font is monospaced): the line holds still as the numbers change.
+        let mut line = format!("{fps:>4.0} fps   {ms:>6.2} ms   {ents:>6.0} entities   {quality:?} quality (F4)", quality = *quality);
         // The GPU, and the render passes that cost it most (natively; the browser has no timers).
         if let Some(a) = &adapter {
             line += &format!("\n{} ({:?})", a.name, a.backend);

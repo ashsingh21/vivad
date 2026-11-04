@@ -282,6 +282,12 @@ impl<'a> Builder<'a> {
 
     /// Chhatri: four pillars and a dome, the domed rooftop pavilion of Rajasthan. The pillars
     /// and slab are colliders; the visible art is the `CHHATRI` kit piece.
+    /// How high a chhatri's platform stands (in the model, a unit across, 0.08: above it are the
+    /// pillars' bases).
+    pub fn chhatri_floor(size: f32) -> f32 {
+        size * 0.08
+    }
+
     pub fn chhatri(&mut self, f: Frame, base: Vec3, size: f32, _mat: Mat) {
         let h = size * 1.1;
         for (sx, sz) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {

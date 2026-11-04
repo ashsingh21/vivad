@@ -285,6 +285,11 @@ fn orient_bows(
         if w < 1e-3 && !gun {
             continue;
         }
+        // Put away, or hanging from the glider or falling free: the hands are the clip's (the left
+        // hand was pulled off the glider's bar toward the gun's fore-end).
+        if !shown.get(e).is_ok_and(|v| v.get()) || matches!(anim.showing.0, "glide" | "freefall") {
+            continue;
+        }
         let (Ok((_, hand_g)), Ok((grip, _)), Ok((bow_local, _))) = (tf.get(hand), tf.get(socket), tf.get(e)) else { continue };
         let (mut hand_g, grip, bow_local) = (*hand_g, *grip, *bow_local);
         let aim = intent.aim_dir();
@@ -398,8 +403,8 @@ fn orient_bows(
             if !raw {
                 reach(upper, lower, hand, wrist, Vec3::NEG_Y - right * 0.7, want, &kids, &mut tf);
             }
-            // Only while the gun shows (it's put away in the air).
-            if local.contains(wv.sim) && std::env::var_os("VIVAD_GRIPCHECK").is_some() && shown.get(e).is_ok_and(|v| v.get()) {
+            // (Only while the gun shows: see above.)
+            if local.contains(wv.sim) && std::env::var_os("VIVAD_GRIPCHECK").is_some() {
                 let now = elapsed.as_ref().map_or(0.0, |m| m.elapsed);
                 let g = grips.0.entry(anim.showing).or_insert(Grip { pitch: (f32::MAX, f32::MIN), span: (now, now), ..default() });
                 let (pitch, off) = (along.y.asin().to_degrees(), (palm_at(&tf) - contact).length());
