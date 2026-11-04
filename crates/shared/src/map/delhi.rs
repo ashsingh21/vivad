@@ -749,6 +749,11 @@ fn open(map: &MapLayout, ring: &super::cp::Ring, houses: &[Vec<Vec2>], p: Vec2, 
     if r > ring.ri - 6.0 && r < ring.ro + 3.0 || r < 12.0 {
         return false;
     }
+    free(map, houses, p, clear)
+}
+
+/// Off the roads, water and paths, out of doorways, clear of buildings, trees and the street kit.
+fn free(map: &MapLayout, houses: &[Vec<Vec2>], p: Vec2, clear: f32) -> bool {
     if matches!(map.terrain.ground_at(p.x, p.y), Some(ground::ROAD | ground::WATER | ground::PATH)) {
         return false;
     }
@@ -794,6 +799,21 @@ fn trees(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp::Rin
                 tree(b, rng, p);
                 here += 1;
                 planted += 1;
+            }
+        }
+    }
+    // Connaught Place's avenues: big neems all round the park's edge, over the inner circle's
+    // pavement, and down the far side of the outer circle, shading the colonnades.
+    if ring.ri > 0.0 {
+        for (rad, step) in [(ring.ro + 9.0, 18.0)] {
+            let n = (std::f32::consts::TAU * rad / step) as usize;
+            for k in 0..n {
+                let a = std::f32::consts::TAU * (k as f32 + rng.random_range(-0.15..0.15)) / n as f32;
+                let p = ring.at(rad + rng.random_range(-0.6..0.6), a, 0.0).xz();
+                if p.abs().max_element() < HALF - 4.0 && free(b.map, houses, p, 2.5) {
+                    let scale = rng.random_range(0.95..1.2);
+                    b.map.props.push(Prop { model: super::india::TREE_NEEM, pos: Vec3::new(p.x, b.map.terrain.height(p.x, p.y), p.y), yaw: rng.random_range(0.0..std::f32::consts::TAU), scale, trunk: Some((0.3, 4.0)) });
+                }
             }
         }
     }
