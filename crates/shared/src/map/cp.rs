@@ -543,6 +543,17 @@ pub fn dress(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                     place(b, "auto", r.at(kerb - out * 0.6, a, 0.0), along(a) + if rng.random_bool(0.5) { 0.0 } else { tau / 2.0 });
                 }
             }
+            // Cars parked along the inner circle's edge by the colonnade, a bay at a time, and now
+            // and then along the outer circle.
+            if i > 1 && i + 2 < n {
+                const CARS: [&str; 4] = ["car_white", "car_red", "car_silver", "car_blue"];
+                let a = (s0 + s1) / 2.0;
+                for (rad, odds) in [(inner_road(r).1 - 1.1, 0.35), (r.ro + 5.4, 0.12)] {
+                    if rng.random_bool(odds) {
+                        place(b, CARS[rng.random_range(0..CARS.len())], r.at(rad, a, 0.0), along(a) + if rng.random_bool(0.5) { 0.0 } else { tau / 2.0 });
+                    }
+                }
+            }
             // A stall at each block's ends, by the street corner, facing the passers-by.
             if i == 1 || i + 2 == n {
                 for (kerb, out) in [(r.ri - 1.6, -1.0f32), (r.ro + 3.0, 1.0)] {

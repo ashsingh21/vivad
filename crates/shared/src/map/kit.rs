@@ -26,6 +26,7 @@ pub struct KitPiece {
 fn collider(name: &str) -> Option<Shape> {
     Some(match name {
         "auto" => Shape::Box(Vec3::new(1.4, 1.8, 2.6)),
+        "car_white" | "car_red" | "car_silver" | "car_blue" => Shape::Box(Vec3::new(1.7, 1.5, 3.9)),
         "scooter" => Shape::Box(Vec3::new(0.45, 1.1, 1.65)),
         // Motorcycles parked on their side stands (leaning), and the roadster bicycle.
         "thumper" | "commuter" | "discover" | "twostroke" | "sport150" => Shape::Box(Vec3::new(0.7, 1.1, 2.0)),
@@ -50,6 +51,7 @@ fn collider(name: &str) -> Option<Shape> {
 fn reach(name: &str) -> f32 {
     match name {
         "auto" | "thela" | "chai" => 1.6,
+        "car_white" | "car_red" | "car_silver" | "car_blue" => 2.1,
         "mumty" => 2.1,
         "clothesline" => 2.2,
         "umbrella" => 1.5,
@@ -126,8 +128,12 @@ fn street_free(map: &MapLayout, houses: &[Vec<Vec2>], p: Vec2, r: f32, half: f32
 /// Pieces along the roads: on each side of each stretch, a piece every 6-14 m just off the
 /// carriageway, and a pole every ~30 m.
 pub fn streets(b: &mut Builder, rng: &mut SmallRng, roads: &[(Vec<Vec2>, f32, bool)], houses: &[Vec<Vec2>], half: f32) {
-    const STREET: [(&str, f32); 14] = [
+    const STREET: [(&str, f32); 18] = [
         ("auto", 0.14),
+        ("car_white", 0.02),
+        ("car_red", 0.015),
+        ("car_silver", 0.02),
+        ("car_blue", 0.015),
         ("scooter", 0.08),
         ("thumper", 0.04),
         ("commuter", 0.05),
@@ -140,7 +146,7 @@ pub fn streets(b: &mut Builder, rng: &mut SmallRng, roads: &[(Vec<Vec2>, f32, bo
         ("drum", 0.09),
         ("crates", 0.11),
         ("chairs", 0.07),
-        ("pot", 0.12),
+        ("pot", 0.05),
     ];
     for (pts, width, minor) in roads {
         for seg in pts.windows(2) {
@@ -177,7 +183,7 @@ pub fn streets(b: &mut Builder, rng: &mut SmallRng, roads: &[(Vec<Vec2>, f32, bo
                     if street_free(b.map, houses, p, r, half) {
                         let yaw = match name {
                             // Parked along the kerb, either way round.
-                            "auto" | "scooter" | "thela" | "thumper" | "commuter" | "discover" | "twostroke" | "sport150" | "roadster" => facing(d) + if rng.random_range(0.0..1.0) < 0.5 { 0.0 } else { std::f32::consts::PI },
+                            "auto" | "car_white" | "car_red" | "car_silver" | "car_blue" | "scooter" | "thela" | "thumper" | "commuter" | "discover" | "twostroke" | "sport150" | "roadster" => facing(d) + if rng.random_range(0.0..1.0) < 0.5 { 0.0 } else { std::f32::consts::PI },
                             // Stalls and chairs face the road.
                             "chai" | "chairs" => facing(-n * side),
                             _ => rng.random_range(0.0..std::f32::consts::TAU),

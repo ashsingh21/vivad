@@ -225,6 +225,55 @@ def bake_ao(o, strength=0.7):
 
 # ------------------------------------------------------------------ street
 
+# The compact hatchbacks parked round the circles, by body colour (one piece each: the kit's
+# colours are in the vertices).
+CARS = {"car_white": (0.92, 0.92, 0.90), "car_red": (0.72, 0.08, 0.08), "car_silver": (0.62, 0.64, 0.66), "car_blue": (0.12, 0.24, 0.52)}
+
+
+def car(name):
+    """A compact hatchback, our own: a rounded tub on four wheels, the glasshouse set back with
+    a short bonnet sloping to the nose, a flat roof, the tail cut off square; bumpers, lamps,
+    grille, mirrors and plates. 3.8 m long, 1.66 wide, 1.5 high; the nose toward +Y."""
+    p = Piece(name)
+    body, dark = CARS[name], (0.12, 0.12, 0.13)
+    R = 0.31
+    # Wheels: tyres across X with a silver hub; the body's flanks hide their tops.
+    for x in (-0.70, 0.70):
+        for y in (-1.22, 1.24):
+            p.cyl((x - 0.1, y, R), (x + 0.1, y, R), R, "tyre", 18)
+            p.cyl((x + math.copysign(0.1, x), y, R), (x + math.copysign(0.115, x), y, R), 0.17, "chrome", 14)
+    # The tub: tail to nose, its waist at about 0.85 m, the bonnet falling to the nose.
+    bikes.loft(p, [((0, -1.90, 0.62), 0.78, 0.26, 0.35), ((0, -1.82, 0.60), 0.83, 0.30, 0.3), ((0, 0.9, 0.58), 0.83, 0.29, 0.3),
+                   ((0, 1.6, 0.55), 0.81, 0.24, 0.32), ((0, 1.90, 0.50), 0.74, 0.17, 0.4)], body)
+    # The glasshouse: tinted, narrowing to the roof, the windscreen raked well back, the tailgate
+    # nearly upright; the roof flush on top and slim pillars along its edges.
+    belt, top = 0.86, 1.42
+    (yb0, yb1), (yt0, yt1), (xb, xt) = (-1.76, 0.95), (-1.62, 0.12), (0.78, 0.65)
+    p.hull([(x, y, belt) for x in (-xb, xb) for y in (yb0, yb1)] + [(x, y, top) for x in (-xt, xt) for y in (yt0, yt1)], C["glass"])
+    p.hull([(x, y, z) for x in (-xt + 0.01, xt - 0.01) for y in (yt0 + 0.02, yt1 - 0.02) for z in (top - 0.01, top + 0.05)], body)
+    for x in (-1, 1):
+        for (yb, yt) in ((yb1, yt1), (-0.38, -0.40), (yb0, yt0)):
+            p.cyl((x * (xb + 0.005), yb, belt), (x * (xt + 0.005), yt, top), 0.04, body, 8)
+        # The door mirror.
+        p.box((x * 0.86 - 0.06, 0.70, 0.90), (x * 0.86 + 0.06, 0.82, 1.0), body)
+    # Bumpers in dark plastic; the grille between the headlamps; lamps and plates.
+    p.box((-0.82, 1.84, 0.30), (0.82, 1.98, 0.50), dark)
+    p.box((-0.82, -1.98, 0.30), (0.82, -1.86, 0.52), dark)
+    p.box((-0.34, 1.86, 0.55), (0.34, 1.92, 0.66), dark, round=False)
+    for x in (-1, 1):
+        p.box((x * 0.58 - 0.17, 1.80, 0.62), (x * 0.58 + 0.17, 1.90, 0.73), "lamp")
+        p.box((x * 0.64 - 0.12, -1.93, 0.72), (x * 0.64 + 0.12, -1.86, 0.90), "red")
+    p.box((-0.22, 1.98, 0.36), (0.22, 2.0, 0.46), "white", round=False)
+    p.box((-0.22, -2.0, 0.60), (0.22, -1.98, 0.70), "white", round=False)
+    # Door lines and handles, a shade darker than the paint.
+    shade = tuple(c * 0.55 for c in body)
+    for x in (-1, 1):
+        for y in (-0.36, 0.86):
+            p.box((x * 0.832, y - 0.01, 0.38), (x * 0.838, y + 0.01, 0.85), shade, round=False)
+        p.box((x * 0.832, 0.32, 0.78), (x * 0.842, 0.46, 0.81), shade, round=False)
+    return p.finish(0.03)
+
+
 def auto():
     """The CNG auto-rickshaw: a rounded green tub tapering into its nose, a domed yellow canopy,
     the passengers' bench under it and the driver's saddle up front; one wheel ahead, two behind."""
@@ -580,6 +629,8 @@ def main():
         objs += build()
     for build in bikes.BIKES:
         objs += build(Piece)
+    for name in CARS:
+        objs += car(name)
     bpy.ops.object.select_all(action="DESELECT")
     for o in objs:
         o.select_set(True)
