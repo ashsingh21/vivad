@@ -104,12 +104,11 @@ armoury only="":
     VIVAD_MUTE=1 VIVAD_BOTS=1 VIVAD_ARMOURY=previews/armoury VIVAD_ARMOURY_ONLY="{{only}}" cargo run --release -p game --bin game
     python3 tools/shots.py sheet previews/armoury -o previews/armoury_sheet.png --cols 4 --width 1600
 
-# The guns from MoCap Online's rifle pack (bandook, tamancha), the ones its animations hold:
-# just pack-guns, or just pack-guns bandook
+# The gun from MoCap Online's rifle pack (the tamancha), the one its animations hold: just pack-guns
 pack-guns *names:
     {{blender}} -b --factory-startup -P tools/blender/weapons/pack_guns.py -- {{names}} 2>&1 | grep -E '^\[|Error|Traceback|  File' || true
 
-# Panga's street armoury (bat, katta, tamancha, dunali, gulel): just desi, or just desi katta
+# Panga's street armoury (bat, katta, dunali, bandook, gulel): just desi, or just desi katta
 desi *names:
     {{blender}} -b --factory-startup -P tools/blender/weapons/desi.py -- {{names}} 2>&1 | grep -E '^\[|Error|Traceback|  File' || true
 

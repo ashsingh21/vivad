@@ -1,5 +1,5 @@
 """Panga's street armoury: the cricket bat, the katta (a country-made single-shot pistol), the
-dunali (a double-barrelled shotgun) and the
+dunali (a double-barrelled shotgun), the bandook (a workshop-built rifle) and the
 gulel (a forked-branch slingshot); and two divine weapons, the Sudarshan Chakra and the Brahmastra. Lofted, given procedural materials, baked to one texture set and
 exported like the rest of the armoury (arsenal.py).
 
@@ -179,6 +179,104 @@ def dunali():
     A.finish("dunali", parts, res=1024, hard=("receiver", "rib", "forend", "pad"))
 
 
+
+# The bandook's measures (m, from the grip along the barrel, as for the dunali), and its bore's
+# height over the grip. Its handguard's underside, where the left palm closes, is AXIS - GUARD_R
+# above the grip: crates/game/src/arms.rs forend() must match.
+B_MUZZLE, B_AXIS, GUARD_R = 0.63, 0.09, 0.026
+
+
+def bandook():
+    """Panga's rifle, a stylised workshop build rather than any real gun: a chunky receiver in
+    truck-paint teal with brass rivets, a round wooden handguard bound with blue tape, a straight
+    box magazine with an orange band, a stubby brass muzzle brake, a small red-dot sight with an
+    orange lens, and a wooden stock in line with the bore, a rubber butt pad. Sized to the rifle the
+    animations were captured with (like the dunali): the handguard where the left palm closes, 26 cm
+    ahead of the grip, the butt 21 cm behind it, 84 cm overall."""
+    paint = F.plain("bandook_paint", (0.05, 0.30, 0.31), rough=0.42, metal_v=0.25)
+    steel = F.metal("bandook_steel", (0.16, 0.16, 0.17), rough=0.38, tarnish=RUST)
+    brass = F.metal("bandook_brass", (0.78, 0.56, 0.24), rough=0.3)
+    wood = F.plain("bandook_wood", (0.44, 0.23, 0.09), rough=0.5)
+    rubber = F.plain("bandook_rubber", (0.05, 0.05, 0.05), rough=0.85)
+    tape = F.wrap("bandook_tape", (0.08, 0.22, 0.62), pitch=0.004)
+    orange = F.plain("bandook_orange", (0.95, 0.45, 0.06), rough=0.45)
+    lens = F.plain("bandook_lens", (1.0, 0.42, 0.08), rough=0.15)
+    ax = B_AXIS
+    o = Vector((0, 0, ax))
+    # The receiver: a rounded block, deep over the grip and the magazine well, sloping up at the
+    # front to meet the handguard; an orange coachline down each side.
+    def rrect(hw, lo, hi, r, n=3):
+        c = (lo + hi) / 2
+        hh = (hi - lo) / 2
+        pts = []
+        for cx, cz, a0 in ((hw - r, hh - r, 0.0), (-hw + r, hh - r, 90.0), (-hw + r, -hh + r, 180.0), (hw - r, -hh + r, 270.0)):
+            for k in range(n + 1):
+                a = math.radians(a0 + 90.0 * k / n)
+                pts.append((cx + r * math.cos(a), c + cz + r * math.sin(a)))
+        return pts
+    frames, rings = [], []
+    for y in (-0.035, -0.03, 0.12, 0.135, 0.15, 0.165):
+        lo = 0.004 if y <= 0.12 else 0.004 + (ax - 0.03 - 0.004) * ((y - 0.12) / 0.045) ** 0.8
+        hw = 0.021 if y in (-0.035, 0.165) else 0.023
+        frames.append((Vector((0, y, 0)), X.copy(), Z.copy()))
+        rings.append(rrect(hw, lo, ax + 0.024, 0.007))
+    parts = [geo.loft("receiver", frames, rings, cap_start="fan", cap_end="fan", material=paint, merge=True)]
+    for sx in (-1, 1):
+        parts.append(box(f"line{sx}", (sx * 0.0232 - 0.0006, -0.02, ax - 0.004), (sx * 0.0232 + 0.0006, 0.14, ax + 0.002), orange))
+    # A raised top cover, a shade narrower, and the sight's mount on it.
+    parts.append(box("cover", (-0.019, -0.03, ax + 0.024), (0.019, 0.15, ax + 0.032), steel))
+    parts.append(box("mount", (-0.011, 0.035, ax + 0.032), (0.011, 0.1, ax + 0.042), steel))
+    sight_o = Vector((0, 0, ax + 0.062))
+    parts.append(A.lathe("sight", [(0.0, 0.03), (0.017, 0.03), (0.019, 0.04), (0.019, 0.098), (0.0165, 0.106), (0.0, 0.106)],
+                         steel, seg=20, axis=Y, origin=sight_o))
+    parts.append(A.lathe("lens", [(0.0, 0.1065), (0.0145, 0.1065), (0.0145, 0.104), (0.0, 0.104)], lens, seg=20, axis=Y, origin=sight_o))
+    for k, (y, z) in enumerate(((0.0, 0.022), (0.105, 0.022), (-0.012, ax + 0.012), (0.125, ax + 0.012))):
+        parts.append(rod(f"rivet{k}", (-0.0243, y, z), (0.0243, y, z), 0.0038, brass, seg=10))
+    # Handguard: round wood round the barrel, eased at both ends, two bands of tape.
+    parts.append(A.lathe("guard", [(0.0, 0.15), (GUARD_R - 0.004, 0.15), (GUARD_R, 0.162), (GUARD_R, 0.39), (GUARD_R - 0.005, 0.405), (0.0, 0.405)],
+                         wood, seg=20, axis=Y, origin=o))
+    for k, y in enumerate((0.185, 0.355)):
+        parts.append(A.lathe(f"tape{k}", [(GUARD_R + 0.0003, y - 0.013), (GUARD_R + 0.0016, y - 0.012), (GUARD_R + 0.0016, y + 0.012),
+                                          (GUARD_R + 0.0003, y + 0.013)], tape, seg=20, axis=Y, origin=o))
+    parts.append(A.lathe("barrel", [(0.0, 0.4), (0.0105, 0.4), (0.0105, 0.565), (0.0, 0.565)], steel, seg=16, axis=Y, origin=o))
+    # A stubby brass brake with three cuts round it.
+    brake = [(0.0, 0.562), (0.0155, 0.562)]
+    for k in range(3):
+        y = 0.572 + k * 0.018
+        brake += [(0.0155, y), (0.0125, y + 0.002), (0.0125, y + 0.006), (0.0155, y + 0.008)]
+    brake += [(0.0155, B_MUZZLE - 0.004), (0.0135, B_MUZZLE), (0.006, B_MUZZLE), (0.006, B_MUZZLE - 0.012), (0.0, B_MUZZLE - 0.012)]
+    parts.append(A.lathe("brake", brake, brass, seg=16, axis=Y, origin=o))
+    parts.append(A.lathe("post", [(0.0, 0.0), (0.0035, 0.0), (0.0025, 0.024), (0.0, 0.026)], steel, seg=8,
+                         origin=Vector((0, 0.535, ax + 0.008))))
+    # A straight box magazine, raked forward a little as it drops, an orange band round its middle.
+    frames, rings = [], []
+    for s in range(4):
+        u = s / 3
+        z = 0.006 - 0.118 * u
+        frames.append((Vector((0, 0.092 + 0.022 * u, z)), X.copy(), Y.copy()))
+        rings.append([(0.0125, -0.024), (0.0125, 0.024), (-0.0125, 0.024), (-0.0125, -0.024)])
+    parts.append(geo.loft("mag", frames, rings, cap_start="fan", cap_end="fan", material=steel, merge=True))
+    parts.append(box("band", (-0.0138, 0.077, -0.06), (0.0138, 0.127, -0.042), orange))
+    parts.append(box("magbase", (-0.0145, 0.084, -0.122), (0.0145, 0.14, -0.111), steel))
+    parts.append(bent("tguard", [(0, 0.06, 0.004), (0, 0.062, -0.02), (0, 0.03, -0.03), (0, 0.0, -0.022), (0, -0.004, 0.004)], 0.0032, steel))
+    parts.append(bent("trigger", [(0, 0.03, 0.004), (0, 0.036, -0.01), (0, 0.03, -0.019)], 0.0035, steel))
+    parts.append(grip_slab("grip", 0.004, -0.095, 0.016, 0.034, rubber))
+    # The stock: from the receiver back in line with the bore, deepening to the butt.
+    S = 8
+    frames, rings = [], []
+    for s in range(S):
+        u = s / (S - 1)
+        y = -0.03 - (BUTT - 0.044) * u
+        top = ax + 0.02 - 0.008 * u
+        bottom = 0.03 - 0.075 * u ** 1.2
+        hw = 0.018 + 0.004 * u
+        frames.append((Vector((0, y, (top + bottom) / 2)), X.copy(), Z.copy()))
+        rings.append(geo.ellipse(hw, (top - bottom) / 2, 14))
+    parts.append(geo.loft("stock", frames, rings, cap_start="fan", cap_end=None, material=wood, merge=True))
+    end_y = frames[-1][0].y
+    parts.append(box("pad", (-0.0235, end_y - 0.014, -0.047), (0.0235, end_y + 0.002, ax + 0.014), rubber))
+    A.finish("bandook", parts, res=1024, hard=("cover", "mount", "mag", "band", "magbase", "pad"))
+
 GULEL_TIPS = (0.034, 0.118)
 
 
@@ -251,7 +349,7 @@ def brahmastra():
 
 
 # (The tamancha is the pistol from MoCap Online's rifle pack: pack_guns.py.)
-BUILDERS = {"bat": bat, "katta": katta, "dunali": dunali, "gulel": gulel, "chakra": chakra,
+BUILDERS = {"bat": bat, "katta": katta, "dunali": dunali, "bandook": bandook, "gulel": gulel, "chakra": chakra,
             "brahmastra": brahmastra}
 
 

@@ -1,6 +1,6 @@
 """The guns from MoCap Online's Rifle Basic pack (tools/blender/characters/mocaponline, gitignored:
-its licence), the ones its rifle animations were captured holding: the rifle as the bandook, the
-pistol as the tamancha. Imported as they are, their own textures cut to 1024 for phones, and
+its licence), the ones its animations were captured holding: the pistol as the tamancha. (Its rifle
+was the bandook until our own, tools/blender/weapons/desi.py, took its place, sized to it.) Imported as they are, their own textures cut to 1024 for phones, and
 exported like the rest of the armoury (arsenal.py): one mesh, one texture set, LOD0 + LOD1.
 
 Each model's origin is the pack's weapon bone in the right hand, the grip the animations close on.
@@ -28,7 +28,6 @@ RES = 1024
 # Our name: (the pack's file, its textures: base colour, ambient occlusion, normal, specular (None:
 # not in the pack), its metalness).
 GUNS = {
-    "bandook": ("M4/M4_Rifle_01.fbx", ("M4DF2048.jpg", "M4AO2048.jpg", "M4NM2048.jpg", "M4SP2048.jpg"), 0.6),
     "tamancha": ("Pistol/1911_01.fbx", ("1911.jpg", None, None, None), 0.6),
 }
 

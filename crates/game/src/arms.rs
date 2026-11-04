@@ -428,11 +428,11 @@ fn orient_bows(
 
 /// Where the left palm meets a long gun, in the gun's frame (its origin the grip, barrel -Z, up
 /// +Y): under the fore-end where the captured left hand closes, 26 cm ahead of the grip, against
-/// its underside (measured from the models: the bandook's handguard bottoms out 7.1 cm above the
-/// grip, the dunali's wooden fore-end 1.3 cm).
+/// its underside (from the models: the bandook's round handguard bottoms out 6.4 cm above the grip,
+/// B_AXIS - GUARD_R in tools/blender/weapons/desi.py, the dunali's wooden fore-end 1.3 cm).
 fn forend(model: &str) -> Vec3 {
     let under = match model {
-        "bandook" => 0.071,
+        "bandook" => 0.064,
         _ => 0.013,
     };
     Vec3::new(0.0, under, -0.26)
