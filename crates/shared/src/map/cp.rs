@@ -313,6 +313,24 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 let (p, q) = (xz(r.ri + 0.36, s0), xz(r.ro - 0.36, s0));
                 let room = (blk * 5 + i) % 7;
                 b.wall(w, p, q, r.g + lift, r.u - SLAB, 0.2, Mat::Paint(room as u8), &[Opening::door(p.distance(q) * 0.35), Opening::door(p.distance(q) * 0.65)]);
+                // A storeroom's racks on both faces, between and beside the doorways.
+                let tangent = Vec2::new(-s0.sin(), s0.cos());
+                let span = p.distance(q);
+                for (t, width) in [(0.17, span * 0.28), (0.5, span * 0.22), (0.83, span * 0.28)] {
+                    let at = p.lerp(q, t);
+                    for side in [-1.0f32, 1.0] {
+                        let f = at + tangent * side * 0.11;
+                        b.map.signs.push(super::ShopSign { pos: Vec3::new(f.x, r.g + lift + 1.2, f.y), facing: tangent * side, width, height: 2.2, kind: SignKind::Shelves });
+                    }
+                }
+            }
+            // Upstairs, a tube light down the middle of every other bay's ceiling, its glow below
+            // (not over a stair well).
+            if i % 2 == 1 && !stairs(i) {
+                for (rad, len) in [((r.ri * 2.0 + r.ro) / 3.0, 1.2), ((r.ri + r.ro * 2.0) / 3.0, 1.2)] {
+                    b.map.signs.push(super::ShopSign { pos: r.at(rad, am, r.g + r.u - SLAB - 0.03 + lift), facing: out_dir(am), width: 0.14, height: len, kind: SignKind::Light });
+                    b.map.signs.push(super::ShopSign { pos: r.at(rad, am, r.g + lift + 0.015), facing: out_dir(am), width: 3.4, height: 3.4, kind: SignKind::Pool });
+                }
             }
             if i % 2 == 0 && !stairs(i) && !stairs(i + 1) && i + 1 < n {
                 let things: [&'static str; 4] = ["crates", "chairs", "drum", "cooler"];

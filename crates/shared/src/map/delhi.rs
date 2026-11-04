@@ -632,6 +632,14 @@ fn hall(b: &mut Builder, rng: &mut SmallRng, pts: &[Vec2], others: &[Vec<Vec2>])
         }
         // Up into the building above, its top hidden there.
         b.wall(w, a, q, 0.0, HALL + 0.1, T, Mat::Rustic, &ops);
+        // A blank wall inside is lined with shelves of goods, a bay every 3.5 m.
+        if ops.is_empty() && len > 4.0 {
+            let k = ((len - 1.0) / 3.5).floor() as usize;
+            for j in 0..k {
+                let p = a + dir * (len * 0.5 + (j as f32 - (k as f32 - 1.0) * 0.5) * 3.5) - out * (T * 0.5 + 0.02);
+                b.map.signs.push(super::ShopSign { pos: Vec3::new(p.x, 1.3, p.y), facing: -out, width: 3.2, height: 2.4, kind: super::SignKind::Shelves });
+            }
+        }
     }
     // Inside: along the longest side's direction, a grid of square columns, wider apart in the
     // bigger halls (about six across the hall's breadth, never under 8 m), and a tube light by
@@ -659,6 +667,8 @@ fn hall(b: &mut Builder, rng: &mut SmallRng, pts: &[Vec2], others: &[Vec<Vec2>])
                 let l = at(x + grid * 0.5, y);
                 if k % 2 == 0 && clear(l, 1.0) {
                     b.map.signs.push(super::ShopSign { pos: Vec3::new(l.x, HALL - 0.03, l.y), facing: v, width: 0.14, height: 1.2, kind: super::SignKind::Light });
+                    let y = b.map.terrain.height(l.x, l.y) + 0.03;
+                    b.map.signs.push(super::ShopSign { pos: Vec3::new(l.x, y, l.y), facing: v, width: 3.6, height: 3.4, kind: super::SignKind::Pool });
                 }
                 let f = at(x + grid * 0.5, y + grid * 0.5);
                 if clear(f, 1.6) {
@@ -674,10 +684,18 @@ fn hall(b: &mut Builder, rng: &mut SmallRng, pts: &[Vec2], others: &[Vec<Vec2>])
     while free.len() > 10 {
         free.swap_remove(rng.random_range(0..free.len()));
     }
-    // Between the columns: counters and clutter, one chest a hall, finds.
+    // Between the columns: counters, racks of goods, clutter, one chest a hall, finds.
     for (k, p) in free.iter().enumerate() {
-        match (k + rng.random_range(0..3)) % 4 {
+        match (k + rng.random_range(0..3)) % 5 {
             0 => b.bx(Frame::new(Vec3::new(p.x, 0.0, p.y), yaw_u), Vec3::new(0.0, 0.5, 0.0), Vec3::new(2.4, 1.0, 0.8), Mat::Wood),
+            // A rack stocked both sides, head high: cover to duck round.
+            3 => {
+                b.bx(Frame::new(Vec3::new(p.x, 0.0, p.y), yaw_u), Vec3::new(0.0, 0.9, 0.0), Vec3::new(2.4, 1.8, 0.6), Mat::Wood);
+                for side in [-1.0f32, 1.0] {
+                    let f = *p + v * side * 0.31;
+                    b.map.signs.push(super::ShopSign { pos: Vec3::new(f.x, 0.9, f.y), facing: v * side, width: 2.3, height: 1.7, kind: super::SignKind::Shelves });
+                }
+            }
             1 => super::kit::place(b, ["crates", "drum", "cooler", "chairs"][rng.random_range(0..4)], Vec3::new(p.x, 0.0, p.y), rng.random_range(0.0..std::f32::consts::TAU)),
             2 => b.loot(w, Vec3::new(p.x, 0.3, p.y)),
             _ => {}

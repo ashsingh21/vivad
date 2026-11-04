@@ -191,6 +191,8 @@ impl Plugin for AutoshotPlugin {
                     ("cp_kerb_outer", v(108.4, 1.7, 98.7), v(85.0, 0.8, 107.2)),
                     // A radial street's mouth on the inner circle: its zebra crossings and kerbs.
                     ("cp_zebra", v(-17.5, 2.2, 70.6), v(-8.2, 0.5, 89.7)),
+                    // Upstairs in the ring, along its rooms; inside a hall, toward its back wall.
+                    ("cp_upper_room", v(79.5, 7.4, 82.4), v(69.0, 6.4, 95.4)),
                     ("cp_loot", v(0.0, 0.0, 0.0), v(0.0, 0.0, 0.0)),
                     ("cp_loot_close", v(0.0, 0.0, 0.0), v(0.0, 0.0, 0.0)),
                     ("03_bazaar_roofs", v(-30.0, 26.0, 40.0), v(5.0, 2.0, 0.0)),
