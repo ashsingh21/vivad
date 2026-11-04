@@ -384,27 +384,33 @@ pub fn inner_road(r: &Ring) -> (f32, f32) {
     (r.park + 4.0, r.ri - 5.0)
 }
 
+/// The outer circle's, beyond the colonnade's pavement and its neem avenue (the buildings round
+/// it start some 20 m out).
+pub fn outer_road(r: &Ring) -> (f32, f32) {
+    (r.ro + 9.5, r.ro + 18.5)
+}
+
 /// The radial streets' carriageway, its half-width.
 const RADIAL_HALF: f32 = 4.5;
 
-/// Tarmac where the ring's roads run: the inner circle all round, and each radial street from
-/// the park out past the blocks (the mapped roads come in pieces that miss the ring's geometry).
+/// Tarmac where the ring's roads run: both circles all round, and each radial street between
+/// them (the mapped roads come in pieces that miss the ring's geometry).
 pub fn paint(t: &mut super::terrain::Terrain, r: &Ring) {
-    let (r0, r1) = inner_road(r);
+    let roads = [inner_road(r), outer_road(r)];
     let n = t.n;
     for i in 0..n {
         for j in 0..n {
             let p = Vec2::new(t.coord(i), t.coord(j)) - r.center.xz();
             let d = p.length();
-            if d < r.park + 2.0 || d > r.ro + 6.0 {
+            if d < r.park + 2.0 || d > roads[1].1 {
                 continue;
             }
             let a = p.y.atan2(p.x);
             let radial = r.streets.iter().any(|&s| {
                 let da = (a - s + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
-                (da * d).abs() < RADIAL_HALF && d > r1 - 1.0
+                (da * d).abs() < RADIAL_HALF && d > roads[0].1 - 1.0 && d < roads[1].0 + 1.0
             });
-            if (d > r0 && d < r1) || radial {
+            if roads.iter().any(|&(r0, r1)| d > r0 && d < r1) || radial {
                 t.ground[i * n + j] = super::terrain::ground::ROAD;
                 t.road_d[i * n + j] = 0.0;
             }
@@ -412,13 +418,11 @@ pub fn paint(t: &mut super::terrain::Terrain, r: &Ring) {
     }
 }
 
-/// The inner circle's markings, drawn a hair over the tarmac: edge lines, a dashed centre line,
-/// a zebra crossing each side of every radial street's mouth, dashes down the radial streets;
+/// Both circles' markings, drawn a hair over the tarmac: edge lines, a dashed centre line, a
+/// zebra crossing each side of every radial street's mouth, dashes down the radial streets;
 /// granite kerbs along both edges (ankle high, drawn only: kerbs that collided would trip).
 pub fn markings(b: &mut Builder, r: &Ring) {
     let tau = std::f32::consts::TAU;
-    let (r0, r1) = inner_road(r);
-    let mid = (r0 + r1) / 2.0;
     let ground = |b: &Builder, rad: f32, a: f32| {
         let p = r.at(rad, a, 0.0);
         b.map.terrain.height(p.x, p.z)
@@ -433,40 +437,48 @@ pub fn markings(b: &mut Builder, r: &Ring) {
     };
     // Crossings span the mouths, RADIAL_HALF + 4 m out from each street's middle.
     let zebra = RADIAL_HALF + 4.0;
-    for (rad, len, gap, width) in [(r0 + 0.4, 2.8, 0.2, 0.12), (r1 - 0.4, 2.8, 0.2, 0.12), (mid, 3.0, 3.0, 0.15)] {
-        let n = (tau * rad / (len + gap)) as usize;
-        for k in 0..n {
-            let a = tau * (k as f32 + 0.5) / n as f32;
-            if off_street(a, rad) > zebra + 2.0 {
-                paint(b, rad, a, len, width);
+    // Each circle, and the edge of it the radial streets join (the blocks' side).
+    let (inner, outer) = (inner_road(r), outer_road(r));
+    for ((r0, r1), joins) in [(inner, inner.1), (outer, outer.0)] {
+        let mid = (r0 + r1) / 2.0;
+        for (rad, len, gap, width) in [(r0 + 0.4, 2.8, 0.2, 0.12), (r1 - 0.4, 2.8, 0.2, 0.12), (mid, 3.0, 3.0, 0.15)] {
+            let n = (tau * rad / (len + gap)) as usize;
+            for k in 0..n {
+                let a = tau * (k as f32 + 0.5) / n as f32;
+                if off_street(a, rad) > zebra + 2.0 {
+                    paint(b, rad, a, len, width);
+                }
+            }
+        }
+        for rad in [r0 - 0.15, r1 + 0.15] {
+            let h = 0.14;
+            let n = (tau * rad / 2.4) as usize;
+            for k in 0..n {
+                let a = tau * (k as f32 + 0.5) / n as f32;
+                // The kerb dips at the crossings and where the radial streets join.
+                if off_street(a, rad) < zebra + 1.6 || ((rad - joins).abs() < 0.5 && off_street(a, rad) < RADIAL_HALF + 0.5) {
+                    continue;
+                }
+                let y = ground(b, rad, a);
+                b.deco(Frame::new(r.center, -a), Vec3::new(rad, y + h / 2.0 - 0.02, 0.0), Vec3::new(0.3, h + 0.04, tau * rad / n as f32 + 0.02), Mat::Granite);
+            }
+        }
+        for &s in &r.streets {
+            // Zebras: stripes along the road, 0.5 m wide a metre apart across it, 3 m to cross on.
+            for side in [-1.0f32, 1.0] {
+                let a = s + side * (zebra - 1.5) / mid;
+                let mut rad = r0 + 0.9;
+                while rad < r1 - 0.9 {
+                    paint(b, rad, a, 3.0, 0.5);
+                    rad += 1.0;
+                }
             }
         }
     }
-    for (rad, h) in [(r0 - 0.15, 0.14), (r1 + 0.15, 0.14)] {
-        let n = (tau * rad / 2.4) as usize;
-        for k in 0..n {
-            let a = tau * (k as f32 + 0.5) / n as f32;
-            // The kerb dips at the crossings and where the radial streets join (the outer edge).
-            if off_street(a, rad) < zebra + 1.6 || (rad > mid && off_street(a, rad) < RADIAL_HALF + 0.5) {
-                continue;
-            }
-            let y = ground(b, rad, a);
-            b.deco(Frame::new(r.center, -a), Vec3::new(rad, y + h / 2.0 - 0.02, 0.0), Vec3::new(0.3, h + 0.04, tau * rad / n as f32 + 0.02), Mat::Granite);
-        }
-    }
+    // Dashes down each radial street, from one circle to the other.
     for &s in &r.streets {
-        // Zebras: stripes along the road, 0.5 m wide a metre apart across it, 3 m to cross on.
-        for side in [-1.0f32, 1.0] {
-            let a = s + side * (zebra - 1.5) / mid;
-            let mut rad = r0 + 0.9;
-            while rad < r1 - 0.9 {
-                paint(b, rad, a, 3.0, 0.5);
-                rad += 1.0;
-            }
-        }
-        // Dashes down the radial street, from the inner circle out past the blocks.
-        let mut rad = r1 + 2.0;
-        while rad < r.ro + 4.0 {
+        let mut rad = inner.1 + 2.0;
+        while rad < outer.0 - 1.5 {
             b.deco(Frame::new(r.center, -s), Vec3::new(rad, ground(b, rad, s) + 0.012, 0.0), Vec3::new(2.4, 0.02, 0.15), Mat::Plaster);
             rad += 5.0;
         }
@@ -503,6 +515,8 @@ pub fn dress(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
     // Facing along the circle at bearing `a` (the kit's models face -Z).
     let along = |a: f32| (a.sin()).atan2(-a.cos());
     let radial_yaw = |a: f32| (-a.cos()).atan2(-a.sin());
+    // A tree's trunk (the avenue's, planted first) within `d` of `p`.
+    let by_tree = |b: &Builder, p: Vec3, d: f32| b.map.props.iter().any(|q| q.trunk.is_some() && q.pos.xz().distance(p.xz()) < d);
     for segs in blocks(r) {
         let n = segs.len();
         for (i, &(s0, s1)) in segs.iter().enumerate() {
@@ -536,6 +550,9 @@ pub fn dress(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                         }
                         let a = s0 + (s1 - s0) * (k as f32 + 0.5) / count as f32;
                         let name = BIKES[rng.random_range(0..BIKES.len())];
+                        if by_tree(b, r.at(kerb + out * 0.4, a, 0.0), 1.4) {
+                            continue;
+                        }
                         place(b, name, r.at(kerb + out * 0.4, a, 0.0), radial_yaw(a) + if out > 0.0 { tau / 2.0 } else { 0.0 } + 0.5 + rng.random_range(-0.08..0.08));
                     }
                 } else if roll < 0.35 {
@@ -543,12 +560,11 @@ pub fn dress(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                     place(b, "auto", r.at(kerb - out * 0.6, a, 0.0), along(a) + if rng.random_bool(0.5) { 0.0 } else { tau / 2.0 });
                 }
             }
-            // Cars parked along the inner circle's edge by the colonnade, a bay at a time, and now
-            // and then along the outer circle.
+            // Cars parked a bay at a time along both circles' edges on the colonnade's side.
             if i > 1 && i + 2 < n {
                 const CARS: [&str; 4] = ["car_white", "car_red", "car_silver", "car_blue"];
                 let a = (s0 + s1) / 2.0;
-                for (rad, odds) in [(inner_road(r).1 - 1.1, 0.35), (r.ro + 5.4, 0.12)] {
+                for (rad, odds) in [(inner_road(r).1 - 1.1, 0.35), (outer_road(r).0 + 1.1, 0.3)] {
                     if rng.random_bool(odds) {
                         place(b, CARS[rng.random_range(0..CARS.len())], r.at(rad, a, 0.0), along(a) + if rng.random_bool(0.5) { 0.0 } else { tau / 2.0 });
                     }
@@ -560,7 +576,9 @@ pub fn dress(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                     let name = if rng.random_bool(0.5) { "chai" } else { "thela" };
                     let a = (s0 + s1) / 2.0;
                     let yaw = if name == "chai" { radial_yaw(a) + if out > 0.0 { 0.0 } else { tau / 2.0 } } else { along(a) };
-                    place(b, name, r.at(kerb + out * 1.5, a, 0.0), yaw);
+                    if !by_tree(b, r.at(kerb + out * 1.5, a, 0.0), 2.0) {
+                        place(b, name, r.at(kerb + out * 1.5, a, 0.0), yaw);
+                    }
                 }
             }
             // By a column now and then, in the verandah: out of the bay's middle, where loot lies.

@@ -824,10 +824,10 @@ fn trees(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp::Rin
             }
         }
     }
-    // Connaught Place's avenues: big neems all round the park's edge, over the inner circle's
-    // pavement, and down the far side of the outer circle, shading the colonnades.
+    // Connaught Place's avenue: big neems down the outer colonnade's pavement, between it and the
+    // outer circle, shading the shops.
     if ring.ri > 0.0 {
-        for (rad, step) in [(ring.ro + 9.0, 18.0)] {
+        for (rad, step) in [(ring.ro + 7.0, 18.0)] {
             let n = (std::f32::consts::TAU * rad / step) as usize;
             for k in 0..n {
                 let a = std::f32::consts::TAU * (k as f32 + rng.random_range(-0.15..0.15)) / n as f32;
