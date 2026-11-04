@@ -286,12 +286,15 @@ def locomotion(rig, name, speed, direction, cadence, duty, lift, crouch, bob, le
         drop = crouch + bob * (0.5 + 0.5 * math.cos(4 * math.pi * (t - duty / 2)))
         sway = 0.025 * math.sin(2 * math.pi * t) if not sideways else 0.0
         rig.move("pelvis", (sway, hips_back, -drop))
-        twist = 0.12 * math.sin(2 * math.pi * t) * (speed / RUN) if not sideways else 0.0
+        # Stepping sideways the hips turn a little toward each step instead (about 3 degrees each
+        # way): held square, the strafes moved like a puppet's.
+        twist = 0.12 * math.sin(2 * math.pi * t) * (speed / RUN) if not sideways else 0.05 * math.sin(2 * math.pi * t)
         rig.rotate("pelvis", UP, twist)
-        # The hip over the planted foot rides up, the swinging leg's side drops a little.
-        if not sideways:
-            rig.rotate("pelvis", FWD, 0.045 * math.cos(2 * math.pi * (t - duty / 2)))
-            rig.rotate("spine_01", FWD, -0.03 * math.cos(2 * math.pi * (t - duty / 2)))
+        # The hip over the planted foot rides up, the swinging leg's side drops a little (more,
+        # stepping sideways, where the legs part and close under it).
+        roll = 0.045 if not sideways else 0.06
+        rig.rotate("pelvis", FWD, roll * math.cos(2 * math.pi * (t - duty / 2)))
+        rig.rotate("spine_01", FWD, -roll * 0.66 * math.cos(2 * math.pi * (t - duty / 2)))
         rig.rotate("spine_01", LEFT, lean * 0.4)
         rig.rotate("spine_02", LEFT, lean * 0.6)
         rig.rotate("spine_02", UP, -twist * 1.8)
@@ -422,9 +425,10 @@ MOTUS_CLIPS = [
 _R, _P = "rifle/", "pistol/"
 _DIRS = (("f", "forward"), ("b", "backward"), ("l", "left"), ("r", "right"))
 MIXAMO_CLIPS = [
-    # Empty-handed (and melee): the walk, the run, the crouch idle; the crouch walk in four
+    # Empty-handed (and melee): the walk (its 7 cm bob calmed to about 4, a walk's), the run, the
+    # crouch idle; the crouch walk in four
     # directions on the rifle pack's crouched legs, the arms hanging relaxed.
-    ("walk_f", "Walking", 1.8, {}),
+    ("walk_f", "Walking", 1.8, {"calm": 0.6}),
     ("crouch_idle", "Crouch Idle", 0.0, {}),
     ("crouch_f", f"{_R}walk crouching forward", 1.4, {"relax": True}),
     ("crouch_b", "Walk Crouching Backward", 1.4, {}),
@@ -438,19 +442,20 @@ MIXAMO_CLIPS = [
     *[(f"rifle_run_{d}", f"{_R}run {w}", 5.6, {}) for d, w in _DIRS],
     *[(f"rifle_crouch_{d}", f"{_R}walk crouching {w}", 1.4, {}) for d, w in _DIRS],
     ("rifle_sprint_f", f"{_R}sprint forward", 8.6, {}),
-    # Holding a pistol: the pistol pack (its strafes for both walking and running sideways).
+    # Holding a pistol: the pistol pack (its strafes for both walking and running sideways), the
+    # hips' bounce halved (8-10 cm as captured).
     ("pistol_idle", f"{_P}pistol idle", 0.0, {}),
     # Aiming or firing a pistol: its idle's two-handed hold, laid over the legs.
     ("pistol_aim", f"{_P}pistol idle", 0.0, {}),
     ("pistol_crouch_idle", f"{_P}pistol kneeling idle", 0.0, {}),
-    ("pistol_walk_f", f"{_P}pistol walk", 1.8, {}),
-    ("pistol_walk_b", f"{_P}pistol walk backward", 1.8, {}),
-    ("pistol_walk_l", f"{_P}pistol strafe", 1.8, {}),
-    ("pistol_walk_r", f"{_P}pistol strafe (2)", 1.8, {}),
-    ("pistol_run_f", f"{_P}pistol run", 5.6, {}),
-    ("pistol_run_b", f"{_P}pistol run backward", 5.6, {}),
-    ("pistol_run_l", f"{_P}pistol strafe", 5.6, {}),
-    ("pistol_run_r", f"{_P}pistol strafe (2)", 5.6, {}),
+    ("pistol_walk_f", f"{_P}pistol walk", 1.8, {"calm": 0.5}),
+    ("pistol_walk_b", f"{_P}pistol walk backward", 1.8, {"calm": 0.5}),
+    ("pistol_walk_l", f"{_P}pistol strafe", 1.8, {"calm": 0.5}),
+    ("pistol_walk_r", f"{_P}pistol strafe (2)", 1.8, {"calm": 0.5}),
+    ("pistol_run_f", f"{_P}pistol run", 5.6, {"calm": 0.5}),
+    ("pistol_run_b", f"{_P}pistol run backward", 5.6, {"calm": 0.5}),
+    ("pistol_run_l", f"{_P}pistol strafe", 5.6, {"calm": 0.5}),
+    ("pistol_run_r", f"{_P}pistol strafe (2)", 5.6, {"calm": 0.5}),
     # In the air: the jump's rise off the ground, knees tucking (the game holds its middle), and a
     # drop off a ledge for the fall, both hips-at-rest so the legs move under the body.
     ("jump", "Jumping Up", 0.0, {"window": (33, 51), "air": True}),
@@ -1533,7 +1538,10 @@ def slide_pose(rig, t):
     rig.leg_ik("l", (hl.x + lx, hl.y - lead * ly, ground + lz), pole("lead_pole", kl))
     rig.foot_pitch("l", lerp(a["lead_foot"][0], z["lead_foot"][0], kf), yaw=lerp(a["lead_foot"][1], z["lead_foot"][1], kf))
     ry, rz = lerp(a["fold"][1], z["fold"][1], kl), lerp(a["fold"][2], z["fold"][2], kl)
-    rig.leg_ik("r", (hr.x + lerp(fx(a["fold"]), fx(z["fold"]), kl), hr.y - lead * ry, ground + rz), pole("fold_pole", kl))
+    # The folded leg's knee drawn straight across between its ends (over the top, it flipped round
+    # in the drop and the get-up, the foot and toes with it).
+    fold_pole = vec("fold_pole", kl)
+    rig.leg_ik("r", (hr.x + lerp(fx(a["fold"]), fx(z["fold"]), kl), hr.y - lead * ry, ground + rz), fold_pole)
     rig.foot_pitch("r", lerp(a["fold_foot"][0], z["fold_foot"][0], kf), yaw=lerp(a["fold_foot"][1], z["fold_foot"][1], kf))
     for s in "lr":
         sw, el, out = vec(f"arm_{s}", k)
@@ -1851,7 +1859,7 @@ def main():
         bpy.context.view_layer.objects.active = arm
         bpy.ops.object.mode_set(mode="POSE")
         n = transfer(rig, msrc, macts, name, None, speed, bones=MIXAMO_BONES, src_fps=mfps, ref=None, relax=opts.get("relax", False),
-                     keep=opts.get("keep"), window=opts.get("window"), pingpong=opts.get("pingpong", False), air=opts.get("air", False))
+                     keep=opts.get("keep"), window=opts.get("window"), pingpong=opts.get("pingpong", False), air=opts.get("air", False), calm=opts.get("calm", 1.0))
         if speed:
             cycles[name] = n
         print(f"[anims] {name} from Mixamo's {file} ({mfps:.0f} fps)")
