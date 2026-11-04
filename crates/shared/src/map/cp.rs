@@ -52,7 +52,6 @@ impl Ring {
 pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
     let w = Frame::new(Vec3::ZERO, 0.0);
     let tau = std::f32::consts::TAU;
-    let half_gap = (r.street / 2.0 / r.ri).asin();
     // The park: a fountain basin and the tall flag at its heart.
     let c = r.center;
     b.cyl(w, c, 3.2, 0.55, Mat::Marble);
@@ -68,18 +67,12 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
         b.loot(w, p + Vec3::Y * (b.map.terrain.height(p.x, p.z) + 0.3));
     }
     park(b, rng, r);
-    let mut streets = r.streets.clone();
-    streets.sort_by(f32::total_cmp);
     // Deep blocks are two rows of shops back to back, one facing each colonnade.
     let (core0, core1) = (r.ri + r.ver, r.ro - r.ver);
     let split = core1 - core0 > 14.0;
     let mid = (core0 + core1) / 2.0;
-    for blk in 0..streets.len() {
-        let a0 = streets[blk] + half_gap;
-        let a1 = streets[(blk + 1) % streets.len()] + if blk + 1 == streets.len() { tau } else { 0.0 } - half_gap;
-        let n = (((a1 - a0) * r.ri) / r.seg_len).round().max(4.0) as usize;
-        let ang = |t: f32| a0 + (a1 - a0) * t;
-        let segs: Vec<(f32, f32)> = (0..n).map(|i| (ang(i as f32 / n as f32), ang((i + 1) as f32 / n as f32))).collect();
+    for (blk, segs) in blocks(r).into_iter().enumerate() {
+        let n = segs.len();
         let xz = |rad: f32, a: f32| r.at(rad, a, 0.0).xz();
         // Stairs every ten shops or so (at least one per block), in the middle of each run.
         let stairs = |i: usize| i % 10 == 5 || (n <= 10 && i == n / 2);
@@ -329,6 +322,95 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
             if rng.random_bool(0.3) {
                 let rad = if rng.random_bool(0.5) { r.ro - r.ver / 2.0 } else { r.ri + r.ver / 2.0 };
                 b.loot(radial, Vec3::new(rad, 0.3, 0.0));
+            }
+        }
+    }
+}
+
+
+/// Each block's shop segments (start and end bearings), between one radial street and the next.
+fn blocks(r: &Ring) -> Vec<Vec<(f32, f32)>> {
+    let tau = std::f32::consts::TAU;
+    let half_gap = (r.street / 2.0 / r.ri).asin();
+    let mut streets = r.streets.clone();
+    streets.sort_by(f32::total_cmp);
+    (0..streets.len())
+        .map(|blk| {
+            let a0 = streets[blk] + half_gap;
+            let a1 = streets[(blk + 1) % streets.len()] + if blk + 1 == streets.len() { tau } else { 0.0 } - half_gap;
+            let n = (((a1 - a0) * r.ri) / r.seg_len).round().max(4.0) as usize;
+            let ang = |t: f32| a0 + (a1 - a0) * t;
+            (0..n).map(|i| (ang(i as f32 / n as f32), ang((i + 1) as f32 / n as f32))).collect()
+        })
+        .collect()
+}
+
+/// The ring lived in, after the street kit: roof life on the terraces (stair rooms, coolers,
+/// dishes, solar panels, tanks of drums), two-wheelers parked in rows along both circles' kerbs
+/// with autos between, a chai stall or thela by each block's ends, and a few planters, crates and
+/// coolers by the colonnade's columns.
+pub fn dress(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
+    use super::kit::place;
+    let tau = std::f32::consts::TAU;
+    const ROOF: [&str; 7] = ["cooler", "dish", "solar", "drum", "crates", "pot", "clothesline"];
+    const BIKES: [&str; 6] = ["scooter", "scooter", "commuter", "thumper", "discover", "sport150"];
+    // Facing along the circle at bearing `a` (the kit's models face -Z).
+    let along = |a: f32| (a.sin()).atan2(-a.cos());
+    let radial_yaw = |a: f32| (-a.cos()).atan2(-a.sin());
+    for segs in blocks(r) {
+        let n = segs.len();
+        for (i, &(s0, s1)) in segs.iter().enumerate() {
+            let lift = if i % 2 == 0 { 0.0 } else { 0.02 };
+            let roof = r.g + r.u + lift + 0.04;
+            // A stair room every eight or so shops, else one or two things, kept off the parapets.
+            if i % 8 == 3 {
+                place(b, "mumty", r.at((r.ri + r.ro) / 2.0 + rng.random_range(-4.0..4.0), (s0 + s1) / 2.0, roof), along(s0) + if rng.random_bool(0.5) { 0.0 } else { tau / 2.0 });
+            } else {
+                for _ in 0..rng.random_range(1..5) {
+                    let name = ROOF[rng.random_range(0..ROOF.len())];
+                    let rad = rng.random_range(r.ri + 2.0..r.ro - 2.0);
+                    let yaw = if name == "solar" || name == "clothesline" { along(s0) } else { rng.random_range(0.0..tau) };
+                    place(b, name, r.at(rad, s0 + (s1 - s0) * rng.random_range(0.2..0.8), roof), yaw);
+                }
+            }
+            // The kerbs: the inner circle's against the colonnade, the outer circle's beyond it.
+            for (kerb, out) in [(r.ri - 2.6, -1.0f32), (r.ro + 2.6, 1.0)] {
+                // Not across the radial streets' mouths, nor right at the block's ends.
+                if i == 0 || i + 1 == n {
+                    continue;
+                }
+                let roll = rng.random_range(0.0..1.0);
+                if roll < 0.2 {
+                    // A row of two-wheelers nosed in, angled, side by side down the bay.
+                    let chord = (s1 - s0) * kerb;
+                    let count = ((chord / 0.95) as usize).min(3);
+                    for k in 0..count {
+                        if rng.random_bool(0.2) {
+                            continue;
+                        }
+                        let a = s0 + (s1 - s0) * (k as f32 + 0.5) / count as f32;
+                        let name = BIKES[rng.random_range(0..BIKES.len())];
+                        place(b, name, r.at(kerb + out * 0.4, a, 0.0), radial_yaw(a) + if out > 0.0 { tau / 2.0 } else { 0.0 } + 0.5 + rng.random_range(-0.08..0.08));
+                    }
+                } else if roll < 0.35 {
+                    let a = (s0 + s1) / 2.0;
+                    place(b, "auto", r.at(kerb - out * 0.6, a, 0.0), along(a) + if rng.random_bool(0.5) { 0.0 } else { tau / 2.0 });
+                }
+            }
+            // A stall at each block's ends, by the street corner, facing the passers-by.
+            if i == 1 || i + 2 == n {
+                for (kerb, out) in [(r.ri - 3.0, -1.0f32), (r.ro + 3.0, 1.0)] {
+                    let name = if rng.random_bool(0.5) { "chai" } else { "thela" };
+                    let a = (s0 + s1) / 2.0;
+                    let yaw = if name == "chai" { radial_yaw(a) + if out > 0.0 { 0.0 } else { tau / 2.0 } } else { along(a) };
+                    place(b, name, r.at(kerb + out * 1.5, a, 0.0), yaw);
+                }
+            }
+            // By a column now and then, in the verandah: out of the bay's middle, where loot lies.
+            if rng.random_bool(0.18) {
+                let (rad, name) = if rng.random_bool(0.5) { (r.ri + 1.3, "planter") } else { (r.ro - 1.3, ["crates", "cooler", "pot"][rng.random_range(0..3)]) };
+                let a = s0 + 1.3 / rad;
+                place(b, name, r.at(rad, a, 0.0), rng.random_range(0.0..tau));
             }
         }
     }

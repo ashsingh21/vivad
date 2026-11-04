@@ -156,6 +156,9 @@ pub fn generate(id: super::MapId, seed: u64) -> MapLayout {
     super::kit::streets(&mut b, &mut rng, &roads, &houses, HALF);
     super::kit::open_spaces(&mut b, &mut rng, &houses, HALF);
     super::kit::roofs(&mut b, &mut rng);
+    if id == super::MapId::Cp {
+        super::cp::dress(&mut b, &mut rng, &ring);
+    }
     street_loot(&mut b, &mut rng, &data, &ring, &houses);
     map.terrain.settle_under(&map.blocks);
     map.pois = data.pois.iter().map(|p| Poi { name: p.name.clone(), center: Vec3::new(p.x, 0.0, p.z), radius: p.r }).collect();

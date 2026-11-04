@@ -28,9 +28,11 @@ impl Plugin for StreetPlugin {
 }
 
 const CHUNK: f32 = 32.0;
-/// Where LOD1 takes over, and where the pieces stop being drawn (from a chunk's centre, before the
-/// quality level's scale): the chunk's slack added.
+/// Where LOD1 takes over, where the far band (the heavy pieces' LOD2, the rest's LOD1 again) does,
+/// and where the pieces stop being drawn (from a chunk's centre, before the quality level's
+/// scale): the chunk's slack added.
 const SWITCH: f32 = 35.0;
+const MID: f32 = 55.0;
 const FAR: f32 = 140.0;
 
 /// The wear textures (tools/textures/city.py), and how many metres one repeat covers.
@@ -124,8 +126,11 @@ fn build_kit(
     let mut own_materials: HashMap<AssetId<StandardMaterial>, Handle<StandardMaterial>> = HashMap::new();
     for piece in &layout.kit {
         let key = ((piece.pos.x / CHUNK).floor() as i32, (piece.pos.z / CHUNK).floor() as i32);
-        for lod in 0..2 {
-            let Some((template, own)) = templates.entry((piece.name, lod)).or_insert_with(|| mesh_of(piece.name, lod)) else { continue };
+        for lod in 0..3 {
+            // The far band: LOD2 where the piece has one, else its LOD1.
+            let have = templates.entry((piece.name, lod)).or_insert_with(|| mesh_of(piece.name, lod)).is_some();
+            let from = if lod == 2 && !have { 1 } else { lod };
+            let Some((template, own)) = templates.entry((piece.name, from)).or_insert_with(|| mesh_of(piece.name, from)) else { continue };
             let mut placed = template.clone().transformed_by(Transform::from_translation(piece.pos).with_rotation(Quat::from_rotation_y(piece.yaw)));
             let mat = own.as_ref().map(|h| {
                 own_materials.insert(h.id(), h.clone());
@@ -147,7 +152,11 @@ fn build_kit(
         }
     }
     let slack = CHUNK * 0.71;
-    let ranges = [(0.0..0.0, SWITCH + slack..SWITCH + slack + 6.0), (SWITCH + slack..SWITCH + slack + 6.0, FAR + slack..FAR + slack + 15.0)];
+    let ranges = [
+        (0.0..0.0, SWITCH + slack..SWITCH + slack + 6.0),
+        (SWITCH + slack..SWITCH + slack + 6.0, MID + slack..MID + slack + 8.0),
+        (MID + slack..MID + slack + 8.0, FAR + slack..FAR + slack + 15.0),
+    ];
     let n = chunks.len();
     for ((cx, cz, lod, mat), mesh) in chunks {
         // The origin at the chunk's centre: LOD distances are measured from it.

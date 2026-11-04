@@ -6,7 +6,7 @@ a desert cooler, a dish, a solar panel, a washing line and a stair room (mumty) 
 One file, every piece a mesh named after it (`auto_LOD0`, `auto_LOD1`, ...), coloured per vertex
 (COLOR_0) with no textures or materials of its own: the game merges every placed copy into one mesh
 per chunk with one shared material (crate::street), so a whole street is a few draws
-(docs/rendering-guidelines.md section 3). LOD1 is LOD0 decimated to ~40%.
+(docs/rendering-guidelines.md section 3). LOD1 is LOD0 decimated to ~40%; the heavy pieces' LOD2 to 10%.
 
 Each piece stands on its origin (z = 0), facing Blender +Y (game -Z). Sizes are real, in metres; the
 footprints the map uses for colliders are in shared::map::kit.
@@ -171,7 +171,23 @@ class Piece:
         d.ratio = 0.4
         bpy.context.view_layer.objects.active = lod1
         bpy.ops.object.modifier_apply(modifier=d.name)
-        return [o, lod1]
+        # The heavy pieces (the two-wheelers, the auto: thousands of triangles in spokes, lamps and
+        # cables) get a LOD2 for the far band, a tenth of LOD0: a parked row seen across a circle.
+        if len(me.polygons) < HEAVY:
+            return [o, lod1]
+        lod2 = o.copy()
+        lod2.data = o.data.copy()
+        lod2.name = lod2.data.name = f"{self.name}_LOD2"
+        bpy.context.scene.collection.objects.link(lod2)
+        d = lod2.modifiers.new("decimate", "DECIMATE")
+        d.ratio = 0.1
+        bpy.context.view_layer.objects.active = lod2
+        bpy.ops.object.modifier_apply(modifier=d.name)
+        return [o, lod1, lod2]
+
+
+# Triangles in LOD0 from which a piece gets a LOD2.
+HEAVY = 3000
 
 
 def bake_ao(o, strength=0.7):
