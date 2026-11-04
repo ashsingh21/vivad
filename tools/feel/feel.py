@@ -65,6 +65,8 @@ SCENES = [
                                   (3.9, "-KeyW"), (3.9, "-ShiftLeft"), (4.3, "+KeyC"), (4.4, "-KeyC")]),
     ("jump_run", "bat", 4.5, [(0.5, "+KeyW"), (1.6, "+Space"), (1.7, "-Space"), (3.4, "-KeyW")]),
     ("jump_still", "bat", 2.8, [(0.5, "+Space"), (0.6, "-Space")]),
+    ("jump_sprint", "bat", 4.5, [(0.5, "+KeyW"), (0.5, "+ShiftLeft"), (1.8, "+Space"), (1.9, "-Space"), (3.6, "-KeyW"), (3.6, "-ShiftLeft")]),
+    ("rifle_jump_run", "bandook", 4.5, [(0.5, "+KeyW"), (0.5, "+ShiftLeft"), (1.8, "+Space"), (1.9, "-Space"), (3.6, "-KeyW"), (3.6, "-ShiftLeft")]),
     ("strafe_flip", "bat", 4.0, [(0.5, "+KeyA"), (1.7, "-KeyA"), (1.7, "+KeyD"), (2.9, "-KeyD")]),
     ("reverse", "bat", 4.5, [(0.5, "+KeyW"), (2.0, "-KeyW"), (2.0, "+KeyS"), (3.2, "-KeyS")]),
     ("turn_sprint", "bat", 4.0, [(0.5, "+KeyW"), (0.5, "+ShiftLeft"), (1.8, "Turn90"), (3.0, "-KeyW"), (3.0, "-ShiftLeft")]),
@@ -93,6 +95,11 @@ TARGETS = {
     "stride": ((0.92, 1.08), "range"),
     "pop": (5.0, "max"),
     "arch": (12.0, "max"),
+    # Knees and feet aimed off the body's forward (degrees), and turning fast (degrees in 0.1 s).
+    "knee": (35.0, "max"),
+    "foot": (35.0, "max"),
+    "knee_twist": (25.0, "max"),
+    "foot_twist": (25.0, "max"),
 }
 
 
@@ -359,6 +366,41 @@ def measure(d):
         m["arm_swing"] = float((np.percentile(hz, 95) - np.percentile(hz, 5)) * 100)
         m["run_pitch"] = float(np.median(pitch[fast]))
         m["bob"] = float((np.percentile(pel[fast], 95) - np.percentile(pel[fast], 5)) * 100)
+    # Legs: which way each knee and foot points from the body's forward (degrees, + outward), on
+    # the ground and in the air. A knee is aimed where the leg bends (only read while it bends 4 cm
+    # or more off the hip-to-ankle line); a twist is the knee or foot turning fast (degrees in 0.1 s).
+    for where, w in (("ground", ground), ("air", (d["grounded"] < 0.5) & (np.array(d["mode"]) == "ground"))):
+        worst = {}
+        for side, sx in (("l", -1), ("r", 1)):
+            hip, knee, ankle, ball = (loc[:, B(f"{b}_{side}")] for b in ("thigh", "calf", "foot", "ball"))
+            line = ankle - hip
+            u = line / np.maximum(np.linalg.norm(line, axis=1, keepdims=True), 1e-4)
+            off = (knee - hip) - ((knee - hip) * u).sum(1, keepdims=True) * u
+            bent = np.linalg.norm(off[:, [0, 2]], axis=1) > 0.04
+            kyaw = np.degrees(np.arctan2(off[:, 0] * sx, off[:, 2]))
+            fv = ball - ankle
+            fyaw = np.degrees(np.arctan2(fv[:, 0] * sx, fv[:, 2]))
+            # (Only while the foot lies near level: one kicked up behind points anywhere.)
+            flat = np.linalg.norm(fv[:, [0, 2]], axis=1) > 0.7 * np.linalg.norm(fv, axis=1)
+            for k, y, ok in (("knee", kyaw, w & bent), ("foot", fyaw, w & flat)):
+                if ok.sum() < 5:
+                    continue
+                i = np.flatnonzero(ok)[np.argmax(np.abs(y[ok]))]
+                if abs(y[i]) > abs(worst.get(k, (0, 0, ""))[0]):
+                    worst[k] = (float(y[i]), t[i], f"{side} {d['legs'][i]} {d['action'][i]}")
+                # Twist: the change over 0.1 s, within the window.
+                j = np.searchsorted(t, t + 0.1).clip(0, len(t) - 1)
+                both = ok & ok[j]
+                if both.any():
+                    dy = np.abs((y[j] - y + 180) % 360 - 180)
+                    i = np.flatnonzero(both)[np.argmax(dy[both])]
+                    if dy[i] > worst.get(k + "_twist", (0, 0, ""))[0]:
+                        worst[k + "_twist"] = (float(dy[i]), t[i], f"{side} {d['legs'][i]} {d['action'][i]} {y[i]:+.0f}->{y[j[i]]:+.0f}")
+        for k, (v, at, what) in worst.items():
+            m[f"{where}_{k}"] = abs(v)
+            lim = TARGETS.get(f"{k}"[:4] + ("_twist" if "twist" in k else ""), (None,))[0]
+            if lim is not None and abs(v) > lim:
+                notes.append(f"{where} {k} {at:.2f}: {v:+.0f} deg ({what})")
     a = arch(loc)
     upright = ground & (d["crouched"] < 0.5)
     if upright.any():
@@ -370,6 +412,7 @@ def measure(d):
 
 
 def verdict(k, v):
+    k = k.removeprefix("ground_").removeprefix("air_")
     if k not in TARGETS:
         return ""
     lim, how = TARGETS[k]
@@ -381,7 +424,8 @@ def verdict(k, v):
 
 UNITS = {"start_t90": "s", "stop_time": "s", "settle": "s", "land_settle": "s", "flip_time": "s", "turn_time": "s",
          "slide_drop": "s", "slide_getup": "s", "land_dip": "cm", "foot_slide": "cm/s", "stride": "x",
-         "pop": "cm", "arch": "deg", "arm_swing": "cm", "bob": "cm", "run_pitch": "deg", "turn_lean": "deg"}
+         "pop": "cm", "arch": "deg", "arm_swing": "cm", "bob": "cm", "run_pitch": "deg", "turn_lean": "deg",
+         **{f"{w}_{k}": "deg" for w in ("ground", "air") for k in ("knee", "foot", "knee_twist", "foot_twist")}}
 
 
 def check(path, quiet_notes=False):

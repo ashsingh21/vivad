@@ -395,7 +395,8 @@ RIFLE_GAIT = {
     "walk": (1.35, 1.12, 1.23, 1.27), "run": (5.16, 2.72, 4.36, 4.88), "crouch": (0.93, 0.92, 1.12, 1.02),
     "aimwalk": (1.29, 1.19, 1.14, 1.10), "aimrun": (3.02, 2.52, 3.50, 3.97), "aimcrouch": (0.88, 0.84, 1.09, 0.98),
 }
-RIFLE_SPRINT = 6.2
+# As fast as the plain sprint (Fortnite's sprint doesn't care what's in your hands).
+RIFLE_SPRINT = 8.6
 _G = lambda gait, d: RIFLE_GAIT[gait]["fblr".index(d)]
 MOTUS_CLIPS = [
     # The idles from where they settle (each file opens on a step in from another pose), there and
@@ -1178,6 +1179,72 @@ def straighten(rig, name, k=1.0):
     print(f"[anims] {name}: back bent {math.degrees(sum(before) / len(before)):.0f} -> {math.degrees(sum(after) / len(after)):.0f} deg off its lean")
 
 
+# How far a knee may aim off straight ahead (radians): in, and (by default) out; and how far a
+# foot points out past its knee.
+KNEE_IN, KNEE_OUT, TOE_OUT = math.radians(5), math.radians(15), math.radians(6)
+
+
+def square_knees(rig, name, out_max=KNEE_OUT):
+    """Turn `name`'s knees (each leg about its hip-to-ankle line, the ankle staying put) to aim
+    near ahead, frame by frame, each foot pointing the way its knee does. Mixamo's jump tucks the
+    right knee out 81 degrees and the left in 26, and the idle stands with the right knee out 58,
+    the foot 44: in the air (and taking off from standing) the legs read as twisted."""
+    sc = bpy.context.scene
+    act = bpy.data.actions[name]
+    rig.obj.animation_data.action = act
+    f0, f1 = map(int, act.frame_range)
+    poses = []
+    for f in range(f0, f1 + 1):
+        sc.frame_set(f)
+        poses.append({pb.name: pb.matrix_basis.copy() for pb in rig.pb})
+    new_action(rig, name)
+
+    def yaw(v, out):
+        return math.atan2(v.dot(out), v.dot(FWD))
+
+    worst = [0.0, 0.0]
+    for i, pose in enumerate(poses):
+        for pb in rig.pb:
+            pb.matrix_basis = pose[pb.name]
+        bpy.context.view_layer.update()
+        for s, out in (("l", LEFT), ("r", -LEFT)):
+            # About UP, + turns the left side out (+x) and the right one in.
+            sign = 1 if s == "l" else -1
+            hip, knee, ankle = rig.head(f"thigh_{s}"), rig.head(f"calf_{s}"), rig.head(f"foot_{s}")
+            line = (ankle - hip).normalized()
+            bend = (knee - hip) - line * (knee - hip).dot(line)
+            flat = Vector((bend.x, bend.y, 0.0))
+            # A leg near straight has no clear knee direction: the foot's own way counts.
+            toe = rig.head(f"ball_{s}") - ankle
+            toe_flat = Vector((toe.x, toe.y, 0.0))
+            k = yaw(flat, out) if flat.length > 0.04 else yaw(toe_flat, out) - TOE_OUT
+            want = max(-KNEE_IN, min(out_max, k))
+            worst[0] = max(worst[0], abs(k))
+            worst[1] = max(worst[1], abs(want))
+            if abs(want - k) > 1e-3 and flat.length > 0.04:
+                spin = Matrix.Rotation((want - k) * sign, 3, UP)
+                foot, ball = rig.world_rot(f"foot_{s}"), rig.world_rot(f"ball_{s}")
+                rig.leg_ik(s, ankle, pole=spin @ bend)
+                rig.set_world_rot(f"foot_{s}", foot)
+                rig.set_world_rot(f"ball_{s}", ball)
+            # The foot (and toes) turned about UP into a band round the knee's way (from straight
+            # with it to a little more out), eased in as it lies flatter (one pointed down has no
+            # clear way round, and a foot flipping in and out of the turn would pop).
+            toe = rig.head(f"ball_{s}") - rig.head(f"foot_{s}")
+            toe_flat = Vector((toe.x, toe.y, 0.0))
+            ease = max(0.0, min(1.0, (toe_flat.length / max(toe.length, 1e-6) - 0.5) / 0.3))
+            fy = yaw(toe_flat, out)
+            d = (max(want, min(want + 2 * TOE_OUT, fy)) - fy) * sign * ease
+            if ease > 0.0:
+                if abs(d) > 1e-3:
+                    q = Matrix.Rotation(d, 3, UP).to_quaternion()
+                    foot, ball = rig.world_rot(f"foot_{s}"), rig.world_rot(f"ball_{s}")
+                    rig.set_world_rot(f"foot_{s}", q @ foot)
+                    rig.set_world_rot(f"ball_{s}", q @ ball)
+        rig.key(i + 1)
+    print(f"[anims] {name}: knees aimed {math.degrees(worst[0]):.0f} -> {math.degrees(worst[1]):.0f} deg off ahead at worst")
+
+
 # Clips whose head turns on purpose (a swing's follow-through, a fall), left as they are.
 LOOK_FREE = ("melee_", "death", "freefall", "glide", "consume", "bow_draw")
 
@@ -1825,11 +1892,12 @@ def main():
     # The sprint's steps are a runner's; only its bounce (14 cm) calmed, to about 9.
     cycles["run_f"] = mocap(rig, src, acts, "run_f", "Jog_Fwd_Loop", RUN, stride=0.72, calm=0.35, ball=True, kick=0.9, lift=0.05)
     cycles["sprint_f"] = transfer(rig, src, acts, "sprint_f", "Sprint_Loop", SPRINT, keep=TORSO_KEEP, calm=0.65)
-    # Sprinting with a long gun, as in Fortnite: the sprint's body at the rifle sprint's speed in a
-    # runner's steps (shortened, not slowed: at its own stride, 6.2 m/s is 120 bounding steps a
-    # minute), the gun across the chest in both hands. Becomes rifle_sprint_f (`port_arms`).
-    cycles["sprint_1h"] = mocap(rig, src, acts, "sprint_1h", "Sprint_Loop", RIFLE_SPRINT, stride=0.75, calm=0.6, ball=True, lift=0.03)
+    # Sprinting with a long gun, as in Fortnite: the sprint itself at the same speed, the gun across
+    # the chest in both hands. Becomes rifle_sprint_f (`port_arms`).
+    cycles["sprint_1h"] = transfer(rig, src, acts, "sprint_1h", "Sprint_Loop", RIFLE_SPRINT, keep=TORSO_KEEP, calm=0.65)
     transfer(rig, src, acts, "idle", "Idle_Loop", 0.0, keep=TORSO_KEEP)
+    # Stood square enough to spring from (the capture's right knee turns out 58 degrees).
+    square_knees(rig, "idle", math.radians(22))
     # A stroll, its steps a little longer than the clip's (it walks slowly).
     cycles["walk_f"] = mocap(rig, src, acts, "walk_f", "Walk_Loop", WALK, stride=1.4)
     # Crouching: the clips' own motion, their deep hunch eased to a fairly upright back with the
@@ -1864,6 +1932,11 @@ def main():
             cycles[name] = n
         print(f"[anims] {name} from Mixamo's {file} ({mfps:.0f} fps)")
         drop_mocap(mobjs, macts, arm)
+    # Mixamo's pistol set stands and walks duck-footed (knees out 54-66 degrees; the backpedal
+    # knock-kneed, 51 in).
+    for n in ("pistol_idle", "pistol_walk_f", "pistol_walk_b"):
+        if n in bpy.data.actions:
+            square_knees(rig, n, math.radians(22))
     # Moving with a gun: the plain walk and run under the gun's hold (the packs' own runs are a
     # tactical jog, hunched, arms locked out), and still: a long gun at low ready (our own hold,
     # fitted to the gun: the packs' left hand isn't where our fore-end is), a pistol in both hands
@@ -1900,6 +1973,9 @@ def main():
     for run, arms in HIGH_READY:
         if run in bpy.data.actions and arms in bpy.data.actions:
             arms_from(rig, run, arms)
+    for n in ("jump", "fall"):
+        if n in bpy.data.actions:
+            square_knees(rig, n)
     # In the air with a long gun: the jump's and fall's legs and body, the gun held up in both hands
     # as when aiming and pointed ahead (the plain ones throw the arms out and drop the gun).
     for n in ("jump", "fall"):

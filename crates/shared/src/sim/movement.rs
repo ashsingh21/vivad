@@ -53,8 +53,8 @@ pub const RIFLE_CROUCH: Gait = Gait([0.93, 0.92, 1.12, 1.02]);
 pub const RIFLE_AIM_WALK: Gait = Gait([1.29, 1.19, 1.14, 1.10]);
 pub const RIFLE_AIM_RUN: Gait = Gait([3.02, 2.52, 3.50, 3.97]);
 pub const RIFLE_AIM_CROUCH: Gait = Gait([0.88, 0.84, 1.09, 0.98]);
-/// The pack has no sprint: its run, a fifth quicker.
-pub const RIFLE_SPRINT: f32 = 6.2;
+/// As fast as the plain sprint: what's in your hands doesn't slow it (as in Fortnite).
+pub const RIFLE_SPRINT: f32 = SPRINT_SPEED;
 
 /// Guns held in both hands (and moved with like a rifle).
 pub fn long_gun(item: &str) -> bool {

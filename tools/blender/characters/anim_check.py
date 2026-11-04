@@ -9,6 +9,7 @@ For each clip, sampled frame by frame on the exported rig (assets/models/charact
          feet skate), how far the feet sink below or float over the ground, and how fast a planted
          foot drifts sideways (skating across the step)
   knees  bent backward (the knee behind the hip-to-ankle line)
+         and aimed off ahead (degrees, + out: legs turned sideways or twisted in the air)
   elbows bent the wrong way (the elbow pointing forward, ahead of the shoulder-to-wrist line)
   hands  a hand inside the torso; for gun clips, how far apart the hands are (both on the gun)
   pops   the biggest jump in any bone's turn from one frame to the next, against the median
@@ -37,7 +38,7 @@ FPS = 30
 SPEEDS = {"walk": 1.8, "run": 5.6, "sprint": 8.6, "crouch": 1.4}
 # A long gun's gaits by direction (f, b, l, r): the rifle pack's recorded speeds (anims.py RIFLE_GAIT).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-RIFLE = {"walk": (1.35, 1.12, 1.23, 1.27), "run": (5.16, 2.72, 4.36, 4.88), "crouch": (0.93, 0.92, 1.12, 1.02), "sprint": (6.2,) * 4}
+RIFLE = {"walk": (1.35, 1.12, 1.23, 1.27), "run": (5.16, 2.72, 4.36, 4.88), "crouch": (0.93, 0.92, 1.12, 1.02), "sprint": (8.6,) * 4}
 RIFLE_AIM = {"walk": (1.29, 1.19, 1.14, 1.10), "run": (3.02, 2.52, 3.50, 3.97), "crouch": (0.88, 0.84, 1.09, 0.98)}
 # Ground-contact clips (the feet should touch the ground; the rest are in the air or lying down).
 AIR = ("jump", "fall", "freefall", "glide", "death", "slide", "rifle_slide", "rifle_jump", "rifle_fall")
@@ -83,7 +84,7 @@ def main():
     ankle = min(P("foot_l").z, P("foot_r").z)
     torso = ("pelvis", "spine_01", "spine_02", "spine_03", "neck_01", "head")
     print(f"[check] {variant}: {len(bpy.data.actions)} clips; ground at ball height {ground:.3f} m")
-    print(f"{'clip':22s} {'frm':>3s} {'feet x':>6s} {'sink':>5s} {'float':>5s} {'skid':>4s} {'hands':>5s} {'pop':>5s} {'head':>9s} {'hips':>9s} {'lean':>7s} {'arch':>7s} {'waist':>6s} {'hips':>6s}")
+    print(f"{'clip':22s} {'frm':>3s} {'feet x':>6s} {'sink':>5s} {'float':>5s} {'skid':>4s} {'hands':>5s} {'pop':>5s} {'head':>9s} {'hips':>9s} {'lean':>7s} {'arch':>7s} {'waist':>6s} {'hips':>6s} {'knee':>5s}")
     names = sorted(a.name for a in bpy.data.actions)
     for name in names:
         if only and name not in only:
@@ -162,6 +163,20 @@ def main():
                         bad += 1
             if bad:
                 flags.append(f"knee backward x{bad}")
+        # Knees aimed off ahead (+ out), where the leg bends 4 cm or more: a strafe's hips turned
+        # toward the run turn the knees with them; Mixamo's jump tucked one out 81 degrees.
+        aim = 0.0
+        if not upper:
+            for fr in frames:
+                for s, out in (("l", Vector((1, 0, 0))), ("r", Vector((-1, 0, 0)))):
+                    h, k, a = fr["p"][f"thigh_{s}"], fr["p"][f"calf_{s}"], fr["p"][f"foot_{s}"]
+                    line = (a - h).normalized()
+                    off = (k - h) - line * (k - h).dot(line)
+                    if Vector((off.x, off.y)).length > 0.04:
+                        y = math.degrees(math.atan2(off.dot(out), off.dot(Vector((0, -1, 0)))))
+                        aim = y if abs(y) > abs(aim) else aim
+            if abs(aim) > 40 and name not in ("slide", "rifle_slide", "death"):
+                flags.append(f"knee aimed {aim:+.0f} deg")
         # Elbows forward, hands in the body, hands apart on a gun.
         bad, inside, apart = 0, 0, []
         for fr in frames:
@@ -209,7 +224,7 @@ def main():
         hips = [fr["p"]["pelvis"].z - ground for fr in frames]
         fmt = lambda x: "  -  " if x != x else f"{x:5.2f}"
         print(f"{name:22s} {n:3d} {fmt(feet_x):>6s} {fmt(sink * 100 if sink == sink else sink):>5s} {fmt(flt * 100 if flt == flt else flt):>5s} "
-              f"{fmt(skid)[1:]:>4s} {hands:5.2f} {pop:5.1f} {min(head):4.2f}-{max(head):4.2f} {min(hips):4.2f}-{max(hips):4.2f} {lean_m:+7.1f} {arch_m:+7.1f} {low_m:+6.1f} {tilt_m:+6.1f} "
+              f"{fmt(skid)[1:]:>4s} {hands:5.2f} {pop:5.1f} {min(head):4.2f}-{max(head):4.2f} {min(hips):4.2f}-{max(hips):4.2f} {lean_m:+7.1f} {arch_m:+7.1f} {low_m:+6.1f} {tilt_m:+6.1f} {aim:+5.0f} "
               + ("! " + "; ".join(flags) if flags else "ok"))
 
 
