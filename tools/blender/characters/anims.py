@@ -723,7 +723,7 @@ def crouch_idle(rig):
 
 
 def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_TPose", relax=False, keep=None, window=None,
-             pingpong=False, air=False, joints=False):
+             pingpong=False, air=False, joints=False, calm=1.0):
     """Retarget a clip bone by bone: every joint's rotation copied from the source, as a turn from
     its rest in world space, onto ours (each source bone first aligned to our rest's direction, so
     the rigs' different rest poses don't matter: a T-pose's arms onto our A). Twists, shoulders,
@@ -737,7 +737,10 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
     hunch). `window`: only these source frames (first, last), `pingpong` played there and back to
     loop seamlessly. `joints`: line bones up joint to joint (below), for a source whose bone tails
     point anywhere. `air`: airborne, the hips held at rest height (the body is where the game puts
-    it; the legs tuck up under the hips rather than the whole body rising)."""
+    it; the legs tuck up under the hips rather than the whole body rising). `calm`: the hips' rise
+    and fall scaled about their middle (the library's jog bounces 24 cm a stride, a real one 8-10),
+    the legs reaching down by IK to where the captured ankles were, so the feet still land and
+    push off where they did."""
     bmap = bones or {}
     sb = lambda n: src.pose.bones.get(bmap.get(n, n)) or next((b for b in src.pose.bones if b.name.lower() == n), None)
     ours = [b.name for b in rig.obj.data.bones if b.name in rig.pb and b.name != "Root" and sb(b.name)]
@@ -860,8 +863,10 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
         if lands:
             S = S[lands[0]:] + S[:lands[0]]
     new_action(rig, name)
+    rig.clip = name
     depth = lambda n: len(rig.obj.data.bones[n].parent_recursive)
     order = sorted(ours, key=depth)
+    mid_z = sum((x[1].z - s_pelvis.z) * r for x in S) / len(S)
     for i in range(out + 1):
         rots, pelvis, _, _ = S[i] if i < len(S) else S[i % out]
         rig.rest()
@@ -877,6 +882,20 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
                 # Part of the turn from our rest, in world space.
                 q = Quaternion().slerp(q @ t_rot[n].inverted(), keep[n]) @ t_rot[n]
             rig.set_world_rot(n, q)
+        if calm != 1.0:
+            # The legs as captured, then the hips eased toward their middle height and the legs
+            # reaching back to the same ankles, feet and toes.
+            legs = {s: (rig.head(f"foot_{s}"), rig.head(f"calf_{s}"), rig.world_rot(f"foot_{s}"), rig.world_rot(f"ball_{s}")) for s in "lr"}
+            rig.move("pelvis", (0.0, 0.0, (mid_z - off.z) * (1.0 - calm)))
+            for s in "lr":
+                ankle, knee, foot, ball = legs[s]
+                # The knee bends the way it did; a leg near straight has no clear way, so forward.
+                hip = rig.head(f"thigh_{s}")
+                line = (ankle - hip).normalized()
+                bend = (knee - hip) - line * (knee - hip).dot(line)
+                rig.leg_ik(s, ankle, pole=bend.normalized() if bend.length > 0.03 else FWD)
+                rig.set_world_rot(f"foot_{s}", foot)
+                rig.set_world_rot(f"ball_{s}", ball)
         if relax:
             for s in "lr":
                 c = math.cos(2 * math.pi * i / out) * (1 if s == "r" else -1)
@@ -884,6 +903,27 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
                 relax_fingers(rig, s, 0.5)
         rig.key(i + 1)
     return out
+
+
+# The actions the game lays over the legs, torso only (crates/game/src/animation.rs UPPER_BODY,
+# OPTIONAL_UPPER): posed over hips at rest, the game holding the torso to that posture whatever
+# the legs' hips do (crates/game/src/arms.rs pose_torso).
+UPPER = ("melee_guard", "melee_swing", "melee_swing_b", "bow_draw", "rifle_aim", "consume", "pistol_aim")
+
+
+def over_rest_hips(rig, name):
+    """The hips turned back to rest under each frame of `name`, the torso kept where it was."""
+    act = bpy.data.actions[name]
+    rig.obj.animation_data.action = act
+    f0, f1 = map(int, act.frame_range)
+    for f in range(f0, f1 + 1):
+        bpy.context.scene.frame_set(f)
+        chest = rig.world_rot("spine_01")
+        rig.pb["pelvis"].rotation_quaternion = Quaternion()
+        bpy.context.view_layer.update()
+        rig.set_world_rot("spine_01", chest)
+        rig.key(f)
+    rig.obj.animation_data.action = None
 
 
 PISTOL_DROP = 0.6
@@ -1657,8 +1697,9 @@ def main():
     src, objs, acts = load_mocap("ual")
     bpy.context.view_layer.objects.active = arm
     bpy.ops.object.mode_set(mode="POSE")
-    cycles["run_f"] = transfer(rig, src, acts, "run_f", "Jog_Fwd_Loop", RUN, keep=TORSO_KEEP)
-    cycles["sprint_f"] = transfer(rig, src, acts, "sprint_f", "Sprint_Loop", SPRINT, keep=TORSO_KEEP)
+    # Both bounce far more than a real run (24 and 14 cm a stride): calmed to about 9.
+    cycles["run_f"] = transfer(rig, src, acts, "run_f", "Jog_Fwd_Loop", RUN, keep=TORSO_KEEP, calm=0.37)
+    cycles["sprint_f"] = transfer(rig, src, acts, "sprint_f", "Sprint_Loop", SPRINT, keep=TORSO_KEEP, calm=0.65)
     transfer(rig, src, acts, "idle", "Idle_Loop", 0.0, keep=TORSO_KEEP)
     # A stroll, its steps a little longer than the clip's (it walks slowly).
     cycles["walk_f"] = mocap(rig, src, acts, "walk_f", "Walk_Loop", WALK, stride=1.4)
@@ -1768,6 +1809,9 @@ def main():
     if not (RIFLE_PACK and "rifle_aim" in bpy.data.actions):
         hold_pose(rig, "rifle_aim", 10, rifle_aim_pose)
     hold_pose(rig, "consume", 30, consume_pose)
+    for name in UPPER:
+        if name in bpy.data.actions:
+            over_rest_hips(rig, name)
     print(f"[anims] {variant}: leg {rig.leg:.3f} m, cycles {cycles}, IK reach clamped on {rig.clamped} leg poses")
     print(f"[anims] stance duty: {rig.duty}")
     print("[anims] worst ankle shortfall (m): " + ", ".join(f"{k} {v:.3f}" for k, v in sorted(rig.worst.items())))
@@ -1780,7 +1824,10 @@ def main():
     for act in bpy.data.actions:
         tr = arm.animation_data.nla_tracks.new()
         tr.name = act.name
-        tr.strips.new(act.name, int(act.frame_range[0]), act)
+        # Each strip at frame 0, so its first key is at time 0: at its own first frame (1/30 s) the
+        # game held the first pose for a frame before every loop (a stutter, a foot freezing then
+        # jumping at each seam).
+        tr.strips.new(act.name, 0, act)
         tr.mute = True
     bpy.ops.object.mode_set(mode="OBJECT")
     bpy.ops.object.select_all(action="DESELECT")

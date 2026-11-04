@@ -215,8 +215,10 @@ fn dress_warriors(mut commands: Commands, q: Query<(Entity, &WarriorVisual), Add
                 // Torso and drawing-hand bones for the aim layer and the bow string.
                 let at = |n: &str| named.get(n).and_then(|&e| transforms.get(e).ok()).map(|t| t.translation);
                 let spine = ["spine_01", "spine_02", "spine_03", "neck_01"].map(|n| named.get(n).copied());
-                if let (Some(hand_l), [Some(a), Some(b), Some(c), Some(d)], Some(i), Some(m), Some(p)) =
-                    (named.get("hand_l").copied(), spine, at("index_01_l"), at("middle_01_l"), at("pinky_01_l"))
+                let pelvis = named.get("pelvis").copied();
+                let pelvis_rest = pelvis.and_then(|e| transforms.get(e).ok()).map(|t| t.rotation).unwrap_or_default();
+                if let (Some(hand_l), [Some(a), Some(b), Some(c), Some(d)], Some(i), Some(m), Some(p), Some(pelvis)) =
+                    (named.get("hand_l").copied(), spine, at("index_01_l"), at("middle_01_l"), at("pinky_01_l"), pelvis)
                 {
                     // The string sits in the crook of the curled index and middle fingers.
                     let pinch_l = m * 1.3 + crate::arms::palm_normal(i, m, p) * 0.025;
@@ -228,6 +230,8 @@ fn dress_warriors(mut commands: Commands, q: Query<(Entity, &WarriorVisual), Add
                     commands.entity(vis).insert(crate::arms::Body {
                         root: ready.entity,
                         spine: [a, b, c, d],
+                        pelvis,
+                        pelvis_rest,
                         hand_l,
                         pinch_l,
                         knuckle_l: m,

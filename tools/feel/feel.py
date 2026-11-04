@@ -104,6 +104,7 @@ def load(path):
     # Rates come from the frame clock (rt): match time (t) steps with the sim's ticks.
     d = {k: num(k) for k in ["rt", "dt", "move_x", "move_y", "yaw", "pitch", "held", "grounded", "crouched", "sliding",
                              "vx", "vy", "vz", "px", "py", "pz", "facing", "lean"]}
+    d["phase"] = num("phase") if "phase" in rows[0] else np.zeros(len(rows))
     d["mt"], d["t"] = num("t"), d.pop("rt")
     for k in ["scene", "keys", "legs", "action", "clips", "mode"]:
         d[k] = [r[k] for r in rows]
@@ -178,6 +179,9 @@ def pose_speed(loc, t):
 def events(d):
     t, mv = d["t"], np.hypot(d["move_x"], d["move_y"])
     out = []
+    for i in range(1, len(t)):
+        if d["keys"][i] != d["keys"][i - 1]:
+            out.append(("keys", t[i]))
     moving = mv > 0.1
     for i in range(1, len(t)):
         if moving[i] and not moving[i - 1]:
@@ -201,7 +205,7 @@ def events(d):
         dyaw = (d["yaw"][i] - d["yaw"][i - 1] + math.pi) % (2 * math.pi) - math.pi
         if abs(dyaw) > 0.02 and not any(e[0] == "turn" and t[i] - e[1] < 0.5 for e in out):
             out.append(("turn", t[i]))
-    return out
+    return sorted(out, key=lambda e: e[1])
 
 
 def measure(d):
@@ -214,9 +218,12 @@ def measure(d):
     pitch = torso_pitch(loc)
     m, notes = {}, []
     put = lambda k, v: m.__setitem__(k, max(m.get(k, v), v)) if v is not None else None
-    for kind, at in events(d):
+    evs = events(d)
+    for k, (kind, at) in enumerate(evs):
+        # Up to the next key change (a sprint pressed later isn't this start's top speed).
+        nxt = min([e for _, e in evs[k + 1:] if e > at + 0.05] + [at + 1.6])
         if kind == "start":
-            w = after(t, at, at + 1.6)
+            w = after(t, at, nxt)
             top = sp[w].max() if w.any() else 0
             t90 = first(w & (sp >= 0.9 * top), t)
             if top > 0.5 and t90 is not None:
@@ -247,16 +254,20 @@ def measure(d):
                 notes.append(f"stop {at:.2f}: from {v0:.1f} m/s, still in {still - at:.2f}s over {dist:.2f} m; body settles {settle:.2f}s later; "
                              f"lean {pitch[lw].min():+.0f}..{pitch[lw].max():+.0f} deg")
         elif kind == "land":
+            # Settled: the airborne clips (jump, fall) faded out, the ground's clips playing. The
+            # dip: the pelvis's lowest just after against its usual low (a run's own bob is no dip).
+            air = np.array([sum(float(p.rsplit("=", 1)[1]) for p in c.split("|") if p and p.split("=")[0].removeprefix("rifle_").rstrip("~") in ("jump", "fall"))
+                            for c in d["clips"]])
             w = after(t, at, at + 0.8)
-            later = after(t, at + 0.8, at + 1.2)
+            later = after(t, at + 0.8, at + 1.6)
             if w.any():
-                rest = np.median(pel[later]) if later.any() else np.median(pel[w][-5:])
-                dip = rest - pel[w].min()
-                out_of = np.flatnonzero(w & (np.abs(pel - rest) > 0.01))
-                settle = (t[out_of[-1]] - at) if len(out_of) else 0.0
+                usual = np.percentile(pel[later], 5) if later.sum() > 10 else np.median(pel[w][-5:])
+                dip = usual - pel[w].min()
+                done = first(w & (air < 0.1), t)
+                settle = (done - at) if done is not None else 0.8
                 put("land_dip", dip * 100)
                 put("land_settle", settle)
-                notes.append(f"land {at:.2f}: pelvis dips {dip * 100:.1f} cm, settles in {settle:.2f}s")
+                notes.append(f"land {at:.2f}: pelvis dips {dip * 100:.1f} cm below its usual low, back on the ground's clips in {settle:.2f}s")
         elif kind == "flip":
             i = np.searchsorted(t, at)
             v_before = np.array([d["vx"][i - 1], d["vz"][i - 1]])
@@ -425,7 +436,7 @@ def plot(path, only=None, out=OUT, title=None):
                 ax[0].axvline(t[i], color="tab:orange", lw=0.8)
                 ax[0].text(t[i], ax[0].get_ylim()[1] if i else 9, k or "-", fontsize=7, rotation=90, va="top", color="tab:orange")
                 prev = k
-        for kind, at in events(s):
+        for kind, at in [e for e in events(s) if e[0] != "keys"]:
             for a in ax:
                 a.axvline(at - s["t"][0], color="tab:red", lw=0.6, ls=":")
             ax[3].text(at - s["t"][0], 0, kind, fontsize=7, color="tab:red")
@@ -532,13 +543,17 @@ def run(only=None):
     scenes, keys = script(only)
     env = dict(os.environ, VIVAD_MUTE="1", VIVAD_BOTS="1", VIVAD_MAP="cp", VIVAD_MAP_SEED="7",
                VIVAD_FEEL=scenes, VIVAD_KEYS=keys, VIVAD_TRACE=TRACE)
+    # Never measure an old run's trace by mistake.
+    if os.path.exists(TRACE):
+        os.remove(TRACE)
     p = subprocess.run(["cargo", "run", "--release", "-q", "-p", "game", "--bin", "game"], cwd=ROOT, env=env,
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     for line in p.stdout.splitlines():
         if line.startswith("[feel]") or "panicked" in line or line.startswith("error"):
             print(line)
-    if not os.path.exists(TRACE):
-        sys.exit("[feel] no trace written")
+    if not os.path.exists(TRACE) or "[feel] scene end" not in p.stdout:
+        print("\n".join(p.stdout.splitlines()[-20:]))
+        sys.exit(f"[feel] the game stopped before the scenes ended (exit {p.returncode}): no numbers")
     check(TRACE)
 
 

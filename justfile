@@ -79,6 +79,11 @@ anims:
 animcheck variant="male" clips="":
     {{blender}} -b -t 1 -P tools/blender/characters/anim_check.py -- {{variant}} {{clips}} 2>&1 | grep -E '^\[check|^clip|^[a-z_]+ +[0-9]|Error|Traceback' || true
 
+# Each clip's hips and back by the numbers (bob, sway, twist, roll, lean, arch): just clipstats, or
+# just clipstats female run_f,sprint_f
+clipstats variant="male" clips="":
+    {{blender}} -b -t 1 build/anims_{{variant}}.blend -P tools/blender/characters/clip_stats.py -- $(echo "{{clips}}" | tr ',' ' ') 2>&1 | grep '^\[clip\]'
+
 # Every sound effect, synthesized (prints level, length, brightness and loop-seam numbers).
 sfx:
     python3 tools/audio/sfx.py --report

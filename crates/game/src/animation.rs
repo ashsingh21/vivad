@@ -121,6 +121,11 @@ impl AnimSet {
 }
 
 impl WarriorAnim {
+    /// Where the locomotion cycle is (0..1: the left foot lands at 0, the right at 0.5).
+    pub fn phase(&self) -> f32 {
+        self.phase
+    }
+
     /// The clips playing and their weights, heaviest first: (name, played masked, weight), for
     /// `crate::feel`'s trace.
     pub fn blend(&self, sets: &AnimSets) -> Vec<(&'static str, bool, f32)> {
@@ -128,7 +133,7 @@ impl WarriorAnim {
         let mut out: Vec<_> = self
             .weights
             .iter()
-            .filter_map(|(node, w)| set.nodes.iter().find_map(|(n, (full, mask))| if full == node { Some((*n, false, *w)) } else if *mask == Some(*node) { Some((*n, true, *w)) } else { None }))
+            .filter_map(|(node, &(w, _))| set.nodes.iter().find_map(|(n, (full, mask))| if full == node { Some((*n, false, w)) } else if *mask == Some(*node) { Some((*n, true, w)) } else { None }))
             .collect();
         out.sort_by(|a, b| b.2.total_cmp(&a.2));
         out
@@ -159,8 +164,13 @@ pub struct WarriorAnim {
     variant: usize,
     player: Entity,
     phase: f32,
+    /// How fast the cycle is going (cycles per second), and the legs' own velocity (forward,
+    /// right; m/s): see `drive`.
+    rate: f32,
+    legs: Vec2,
     clock: f32,
-    weights: HashMap<AnimationNodeIndex, f32>,
+    /// Each clip's weight and how fast it's changing (`ease`).
+    weights: HashMap<AnimationNodeIndex, (f32, f32)>,
     /// Alternate sword cuts: forehand, then the backhand return.
     backhand: bool,
     last_swing: f32,
@@ -169,6 +179,9 @@ pub struct WarriorAnim {
     swing_lag: f32,
     /// Weight of the bow draw clip: how far the string follows the drawing hand.
     pub bow_weight: f32,
+    /// Weight of the upper-body action laid over the legs (`UPPER_BODY`): how far the torso is
+    /// held to the action's own posture over the legs' hips (`crate::arms::pose_torso`).
+    pub upper: f32,
     /// Seconds since this warrior's pose was last updated (see `due`).
     since_pose: f32,
     /// How much of the aim pitch the torso takes (eased with the held item).
@@ -281,6 +294,8 @@ pub fn bind(commands: &mut Commands, sets: &AnimSets, variant: usize, rig_root: 
         variant,
         player: rig_root,
         phase: 0.0,
+        rate: 0.0,
+        legs: Vec2::ZERO,
         clock: 0.0,
         weights: HashMap::new(),
         backhand: false,
@@ -288,6 +303,7 @@ pub fn bind(commands: &mut Commands, sets: &AnimSets, variant: usize, rig_root: 
         hit_stop: 0.0,
         swing_lag: 0.0,
         bow_weight: 0.0,
+        upper: 0.0,
         since_pose: 0.0,
         aim_share: 0.0,
         slide_from: None,
@@ -378,6 +394,17 @@ pub fn bow_draw(kind: &ItemKind, act: &Action, loaded: bool, aiming: bool) -> Op
     })
 }
 
+/// A clip's weight `(w, rate)` moved toward `target` over `dt`: critically damped, so a blend
+/// starts gently from rest as well as settling (an exponential fade jumps a seventh of the way on
+/// its first frame: a limb visibly snapping into the new clip). 90% there in about 3.9 / `k`
+/// seconds. Exact for any step (far warriors are posed every few frames).
+fn ease((w, v): (f32, f32), target: f32, k: f32, dt: f32) -> (f32, f32) {
+    let x = w - target;
+    let c = v + k * x;
+    let e = (-k * dt).exp();
+    (target + (x + c * dt) * e, (v - k * c * dt) * e)
+}
+
 fn clip_speed(name: &str) -> f32 {
     let dir = |n: &str| match n.as_bytes().last() {
         Some(b'f') => 0,
@@ -435,6 +462,12 @@ fn drive(
         let vel = (hist.curr - hist.prev) / fixed.timestep().as_secs_f32().max(1e-4);
         let local = tf.rotation.inverse() * vel;
         let (forward, right) = (-local.z, local.x);
+        // The legs' own speed: with the body's at once when it speeds up (feet planted), easing
+        // down when it slows (the capsule stops in a few frames; a stride stops in a fraction of a
+        // second, run to walk to standing, not every foot freezing where it was).
+        let raw = Vec2::new(forward, right);
+        anim.legs = if raw.length() >= anim.legs.length() { raw } else { raw + (anim.legs - raw) * (-dt * feel.stop_ease).exp() };
+        let (lf, lr) = (anim.legs.x, anim.legs.y);
 
         // Targets: (clip, use the masked node?, weight, time in the clip).
         let mut want: Vec<(&'static str, bool, f32, f32)> = vec![];
@@ -500,10 +533,11 @@ fn drive(
                     } else if low {
                         // The crouch walk in the direction of travel (two nearest by angle), over
                         // the crouch idle; forward only where the file has no others.
-                        let a = (speed / gaits.crouch.speed(forward, right)).clamp(0.0, 1.0);
+                        let ls = lf.hypot(lr);
+                        let a = (ls / gaits.crouch.speed(lf, lr)).clamp(0.0, 1.0);
                         let mut out = vec![("crouch_idle", 1.0 - a)];
-                        if set.has("crouch_b") && speed > 0.05 {
-                            let (f, r) = (forward / speed, right / speed);
+                        if set.has("crouch_b") && ls > 0.05 {
+                            let (f, r) = (lf / ls, lr / ls);
                             for (n, w) in [("crouch_f", f.max(0.0)), ("crouch_b", (-f).max(0.0)), ("crouch_l", (-r).max(0.0)), ("crouch_r", r.max(0.0))] {
                                 if w * w * a > 1e-3 {
                                     out.push((n, w * w * a));
@@ -514,11 +548,11 @@ fn drive(
                         }
                         out
                     } else {
-                        locomotion_weights(forward, right, gaits)
+                        locomotion_weights(lf, lr, gaits)
                     };
                     let loco: Vec<(&'static str, f32)> = loco.into_iter().map(|(n, w)| (set.pick(prefix, n), w)).collect();
-                    // Advance the shared cycle at the real ground speed.
-                    let speed = forward.hypot(right);
+                    // Advance the shared cycle at the legs' speed.
+                    let speed = lf.hypot(lr);
                     let (mut rate, mut wsum) = (0.0, 0.0);
                     for (n, w) in &loco {
                         let v = clip_speed(n);
@@ -527,10 +561,11 @@ fn drive(
                             wsum += w;
                         }
                     }
-                    if wsum > 0.0 {
+                    anim.rate = if wsum > 0.0 { rate / wsum } else { 0.0 };
+                    if anim.rate > 1e-3 {
                         // Contacts are at the cycle's start (left foot) and middle (right).
                         let before = anim.phase;
-                        anim.phase = (anim.phase + dt * rate / wsum).fract();
+                        anim.phase = (anim.phase + dt * anim.rate).fract();
                         let crossed = anim.phase < before || (before < 0.5 && anim.phase >= 0.5);
                         if crossed && speed > 0.8 {
                             steps.write(Footstep { who: wv.sim, pos: tf.translation - Vec3::Y * shared::sim::HALF_HEIGHT, speed, crouched: low });
@@ -639,7 +674,6 @@ fn drive(
             continue;
         }
         let pose_dt = std::mem::take(&mut anim.since_pose);
-        let k = (pose_dt * feel.fade_rate).min(1.0);
         let mut targets: HashMap<AnimationNodeIndex, (f32, f32)> = HashMap::new();
         for (n, masked, w, t) in want {
             let Some(&(full, mask)) = set.nodes.get(n) else { continue };
@@ -651,18 +685,23 @@ fn drive(
         all.sort();
         all.dedup();
         anim.bow_weight = 0.0;
+        anim.upper = 0.0;
         // The rifle's aiming set raises the gun as the aim layer does: its clips' summed weight.
         let mut aim_set = 0.0f32;
         for node in all {
             let (target, t) = targets.get(&node).copied().unwrap_or((0.0, -1.0));
-            let w = anim.weights.entry(node).or_insert(0.0);
-            *w += (target - *w) * k;
+            let w = anim.weights.entry(node).or_insert((0.0, 0.0));
+            *w = ease(*w, target, feel.blend_rate, pose_dt);
+            let (w, _) = w;
             if *w < 1e-3 && target == 0.0 {
                 anim.weights.remove(&node);
                 player.stop(node);
                 continue;
             }
-            let w = *w;
+            let w = w.clamp(0.0, 1.0);
+            if UPPER_BODY.iter().chain(OPTIONAL_UPPER.iter()).any(|c| set.nodes.get(c).is_some_and(|n| n.1 == Some(node))) {
+                anim.upper = (anim.upper + w).min(1.0);
+            }
             if ["bow_draw", "rifle_aim", "pistol_aim"].iter().any(|c| set.nodes.get(c).is_some_and(|n| n.1 == Some(node))) {
                 anim.bow_weight = anim.bow_weight.max(w);
             }

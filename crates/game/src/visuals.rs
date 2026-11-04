@@ -616,7 +616,7 @@ pub struct HeldWeapon {
     landed: f32,
 }
 
-/// After landing, the gun comes back once the glide's pose has faded (the animation's fade rate, feel.ron:
+/// After landing, the gun comes back once the glide's pose has faded (the animation's blend rate, feel.ron:
 /// down to a few percent), so it never shows in a hand still holding the glider.
 const UNSTOW: f32 = 0.3;
 

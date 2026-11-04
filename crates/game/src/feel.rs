@@ -42,8 +42,12 @@ pub struct TraceBones(pub Vec<Entity>);
 /// Movement feel tunables (assets/data/feel.ron).
 #[derive(Resource, Deserialize, Clone, Copy, Debug)]
 pub struct Feel {
-    /// How fast clip weights move to their targets (per second): every blend's speed.
-    pub fade_rate: f32,
+    /// How fast clip weights move to their targets: every blend eases in and out, 90% done in
+    /// about 3.9 / blend_rate seconds (`crate::animation::ease`).
+    pub blend_rate: f32,
+    /// How fast the legs' own speed eases down when the body slows (per second): a stop's
+    /// strides run out over about 2.3 / stop_ease seconds.
+    pub stop_ease: f32,
     /// How fast the drawn body turns to its facing (per second), fighting and not.
     pub turn_rate_fight: f32,
     pub turn_rate: f32,
@@ -77,7 +81,7 @@ impl Plugin for FeelPlugin {
                     Some(Scene { name: name.into(), at: t, item: item.into() })
                 })
                 .collect();
-            app.insert_resource(Scenes { list: scenes, index: None, spot: None })
+            app.insert_resource(Scenes { list: scenes, index: None, spot: None, title: None })
                 .add_systems(PreUpdate, stage_scenes.after(crate::input::LocalInput));
         }
     }
@@ -93,7 +97,7 @@ struct Trace {
 }
 
 fn header() -> String {
-    let mut h = String::from("t,rt,dt,scene,keys,move_x,move_y,yaw,pitch,held,mode,grounded,crouched,sliding,vx,vy,vz,px,py,pz,facing,lean,legs,action,clips");
+    let mut h = String::from("t,rt,dt,scene,keys,move_x,move_y,yaw,pitch,held,mode,grounded,crouched,sliding,vx,vy,vz,px,py,pz,facing,lean,phase,legs,action,clips");
     for b in TRACE_BONES {
         let _ = write!(h, ",{b}_x,{b}_y,{b}_z");
     }
@@ -154,9 +158,9 @@ fn trace(
         MoveMode::Gliding => "glide",
     };
     let mut row = format!(
-        "{:.4},{:.4},{:.4},{scene},{},{:.2},{:.2},{:.4},{:.4},{},{mode},{},{},{},{:.3},{:.3},{:.3},{:.4},{:.4},{:.4},{yaw:.4},{lean:.4},{},{},",
+        "{:.4},{:.4},{:.4},{scene},{},{:.2},{:.2},{:.4},{:.4},{},{mode},{},{},{},{:.3},{:.3},{:.3},{:.4},{:.4},{:.4},{yaw:.4},{lean:.4},{:.4},{},{},",
         m.elapsed, time.elapsed_secs(), time.delta_secs(), held.trim_end(), intent.move_axis.x, intent.move_axis.y, intent.yaw, intent.pitch, intent.held,
-        kin.grounded as u8, kin.crouched as u8, kin.sliding as u8, v.x, v.y, v.z, p.x, p.y, p.z, anim.showing.0, anim.showing.1,
+        kin.grounded as u8, kin.crouched as u8, kin.sliding as u8, v.x, v.y, v.z, p.x, p.y, p.z, anim.phase(), anim.showing.0, anim.showing.1,
     );
     for (i, (n, masked, w)) in anim.blend(&sets).into_iter().enumerate() {
         let _ = write!(row, "{}{n}{}={w:.3}", if i > 0 { "|" } else { "" }, if masked { "~" } else { "" });
@@ -264,6 +268,8 @@ struct Scene {
 struct Scenes {
     list: Vec<Scene>,
     index: Option<usize>,
+    /// The scene's name on screen (for recording a run).
+    title: Option<Entity>,
     /// Where each scene starts and the way it faces (yaw).
     spot: Option<(Vec3, f32)>,
 }
@@ -323,6 +329,7 @@ fn stage_scenes(
     mut me: Query<(&mut Transform, &mut Kinematic, &mut PosHistory, &mut Inventory, &mut PlayerIntent, &mut Health, &mut Action), With<LocalPlayer>>,
     mut bots: Query<(Entity, &mut Transform, &mut Kinematic, &mut Health), (With<Warrior>, Without<LocalPlayer>)>,
     mut exit: MessageWriter<AppExit>,
+    mut texts: Query<&mut Text>,
     spatial: SpatialQuery,
     warriors: Query<Entity, With<Warrior>>,
 ) {
@@ -360,6 +367,23 @@ fn stage_scenes(
     sc.index = Some(i);
     let scene = &sc.list[i];
     println!("[feel] scene {} at {:.2}", scene.name, m.elapsed);
+    let label = scene.name.replace('_', " ");
+    match sc.title.and_then(|e| texts.get_mut(e).ok()) {
+        Some(mut t) => t.0 = label,
+        None => {
+            let e = commands
+                .spawn((
+                    Text::new(label),
+                    TextFont { font_size: bevy::text::FontSize::Px(40.0), ..default() },
+                    TextColor(Color::srgb(1.0, 0.92, 0.6)),
+                    bevy::ui::widget::TextShadow::default(),
+                    Node { position_type: PositionType::Absolute, top: px(70.0), left: px(40.0), ..default() },
+                ))
+                .id();
+            sc.title = Some(e);
+        }
+    }
+    let scene = &sc.list[i];
     if scene.name == "end" {
         exit.write(AppExit::Success);
         return;

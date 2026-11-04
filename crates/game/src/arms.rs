@@ -90,6 +90,9 @@ pub struct Body {
     pub root: Entity,
     /// spine_01, spine_02, spine_03, neck_01.
     pub spine: [Entity; 4],
+    /// The pelvis and its rest rotation (in its parent's frame).
+    pub pelvis: Entity,
+    pub pelvis_rest: Quat,
     pub hand_l: Entity,
     /// Where the left hand pinches the string, in its bone's frame.
     pub pinch_l: Vec3,
@@ -634,24 +637,41 @@ fn pose_torso(
             }
         }
         let pitch = if dead || kin.mode != MoveMode::Ground { 0.0 } else { intent.pitch.clamp(-1.1, 1.1) * anim.aim_share };
-        if pitch.abs() < 1e-3 && lean == Quat::IDENTITY {
+        if pitch.abs() < 1e-3 && lean == Quat::IDENTITY && anim.upper < 1e-3 {
             continue;
         }
-        // Model-space rotation of the first spine bone's parent.
+        // Model-space rotation of a bone's parent.
         let rot = |e: Entity| tf.get(e).map(|t| t.rotation).unwrap_or(Quat::IDENTITY);
-        let mut parent = Quat::IDENTITY;
-        if let Ok(p) = parents.get(body.spine[0]) {
-            let mut cur = p.parent();
-            while cur != body.root {
-                parent = rot(cur) * parent;
-                let Ok(p) = parents.get(cur) else { break };
-                cur = p.parent();
+        let above = |bone: Entity| {
+            let mut q = Quat::IDENTITY;
+            if let Ok(p) = parents.get(bone) {
+                let mut cur = p.parent();
+                while cur != body.root {
+                    q = rot(cur) * q;
+                    let Ok(p) = parents.get(cur) else { break };
+                    cur = p.parent();
+                }
             }
-        }
+            q
+        };
+        let mut parent = above(body.spine[0]);
+        // An upper-body action (the bat's guard, a gun's aim, a drink) is posed over hips at rest:
+        // laid over the legs' hips (an idle's tip forward 29 degrees, a sprint's sit back), its
+        // torso would tip with them. Held to its own posture instead, by its weight.
+        let hold = if anim.upper > 1e-3 {
+            let c = above(body.pelvis);
+            let (now, rest) = (c * rot(body.pelvis), c * body.pelvis_rest);
+            Quat::IDENTITY.slerp(rest * now.inverse(), anim.upper)
+        } else {
+            Quat::IDENTITY
+        };
         for (i, &bone) in body.spine.iter().enumerate() {
             let Ok(mut t) = tf.get_mut(bone) else { break };
             // Model +X is the character's left: pitching up turns forward (+Z) toward +Y.
             let mut r = Quat::from_rotation_x(-pitch * SHARE[i]);
+            if i == 0 {
+                r *= hold;
+            }
             if i == 1 {
                 r = lean * r;
             }
