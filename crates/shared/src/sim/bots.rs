@@ -438,10 +438,13 @@ fn choose_weapon(inv: &Inventory, db: &ItemDb, dist: f32) -> usize {
     for (i, s) in inv.slots.iter().enumerate() {
         let Some(s) = s else { continue };
         let score = match &db.get(&s.id).kind {
-            ItemKind::Bow { pellets, charge, .. } => {
+            ItemKind::Bow { pellets, charge, burst, .. } => {
                 let usable = s.count > 0 || inv.arrows > 0;
                 if !usable {
                     0.0
+                } else if burst.is_some() {
+                    // A rocket only from well outside its own blast.
+                    if (12.0..45.0).contains(&dist) { 8.0 } else { 0.0 }
                 } else if *pellets > 1 {
                     if dist < 14.0 { 9.0 } else { 2.0 }
                 } else if *charge > 0.0 {
@@ -450,8 +453,8 @@ fn choose_weapon(inv: &Inventory, db: &ItemDb, dist: f32) -> usize {
                     6.0
                 }
             }
-            // Fire astras go to a mid-range target; the wind astra is left to players.
-            ItemKind::Astra { effect: AstraEffect::Fire { .. }, .. } if s.count > 0 && (8.0..24.0).contains(&dist) => 7.0,
+            // Fire and chilli smoke go to a mid-range target; the wind astra is left to players.
+            ItemKind::Astra { effect: AstraEffect::Fire { .. } | AstraEffect::Gas { .. }, .. } if s.count > 0 && (8.0..24.0).contains(&dist) => 7.0,
             _ => 0.0,
         } * s.rarity.damage_scale();
         if score > best.1 {
