@@ -128,6 +128,9 @@ pub fn generate(id: super::MapId, seed: u64) -> MapLayout {
     let cp = Vec3::new(0.0, 0.0, -data.south_shift);
     // Only Connaught Place has the ring; elsewhere a ring of no size keeps nothing out.
     let ring = if id == super::MapId::Cp { ring(cp) } else { super::cp::Ring { ri: 0.0, ro: 0.0, ..self::ring(Vec3::new(1.0e5, 0.0, 1.0e5)) } };
+    if id == super::MapId::Cp {
+        super::cp::paint(&mut map.terrain, &ring);
+    }
     let made = if id == super::MapId::Cp { CP_HILLS.iter().map(|h| h.at(&ring)).collect() } else { vec![] };
     hills(&mut map, &data, &ring, &made, seed as u32);
     let mut rng = SmallRng::seed_from_u64(seed);
@@ -135,6 +138,7 @@ pub fn generate(id: super::MapId, seed: u64) -> MapLayout {
     boundary(&mut b);
     if id == super::MapId::Cp {
         super::cp::build(&mut b, &mut rng, &ring);
+        super::cp::markings(&mut b, &ring);
         dress_hills(&mut b, &mut rng, &made);
     }
     for l in &data.landmarks {
