@@ -61,6 +61,10 @@ pub enum ItemKind {
         misfire: f32,
         #[serde(default)]
         backfire: f32,
+        /// Shots that burst where they land (the patakha launcher's rocket) instead of wounding
+        /// what they hit.
+        #[serde(default)]
+        burst: Option<AstraEffect>,
     },
     /// Thrown astra that bursts into an area effect on impact.
     Astra { effect: AstraEffect, speed: f32, count: u32 },
@@ -80,8 +84,17 @@ pub enum AstraEffect {
     /// (`damage` each, once per pass), and comes back to the thrower's hand to be thrown again.
     Chakra { damage: f32, range: f32 },
     /// The Brahmastra: a blast that hurts everyone within `radius` (`damage` at the centre, falling
-    /// off to nothing at the edge, the thrower included) and hurls them outward.
-    Blast { radius: f32, damage: f32, impulse: f32 },
+    /// off to nothing at the edge, the thrower included) and hurls them outward. With a `fuse` it
+    /// lies where it lands for that long first (the pressure cooker, whistling).
+    Blast {
+        radius: f32,
+        damage: f32,
+        impulse: f32,
+        #[serde(default)]
+        fuse: f32,
+    },
+    /// The mirchi bomb: a cloud of chilli smoke, `dps` to everyone inside `radius`, for `duration`.
+    Gas { radius: f32, dps: f32, duration: f32 },
 }
 
 #[derive(Clone, Debug, Deserialize)]

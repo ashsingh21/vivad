@@ -131,6 +131,11 @@ view name:
 gripcheck seed="7" map="cp":
     VIVAD_MUTE=1 VIVAD_BOTS=1 VIVAD_MAP={{map}} VIVAD_MAP_SEED={{seed}} VIVAD_GRIPCHECK=67 VIVAD_KEYS="4:+Space,4.3:-Space,32:+KeyW,34:+ShiftLeft,36:+KeyC,36.1:-KeyC,38:+KeyC,38.1:-KeyC,38.5:-ShiftLeft,39:+Space,39.2:-Space,41:-KeyW,42:+AltLeft,42.1:-AltLeft,42:+KeyW,44:-KeyW,44:+AltLeft,44.1:-AltLeft,44:+KeyA,45.5:-KeyA,45.5:+KeyD,47:-KeyD,47:+KeyS,48.5:-KeyS,48.5:+KeyC,48.6:-KeyC,49.5:+KeyW,51:-KeyW,51:+KeyA,52:-KeyA,52:+KeyS,53:-KeyS,53:+KeyC,53.1:-KeyC,53.5:+MouseRight,54.5:+KeyW,56:-KeyW,56:+KeyA,57:-KeyA,57:+KeyS,58:-KeyS,58:+KeyC,58.1:-KeyC,58.5:+KeyW,60:-KeyW,60:+KeyC,60.1:-KeyC,60.5:+MouseLeft,61:-MouseLeft,61.5:-MouseRight,62:+KeyW,62:+ShiftLeft,64:+Space,64.2:-Space,66:-KeyW,66:-ShiftLeft" cargo run --release -p game --bin game 2>&1 | grep '^\[grip\]'
 
+# Every item used in turn on a practice target, from the player's camera (record the window for a
+# video): just showcase, or just showcase patakha,cooker
+showcase items="all":
+    VIVAD_MUTE=1 VIVAD_BOTS=1 VIVAD_MAP=cp VIVAD_MAP_SEED=7 VIVAD_SHOWCASE={{items}} cargo run --release -p game --bin game 2>&1 | grep '^\[showcase\]'
+
 play seed="7" map="cp":
     VIVAD_MAP={{map}} VIVAD_MAP_SEED={{seed}} cargo run --release -p game --bin game
 

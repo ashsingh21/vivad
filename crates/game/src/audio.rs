@@ -30,7 +30,7 @@ impl Plugin for SoundPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Played>()
             .add_systems(Startup, load)
-            .add_systems(Update, (listener, footsteps, warrior_events, combat_events, world_events, beds, log_counts));
+            .add_systems(Update, (listener, footsteps, warrior_events, combat_events, world_events, cooker_whistles, beds, log_counts));
         // Automated runs (autoplay, tours) shouldn't sound through the speakers.
         if std::env::var("VIVAD_MUTE").is_ok() {
             app.insert_resource(GlobalVolume::new(Volume::Linear(0.0)));
@@ -46,7 +46,7 @@ const UI: f32 = 0.5;
 const ITEM: f32 = 0.6;
 const BED: f32 = 0.45;
 
-const NAMES: [&str; 67] = [
+const NAMES: [&str; 71] = [
     "step_dirt_0", "step_dirt_1", "step_dirt_2", "step_dirt_3", "step_stone_0", "step_stone_1", "step_stone_2", "step_stone_3",
     "step_wood_0", "step_wood_1", "step_wood_2", "step_wood_3", "step_grass_0", "step_grass_1", "step_grass_2", "step_grass_3",
     "step_water_0", "step_water_1", "step_water_2", "step_water_3", "sword_whoosh_0", "sword_whoosh_1", "sword_whoosh_2",
@@ -55,6 +55,7 @@ const NAMES: [&str; 67] = [
     "bullet_impact_wood", "katta_click", "katta_backfire", "chakra_throw", "brahmastra_blast", "hit_flesh", "hit_shield", "hitmarker", "hitmarker_head", "hurt", "jump", "land", "glider_open",
     "glide_loop", "freefall_loop", "vimana_loop", "chest_open", "tijori_open", "pickup", "drink", "reload", "fire_ignite",
     "fire_loop", "wind_gust", "throw", "zone_warn", "zone_loop", "kill", "eliminated", "victory", "amb_day", "amb_river",
+    "blast", "rocket_launch", "cooker_whistle", "mirchi_pop",
 ];
 
 #[derive(Resource)]
@@ -300,6 +301,7 @@ fn combat_events(
                 play.at(sound, tf.translation, WEAPON, reach);
             }
             Some(_) if p.item == "chakra" => play.at("chakra_throw", tf.translation, WEAPON, 80.0),
+            Some(_) if p.item == "patakha" => play.at("rocket_launch", tf.translation, WEAPON, 150.0),
             Some(_) => play.at("throw", tf.translation, WEAPON, 60.0),
         }
     }
@@ -338,10 +340,26 @@ fn combat_events(
     }
 }
 
+/// A landed pressure cooker whistles as it lands and every 0.8 s after, until it blows.
+fn cooker_whistles(mut play: Player, q: Query<(Entity, &Projectile, &Transform)>, time: Res<Time>, mut next: Local<HashMap<Entity, f32>>) {
+    next.retain(|e, _| q.contains(*e));
+    for (e, p, tf) in &q {
+        if !(p.stuck && shared::sim::combat::fused(p)) {
+            continue;
+        }
+        let t = next.entry(e).or_insert(0.0);
+        *t -= time.delta_secs();
+        if *t <= 0.0 {
+            play.at("cooker_whistle", tf.translation, IMPACT, 70.0);
+            *t = 0.8;
+        }
+    }
+}
+
 #[allow(clippy::type_complexity)]
 fn world_events(
     mut play: Player,
-    fires: Query<(Entity, &Transform), Added<FireZone>>,
+    fires: Query<(Entity, &FireZone, &Transform), Added<FireZone>>,
     bursts: Query<(&Burst, &Transform), Added<Burst>>,
     chests: Query<(&Chest, &Transform), Changed<Chest>>,
     me_dead: Query<(), (With<LocalPlayer>, Added<Eliminated>)>,
@@ -350,11 +368,19 @@ fn world_events(
     m: Res<Match>,
     mut was: Local<(bool, Option<MatchState>, usize)>,
 ) {
-    for (e, tf) in &fires {
+    for (e, z, tf) in &fires {
+        if z.gas {
+            play.at("mirchi_pop", tf.translation, IMPACT, 60.0);
+            continue;
+        }
         play.at("fire_ignite", tf.translation, IMPACT, 80.0);
         play.attach_loop("fire_loop", e, IMPACT * 0.8);
     }
     for (b, tf) in &bursts {
+        if b.blast && b.item != "brahmastra" {
+            play.at("blast", tf.translation, IMPACT * 1.3, 250.0);
+            continue;
+        }
         if b.blast {
             play.at("brahmastra_blast", tf.translation, IMPACT * 1.6, 500.0);
             continue;

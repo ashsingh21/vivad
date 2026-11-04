@@ -25,6 +25,7 @@ impl Plugin for FxPlugin {
         app.init_resource::<CameraPunch>()
             .add_systems(Startup, setup)
             .add_systems(Update, (add_streaks, muzzle_flash, misfire_smoke, blast_shake, hit_sparks, arrow_dust, landing_dust, fly_sparks, punch_camera, hit_stop))
+            .add_systems(Update, (gadget_trails, gadget_blasts, mirchi_clouds))
             .add_systems(PostUpdate, (update_streaks, swing_ribbons).after(TransformSystems::Propagate));
     }
 }
@@ -54,6 +55,8 @@ struct FxAssets {
     gulal: Handle<StandardMaterial>,
     dust: Handle<StandardMaterial>,
     smoke: Handle<StandardMaterial>,
+    steam: Handle<StandardMaterial>,
+    mirchi: Handle<StandardMaterial>,
 }
 
 fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>) {
@@ -103,6 +106,18 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: Res
             unlit: true,
             ..default()
         }),
+        steam: mats.add(StandardMaterial {
+            base_color: Color::srgba(0.95, 0.95, 0.95, 0.45),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        }),
+        mirchi: mats.add(StandardMaterial {
+            base_color: Color::srgba(0.82, 0.32, 0.16, 0.06),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        }),
     });
 }
 
@@ -127,6 +142,8 @@ fn add_streaks(mut commands: Commands, q: Query<(Entity, &Projectile, &Transform
             Some(_) if p.item == "agneyastra" => (fx.fire_streak.clone(), 0.09, STREAK_TIME),
             Some(_) if p.item == "chakra" => (fx.gold_spark.clone(), 0.06, STREAK_TIME * 1.5),
             Some(_) if p.item == "brahmastra" => (fx.gold_spark.clone(), 0.12, STREAK_TIME * 2.0),
+            Some(_) if p.item == "patakha" => (fx.fire_streak.clone(), 0.07, STREAK_TIME * 1.5),
+            Some(_) if p.item == "mirchi" => (fx.fire_streak.clone(), 0.04, STREAK_TIME),
             Some(_) => (fx.wind_streak.clone(), 0.08, STREAK_TIME),
             None if shot_kind(&p.item) == Shot::Bullet => (fx.tracer.clone(), if p.item == "dunali" { 0.018 } else { 0.03 }, TRACER_TIME),
             None => (fx.streak.clone(), 0.055, STREAK_TIME),
@@ -401,7 +418,8 @@ fn muzzle_flash(mut commands: Commands, q: Query<(&Projectile, &Transform), Adde
         fired.push(p.owner);
         let ahead = p.velocity.normalize_or(Vec3::NEG_Z);
         let at = t.translation + ahead * 0.15;
-        let size = if p.item == "dunali" { 0.2 } else { 0.13 };
+        // Small: seen over the shoulder, a bigger flash covers the target.
+        let size = if p.item == "dunali" { 0.1 } else { 0.065 };
         commands.spawn((
             Spark { vel: Vec3::ZERO, life: 0.06, max: 0.06, size, gravity: 0.0 },
             Mesh3d(fx.sphere.clone()),
@@ -411,6 +429,84 @@ fn muzzle_flash(mut commands: Commands, q: Query<(&Projectile, &Transform), Adde
             PointLight { color: Color::srgb(1.0, 0.75, 0.4), intensity: 150_000.0, range: 7.0, shadow_maps_enabled: false, ..default() },
         ));
         burst(&mut commands, &fx, &fx.gold_spark, at, ahead, 5, 7.0, 0.01, 4.0);
+    }
+}
+
+/// The rocket's tail of sparks and smoke in flight, a launch puff behind the launcher, and a
+/// landed cooker's steam, puffing faster as its fuse runs down.
+fn gadget_trails(
+    mut commands: Commands,
+    fx: Res<FxAssets>,
+    time: Res<Time>,
+    q: Query<(&Projectile, &Transform)>,
+    added: Query<(&Projectile, &Transform), Added<Projectile>>,
+    mut acc: Local<f32>,
+) {
+    for (p, t) in &added {
+        if p.item == "patakha" {
+            let back = -p.velocity.normalize_or(Vec3::NEG_Z);
+            // The back-blast: small and quick, or it fills the view over the shoulder.
+            billow(&mut commands, &fx, &fx.steam, t.translation + back * 0.5, back, 5, 2.0, 0.045);
+            burst(&mut commands, &fx, &fx.gold_spark, t.translation, -back, 8, 6.0, 0.015, 4.0);
+        }
+    }
+    *acc += time.delta_secs();
+    // Thirty puffs a second, whatever the frame rate.
+    if *acc < 1.0 / 30.0 {
+        return;
+    }
+    *acc = 0.0;
+    for (p, t) in &q {
+        if p.item == "patakha" && !p.stuck {
+            let back = -p.velocity.normalize_or(Vec3::NEG_Z);
+            burst(&mut commands, &fx, &fx.gold_spark, t.translation + back * 0.25, back, 2, 3.0, 0.012, 2.0);
+            billow(&mut commands, &fx, &fx.smoke, t.translation + back * 0.35, back, 1, 0.4, 0.07);
+        } else if p.stuck && shared::sim::combat::fused(p) {
+            let left = (p.ttl / 2.4).clamp(0.0, 1.0);
+            if rand::random::<f32>() < 0.3 + 0.7 * (1.0 - left) {
+                billow(&mut commands, &fx, &fx.steam, t.translation + Vec3::Y * 0.25, Vec3::Y, 1, 1.6, 0.04);
+            }
+        }
+    }
+}
+
+/// A cooker's or a rocket's blast: sparks thrown out, a cloud of smoke rolling up.
+fn gadget_blasts(mut commands: Commands, fx: Res<FxAssets>, q: Query<(&shared::sim::combat::Burst, &Transform), Added<shared::sim::combat::Burst>>) {
+    for (b, t) in &q {
+        if !b.blast || b.item == "brahmastra" {
+            continue;
+        }
+        burst(&mut commands, &fx, &fx.gold_spark, t.translation + Vec3::Y * 0.3, Vec3::Y, 30, 14.0, 0.03, 9.0);
+        billow(&mut commands, &fx, &fx.smoke, t.translation + Vec3::Y * 0.5, Vec3::Y, 14, 6.0, 0.28);
+    }
+}
+
+/// A mirchi bomb's cloud: red smoke kept rolling low over its patch while it lasts.
+fn mirchi_clouds(mut commands: Commands, fx: Res<FxAssets>, time: Res<Time>, q: Query<(&shared::sim::combat::FireZone, &Transform)>, mut acc: Local<f32>) {
+    *acc += time.delta_secs();
+    if *acc < 0.08 {
+        return;
+    }
+    *acc = 0.0;
+    let mut rng = rand::rng();
+    for (z, t) in &q {
+        if !z.gas {
+            continue;
+        }
+        for _ in 0..3 {
+            let a = rng.random_range(0.0..std::f32::consts::TAU);
+            let r = z.radius * rng.random_range(0.0f32..1.0).sqrt() * 0.8;
+            let at = t.translation + Vec3::new(a.cos() * r, rng.random_range(0.1..1.0), a.sin() * r);
+            let max = rng.random_range(1.4..2.2);
+            commands.spawn((
+                Spark { vel: Vec3::new(rng.random_range(-0.4..0.4), 0.2, rng.random_range(-0.4..0.4)), life: max, max, size: rng.random_range(0.6..1.0), gravity: -0.1 },
+                Billow,
+                Mesh3d(fx.sphere.clone()),
+                MeshMaterial3d(fx.mirchi.clone()),
+                Transform::from_translation(at).with_scale(Vec3::splat(0.5)),
+                bevy::light::NotShadowCaster,
+            ));
+        }
     }
 }
 

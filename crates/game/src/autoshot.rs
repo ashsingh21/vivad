@@ -244,6 +244,13 @@ impl Plugin for AutoshotPlugin {
             }
             app.add_systems(PostUpdate, run_tour.after(crate::camera::CameraSystems).before(TransformSystems::Propagate));
         }
+        if let Ok(list) = std::env::var("VIVAD_SHOWCASE") {
+            // Every item used in turn, from the player's own camera, for a video: VIVAD_SHOWCASE=all
+            // or a list of item ids.
+            let items: Vec<String> = if list.trim() == "all" { SHOWCASE.iter().map(|s| s.to_string()).collect() } else { list.split(',').map(str::to_owned).collect() };
+            app.insert_resource(Showcase { items, index: 0, t: -9.0, spot: None, title: None })
+                .add_systems(PreUpdate, showcase_actor.after(crate::input::LocalInput));
+        }
         if let Ok(dir) = std::env::var("VIVAD_ARMOURY") {
             let p = |item, state, view, pitch| Pose { item, state, view, pitch, target: None, after: 0.17 };
             let range = |item, view, dist, after| Pose { item, state: Use::Strike, view, pitch: 0.0, target: Some(dist), after };
@@ -272,6 +279,12 @@ impl Plugin for AutoshotPlugin {
                 p("bandook", Use::Run, View::Side, 0.0),
                 p("bandook", Use::Run, View::Back, 0.0),
                 p("bandook", Use::Aim, View::Side, 0.0),
+                p("patakha", Use::Carry, View::Hand, 0.0),
+                p("patakha", Use::Aim, View::Hand, 0.0),
+                p("patakha", Use::Aim, View::Side, 0.0),
+                p("chappal", Use::Carry, View::Front, 0.0),
+                p("cooker", Use::Carry, View::Front, 0.0),
+                p("mirchi", Use::Carry, View::Front, 0.0),
                 p("dunali", Use::Carry, View::Side, 0.0),
                 p("dunali", Use::Run, View::Side, 0.0),
                 p("dunali", Use::Run, View::Back, 0.0),
@@ -487,38 +500,7 @@ fn armoury_actor(
     mut bots: Query<(Entity, &mut Transform, &mut Kinematic, &mut Health, &mut PlayerIntent), (With<Warrior>, Without<LocalPlayer>)>,
 ) {
     let Ok((mut tf, mut kin, mut inv, mut intent, mut health, mut act)) = q.single_mut() else { return };
-    let spot = *arm.spot.get_or_insert_with(|| {
-        // Open, level ground: the nearest spot to the park's edge with no building or block within
-        // a few metres (inside one the warrior stood on nothing and played the fall).
-        let inside = |p: Vec2, pts: &[Vec2]| {
-            let mut c = false;
-            for i in 0..pts.len() {
-                let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
-                if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x) {
-                    c = !c;
-                }
-            }
-            c
-        };
-        let open = |x: f32, z: f32| {
-            let p = Vec2::new(x, z);
-            let h = |dx: f32, dz: f32| layout.terrain.height(x + dx, z + dz);
-            layout.blocks.iter().all(|b| b.pos.xz().distance(p) > 5.0)
-                && layout.footprints.iter().all(|f| [Vec2::ZERO, Vec2::X * 4.0, -Vec2::X * 4.0, Vec2::Y * 4.0, -Vec2::Y * 4.0].iter().all(|o| !inside(p + *o, &f.pts)))
-                && (h(1.0, 0.0) - h(-1.0, 0.0)).abs() < 0.1
-                && (h(0.0, 1.0) - h(0.0, -1.0)).abs() < 0.1
-        };
-        let (x, z) = (0..400)
-            .flat_map(|r| (0..(r * 6).max(1)).map(move |k| (r, k)))
-            .map(|(r, k)| {
-                let a = k as f32 / (r * 6).max(1) as f32 * std::f32::consts::TAU;
-                (38.0 + r as f32 * a.cos(), 104.0 + r as f32 * a.sin())
-            })
-            .find(|&(x, z)| open(x, z))
-            .unwrap_or((38.0, 104.0));
-        info!("[armoury] standing at ({x:.0}, {z:.0})");
-        Vec3::new(x, layout.terrain.height(x, z) + HALF_HEIGHT + 0.05, z)
-    });
+    let spot = *arm.spot.get_or_insert_with(|| open_spot(&layout));
     tf.translation = spot;
     kin.mode = MoveMode::Ground;
     health.hp = 40.0;
@@ -588,6 +570,40 @@ fn armoury_actor(
     }
 }
 
+/// Open, level ground near the park's edge, where a warrior can stand and use things: the nearest
+/// spot with no building or block within a few metres (inside one the warrior stood on nothing and
+/// played the fall).
+fn open_spot(layout: &MapLayout) -> Vec3 {
+    let inside = |p: Vec2, pts: &[Vec2]| {
+        let mut c = false;
+        for i in 0..pts.len() {
+            let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
+            if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x) {
+                c = !c;
+            }
+        }
+        c
+    };
+    let open = |x: f32, z: f32| {
+        let p = Vec2::new(x, z);
+        let h = |dx: f32, dz: f32| layout.terrain.height(x + dx, z + dz);
+        layout.blocks.iter().all(|b| b.pos.xz().distance(p) > 5.0)
+            && layout.footprints.iter().all(|f| [Vec2::ZERO, Vec2::X * 4.0, -Vec2::X * 4.0, Vec2::Y * 4.0, -Vec2::Y * 4.0].iter().all(|o| !inside(p + *o, &f.pts)))
+            && (h(1.0, 0.0) - h(-1.0, 0.0)).abs() < 0.1
+            && (h(0.0, 1.0) - h(0.0, -1.0)).abs() < 0.1
+    };
+    let (x, z) = (0..400)
+        .flat_map(|r| (0..(r * 6).max(1)).map(move |k| (r, k)))
+        .map(|(r, k)| {
+            let a = k as f32 / (r * 6).max(1) as f32 * std::f32::consts::TAU;
+            (38.0 + r as f32 * a.cos(), 104.0 + r as f32 * a.sin())
+        })
+        .find(|&(x, z)| open(x, z))
+        .unwrap_or((38.0, 104.0));
+    info!("[armoury] standing at ({x:.0}, {z:.0})");
+    Vec3::new(x, layout.terrain.height(x, z) + HALF_HEIGHT + 0.05, z)
+}
+
 /// Frames the player for each pose, screenshots it once settled, then moves to the next.
 fn armoury_camera(
     mut commands: Commands,
@@ -637,5 +653,191 @@ fn armoury_camera(
         arm.t = 0.0;
         arm.shot = false;
         arm.pressed = false;
+    }
+}
+
+// ------------------------------------------------------------------ showcase
+
+/// The showcase's running order: melee, guns, throwables, then drinks.
+const SHOWCASE: [&str; 17] = [
+    "bat", "katta", "tamancha", "dunali", "bandook", "gulel", "patakha", "chappal", "chakra", "agneyastra", "mirchi", "vayavyastra",
+    "cooker", "brahmastra", "sanjeevani", "soma", "amrita",
+];
+/// Seconds per item.
+const SHOWCASE_TIME: f32 = 7.0;
+
+#[derive(Resource)]
+pub struct Showcase {
+    items: Vec<String>,
+    index: usize,
+    /// Seconds into the current item (negative: the warm-up before the first).
+    t: f32,
+    spot: Option<Vec3>,
+    /// The item's name, shown big at the top of the screen.
+    title: Option<Entity>,
+}
+
+/// How far off the range target stands for an item (a blast's reach kept off the player).
+fn showcase_range(id: &str, kind: &ItemKind) -> f32 {
+    match (id, kind) {
+        (_, ItemKind::Melee { .. }) => 1.8,
+        ("dunali", _) => 8.0,
+        ("gulel", _) | ("patakha", _) => 20.0,
+        ("brahmastra", _) => 24.0,
+        ("cooker", _) => 13.0,
+        ("chakra", _) | ("chappal", _) => 12.0,
+        _ => 14.0,
+    }
+}
+
+/// Stands the player on open ground with a target ahead and uses each item in turn: guns fired
+/// aimed, the gulel drawn and loosed, throwables thrown twice, drinks drunk. The target (the one
+/// bot, its brain off) and the player are kept alive.
+#[allow(clippy::type_complexity)]
+fn showcase_actor(
+    mut commands: Commands,
+    mut sc: ResMut<Showcase>,
+    db: Res<ItemDb>,
+    layout: Res<MapLayout>,
+    time: Res<Time>,
+    mut q: Query<(&mut Transform, &mut Kinematic, &mut Inventory, &mut PlayerIntent, &mut Health, &mut Action), With<LocalPlayer>>,
+    mut bots: Query<(Entity, &mut Transform, &mut Kinematic, &mut Health, &mut PlayerIntent), (With<Warrior>, Without<LocalPlayer>)>,
+    mut texts: Query<&mut Text>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    let Ok((mut tf, mut kin, mut inv, mut intent, mut health, mut act)) = q.single_mut() else { return };
+    let spot = *sc.spot.get_or_insert_with(|| open_spot(&layout));
+    let dt = time.delta_secs();
+    let before = sc.t;
+    sc.t += dt;
+    if sc.t >= SHOWCASE_TIME {
+        sc.t = 0.0;
+        sc.index += 1;
+    }
+    let Some(id) = sc.items.get(sc.index).cloned() else {
+        exit.write(AppExit::Success);
+        return;
+    };
+    let def = db.get(&id);
+    let start = before < 0.0 && sc.t >= 0.0 || sc.t < before;
+    // Into a new item: a fresh stack in slot 1 (melee: the bat in its own slot), its name up.
+    if start {
+        info!("[showcase] {} at {:.1}s", id, time.elapsed_secs());
+        println!("[showcase] {id} {:.2}", time.elapsed_secs());
+        let stack = |count| Some(ItemStack { id: id.clone(), rarity: Rarity::Epic, count });
+        inv.slots[0] = match &def.kind {
+            ItemKind::Melee { .. } => None,
+            ItemKind::Bow { magazine, .. } => stack(*magazine),
+            ItemKind::Astra { count, .. } => stack((*count).max(2)),
+            ItemKind::Consumable { .. } => stack(2),
+            ItemKind::Arrows { .. } => None,
+        };
+        inv.arrows = 200;
+        inv.selected = if matches!(def.kind, ItemKind::Melee { .. }) { 0 } else { 1 };
+        *act = Action::default();
+        act.since_attack = 5.0;
+        // Hurt, so a drink is worth drinking.
+        if matches!(def.kind, ItemKind::Consumable { .. }) {
+            health.hp = 30.0;
+            health.shield = 0.0;
+        }
+        match sc.title.and_then(|e| texts.get_mut(e).ok()) {
+            Some(mut t) => t.0 = def.name.clone(),
+            None => {
+                let e = commands
+                    .spawn((Node { position_type: PositionType::Absolute, top: px(70.0), width: percent(100.0), justify_content: JustifyContent::Center, ..default() },))
+                    .id();
+                let t = commands
+                    .spawn((Text::new(def.name.clone()), TextFont { font_size: bevy::text::FontSize::Px(44.0), ..default() }, TextColor(Color::srgb(1.0, 0.92, 0.6)),
+                            bevy::ui::widget::TextShadow::default(), ChildOf(e)))
+                    .id();
+                sc.title = Some(t);
+            }
+        }
+    }
+    tf.translation = tf.translation.with_y(tf.translation.y.max(spot.y - 0.5));
+    if start || sc.t < 0.0 {
+        tf.translation = spot;
+        kin.velocity = Vec3::ZERO;
+    }
+    kin.mode = MoveMode::Ground;
+    if !matches!(def.kind, ItemKind::Consumable { .. }) {
+        health.hp = 100.0;
+        health.shield = 100.0;
+    }
+    let t = sc.t;
+    let ahead = showcase_range(&id, &def.kind);
+    // The target: placed at each item's start (blasts may throw it about after), kept alive.
+    if let Some((bot, mut btf, mut bkin, mut bhp, mut bint)) = bots.iter_mut().next() {
+        commands.entity(bot).remove::<shared::sim::bots::BotBrain>();
+        let at = Vec3::new(spot.x, layout.terrain.height(spot.x, spot.z - ahead) + HALF_HEIGHT + 0.05, spot.z - ahead);
+        if start || sc.t < 0.0 || btf.translation.distance(at) > 25.0 {
+            btf.translation = at;
+            btf.rotation = Quat::from_rotation_y(std::f32::consts::PI);
+            bkin.velocity = Vec3::ZERO;
+        }
+        bkin.mode = MoveMode::Ground;
+        bhp.hp = 100.0;
+        bhp.shield = 100.0;
+        *bint = PlayerIntent::default();
+        let aim_at = at + Vec3::Y * 0.3;
+        for _ in 0..3 {
+            let (origin, _) = shared::sim::aim_ray(tf.translation, &intent);
+            let d = aim_at - origin;
+            intent.yaw = (-d.x).atan2(-d.z);
+            intent.pitch = d.y.atan2(d.xz().length());
+        }
+    }
+    intent.move_axis = Vec2::ZERO;
+    intent.select = None;
+    intent.held = 0;
+    if t < 0.0 {
+        return;
+    }
+    // Inside a window of the item's time.
+    let during = |a: f32, b: f32| t >= a && t < b;
+    let press = |at: f32| before < at && t >= at;
+    match &def.kind {
+        ItemKind::Melee { .. } => {
+            for k in 0..6 {
+                if press(1.0 + 0.8 * k as f32) {
+                    intent.pressed |= btn::FIRE;
+                }
+            }
+            if during(1.0, 5.8) {
+                intent.held |= btn::FIRE;
+            }
+        }
+        ItemKind::Bow { charge, .. } => {
+            if during(0.6, 6.2) {
+                intent.held |= btn::AIM;
+            }
+            if *charge > 0.0 {
+                // Drawn and loosed twice.
+                if during(1.2, 2.6) || during(3.8, 5.2) {
+                    intent.held |= btn::FIRE;
+                }
+            } else if during(1.4, 5.0) {
+                intent.held |= btn::FIRE;
+            }
+            if press(1.4) {
+                intent.pressed |= btn::FIRE;
+            }
+        }
+        ItemKind::Astra { .. } => {
+            if press(1.0) || press(4.0) {
+                intent.pressed |= btn::FIRE;
+                intent.held |= btn::FIRE;
+            }
+        }
+        ItemKind::Consumable { .. } => {
+            if press(1.0) {
+                intent.pressed |= btn::FIRE;
+            }
+            if during(1.0, 6.0) {
+                intent.held |= btn::FIRE;
+            }
+        }
+        ItemKind::Arrows { .. } => {}
     }
 }

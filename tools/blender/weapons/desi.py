@@ -277,6 +277,153 @@ def bandook():
     parts.append(box("pad", (-0.0235, end_y - 0.014, -0.047), (0.0235, end_y + 0.002, ax + 0.014), rubber))
     A.finish("bandook", parts, res=1024, hard=("cover", "mount", "mag", "band", "magbase", "pad"))
 
+
+# ------------------------------------------------------------------ jugaad gadgets
+
+def chappal():
+    """Mummy's rubber chappal, thrown spinning (like the chakra): a blue-and-white flip-flop sole,
+    flat in the XY plane (its toe +Y), the hand at its middle; a blue V strap from the toe post."""
+    sole_top = F.plain("chappal_top", (0.86, 0.86, 0.82), rough=0.7)
+    sole = F.plain("chappal_sole", (0.08, 0.28, 0.62), rough=0.8)
+    strap = F.plain("chappal_strap", (0.06, 0.25, 0.70), rough=0.55)
+    # The sole's outline: a footprint, wider at the ball than the heel, from heel (-y) to toe.
+    def half(u):
+        return 0.036 + 0.014 * math.sin(math.pi * min(1.0, u * 1.25)) + 0.008 * u
+    S = 14
+    out = []
+    for s in range(S):
+        u = s / (S - 1)
+        out.append((half(u) * math.sqrt(max(0.0, 1 - ((u - 0.5) * 2) ** 8)) + 0.002, -0.125 + 0.25 * u))
+    ring = [(x, y) for x, y in out] + [(-x, y) for x, y in reversed(out)]
+    for name, z0, z1, m in (("sole", -0.009, 0.0, sole), ("top", 0.0, 0.006, sole_top)):
+        frames = [(Vector((0, 0, z)), X.copy(), Y.copy()) for z in (z0, z1)]
+        parts_ring = [ring, ring]
+        o = geo.loft(name, frames, parts_ring, cap_start="fan", cap_end="fan", material=m, merge=True)
+        if name == "sole":
+            parts = [o]
+        else:
+            parts.append(o)
+    post = Vector((0, 0.07, 0.006))
+    for sx in (-1, 1):
+        parts.append(bent(f"strap{sx}", [post + Vector((0, 0, 0.012)), Vector((sx * 0.022, 0.02, 0.03)), Vector((sx * 0.045, -0.035, 0.006))],
+                          0.0055, strap, seg=8))
+    parts.append(A.lathe("post", [(0.0, 0.0), (0.006, 0.0), (0.006, 0.014), (0.0, 0.016)], strap, seg=10, origin=post))
+    A.finish("chappal", parts, res=512)
+
+
+def cooker():
+    """A pressure cooker: an aluminium pot with a black bakelite handle (the hand's), the lid's
+    long handle laid over it, and the whistle weight on its steam vent; it whistles before it
+    blows. The handle runs +X from the pot; the origin is on the handle where the hand closes."""
+    alu = F.metal("cooker_alu", (0.72, 0.72, 0.70), rough=0.32, tarnish=(0.35, 0.33, 0.30))
+    bake = F.plain("cooker_bakelite", (0.05, 0.04, 0.035), rough=0.45)
+    red = F.plain("cooker_gasket", (0.6, 0.08, 0.05), rough=0.6)
+    r, h = 0.085, 0.13
+    c = Vector((-0.17, 0, -0.06))
+    parts = [A.lathe("pot", [(0.0, 0.0), (r - 0.012, 0.0), (r, 0.012), (r, h - 0.01), (r + 0.004, h), (r - 0.004, h + 0.003), (0.0, h + 0.003)],
+                     alu, seg=28, origin=c)]
+    parts.append(A.lathe("lid", [(0.0, h + 0.003), (r - 0.002, h + 0.003), (r - 0.012, h + 0.02), (0.02, h + 0.03), (0.0, h + 0.031)],
+                         alu, seg=28, origin=c))
+    parts.append(A.lathe("gasket", [(r - 0.001, h - 0.006), (r + 0.0025, h - 0.005), (r + 0.0025, h + 0.0), (r - 0.001, h + 0.001)], red,
+                         seg=28, origin=c))
+    # The whistle: a stubby weight on its vent.
+    vent = c + Vector((0, 0, h + 0.03))
+    parts.append(A.lathe("whistle", [(0.0, 0.0), (0.006, 0.0), (0.006, 0.012), (0.016, 0.016), (0.017, 0.03), (0.012, 0.04), (0.004, 0.046),
+                                      (0.0, 0.047)], bake, seg=16, origin=vent))
+    # The pot's handle (held) and the lid's (laid over it), black bakelite.
+    for name, z, ln in (("handle", 0.0, 0.17), ("lid_handle", 0.022, 0.15)):
+        frames, rings = [], []
+        for k in range(5):
+            u = k / 4
+            x = c.x + r - 0.005 + (ln + 0.01) * u
+            frames.append((Vector((x, 0, z + c.z + h - 0.03 + 0.012 * u)), Y.copy(), Z.copy()))
+            rings.append(geo.ellipse(0.016 - 0.003 * u, 0.012, 12))
+        parts.append(geo.loft(name, frames, rings, cap_start="fan", cap_end="fan", material=bake, merge=True))
+    A.finish("cooker", parts, res=512)
+
+
+def mirchi():
+    """The mirchi bomb: five fat red chillies bound into a bundle with green thread, their stalks
+    up, a twist of fuse from the middle. Stands along +Z, the hand round the binding."""
+    chilli = F.plain("mirchi_red", (0.75, 0.05, 0.03), rough=0.3)
+    stalk = F.plain("mirchi_stalk", (0.20, 0.42, 0.10), rough=0.6)
+    thread = F.wrap("mirchi_thread", (0.10, 0.55, 0.15), pitch=0.003)
+    fuse = F.wrap("mirchi_fuse", (0.85, 0.75, 0.55), (0.55, 0.15, 0.08), pitch=0.004)
+    parts = []
+    for k in range(5):
+        a = 2 * math.pi * k / 5 + 0.3
+        d = Vector((math.cos(a), math.sin(a), 0))
+        # A chilli: thick at the shoulder, curving out and down to a point.
+        pts = [Vector((0, 0, 0.07)) + d * 0.016, Vector((0, 0, 0.0)) + d * 0.022, Vector((0, 0, -0.07)) + d * 0.03,
+               Vector((0, 0, -0.11)) + d * 0.045]
+        pts = geo.resample_even(geo.catmull_rom(pts, 20), 12)
+        parts.append(A.tube(f"chilli{k}", pts, lambda t: 0.016 * (1 - t) ** 0.6 * min(1.0, 0.6 + t * 4) + 0.001, chilli, seg=12,
+                            caps=("fan", "fan"), up=X))
+        top = Vector((0, 0, 0.07)) + d * 0.016
+        parts.append(bent(f"stalk{k}", [top, top + Vector((0, 0, 0.015)) + d * 0.004, top + Vector((0, 0, 0.025)) + d * 0.012], 0.003,
+                          stalk, seg=6))
+    parts.append(A.lathe("binding", [(0.033, -0.012), (0.036, -0.01), (0.036, 0.012), (0.033, 0.014)], thread, seg=20))
+    parts.append(bent("fuse", [(0, 0, 0.06), (0.004, 0.0, 0.1), (-0.006, 0.004, 0.125), (0.004, -0.002, 0.14)], 0.0025, fuse, seg=6))
+    A.finish("mirchi", parts, res=512)
+
+
+# The launcher's tube: its bore's height over the grip and radius (its underside, where the left
+# palm closes, is P_AXIS - P_R above the grip: crates/game/src/arms.rs forend() must match).
+P_AXIS, P_R = 0.1, 0.048
+
+
+def patakha():
+    """The patakha launcher: a length of grey PVC pipe, bound with silver tape, on a wooden pistol
+    grip, with a fore grip under the tube where the left hand holds it, a foam pad at the back
+    and a bent-wire sight; a Diwali rocket's red nose peeks out of the front. Held like the
+    rifle (barrel +Y, up +Z, the grip at the origin)."""
+    pvc = F.plain("patakha_pvc", (0.55, 0.57, 0.58), rough=0.5)
+    tape = F.wrap("patakha_tape", (0.62, 0.62, 0.64), pitch=0.005)
+    wood = F.plain("patakha_wood", (0.46, 0.26, 0.10), rough=0.55)
+    foam = F.plain("patakha_foam", (0.10, 0.10, 0.11), rough=0.9)
+    red = F.plain("patakha_red", (0.85, 0.08, 0.05), rough=0.45)
+    yellow = F.plain("patakha_yellow", (0.98, 0.78, 0.10), rough=0.5)
+    wire = F.metal("patakha_wire", (0.4, 0.4, 0.42), rough=0.4)
+    o = Vector((0, 0, P_AXIS))
+    y0, y1 = -0.34, 0.5
+    parts = [A.lathe("tube", [(P_R - 0.006, y1 - 0.01), (P_R - 0.006, y0), (P_R, y0), (P_R, y1), (P_R - 0.006, y1)], pvc, seg=24, axis=Y, origin=o)]
+    for k, y in enumerate((-0.18, 0.05, 0.3, 0.46)):
+        parts.append(A.lathe(f"tape{k}", [(P_R + 0.0003, y - 0.02), (P_R + 0.002, y - 0.018), (P_R + 0.002, y + 0.018), (P_R + 0.0003, y + 0.02)],
+                             tape, seg=24, axis=Y, origin=o))
+    # Yellow and red paint bands at the mouth, like the rocket's own wrapper.
+    for k, (y, m) in enumerate(((0.38, yellow), (0.405, red))):
+        parts.append(A.lathe(f"stripe{k}", [(P_R + 0.0002, y - 0.011), (P_R + 0.0012, y - 0.01), (P_R + 0.0012, y + 0.01), (P_R + 0.0002, y + 0.011)],
+                             m, seg=24, axis=Y, origin=o))
+    parts.append(A.lathe("nose", [(0.0, y1 + 0.075), (0.012, y1 + 0.06), (0.03, y1 + 0.02), (0.034, y1 - 0.03), (0.0, y1 - 0.03)], red, seg=20,
+                         axis=Y, origin=o))
+    parts.append(A.lathe("pad", [(0.0, y0 - 0.03), (P_R + 0.004, y0 - 0.03), (P_R + 0.006, y0 - 0.015), (P_R + 0.006, y0 + 0.06),
+                                 (P_R + 0.002, y0 + 0.065)], foam, seg=24, axis=Y, origin=o))
+    parts.append(box("mount", (-0.012, -0.05, 0.004), (0.012, 0.08, P_AXIS - P_R + 0.006), wood))
+    parts.append(grip_slab("grip", 0.004, -0.1, 0.016, 0.034, wood))
+    parts.append(grip_slab("foregrip", P_AXIS - P_R + 0.002, P_AXIS - P_R - 0.09, 0.015, 0.032, wood, rake=-0.05))
+    parts.append(bent("tguard", [(0, 0.05, 0.004), (0, 0.052, -0.02), (0, 0.025, -0.03), (0, 0.0, -0.022), (0, -0.004, 0.004)], 0.003, wire))
+    parts.append(bent("trigger", [(0, 0.028, 0.004), (0, 0.034, -0.01), (0, 0.028, -0.019)], 0.0035, wire))
+    sight = Vector((0, 0.32, P_AXIS + P_R))
+    parts.append(rod("sight_post", sight, sight + Vector((0, 0, 0.03)), 0.0025, wire, seg=6))
+    ring = [sight + Vector((0.016 * math.cos(a), 0, 0.046 + 0.016 * math.sin(a))) for a in [2 * math.pi * k / 16 for k in range(17)]]
+    parts.append(A.tube("sight_ring", ring, lambda t: 0.002, wire, seg=6, up=Y))
+    A.finish("patakha", parts, res=1024, hard=("mount",))
+
+
+def rocket():
+    """The patakha launcher's rocket in flight: a Diwali sky rocket, a red paper tube with a
+    yellow spiral, a red cone nose (+Z, first) and a bamboo stick trailing behind."""
+    red = F.plain("rocket_red", (0.85, 0.08, 0.05), rough=0.45)
+    yellow = F.plain("rocket_yellow", (0.98, 0.78, 0.10), rough=0.5)
+    bamboo = F.plain("rocket_bamboo", (0.72, 0.58, 0.32), rough=0.7)
+    parts = [A.lathe("body", [(0.0, -0.1), (0.03, -0.1), (0.03, 0.1), (0.0, 0.1)], red, seg=16)]
+    for k in range(4):
+        z = -0.08 + 0.05 * k
+        parts.append(A.lathe(f"band{k}", [(0.0302, z), (0.031, z + 0.002), (0.031, z + 0.014), (0.0302, z + 0.016)], yellow, seg=16))
+    parts.append(A.lathe("nose", [(0.0, 0.17), (0.008, 0.16), (0.026, 0.125), (0.031, 0.1), (0.0, 0.1)], red, seg=16))
+    parts.append(rod("stick", (0.03, 0.0, -0.06), (0.03, 0.0, -0.5), 0.005, bamboo, seg=6))
+    A.finish("rocket", parts, res=512)
+
 GULEL_TIPS = (0.034, 0.118)
 
 
@@ -350,7 +497,7 @@ def brahmastra():
 
 # (The tamancha is the pistol from MoCap Online's rifle pack: pack_guns.py.)
 BUILDERS = {"bat": bat, "katta": katta, "dunali": dunali, "bandook": bandook, "gulel": gulel, "chakra": chakra,
-            "brahmastra": brahmastra}
+            "brahmastra": brahmastra, "chappal": chappal, "cooker": cooker, "mirchi": mirchi, "patakha": patakha, "rocket": rocket}
 
 
 def write_gulel(spec):

@@ -58,7 +58,7 @@ pub const RIFLE_SPRINT: f32 = 6.2;
 
 /// Guns held in both hands (and moved with like a rifle).
 pub fn long_gun(item: &str) -> bool {
-    matches!(item, "dunali" | "bandook")
+    matches!(item, "dunali" | "bandook" | "patakha")
 }
 
 /// A long gun's gait for this intent, or None to sprint.

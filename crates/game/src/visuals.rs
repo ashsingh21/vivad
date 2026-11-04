@@ -47,14 +47,15 @@ impl Plugin for VisualsPlugin {
                     update_zone_wall,
                     cleanup_orphans,
                 ),
-            );
+            )
+            .add_systems(Update, (tumble, pop_fx));
     }
 }
 
 /// Baked models in assets/models/weapons, one per item (the arrow-quiver pickup shows the tarkash).
-pub const WEAPON_MODELS: [&str; 15] = [
+pub const WEAPON_MODELS: [&str; 20] = [
     "bat", "katta", "tamancha", "dunali", "bandook", "gulel", "chakra", "brahmastra", "arrow", "tarkash", "agneyastra", "vayavyastra", "sanjeevani",
-    "soma", "amrita",
+    "soma", "amrita", "chappal", "cooker", "mirchi", "patakha", "rocket",
 ];
 
 /// The chakra model's radius (tools/blender/weapons/desi.py CHAKRA_R): its origin is the rim.
@@ -983,6 +984,8 @@ pub enum Shot {
     Bullet,
     Pebble,
     Arrow,
+    /// The patakha launcher's Diwali rocket.
+    Rocket,
 }
 
 /// Guns held to the shoulder (the `rifle_aim` clip) rather than out in the hand.
@@ -994,6 +997,7 @@ pub fn shot_kind(item: &str) -> Shot {
     match item {
         "tamancha" | "dunali" | "katta" | "bandook" => Shot::Bullet,
         "gulel" => Shot::Pebble,
+        "patakha" => Shot::Rocket,
         _ => Shot::Arrow,
     }
 }
@@ -1012,6 +1016,27 @@ fn dress_projectiles(mut commands: Commands, q: Query<(Entity, &Projectile), Add
                 c.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(palette.rarity_glow[&Rarity::Divya].clone()),
                          Transform::from_scale(Vec3::new(0.12, 0.03, 0.12)), bevy::light::NotShadowCaster));
                 c.spawn((PointLight { color: Color::srgb(1.0, 0.8, 0.4), intensity: 80_000.0, range: 5.0, ..default() }, Transform::default()));
+            } else if matches!(p.astra, Some(shared::items::AstraEffect::Chakra { .. })) {
+                // A chappal: spinning flat like the chakra, a little larger so it reads in flight.
+                if let Some(m) = palette.models.get(p.item.as_str()) {
+                    c.spawn((ChakraSpin, Transform::from_scale(Vec3::splat(1.5)), Visibility::default())).with_children(|s| {
+                        s.spawn((Mesh3d(m.mesh.clone()), MeshMaterial3d(m.mat.clone()), Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2))));
+                    });
+                }
+            } else if p.item == "cooker" || p.item == "mirchi" {
+                // Lobbed, tumbling (crate::fx jiggles a landed cooker on its fuse).
+                if let Some(m) = palette.models.get(p.item.as_str()) {
+                    c.spawn((Tumble, Transform::default(), Visibility::default())).with_children(|s| {
+                        s.spawn((Mesh3d(m.mesh.clone()), MeshMaterial3d(m.mat.clone()), Transform::from_scale(Vec3::splat(1.3))));
+                    });
+                }
+            } else if shot_kind(&p.item) == Shot::Rocket {
+                // The rocket nose first (its model's +Y), a hot glow at its tail.
+                if let Some(m) = palette.models.get("rocket") {
+                    c.spawn((Mesh3d(m.mesh.clone()), MeshMaterial3d(m.mat.clone()), Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2)).with_scale(Vec3::splat(1.4))));
+                }
+                c.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(palette.fire.clone()), Transform::from_xyz(0.0, 0.0, 0.16).with_scale(Vec3::splat(0.07)),
+                         bevy::light::NotShadowCaster));
             } else if p.astra.is_some() {
                 // The astra itself, point first, wrapped in a small glow of its element.
                 let glow = match p.item.as_str() {
@@ -1052,6 +1077,24 @@ fn dress_projectiles(mut commands: Commands, q: Query<(Entity, &Projectile), Add
 #[derive(Component)]
 struct ChakraSpin;
 
+/// A lobbed cooker or mirchi bomb turning over in the air (still, once a cooker lands).
+#[derive(Component)]
+pub(crate) struct Tumble;
+
+fn tumble(time: Res<Time>, owners: Query<&Projectile>, mut q: Query<(&ChildOf, &mut Transform), With<Tumble>>) {
+    let t = time.elapsed_secs();
+    for (parent, mut tf) in &mut q {
+        let Ok(p) = owners.get(parent.parent()) else { continue };
+        tf.rotation = if p.stuck {
+            // A cooker on its fuse rattles harder as it gets ready to blow.
+            let shake = 0.06 + 0.25 * (1.0 - p.ttl / 2.4).clamp(0.0, 1.0);
+            Quat::from_rotation_z((t * 47.0).sin() * shake * 0.3) * Quat::from_rotation_x((t * 39.0).cos() * shake * 0.2)
+        } else {
+            Quat::from_rotation_x(t * 9.0) * Quat::from_rotation_z(t * 4.0)
+        };
+    }
+}
+
 fn spin_chakras(time: Res<Time>, mut q: Query<&mut Transform, With<ChakraSpin>>) {
     for mut t in &mut q {
         t.rotate_y(-28.0 * time.delta_secs());
@@ -1077,6 +1120,11 @@ fn dress_fx(
     palette: Res<Palette>,
 ) {
     for (e, f) in &fires {
+        if f.gas {
+            // The mirchi cloud: red smoke heaped low over the ground (crate::fx keeps it rolling).
+            commands.entity(e).insert(Visibility::default());
+            continue;
+        }
         commands.entity(e).insert(Visibility::default()).with_children(|c| {
             c.spawn((Mesh3d(palette.cylinder.clone()), MeshMaterial3d(palette.fire.clone()),
                      Transform::from_xyz(0.0, 0.4, 0.0).with_scale(Vec3::new(f.radius * 2.0, 0.8, f.radius * 2.0)),
@@ -1087,7 +1135,16 @@ fn dress_fx(
     }
     for (e, b) in &bursts {
         commands.entity(e).insert(Visibility::default()).with_children(|c| {
-            if b.blast {
+            if b.blast && b.item != "brahmastra" {
+                // A cooker or a rocket: an orange fireball swelling inside a quick shockwave, a
+                // flash of light (crate::fx adds the sparks and the smoke).
+                c.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(palette.fire.clone()), Transform::from_scale(Vec3::ZERO),
+                         bevy::light::NotShadowCaster, FxPop { age: 0.0, life: 0.55, size: b.radius * 0.3 }));
+                c.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(palette.rarity_glow[&Rarity::Legendary].clone()), Transform::from_scale(Vec3::ZERO),
+                         bevy::light::NotShadowCaster, FxPop { age: 0.0, life: 0.3, size: b.radius * 0.14 }));
+                c.spawn((PointLight { color: Color::srgb(1.0, 0.6, 0.25), intensity: 2.5e6, range: b.radius * 4.0, ..default() },
+                         Transform::from_xyz(0.0, 1.0, 0.0)));
+            } else if b.blast {
                 // The Brahmastra: a core of golden light inside a shockwave swelling to the blast's
                 // edge, lighting everything round it.
                 c.spawn((Mesh3d(palette.sphere.clone()), MeshMaterial3d(palette.rarity_glow[&Rarity::Divya].clone()),
@@ -1101,6 +1158,23 @@ fn dress_fx(
                          Transform::from_scale(Vec3::splat(b.radius * 0.3)), bevy::light::NotShadowCaster, FxSpin(b.radius)));
             }
         });
+    }
+}
+
+/// A blast's fireball: swells in a moment to `size`, then shrinks away over the rest of its life.
+#[derive(Component)]
+struct FxPop {
+    age: f32,
+    life: f32,
+    size: f32,
+}
+
+fn pop_fx(time: Res<Time>, mut q: Query<(&mut Transform, &mut FxPop)>) {
+    for (mut tf, mut p) in &mut q {
+        p.age += time.delta_secs();
+        let grow = (p.age / 0.1).min(1.0);
+        let shrink = (1.0 - (p.age - 0.1) / (p.life - 0.1)).clamp(0.0, 1.0);
+        tf.scale = Vec3::splat(p.size * grow.sqrt() * shrink.sqrt());
     }
 }
 

@@ -295,6 +295,47 @@ def brahmastra_blast():
     return fade(norm(crack * 0.5 + boom + thump * 1.2 + rumble + at(d, (0.1, shimmer))))
 
 
+def blast():
+    """A cooker or a rocket going off: a sharp crack, a short boom, debris rattling down."""
+    d = 1.8
+    crack = band(white(d), 1000, 9000) * env(d, 0.0004, 0.02)
+    boom = band(spectral(d, 1.6), 30, 700) * env(d, 0.002, 0.35, 3.0)
+    thump = np.sin(2 * np.pi * 55 * t_axis(d) * (1 - 0.3 * t_axis(d) / d)) * env(d, 0.001, 0.25, 3.0)
+    rattle = (rng.random(int(d * SR)) < 0.002) * rng.uniform(0.2, 1, int(d * SR))
+    rattle = band(rattle, 2000, 7000) * env(d, 0.15, 1.2) * 1.5
+    return fade(norm(crack * 0.6 + boom + thump + at(d, (0.15, rattle))))
+
+
+def rocket_launch():
+    """The patakha's rocket lit and away: the fuse's fizz, a whoosh and its rising whistle."""
+    d = 1.3
+    t = t_axis(d)
+    fizz = band(white(d), 3000, 9000) * env(d, 0.005, 0.12) * 0.5
+    whoosh = svf(white(d), 400 + 2600 * (t / d), q=1.3) * np.sin(np.pi * np.minimum(t / 0.6, 1.0)) * np.exp(-t / 0.9)
+    f = 1500 + 1800 * (t / d)
+    whistle = np.sin(2 * np.pi * np.cumsum(f) / SR) * env(d, 0.1, 1.0) * 0.25
+    return fade(norm(fizz + whoosh + whistle))
+
+
+def cooker_whistle():
+    """One whistle of a pressure cooker: steam hissing through the weight, a shrill wavering tone."""
+    d = 1.0
+    t = t_axis(d)
+    f = 2600 * (1 + 0.015 * np.sin(2 * np.pi * 11 * t))
+    tone = np.sin(2 * np.pi * np.cumsum(f) / SR) + 0.3 * np.sin(4 * np.pi * np.cumsum(f) / SR)
+    hiss = band(white(d), 2500, 9000) * 0.6
+    shape = np.sin(np.pi * t / d) ** 0.5
+    return fade(norm((tone * 0.6 + hiss) * shape))
+
+
+def mirchi_pop():
+    """The mirchi bomb bursting: a papery pop and a long hiss of chilli smoke."""
+    d = 1.6
+    pop = band(white(d), 500, 5000) * env(d, 0.0005, 0.04)
+    hiss = band(white(d), 1500, 7000) * adsr(d, 0.05, 0.6, 1.0) * 0.5
+    return fade(norm(pop + hiss))
+
+
 def gulel_release():
     """The rubber of a slingshot snapping back, and the pebble's flick off the pouch."""
     d = 0.35
@@ -597,6 +638,10 @@ SOUNDS = {
     "vimana_loop": vimana_loop,
     "chest_open": chest_open,
     "tijori_open": tijori_open,
+    "blast": blast,
+    "rocket_launch": rocket_launch,
+    "cooker_whistle": cooker_whistle,
+    "mirchi_pop": mirchi_pop,
     "pickup": pickup,
     "drink": drink,
     "reload": reload,

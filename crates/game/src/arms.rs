@@ -433,6 +433,8 @@ fn orient_bows(
 fn forend(model: &str) -> Vec3 {
     let under = match model {
         "bandook" => 0.064,
+        // P_AXIS - P_R in desi.py: under the launcher's tube.
+        "patakha" => 0.052,
         _ => 0.013,
     };
     Vec3::new(0.0, under, -0.26)

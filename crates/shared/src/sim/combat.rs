@@ -19,7 +19,7 @@ impl Plugin for CombatPlugin {
             FixedUpdate,
             (
                 (select_slot, use_items).chain().in_set(SimSet::Combat),
-                (fly_chakras, step_projectiles, tick_fire_zones).in_set(SimSet::Combat).after(use_items),
+                (fly_chakras, step_projectiles, tick_fire_zones, tick_bursts).in_set(SimSet::Combat).after(use_items),
                 (apply_damage, count_kills).chain().in_set(SimSet::Damage),
             ),
         );
@@ -41,21 +41,30 @@ pub struct Projectile {
     pub stuck: bool,
 }
 
-/// Burning ground left by an Agneyastra.
+/// Burning ground left by an anaar, or a mirchi bomb's cloud (`gas`).
 #[derive(Component, Clone, Debug)]
 pub struct FireZone {
     pub owner: Entity,
     pub radius: f32,
     pub dps: f32,
     pub ttl: f32,
+    /// What made it (the kill feed's cause).
+    pub item: String,
+    pub gas: bool,
 }
 
-/// One-shot visual cue for clients (wind bursts, the Brahmastra's blast).
+/// One-shot visual cue for clients (wind bursts, blasts), and what made it.
 #[derive(Component, Clone, Debug)]
 pub struct Burst {
     pub radius: f32,
     pub ttl: f32,
     pub blast: bool,
+    pub item: String,
+}
+
+/// A thrown astra with a fuse (the pressure cooker): whether it has landed, and lies waiting.
+pub fn fused(p: &Projectile) -> bool {
+    matches!(p.astra, Some(AstraEffect::Blast { fuse, .. }) if fuse > 0.0)
 }
 
 /// A thrown chakra's flight: how far it has gone out, whether it is on its way back, and who it
@@ -168,7 +177,7 @@ fn use_items(
                     act.since_attack = 0.0;
                 }
             }
-            ItemKind::Bow { damage: dmg, interval, speed, gravity, pellets, spread_deg, magazine, reload, charge, headshot, misfire, backfire } => {
+            ItemKind::Bow { damage: dmg, interval, speed, gravity, pellets, spread_deg, magazine, reload, charge, headshot, misfire, backfire, burst } => {
                 let slot = inv.selected;
                 // Reloading.
                 if act.reload_left > 0.0 {
@@ -245,11 +254,15 @@ fn use_items(
                         owner: entity,
                         velocity: dir * speed * (0.55 + 0.45 * power),
                         gravity: *gravity,
-                        damage: dmg * scale * power,
+                        // A rocket's harm is its blast (scaled by the launcher's rarity).
+                        damage: if burst.is_some() { 0.0 } else { dmg * scale * power },
                         headshot_mult: *headshot,
                         ttl: 4.0,
                         item: stack.id.clone(),
-                        astra: None,
+                        astra: burst.clone().map(|b| match b {
+                            AstraEffect::Blast { radius, damage, impulse, fuse } => AstraEffect::Blast { radius, damage: damage * scale, impulse, fuse },
+                            b => b,
+                        }),
                         stuck: false,
                     };
                     announce(&arrow, muzzle);
@@ -364,6 +377,11 @@ fn step_projectiles(
         let echo = remote.contains(p.owner);
         p.ttl -= dt;
         if p.ttl <= 0.0 {
+            // A landed cooker's fuse has run out.
+            if p.stuck && fused(&p) {
+                let effect = p.astra.clone().unwrap();
+                astra_burst(&mut commands, &mut kin, &mut damage, p.owner, tf.translation, &effect, &p.item);
+            }
             commands.entity(e).despawn();
             continue;
         }
@@ -376,6 +394,13 @@ fn step_projectiles(
         let filter = SpatialQueryFilter::from_mask(hit_mask()).with_excluded_entities([p.owner]);
         if let Some(hit) = spatial.cast_ray(tf.translation, dir, dist, true, &filter) {
             let point = tf.translation + dir * hit.distance;
+            if let Some(AstraEffect::Blast { fuse, .. }) = p.astra.clone().filter(|_| fused(&p)) {
+                // Lies where it lands (a hand's breadth back off what it hit) until its fuse runs out.
+                tf.translation = point - dir * 0.12;
+                p.stuck = true;
+                p.ttl = fuse;
+                continue;
+            }
             if let Some(effect) = p.astra.clone() {
                 astra_burst(&mut commands, &mut kin, &mut damage, p.owner, point, &effect, &p.item);
                 commands.entity(e).despawn();
@@ -418,14 +443,15 @@ fn astra_burst(
     item: &str,
 ) {
     match effect {
-        AstraEffect::Fire { radius, dps, duration } => {
+        AstraEffect::Fire { radius, dps, duration } | AstraEffect::Gas { radius, dps, duration } => {
+            let gas = matches!(effect, AstraEffect::Gas { .. });
             commands.spawn((
-                FireZone { owner, radius: *radius, dps: *dps, ttl: *duration },
+                FireZone { owner, radius: *radius, dps: *dps, ttl: *duration, item: item.to_string(), gas },
                 Transform::from_translation(at),
             ));
         }
         AstraEffect::Wind { radius, impulse } => {
-            commands.spawn((Burst { radius: *radius, ttl: 0.6, blast: false }, Transform::from_translation(at)));
+            commands.spawn((Burst { radius: *radius, ttl: 0.6, blast: false, item: item.to_string() }, Transform::from_translation(at)));
             for (_, tf, mut k) in kin.iter_mut() {
                 let d = tf.translation - at;
                 if d.length() < *radius {
@@ -437,8 +463,8 @@ fn astra_burst(
                 }
             }
         }
-        AstraEffect::Blast { radius, damage: full, impulse } => {
-            commands.spawn((Burst { radius: *radius, ttl: 1.2, blast: true }, Transform::from_translation(at)));
+        AstraEffect::Blast { radius, damage: full, impulse, .. } => {
+            commands.spawn((Burst { radius: *radius, ttl: 1.2, blast: true, item: item.to_string() }, Transform::from_translation(at)));
             // Each peer hurts and hurls its own warriors (this one's are local here).
             for (we, tf, mut k) in kin.iter_mut() {
                 let d = tf.translation - at;
@@ -537,6 +563,16 @@ fn fly_chakras(
     }
 }
 
+/// A burst's visual cue lasts its `ttl`, then goes.
+fn tick_bursts(mut commands: Commands, mut q: Query<(Entity, &mut Burst)>, time: Res<Time>) {
+    for (e, mut b) in &mut q {
+        b.ttl -= time.delta_secs();
+        if b.ttl <= 0.0 {
+            commands.entity(e).despawn();
+        }
+    }
+}
+
 fn tick_fire_zones(
     mut commands: Commands,
     mut zones: Query<(Entity, &Transform, &mut FireZone)>,
@@ -559,7 +595,7 @@ fn tick_fire_zones(
                     amount: z.dps * dt,
                     source: Some(z.owner),
                     headshot: false,
-                    cause: DamageCause::Weapon("agneyastra".into()),
+                    cause: DamageCause::Weapon(z.item.clone()),
                 });
             }
         }

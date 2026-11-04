@@ -68,6 +68,32 @@
             kind: Astra(effect: Blast(radius: 16.0, damage: 140.0, impulse: 20.0), speed: 24.0, count: 1),
             drops: [(Divya, 0.4)],
         ),
+        "chappal": (
+            name: "Chappal",
+            lore: "Mummy ki chappal. Kahin bhi chhupo, dhoondh ke laut aati hai.",
+            kind: Astra(effect: Chakra(damage: 28.0, range: 22.0), speed: 26.0, count: 1),
+            drops: [(Common, 5.0), (Rare, 3.0)],
+        ),
+        "cooker": (
+            name: "Pressure Cooker",
+            lore: "Teen seeti, phir dhamaka. Daal ho ya dushman, sab gal jaata hai.",
+            kind: Astra(effect: Blast(radius: 7.0, damage: 90.0, impulse: 12.0, fuse: 2.4), speed: 20.0, count: 1),
+            drops: [(Rare, 3.0), (Epic, 2.0), (Legendary, 0.8)],
+        ),
+        "patakha": (
+            name: "Patakha Launcher",
+            lore: "Diwali ka rocket, jugaad ki naal mein. Jahan lage, wahan tamasha.",
+            kind: Bow(damage: 85.0, interval: 1.0, speed: 38.0, gravity: 2.0, pellets: 1, spread_deg: 0.8,
+                      magazine: 1, reload: 2.4, charge: 0.0, headshot: 1.0,
+                      burst: Some(Blast(radius: 5.5, damage: 85.0, impulse: 11.0))),
+            drops: [(Epic, 1.5), (Legendary, 1.0)],
+        ),
+        "mirchi": (
+            name: "Mirchi Bomb",
+            lore: "Lal mirchi ka dhuaan. Aankh mein paani, gale mein khaas-khaas.",
+            kind: Astra(effect: Gas(radius: 4.5, dps: 12.0, duration: 6.0), speed: 24.0, count: 2),
+            drops: [(Common, 6.0), (Rare, 3.0)],
+        ),
         "sanjeevani": (
             name: "Haldi Doodh",
             lore: "Maa ka nuskha. Har zakhm ka ilaaj.",
