@@ -273,6 +273,16 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 b.deco(radial, Vec3::new(face + out * 0.06, y0 + 0.74, 0.0), Vec3::new(0.12, 0.1, 1.75), Mat::Stucco);
                 b.deco(radial, Vec3::new(face + out * 0.05, y0 + 3.12, 0.0), Vec3::new(0.1, 0.16, 1.95), Mat::Stucco);
                 b.deco(radial, Vec3::new(face + out * 0.09, y0 + 3.24, 0.0), Vec3::new(0.18, 0.08, 2.1), Mat::Stucco);
+                // Glazed, a blind or curtain drawn some way down behind the glass in a shop's colour,
+                // and now and then a window AC in the bottom of it (half out over the street).
+                let am = (s0 + s1) / 2.0;
+                b.map.signs.push(super::ShopSign { pos: r.at(rad + out * 0.02, am, y0 + 1.9), facing: Vec2::new(am.cos(), am.sin()) * out, width: 1.4, height: 2.2, kind: SignKind::Glass });
+                let ac = rng.random_bool(0.2);
+                let drop = rng.random_range(0.5..if ac { 1.5 } else { 2.1 });
+                b.deco(radial, Vec3::new(rad - out * 0.12, y0 + 3.0 - drop / 2.0, 0.0), Vec3::new(0.03, drop, 1.36), Mat::Paint(rng.random_range(0..7)));
+                if ac {
+                    b.deco(radial, Vec3::new(rad + out * 0.05, y0 + 1.1, 0.0), Vec3::new(0.62, 0.55, 0.8), Mat::Plaster);
+                }
                 for side in [-0.79f32, 0.79] {
                     b.deco(radial, Vec3::new(face + out * 0.04, y0 + 1.9, side), Vec3::new(0.08, 2.24, 0.16), Mat::Stucco);
                     // Louvred shutters folded back either side, the ring's green.
