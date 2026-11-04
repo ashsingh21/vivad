@@ -325,13 +325,19 @@ fn meta_actions(
 /// For testing the player's own controls (not the autopilot's): VIVAD_KEYS="t:+Key,t:-Key,..."
 /// presses (+) and releases (-) keys at those match times (seconds), through the same bindings and
 /// intent as a person's keyboard. Key names as Bevy's KeyCode (KeyW, ShiftLeft, ControlLeft, Space),
-/// or MouseRight / MouseLeft.
+/// or MouseRight / MouseLeft. "t:Turn90" turns the view as the mouse would, 90 degrees left
+/// (negative: right) over TURN_TIME.
+#[allow(clippy::too_many_arguments)]
 fn scripted_keys(
     m: Option<Res<Match>>,
+    time: Res<Time>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut mouse: ResMut<ButtonInput<MouseButton>>,
+    mut me: Query<&mut PlayerIntent, With<LocalPlayer>>,
     mut next: Local<usize>,
-    mut script: Local<Option<Vec<(f32, bool, Result<KeyCode, MouseButton>)>>>,
+    mut script: Local<Option<Vec<(f32, bool, Scripted)>>>,
+    // Turns under way: (seconds left, radians per second).
+    mut turns: Local<Vec<(f32, f32)>>,
 ) {
     let script = script.get_or_insert_with(|| {
         std::env::var("VIVAD_KEYS")
@@ -339,10 +345,14 @@ fn scripted_keys(
             .split(',')
             .filter_map(|e| {
                 let (t, k) = e.split_once(':')?;
+                let t: f32 = t.trim().parse().ok()?;
+                if let Some(deg) = k.strip_prefix("Turn") {
+                    return Some((t, true, Scripted::Turn(deg.parse::<f32>().ok()?.to_radians())));
+                }
                 let (down, name) = (k.starts_with('+'), &k[1..]);
                 let code = match name {
-                    "MouseRight" => return Some((t.trim().parse().ok()?, down, Err(MouseButton::Right))),
-                    "MouseLeft" => return Some((t.trim().parse().ok()?, down, Err(MouseButton::Left))),
+                    "MouseRight" => return Some((t, down, Scripted::Mouse(MouseButton::Right))),
+                    "MouseLeft" => return Some((t, down, Scripted::Mouse(MouseButton::Left))),
                     "KeyW" => KeyCode::KeyW,
                     "KeyA" => KeyCode::KeyA,
                     "KeyS" => KeyCode::KeyS,
@@ -352,9 +362,10 @@ fn scripted_keys(
                     "ControlLeft" => KeyCode::ControlLeft,
                     "AltLeft" => KeyCode::AltLeft,
                     "Space" => KeyCode::Space,
+                    "F9" => KeyCode::F9,
                     _ => return None,
                 };
-                Some((t.trim().parse().ok()?, down, Ok(code)))
+                Some((t, down, Scripted::Key(code)))
             })
             .collect()
     });
@@ -364,13 +375,32 @@ fn scripted_keys(
             break;
         }
         match (code, down) {
-            (Ok(k), true) => keys.press(k),
-            (Ok(k), false) => keys.release(k),
-            (Err(b), true) => mouse.press(b),
-            (Err(b), false) => mouse.release(b),
+            (Scripted::Key(k), true) => keys.press(k),
+            (Scripted::Key(k), false) => keys.release(k),
+            (Scripted::Mouse(b), true) => mouse.press(b),
+            (Scripted::Mouse(b), false) => mouse.release(b),
+            (Scripted::Turn(a), _) => turns.push((TURN_TIME, a / TURN_TIME)),
         }
         *next += 1;
     }
+    let dt = time.delta_secs();
+    if let Ok(mut intent) = me.single_mut() {
+        for (left, rate) in turns.iter_mut() {
+            intent.yaw += *rate * dt.min(*left);
+            *left -= dt;
+        }
+    }
+    turns.retain(|t| t.0 > 0.0);
+}
+
+/// A scripted turn's length (seconds): a quick flick of the mouse.
+const TURN_TIME: f32 = 0.2;
+
+#[derive(Clone, Copy)]
+enum Scripted {
+    Key(KeyCode),
+    Mouse(MouseButton),
+    Turn(f32),
 }
 
 /// For testing with an item in hand: VIVAD_GIVE=<item id> puts it (loaded, with spare rounds) in the

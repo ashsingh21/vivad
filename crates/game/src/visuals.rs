@@ -616,7 +616,7 @@ pub struct HeldWeapon {
     landed: f32,
 }
 
-/// After landing, the gun comes back once the glide's pose has faded (the animation's FADE_RATE:
+/// After landing, the gun comes back once the glide's pose has faded (the animation's fade rate, feel.ron:
 /// down to a few percent), so it never shows in a hand still holding the glider.
 const UNSTOW: f32 = 0.3;
 
@@ -665,6 +665,7 @@ fn interpolate_warriors(
     sims: Query<(&PosHistory, &Transform, &shared::sim::PlayerIntent, &shared::sim::Action, &Kinematic, &Inventory), Without<WarriorVisual>>,
     mut vis: Query<(Entity, &WarriorVisual, &mut Transform)>,
     mut facing: Local<HashMap<Entity, Facing>>,
+    feel: Res<crate::feel::Feel>,
 ) {
     let a = fixed.overstep_fraction();
     let dt = time.delta_secs().max(1e-4);
@@ -686,12 +687,12 @@ fn interpolate_warriors(
         let f = facing.entry(e).or_insert(Facing { yaw: target, turn: 0.0 });
         let diff = (target - f.yaw + PI).rem_euclid(TAU) - PI;
         // Quick when fighting (the shot must look aimed), easy otherwise.
-        let rate = if fighting { 18.0 } else { 9.0 };
+        let rate = if fighting { feel.turn_rate_fight } else { feel.turn_rate };
         let step = diff * (1.0 - (-rate * dt).exp());
         f.yaw += step;
         f.turn = f.turn.lerp(step / dt, (dt * 10.0).min(1.0));
         // Lean into the turn with speed, a few degrees at most.
-        let lean = (-f.turn * ground.length() * 0.012).clamp(-0.14, 0.14);
+        let lean = (-f.turn * ground.length() * feel.lean_gain).clamp(-feel.lean_max, feel.lean_max);
         t.rotation = Quat::from_rotation_y(f.yaw) * Quat::from_rotation_z(lean);
     }
 }

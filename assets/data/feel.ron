@@ -1,0 +1,13 @@
+// Movement feel tunables (crates/game/src/feel.rs). The game rereads this file while it runs:
+// change a number, save, and the next frame uses it. `just feelcheck` measures the result.
+(
+    // How fast clip weights move to their targets, per second: every blend (start, stop, slide,
+    // landing) eases at this rate. 12 means a blend is ~70% done in 0.1 s.
+    fade_rate: 12.0,
+    // How fast the drawn body turns to face its way, per second: aiming or holding a gun, and not.
+    turn_rate_fight: 18.0,
+    turn_rate: 9.0,
+    // Lean into turns: radians per (rad/s of turn x m/s of speed), and the most (0.14 is 8 deg).
+    lean_gain: 0.012,
+    lean_max: 0.14,
+)

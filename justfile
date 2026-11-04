@@ -136,6 +136,23 @@ gripcheck seed="7" map="cp":
 showcase items="all":
     VIVAD_MUTE=1 VIVAD_BOTS=1 VIVAD_MAP=cp VIVAD_MAP_SEED=7 VIVAD_SHOWCASE={{items}} cargo run --release -p game --bin game 2>&1 | grep '^\[showcase\]'
 
+# Movement feel by the numbers: scripted moves (start, stop, slide, jump, flip, turn, rifle) played
+# and measured against targets (tools/feel/feel.py; `!` lines miss). only="sprint_stop,reverse".
+feelcheck only="":
+    python3 tools/feel/feel.py run --only "{{only}}"
+
+# Graphs and ghost trails of the last feelcheck's scenes (all, or some) to previews/feel/.
+feel-plot *scenes:
+    python3 tools/feel/feel.py plot previews/feel/trace.csv {{scenes}}
+
+# The last feelcheck's numbers become the baseline later runs compare with.
+feel-keep:
+    python3 tools/feel/feel.py keep
+
+# A moment marked with F9 while playing (default the newest): timeline, numbers, pictures.
+feel-mark file="":
+    python3 tools/feel/feel.py mark {{file}}
+
 play seed="7" map="cp":
     VIVAD_MAP={{map}} VIVAD_MAP_SEED={{seed}} cargo run --release -p game --bin game
 

@@ -238,6 +238,9 @@ fn dress_warriors(mut commands: Commands, q: Query<(Entity, &WarriorVisual), Add
                         weapon_r: named.get("weapon_r").copied(),
                     });
                 }
+                if let Some(b) = crate::feel::TRACE_BONES.iter().map(|n| named.get(*n).copied()).collect::<Option<Vec<_>>>() {
+                    commands.entity(vis).insert(crate::feel::TraceBones(b));
+                }
                 commands.entity(vis).insert(CharRig { bones, weapon_attached: false, variant, rig_root, named });
             });
     }

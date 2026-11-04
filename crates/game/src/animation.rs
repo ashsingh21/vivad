@@ -67,7 +67,6 @@ const LOWER: u32 = 0;
 const UPPER: u32 = 1;
 /// The authored swing lasts this long (melee_swing is 12 frames at 30 fps).
 const SWING_TIME: f32 = 0.4;
-const FADE_RATE: f32 = 12.0;
 /// The slide clip's drop into it and its get-up (tools/blender/characters/anims.py SLIDE_IN,
 /// SLIDE_OUT: 10 and 12 frames at 30 fps); the held slide between them loops.
 const SLIDE_IN: f32 = 10.0 / 30.0;
@@ -118,6 +117,21 @@ impl AnimSet {
             (None, "sprint_f") => self.nodes.keys().find(|k| **k == format!("{prefix}run_f")).copied().unwrap_or(name),
             _ => name,
         }
+    }
+}
+
+impl WarriorAnim {
+    /// The clips playing and their weights, heaviest first: (name, played masked, weight), for
+    /// `crate::feel`'s trace.
+    pub fn blend(&self, sets: &AnimSets) -> Vec<(&'static str, bool, f32)> {
+        let set = &sets.0[self.variant];
+        let mut out: Vec<_> = self
+            .weights
+            .iter()
+            .filter_map(|(node, w)| set.nodes.iter().find_map(|(n, (full, mask))| if full == node { Some((*n, false, *w)) } else if *mask == Some(*node) { Some((*n, true, *w)) } else { None }))
+            .collect();
+        out.sort_by(|a, b| b.2.total_cmp(&a.2));
+        out
     }
 }
 
@@ -408,6 +422,7 @@ fn drive(
     mine: Query<(), With<LocalPlayer>>,
     cam: Query<&GlobalTransform, With<crate::camera::MainCamera>>,
     mut frame: Local<u32>,
+    feel: Res<crate::feel::Feel>,
 ) {
     let dt = time.delta_secs();
     *frame = frame.wrapping_add(1);
@@ -624,7 +639,7 @@ fn drive(
             continue;
         }
         let pose_dt = std::mem::take(&mut anim.since_pose);
-        let k = (pose_dt * FADE_RATE).min(1.0);
+        let k = (pose_dt * feel.fade_rate).min(1.0);
         let mut targets: HashMap<AnimationNodeIndex, (f32, f32)> = HashMap::new();
         for (n, masked, w, t) in want {
             let Some(&(full, mask)) = set.nodes.get(n) else { continue };

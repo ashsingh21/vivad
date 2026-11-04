@@ -62,3 +62,6 @@ previews/east_sheet.png
 # Mixamo downloads (Adobe terms: not to be redistributed); the converted clips are in the anims glb.
 tools/blender/characters/mixamo/
 tools/blender/characters/mocaponline/
+# Motion traces and F9 marks (tools/feel/feel.py); the baseline in tools/feel/ is kept.
+/marks/
+/previews/feel/
