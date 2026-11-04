@@ -156,7 +156,6 @@ fn grip_report(m: Option<Res<shared::sim::flow::Match>>, log: Res<GripLog>, mut 
     for ((legs, act), g) in rows {
         let name = if act.is_empty() { legs.to_string() } else { format!("{legs} + {act}") };
         let arched = !legs.contains("crouch") && !legs.contains("slide") && !legs.contains("jump") && !legs.contains("fall") && !legs.ends_with("_b") && (g.lean / g.frames.max(1) as f32) < -3.0 || g.arch > 12.0;
-        let bad = g.off > GRIP_OFF || g.pitch.0 < -50.0 || g.pitch.1 > 50.0 || arched;
         println!(
             "[grip] {name:38} {:5} {:7.1} {:7.1} {:+6.0}..{:+4.0} {:6.1} {:5.1}-{:<5.1} {:+5.0} {:+5.0} {}",
             g.frames,

@@ -79,6 +79,12 @@ pub struct Palette {
     rarity_beam: HashMap<Rarity, Handle<StandardMaterial>>,
     pool_mesh: Handle<Mesh>,
     beam_mesh: Handle<Mesh>,
+    /// A dashed ring turning on the ground under rarer loot, a soft glow behind the item, and the
+    /// sparks rising round it.
+    rarity_ring: HashMap<Rarity, Handle<StandardMaterial>>,
+    rarity_halo: HashMap<Rarity, Handle<StandardMaterial>>,
+    rarity_spark: HashMap<Rarity, Handle<StandardMaterial>>,
+    quad: Handle<Mesh>,
     pub(crate) string: Handle<StandardMaterial>,
     fire: Handle<StandardMaterial>,
     wind: Handle<StandardMaterial>,
@@ -189,11 +195,32 @@ fn setup_assets(
         0.55 * (-(r * r) * 5.0).exp() + 0.28 * (-((r - 0.78) / 0.07).powi(2)).exp()
     });
     let beam_tex = mask(&mut images, &|u, v| {
-        // v = 0 at the beam's foot; brighter down the middle of each card.
-        (1.0 - v).powf(1.6) * (1.0 - (u - 0.5).abs() * 2.0).powf(1.5) * 0.7
+        // v = 0 at the beam's foot: a soft column, brightest at the foot, with a hot core.
+        let x = (u - 0.5) * 2.0;
+        let fade = (1.0 - v).powf(1.4);
+        fade * (0.45 * (-(x * x) * 6.0).exp() + 0.5 * (-(x * x) * 60.0).exp()) + 0.35 * (-v * 14.0).exp() * (-(x * x) * 4.0).exp()
+    });
+    let ring_tex = mask(&mut images, &|u, v| {
+        let (dx, dy) = (u - 0.5, v - 0.5);
+        let r = (dx * dx + dy * dy).sqrt() * 2.0;
+        // Twelve dashes round a thin ring.
+        let dash = (0.5 + 0.5 * (dy.atan2(dx) * 12.0).cos()).powf(3.0);
+        (-((r - 0.86) / 0.035).powi(2)).exp() * (0.25 + 0.75 * dash)
+    });
+    let halo_tex = mask(&mut images, &|u, v| {
+        let r2 = ((u - 0.5).powi(2) + (v - 0.5).powi(2)) * 4.0;
+        (-(r2) * 4.0).exp() * 0.6 * (1.0 - r2).max(0.0)
+    });
+    let spark_tex = mask(&mut images, &|u, v| {
+        let (dx, dy) = ((u - 0.5) * 2.0, (v - 0.5) * 2.0);
+        // A round glint with a faint four-point twinkle.
+        (-(dx * dx + dy * dy) * 18.0).exp() + 0.5 * (-(dx * dx) * 400.0).exp() * (1.0 - dy.abs()) + 0.5 * (-(dy * dy) * 400.0).exp() * (1.0 - dx.abs())
     });
     let mut rarity_pool = HashMap::new();
     let mut rarity_beam = HashMap::new();
+    let mut rarity_ring = HashMap::new();
+    let mut rarity_halo = HashMap::new();
+    let mut rarity_spark = HashMap::new();
     for r in Rarity::ALL {
         let l = r.color().to_linear();
         // Common loot gets a dim pool and barely a beam; rarer loot glows more.
@@ -205,28 +232,35 @@ fn setup_assets(
             alpha_mode: AlphaMode::Add,
             unlit: true,
             cull_mode: None,
+            fog_enabled: false,
             ..default()
         });
-        rarity_pool.insert(r, light(&pool_tex, 1.6 * k, &mut materials));
-        rarity_beam.insert(r, light(&beam_tex, 1.2 * k * k, &mut materials));
+        rarity_pool.insert(r, light(&pool_tex, 1.4 * k, &mut materials));
+        rarity_beam.insert(r, light(&beam_tex, 1.3 * k * k, &mut materials));
+        rarity_ring.insert(r, light(&ring_tex, 2.2 * k, &mut materials));
+        rarity_halo.insert(r, light(&halo_tex, 1.5 * k, &mut materials));
+        // Sparks run white-hot at the middle.
+        let spark = |a: f32| Color::linear_rgba((l.red + 0.6) * a, (l.green + 0.6) * a, (l.blue + 0.6) * a, 1.0);
+        rarity_spark.insert(r, materials.add(StandardMaterial {
+            base_color: spark(2.0),
+            base_color_texture: Some(spark_tex.clone()),
+            alpha_mode: AlphaMode::Add,
+            unlit: true,
+            cull_mode: None,
+            fog_enabled: false,
+            ..default()
+        }));
     }
     let beam_mesh = {
         use bevy::mesh::{Indices, PrimitiveTopology};
-        // Two crossed vertical cards, 0.22 wide and 1.7 tall.
-        let (w, h) = (0.11, 1.7);
-        let mut pos = vec![];
-        let mut uv = vec![];
-        for d in [Vec3::X, Vec3::Z] {
-            for (s, t) in [(-1.0, 0.0), (1.0, 0.0), (1.0, 1.0), (-1.0, 1.0)] {
-                pos.push((d * w * s + Vec3::Y * h * t).to_array());
-                uv.push([(s + 1.0) / 2.0, t]);
-            }
-        }
+        // One card, 1 wide and 1 tall from its foot, turned to the camera (`LootCard`) and scaled.
+        let pos = vec![[-0.5, 0.0, 0.0], [0.5, 0.0, 0.0], [0.5, 1.0, 0.0], [-0.5, 1.0, 0.0]];
+        let uv = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
         Mesh::new(PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::RENDER_WORLD)
             .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
-            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 0.0, 1.0]; 8])
+            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 0.0, 1.0]; 4])
             .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
-            .with_inserted_indices(Indices::U32(vec![0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]))
+            .with_inserted_indices(Indices::U32(vec![0, 1, 2, 0, 2, 3]))
     };
     commands.insert_resource(Palette {
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
@@ -238,6 +272,10 @@ fn setup_assets(
         rarity_beam,
         pool_mesh: meshes.add(Plane3d::default().mesh().size(1.3, 1.3)),
         beam_mesh: meshes.add(beam_mesh),
+        rarity_ring,
+        rarity_halo,
+        rarity_spark,
+        quad: meshes.add(Rectangle::new(1.0, 1.0)),
         glint: materials.add(StandardMaterial {
             base_color: Color::srgb(1.0, 0.95, 0.8),
             emissive: LinearRgba::rgb(6.0, 5.0, 3.2),
@@ -788,29 +826,137 @@ fn dress_pickups(mut commands: Commands, q: Query<(Entity, &Pickup), Added<Picku
     for (e, p) in &q {
         let rarity = p.stack.rarity;
         commands.entity(e).insert(Visibility::default());
-        // A pool of the rarity's light on the ground and a faint beam rising through the model,
-        // which hovers and turns slowly above.
-        commands.spawn((Mesh3d(palette.pool_mesh.clone()), MeshMaterial3d(palette.rarity_pool[&rarity].clone()),
-                        Transform::from_xyz(0.0, -0.27, 0.0), bevy::light::NotShadowCaster, ChildOf(e)));
-        commands.spawn((Mesh3d(palette.beam_mesh.clone()), MeshMaterial3d(palette.rarity_beam[&rarity].clone()),
-                        Transform::from_xyz(0.0, -0.27, 0.0), bevy::light::NotShadowCaster, ChildOf(e)));
-        // Small things (vessels, herbs, astras) are shown larger so they read from a distance.
+        let fx = |mesh: &Handle<Mesh>, mat: &HashMap<Rarity, Handle<StandardMaterial>>| {
+            (Mesh3d(mesh.clone()), MeshMaterial3d(mat[&rarity].clone()), bevy::light::NotShadowCaster, bevy::light::NotShadowReceiver)
+        };
+        // Its rarity's light: a soft pool on the ground (just above the grass's roots) with a dashed
+        // ring turning round it, and a beam rising through the item, turned to face the camera.
+        let foot = -0.25;
+        commands.spawn((fx(&palette.pool_mesh, &palette.rarity_pool), Transform::from_xyz(0.0, foot, 0.0), ChildOf(e)));
+        let rare = rarity != Rarity::Common;
+        if rare {
+            commands.spawn((fx(&palette.pool_mesh, &palette.rarity_ring), LootRing, Transform::from_xyz(0.0, foot + 0.01, 0.0), ChildOf(e)));
+        }
+        let tall = match rarity { Rarity::Common => 1.4, Rarity::Rare => 2.0, Rarity::Epic => 2.4, _ => 3.0 };
+        commands.spawn((fx(&palette.beam_mesh, &palette.rarity_beam), LootCard { size: Vec2::new(0.5, tall), pulse: true },
+                        Transform::from_xyz(0.0, foot, 0.0).with_scale(Vec3::new(0.5, tall, 1.0)), ChildOf(e)));
+        // Small things (vessels, astras) are shown larger so they read from a distance, guns a touch
+        // larger than in the hand.
         let scale = match db.get(&p.stack.id).kind {
             ItemKind::Consumable { .. } => 2.2,
             ItemKind::Astra { .. } => 1.6,
-            _ => 1.0,
+            _ => 1.15,
         };
         let spin = commands.spawn((PickupSpin, Transform::from_xyz(0.0, 0.25, 0.0).with_scale(Vec3::splat(scale)), Visibility::default(), ChildOf(e))).id();
         spawn_weapon_model(&mut commands, spin, &p.stack.id, rarity, &db, &palette);
+        commands.entity(spin).insert(PickupCentre);
+        // A soft glow behind the item, and sparks drifting up round it for the rarer finds.
+        let glow = if rare { 1.1 } else { 0.8 };
+        commands.spawn((fx(&palette.quad, &palette.rarity_halo), LootCard { size: Vec2::splat(glow), pulse: false }, PickupHalo,
+                        Transform::from_xyz(0.0, 0.42, 0.0).with_scale(Vec3::splat(glow)), ChildOf(e)));
+        let sparks = match rarity { Rarity::Common => 0, Rarity::Rare => 3, Rarity::Epic => 4, Rarity::Legendary => 6, Rarity::Divya => 8 };
+        for i in 0..sparks {
+            let f = i as f32 / sparks as f32;
+            commands.spawn((fx(&palette.quad, &palette.rarity_spark), LootCard { size: Vec2::splat(0.11), pulse: false },
+                            LootSpark { phase: f, angle: f * std::f32::consts::TAU * 1.618, radius: 0.18 + 0.12 * ((i * 7) % 5) as f32 / 4.0 },
+                            Transform::from_scale(Vec3::ZERO), ChildOf(e)));
+        }
     }
 }
 
-fn animate_pickups(time: Res<Time>, mut q: Query<&mut Transform, With<PickupSpin>>) {
+/// The turning ground ring under rarer loot.
+#[derive(Component)]
+struct LootRing;
+
+/// A loot light card turned each frame to face the camera, about its foot (`size` is its scale).
+#[derive(Component)]
+struct LootCard {
+    size: Vec2,
+    /// A slow breathing in width (the beam).
+    pulse: bool,
+}
+
+/// The glow behind a pickup, which rides its bob.
+#[derive(Component)]
+struct PickupHalo;
+
+/// A spark rising round a pickup on a loop: where in the loop, round which side, how far out.
+#[derive(Component)]
+struct LootSpark {
+    phase: f32,
+    angle: f32,
+    radius: f32,
+}
+
+/// A pickup's model, still to be moved so it turns about its own middle rather than its grip.
+#[derive(Component)]
+struct PickupCentre;
+
+/// Only loot this close to the camera is animated (beyond it nothing moves, so nothing changes).
+const LOOT_ANIMATE: f32 = 60.0;
+
+#[allow(clippy::type_complexity)]
+fn animate_pickups(
+    mut commands: Commands,
+    time: Res<Time>,
+    cam: Query<&GlobalTransform, With<crate::camera::MainCamera>>,
+    loot: Query<(&GlobalTransform, &Children), With<Pickup>>,
+    mut spins: Query<&mut Transform, (With<PickupSpin>, Without<LootCard>, Without<LootRing>)>,
+    mut cards: Query<(&LootCard, &mut Transform, Option<&LootSpark>, Has<PickupHalo>), (Without<PickupSpin>, Without<LootRing>)>,
+    mut rings: Query<&mut Transform, (With<LootRing>, Without<PickupSpin>, Without<LootCard>)>,
+    centre: Query<(Entity, &Children), With<PickupCentre>>,
+    mut models: Query<(&mut Transform, &bevy::camera::primitives::Aabb), (Without<PickupSpin>, Without<LootCard>, Without<LootRing>)>,
+) {
     let t = time.elapsed_secs();
-    for mut tf in &mut q {
-        // Slow turn, a slight lean, a gentle breathing bob at waist height.
-        tf.rotation = Quat::from_rotation_y(t * 0.9) * Quat::from_rotation_z(0.3);
-        tf.translation.y = 0.42 * tf.scale.y.max(1.0) + (t * 1.5).sin() * 0.045;
+    let Ok(cam) = cam.single() else { return };
+    let eye = cam.translation();
+    // Each model, once its bounds are known, shifted so its middle sits on the turning axis.
+    for (e, kids) in &centre {
+        for k in kids.iter() {
+            if let Ok((mut tf, aabb)) = models.get_mut(k) {
+                tf.translation = -Vec3::from(aabb.center);
+                commands.entity(e).remove::<PickupCentre>();
+            }
+        }
+    }
+    for (gt, kids) in &loot {
+        let at = gt.translation();
+        if at.distance_squared(eye) > LOOT_ANIMATE * LOOT_ANIMATE {
+            continue;
+        }
+        // Each pickup bobs on its own beat (from where it lies).
+        let seed = (at.x * 0.37 + at.z * 0.61).fract() * 6.0;
+        let bob = (t * 1.6 + seed).sin() * 0.05;
+        let to_eye = eye - at;
+        let yaw = Quat::from_rotation_y(to_eye.x.atan2(to_eye.z));
+        for k in kids.iter() {
+            if let Ok(mut tf) = spins.get_mut(k) {
+                // A steady turn, a slight lean, a gentle breathing bob at waist height.
+                tf.rotation = Quat::from_rotation_y(t * 1.1 + seed) * Quat::from_rotation_z(0.18);
+                tf.translation.y = 0.5 + 0.1 * (tf.scale.y - 1.0).max(0.0) + bob;
+            } else if let Ok(mut tf) = rings.get_mut(k) {
+                tf.rotation = Quat::from_rotation_y(-t * 0.8);
+            } else if let Ok((card, mut tf, spark, halo)) = cards.get_mut(k) {
+                if let Some(s) = spark {
+                    // Up from the pool to above the item in two seconds, round and out a little,
+                    // swelling in and shrinking away.
+                    let f = (t * 0.45 + s.phase).fract();
+                    let a = s.angle + f * 1.5;
+                    tf.translation = Vec3::new(a.cos() * s.radius, -0.15 + f * 1.4, a.sin() * s.radius);
+                    tf.scale = Vec3::splat(card.size.x * (f * std::f32::consts::PI).sin().powf(0.6));
+                    // Face the camera fully: they're points of light.
+                    tf.rotation = Transform::from_translation(at + tf.translation).looking_at(eye, Vec3::Y).rotation;
+                    continue;
+                }
+                tf.rotation = yaw;
+                if halo {
+                    tf.translation.y = 0.5 + bob;
+                }
+                if card.pulse {
+                    tf.scale.x = card.size.x * (1.0 + 0.12 * (t * 2.2 + seed).sin());
+                }
+            }
+        }
     }
 }
 

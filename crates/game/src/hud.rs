@@ -36,6 +36,12 @@ const MINIMAP: f32 = 190.0;
 #[derive(Component)] struct FeedText;
 /// One arm of the reticle, pointing along `0` (screen space, +y down) from the centre.
 #[derive(Component)] struct ReticleBar(Vec2);
+/// The reticle's centre dot.
+#[derive(Component)] struct ReticleDot;
+/// The shotgun's spread circle and the gulel's closing draw circle (`halo`: the dark ring under it).
+#[derive(Component)] struct ReticleRing { halo: bool }
+/// The hit marker's four ticks hang off this, which pops in scale on a hit.
+#[derive(Component)] struct HitMarker;
 /// One diagonal tick of the hit marker.
 #[derive(Component)] struct HitTick;
 #[derive(Component)] struct TopRight;
@@ -82,6 +88,8 @@ struct Feed {
     lines: Vec<(String, f32)>,
     hit_flash: f32,
     headshot: bool,
+    /// The last hit took the target down.
+    kill: bool,
 }
 
 fn text(s: &str, size: f32, color: Color) -> (Text, TextFont, TextColor) {
@@ -128,26 +136,33 @@ fn build_hud(mut commands: Commands) {
         .spawn(Node { position_type: PositionType::Absolute, width: percent(100.0), height: percent(100.0),
                       justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() })
         .with_children(|p| {
-            // A zero-size anchor at the screen centre; the reticle's pieces hang off it.
+            // A zero-size anchor at the screen centre; the reticle's pieces hang off it. Each piece
+            // is a rounded pill with a soft dark halo, so it reads on a bright sky or a dark wall.
             p.spawn(Node { width: px(0.0), height: px(0.0), ..default() }).with_children(|c| {
-                let outline = Outline { width: px(1.0), offset: px(0.0), color: Color::srgba(0.0, 0.0, 0.0, 0.55) };
-                c.spawn((Node { position_type: PositionType::Absolute, left: px(-1.5), top: px(-1.5), width: px(3.0), height: px(3.0), ..default() },
-                         BackgroundColor(RETICLE), outline));
+                let abs = || Node { position_type: PositionType::Absolute, border_radius: BorderRadius::MAX, ..default() };
+                for halo in [true, false] {
+                    c.spawn((ReticleRing { halo }, Node { border: UiRect::all(px(if halo { 4.0 } else { 2.0 })), ..abs() },
+                             BorderColor::all(if halo { RETICLE_HALO } else { RETICLE }), Visibility::Hidden));
+                }
+                c.spawn((ReticleDot, abs(), BackgroundColor(RETICLE), halo()));
                 for d in [Vec2::X, Vec2::NEG_X, Vec2::Y, Vec2::NEG_Y] {
-                    c.spawn((ReticleBar(d), Node { position_type: PositionType::Absolute, ..default() }, BackgroundColor(RETICLE), outline));
+                    c.spawn((ReticleBar(d), abs(), BackgroundColor(RETICLE), halo()));
                 }
-                for d in [Vec2::new(1.0, 1.0), Vec2::new(-1.0, 1.0), Vec2::new(1.0, -1.0), Vec2::new(-1.0, -1.0)] {
-                    let at = d.normalize() * (HIT_TICK_AT + HIT_TICK_LEN / 2.0);
-                    c.spawn((
-                        HitTick,
-                        Node { position_type: PositionType::Absolute, left: px(at.x - HIT_TICK_LEN / 2.0), top: px(at.y - 1.0),
-                               width: px(HIT_TICK_LEN), height: px(2.0), ..default() },
-                        UiTransform { rotation: Rot2::radians((d.y * d.x).signum() * std::f32::consts::FRAC_PI_4), ..default() },
-                        BackgroundColor(Color::WHITE),
-                        Outline { width: px(1.0), offset: px(0.0), color: Color::srgba(0.0, 0.0, 0.0, 0.5) },
-                        Visibility::Hidden,
-                    ));
-                }
+                // The hit marker pops in large and settles, so a hit is felt as well as seen.
+                c.spawn((HitMarker, Node { position_type: PositionType::Absolute, ..default() }, UiTransform::default(), Visibility::Hidden))
+                    .with_children(|m| {
+                        for d in [Vec2::new(1.0, 1.0), Vec2::new(-1.0, 1.0), Vec2::new(1.0, -1.0), Vec2::new(-1.0, -1.0)] {
+                            let at = d.normalize() * (HIT_TICK_AT + HIT_TICK_LEN / 2.0);
+                            m.spawn((
+                                HitTick,
+                                Node { position_type: PositionType::Absolute, left: px(at.x - HIT_TICK_LEN / 2.0), top: px(at.y - 1.25),
+                                       width: px(HIT_TICK_LEN), height: px(2.5), border_radius: BorderRadius::MAX, ..default() },
+                                UiTransform { rotation: Rot2::radians((d.y * d.x).signum() * std::f32::consts::FRAC_PI_4), ..default() },
+                                BackgroundColor(Color::WHITE),
+                                halo(),
+                            ));
+                        }
+                    });
             });
         });
     // Prompt + use/reload progress, lower centre.
@@ -348,13 +363,36 @@ fn feed(
     }
 }
 
-const RETICLE: Color = Color::srgba(1.0, 1.0, 1.0, 0.9);
-const BAR_LEN: f32 = 7.0;
-const BAR_W: f32 = 2.0;
+const RETICLE: Color = Color::srgba(1.0, 1.0, 1.0, 0.95);
+const RETICLE_HALO: Color = Color::srgba(0.0, 0.0, 0.0, 0.35);
+const RETICLE_CHARGED: Color = Color::srgb(1.0, 0.82, 0.3);
+const BAR_LEN: f32 = 8.0;
+const BAR_W: f32 = 2.5;
+const DOT: f32 = 3.5;
 /// Gap from the centre to each arm with no spread.
 const BASE_GAP: f32 = 5.0;
 const HIT_TICK_AT: f32 = 9.0;
-const HIT_TICK_LEN: f32 = 8.0;
+const HIT_TICK_LEN: f32 = 9.0;
+/// How long the hit marker shows.
+const HIT_SHOW: f32 = 0.22;
+
+/// The soft dark glow round each reticle piece.
+fn halo() -> BoxShadow {
+    BoxShadow::new(Color::srgba(0.0, 0.0, 0.0, 0.45), px(0.0), px(0.0), px(0.5), px(3.0))
+}
+
+/// What the reticle looks like for the held item.
+#[derive(Clone, Copy, PartialEq)]
+enum ReticleStyle {
+    /// A rifle or pistol: four arms round a dot, as far out as the spread.
+    Cross,
+    /// A shotgun: a circle the size of the pellet spread.
+    Ring,
+    /// A drawn weapon (the gulel): a circle closing on the dot as it's drawn, gold when full.
+    Charge,
+    /// Melee, throwables and consumables: just the dot.
+    Dot,
+}
 
 /// The reticle's arms sit as far out as the held bow's spread reaches on screen at the camera's
 /// field of view: wider for the seven-arrow bow, tighter aiming down the sights or crouched, opening
@@ -367,7 +405,9 @@ fn reticle(
     cam: Query<&Projection, With<crate::camera::MainCamera>>,
     time: Res<Time>,
     mut eased: Local<f32>,
-    mut bars: Query<(&ReticleBar, &mut Node)>,
+    mut bars: Query<(&ReticleBar, &mut Node, &mut Visibility), (Without<ReticleRing>, Without<ReticleDot>)>,
+    mut rings: Query<(&ReticleRing, &mut Node, &mut Visibility, &mut BorderColor), Without<ReticleDot>>,
+    mut dot: Query<(&mut Node, &mut BackgroundColor), With<ReticleDot>>,
 ) {
     let Ok((inv, act, intent, kin)) = q.single() else { return };
     let h = windows.iter().next().map(|w| w.height()).unwrap_or(900.0);
@@ -376,16 +416,29 @@ fn reticle(
         _ => 35f32.to_radians(),
     };
     let mut spread_px = 0.0;
-    if let Some(ItemKind::Bow { spread_deg, .. }) = inv.current().map(|s| &db.get(&s.id).kind) {
+    let mut style = ReticleStyle::Dot;
+    let mut drawn = 0.0;
+    if let Some(ItemKind::Bow { spread_deg, pellets, charge, .. }) = inv.current().map(|s| &db.get(&s.id).kind) {
         let spread = spread_deg.to_radians() * shared::sim::combat::spread_scale(intent, kin, act);
         spread_px = spread.tan() / half_fov.tan() * h / 2.0;
+        style = if *pellets > 1 {
+            ReticleStyle::Ring
+        } else if *charge > 0.0 {
+            drawn = (act.charge / charge).clamp(0.0, 1.0);
+            ReticleStyle::Charge
+        } else {
+            ReticleStyle::Cross
+        };
     }
     // Opens fast, closes a little slower.
     let rate = if spread_px > *eased { 25.0 } else { 10.0 };
     *eased += (spread_px - *eased) * (1.0 - (-time.delta_secs() * rate).exp());
-    let mut gap = BASE_GAP + *eased;
-    gap += 6.0 * (1.0 - act.since_attack / 0.15).clamp(0.0, 1.0);
-    for (bar, mut n) in &mut bars {
+    // A shot kicks the reticle open for a moment.
+    let kick = 6.0 * (1.0 - act.since_attack / 0.15).clamp(0.0, 1.0);
+    let gap = BASE_GAP + *eased + kick;
+    let show = |on: bool| if on { Visibility::Inherited } else { Visibility::Hidden };
+    for (bar, mut n, mut v) in &mut bars {
+        *v = show(style == ReticleStyle::Cross);
         let d = bar.0;
         let (w, l) = if d.x != 0.0 { (BAR_LEN, BAR_W) } else { (BAR_W, BAR_LEN) };
         let c = d * (gap + BAR_LEN / 2.0);
@@ -394,27 +447,73 @@ fn reticle(
         n.width = px(w);
         n.height = px(l);
     }
+    let radius = match style {
+        ReticleStyle::Ring => (*eased + kick).max(12.0),
+        // From wide open to snug round the dot as the draw fills.
+        _ => 30.0 - 22.0 * drawn * drawn.sqrt() + kick,
+    };
+    let ring_on = style == ReticleStyle::Ring || (style == ReticleStyle::Charge && drawn > 0.0);
+    let full = style == ReticleStyle::Charge && drawn >= 1.0;
+    for (ring, mut n, mut v, mut b) in &mut rings {
+        *v = show(ring_on);
+        let r = radius + if ring.halo { 1.0 } else { 0.0 };
+        n.left = px(-r);
+        n.top = px(-r);
+        n.width = px(2.0 * r);
+        n.height = px(2.0 * r);
+        if !ring.halo {
+            let c = if full { RETICLE_CHARGED } else { RETICLE.with_alpha(if style == ReticleStyle::Charge { 0.45 + 0.5 * drawn } else { 0.9 }) };
+            *b = BorderColor::all(c);
+        }
+    }
+    if let Ok((mut n, mut c)) = dot.single_mut() {
+        // The dot is a touch bigger on its own, where it's all there is.
+        let s = if style == ReticleStyle::Dot { DOT + 1.0 } else { DOT };
+        n.left = px(-s / 2.0);
+        n.top = px(-s / 2.0);
+        n.width = px(s);
+        n.height = px(s);
+        c.0 = if full { RETICLE_CHARGED } else { RETICLE };
+    }
 }
 
-/// Four diagonal ticks round the reticle when the local player's hit lands (gold for a headshot).
+/// Four diagonal ticks round the reticle when the local player's hit lands: white on the body, gold
+/// for a headshot, red and bigger for the hit that takes them down. They pop in and settle.
 fn hit_marker(
     mut hits: MessageReader<HitMsg>,
     local: Query<Entity, With<LocalPlayer>>,
+    health: Query<&Health>,
     mut f: ResMut<Feed>,
     time: Res<Time>,
-    mut q: Query<(&mut Visibility, &mut BackgroundColor), With<HitTick>>,
+    mut marker: Query<(&mut Visibility, &mut UiTransform), With<HitMarker>>,
+    mut ticks: Query<&mut BackgroundColor, With<HitTick>>,
 ) {
     let Ok(me) = local.single() else { return };
     for h in hits.read() {
         if h.attacker == me && h.target != me {
-            f.hit_flash = 0.18;
+            f.hit_flash = HIT_SHOW;
             f.headshot = h.headshot;
+            f.kill = health.get(h.target).is_ok_and(|hp| hp.hp <= 0.0);
         }
     }
     f.hit_flash = (f.hit_flash - time.delta_secs()).max(0.0);
-    for (mut v, mut c) in &mut q {
-        *v = if f.hit_flash > 0.0 { Visibility::Inherited } else { Visibility::Hidden };
-        c.0 = if f.headshot { Color::srgb(1.0, 0.85, 0.2) } else { Color::WHITE };
+    let Ok((mut v, mut tf)) = marker.single_mut() else { return };
+    *v = if f.hit_flash > 0.0 { Visibility::Inherited } else { Visibility::Hidden };
+    // Age 0..1: in at 1.5x, down to 1x (1.3x for a kill) within the first third, then a slight fade-out shrink.
+    let age = 1.0 - f.hit_flash / HIT_SHOW;
+    let rest = if f.kill { 1.3 } else { 1.0 };
+    let pop = (1.0 - age / 0.3).clamp(0.0, 1.0);
+    tf.scale = Vec2::splat(rest + 0.5 * pop * pop - 0.1 * ((age - 0.7) / 0.3).clamp(0.0, 1.0));
+    let color = if f.kill {
+        Color::srgb(1.0, 0.25, 0.2)
+    } else if f.headshot {
+        Color::srgb(1.0, 0.85, 0.2)
+    } else {
+        Color::WHITE
+    };
+    let alpha = 1.0 - ((age - 0.6) / 0.4).clamp(0.0, 1.0);
+    for mut c in &mut ticks {
+        c.0 = color.with_alpha(alpha);
     }
 }
 

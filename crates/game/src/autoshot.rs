@@ -184,6 +184,8 @@ impl Plugin for AutoshotPlugin {
                     ("cp_shops_along", v(74.6, 1.7, 74.9), v(65.1, 2.4, 85.1)),
                     ("cp_shop_outer", v(81.0, 1.7, 106.1), v(74.4, 1.9, 92.6)),
                     ("cp_lane", v(163.1, 1.8, 135.8), v(185.2, 4.0, 115.6)),
+                    ("cp_loot", v(0.0, 0.0, 0.0), v(0.0, 0.0, 0.0)),
+                    ("cp_loot_close", v(0.0, 0.0, 0.0), v(0.0, 0.0, 0.0)),
                     ("03_bazaar_roofs", v(-30.0, 26.0, 40.0), v(5.0, 2.0, 0.0)),
                     ("04_stepwell", v(-66.0, 22.0, 112.0), v(-112.0, -12.0, 95.0)),
                     ("04b_stepwell_above", v(-96.0, 45.0, 138.0), v(-108.0, -6.0, 95.0)),
@@ -296,6 +298,8 @@ impl Plugin for AutoshotPlugin {
                 range("dunali", View::Range, 9.0, 0.02),
                 range("dunali", View::Range, 9.0, 0.08),
                 range("dunali", View::Player, 9.0, 0.3),
+                range("dunali", View::Player, 9.0, 0.05),
+                range("bandook", View::Player, 20.0, 0.05),
                 range("agneyastra", View::Range, 9.0, 0.25),
                 range("chakra", View::Range, 12.0, 0.3),
                 range("chakra", View::Range, 12.0, 1.6),
@@ -328,6 +332,8 @@ fn run_tour(
     houses: Query<(&shared::sim::MapBlock, &Transform), Without<MainCamera>>,
     mut chests: Query<(&mut shared::sim::loot::Chest, &Transform), Without<MainCamera>>,
     pickups: Query<(&shared::sim::loot::Pickup, &Transform), Without<MainCamera>>,
+    layout: Res<MapLayout>,
+    db: Res<ItemDb>,
     time: Res<Time<Real>>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -375,6 +381,27 @@ fn run_tour(
                 c.opened = true;
             }
         }
+    }
+    if name.starts_with("cp_loot") {
+        // A row of floor loot on the central plaza, one of each rarity (and a drink and a bomb),
+        // laid out on the view's first frame; "_close" is on the legendary one.
+        let row = [("tamancha", Rarity::Common), ("bandook", Rarity::Rare), ("dunali", Rarity::Epic), ("bandook", Rarity::Legendary),
+                   ("gulel", Rarity::Divya), ("amrita", Rarity::Epic), ("vayavyastra", Rarity::Rare)];
+        let at = |i: usize| {
+            let (x, z) = (38.0 + 1.6 * i as f32, 2.0);
+            Vec3::new(x, layout.terrain.height(x, z) + 0.27, z)
+        };
+        if name == "cp_loot" && tour.frames == 0 {
+            for (i, (id, r)) in row.iter().enumerate() {
+                shared::sim::loot::spawn_pickup(&mut commands, shared::sim::loot::PickupId(9 << 56 | i as u64), at(i),
+                                                shared::sim::loot::make_stack(&db, id, *r));
+            }
+        }
+        (pos, look) = if name.ends_with("_close") {
+            (at(3) + Vec3::new(0.5, 0.75, 1.5), at(3) + Vec3::Y * 0.4)
+        } else {
+            (at(3) + Vec3::new(0.0, 2.0, 7.5), at(3) + Vec3::Y * 0.3)
+        };
     }
     if name.starts_with("31_pickup") {
         // Frame a weapon lying in the open (a bow or a sword), from standing height and 3 m off.
