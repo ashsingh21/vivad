@@ -4,14 +4,14 @@
   pinstriped frame and a bouquet painted on its front and lid, pressed ribs round it, brass corner
   caps, hinges and hasp, a brass padlock, steel handles at the ends; the paint chipped to bare steel
   on its edges and dusty in its corners.
-- kalash: the purna kalash (the armoury's amrita vessel, tools/blender/weapons/arsenal.py) at the
-  size of a chest, on a brass thali: a chased gold pot, mauli at its neck, mango leaves and a coconut
-  on top (the lid, lifted off when opened).
+- tijori: the rare one, the old iron safe of a seth's shop: maroon enamel with a painted bouquet on
+  its door, gold trim, a brass dial and a spoked handle, on four stubby feet; inside, lined in red,
+  a stack of gold bars on a shelf (seen when the door swings open).
 
-Each is baked to one texture set. The lid's mesh has its origin on the hinge (the peti's back top
-edge; the kalash's mouth), so the game turns it about there.
+Each is baked to one texture set. The lid's (the door's) mesh has its origin on the hinge (the
+peti's back top edge; the tijori's front left edge), so the game turns it about there.
 
-blender -b --factory-startup -P tools/blender/props/chests.py   -> assets/models/props/chest_{peti,kalash}.glb
+blender -b --factory-startup -P tools/blender/props/chests.py   -> assets/models/props/chest_{peti,tijori}.glb
 """
 
 import math
@@ -42,10 +42,10 @@ BRASS = (0.86, 0.62, 0.30)
 W, D, H, LID = 1.1, 0.62, 0.5, 0.17
 
 
-def painted_steel(name, paint):
+def painted_steel(name, paint, panel_z=H * 0.5, panel=(0.4, 0.15)):
     """Enamel paint over pressed steel: a pinstriped frame and a bouquet where `deco` is set (1 on
-    the front, its centre at `panel_z`; 2 on the lid's top), chipped to steel on the edges, rust
-    in the deeper chips, dust in the corners."""
+    the front, its centre at `panel_z`, its half width and height `panel`; 2 on the lid's top),
+    chipped to steel on the edges, rust in the deeper chips, dust in the corners."""
     m = new_material(name)
     g = Graph(m)
     co = g.texcoord("Object")
@@ -58,10 +58,10 @@ def painted_steel(name, paint):
     on = g.mul(g.smooth(deco, 0.5, 0.6), g.sub(1.0, inside))
     # Panel coordinates: across, and up the front or back across the lid.
     pu = x
-    pv = g.mix(top, g.sub(z, H * 0.5), y)
-    hh = g.mix(top, 0.15, 0.22)
+    pv = g.mix(top, g.sub(z, panel_z), y)
+    hh = g.mix(top, panel[1], 0.22)
     # The frame: two pinstripes inset from the panel's edge.
-    d = g.maxf(g.sub(g.absf(pu), 0.4), g.sub(g.absf(pv), hh))
+    d = g.maxf(g.sub(g.absf(pu), panel[0]), g.sub(g.absf(pv), hh))
     stripe = g.maxf(g.band(d, -0.006, -0.002, 0.0015), g.band(d, -0.022, -0.019, 0.0015))
     # The bouquet: a big six-petalled flower in the middle, two smaller either side, dots round.
     def flower(cx, size, petals):
@@ -328,63 +328,107 @@ def peti():
     bake_split("peti", body + lid, hinge=(0.0, hd + 0.014, H), res=1024)
 
 
-def kalash():
-    """The amrita vessel's design at the armoury's scale (so its finishes read as they do there),
-    on a thali standing on the ground (a ring: the pot, its foot set into it, hides its middle), scaled up to a chest's size after baking."""
-    gold = F.metal("kalash_gold", arsenal.GOLD, rough=0.2, chase=True)
-    plate = F.metal("kalash_thali", BRASS, rough=0.3)
-    leaf_m = F.leaf("kalash_leaf", (0.12, 0.32, 0.08))
-    nut = F.plain("kalash_coconut", (0.36, 0.23, 0.12), rough=0.85)
-    thread = F.wrap("kalash_thread", (0.70, 0.08, 0.04), (0.90, 0.70, 0.15))
-    Z = Vector((0, 0, 1))
-    lathe = arsenal.lathe
-    prof = [(0.0, 0.0), (0.04, 0.0), (0.045, 0.005), (0.04, 0.012), (0.062, 0.03), (0.08, 0.07), (0.077, 0.11),
-            (0.055, 0.14), (0.034, 0.155), (0.032, 0.17), (0.05, 0.18), (0.052, 0.186), (0.046, 0.188)]
-    body = [lathe("pot", prof, gold, seg=32, caps=(None, "fan"))]
-    body.append(lathe("mauli", [(0.0335, 0.15), (0.037, 0.153), (0.037, 0.163), (0.0335, 0.166)], thread, seg=24))
-    body.append(lathe("bandA", [(0.0785, 0.066), (0.0805, 0.068), (0.0805, 0.075), (0.0785, 0.077)], gold, seg=32))
-    body.append(lathe("thali", [(0.035, 0.006), (0.1, 0.006), (0.118, 0.013), (0.122, 0.012), (0.118, 0.004), (0.1, 0.0), (0.035, 0.0), (0.035, 0.006)],
-                      plate, seg=40))
-    # A closed ring: its faces turned outward whichever way the profile ran.
-    thali = body[-1]
-    bm = bmesh.new()
-    bm.from_mesh(thali.data)
-    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-    bm.to_mesh(thali.data)
-    bm.free()
-    lid = []
-    for k in range(7):
-        a = 2 * math.pi * k / 7
-        out = Vector((math.cos(a), math.sin(a), 0))
-        S = 10
-        frames, rings = [], []
-        base = Vector((0, 0, 0.182)) + out * 0.03
-        tip_dir = (out * 0.9 + Z * 0.2).normalized()
-        nrm = Z.cross(out).normalized()
-        for s in range(S):
-            u = s / (S - 1)
-            w = 0.08 * 0.17 * math.sin(math.pi * u) ** 0.7 + 0.0005
-            c = base + tip_dir * (0.08 * u) - Z * (0.035 * u * u)
-            frames.append((c, nrm, tip_dir.cross(nrm).normalized()))
-            rings.append([(w, 0.0), (0.0, 0.0009), (-w, 0.0), (0.0, -0.0009)])
-        lid.append(geo.loft(f"leaf{k}", frames, rings, cap_start="fan", cap_end="fan", material=leaf_m, merge=True,
-                            corner_attrs={"u": lambda si, ri, c: si / 9,
-                                          "v": lambda si, ri, c: {0: 1.0, 1: 0.0, 2: -1.0, 3: 0.0}[ri % 4]}))
-    # The coconut: an egg, smooth enough at a chest's size, a little pointed at its tip.
-    egg = [(0.042 * math.sin(math.pi * k / 16) * (1.0 - 0.18 * k / 16), 0.18 + 0.041 * (1.0 - math.cos(math.pi * k / 16)))
-           for k in range(17)]
-    egg[-1] = (0.0, egg[-1][1] + 0.004)
-    lid.append(lathe("coconut", egg, nut, seg=28))
-    for o in body + lid:
+# The tijori, metres: width, depth, height (to its top, feet included), the walls' thickness, the
+# feet's height.
+TW, TD, TH, WALL, FEET = 0.78, 0.62, 0.98, 0.055, 0.07
+
+
+def tijori():
+    paint = painted_steel("tijori_paint", (0.28, 0.03, 0.04), panel_z=(FEET + TH) / 2, panel=(0.24, 0.32))
+    gold = F.metal("tijori_gold", arsenal.GOLD, rough=0.18)
+    brass = brass_fitting("tijori_brass")
+    steel = dark_steel("tijori_steel")
+    hw, hd = TW / 2, TD / 2
+    body, door = [], []
+    mid = Vector((0.0, 0.0, (FEET + TH) / 2))
+    inner = lambda p: (abs(p.center.x) <= hw - WALL + 0.002 and -hd - 0.001 <= p.center.y <= hd - WALL + 0.002
+                       and FEET + WALL - 0.002 <= p.center.z <= TH - WALL + 0.002 and (mid - p.center).dot(p.normal) > 0)
+    # The carcass, open at the front: back, sides, top and floor; lined in red inside.
+    for name, mn, mx in (("back", (-hw, hd - WALL, FEET), (hw, hd, TH)),
+                         ("side", (-hw, -hd, FEET), (-hw + WALL, hd, TH)),
+                         ("side", (hw - WALL, -hd, FEET), (hw, hd, TH)),
+                         ("top", (-hw, -hd, TH - WALL), (hw, hd, TH)),
+                         ("floor", (-hw, -hd, FEET), (hw, hd, FEET + WALL))):
+        o = box(name, mn, mx, paint, bevel=0.01)
+        tag(o, "deco", 0.0)
+        # Faces looking into the hollow are the lining.
+        tag(o, "deco", 3.0, inner)
+        body.append(o)
+    # Gold trim round the front opening and along the top edge, four stubby feet.
+    t = 0.022
+    for mn, mx in (((-hw - 0.004, -hd - 0.012, TH - t), (hw + 0.004, -hd + 0.01, TH + 0.004)),
+                   ((-hw - 0.004, -hd - 0.012, FEET - 0.004), (hw + 0.004, -hd + 0.01, FEET + t)),
+                   ((-hw - 0.004, -hd - 0.012, FEET), (-hw + t, -hd + 0.01, TH)),
+                   ((hw - t, -hd - 0.012, FEET), (hw + 0.004, -hd + 0.01, TH))):
+        body.append(box("trim", mn, mx, gold, bevel=0.005))
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            x, y = sx * (hw - 0.07), sy * (hd - 0.07)
+            body.append(arsenal.lathe("foot", [(0.0, 0.0), (0.035, 0.0), (0.042, 0.02), (0.03, 0.05), (0.04, FEET + 0.002), (0.0, FEET + 0.002)],
+                                      brass, seg=16, origin=Vector((x, y, 0.0))))
+    # Inside: a shelf, and gold bars stacked on the floor and the shelf (a pyramid of them below,
+    # a row above).
+    shelf_z = FEET + WALL + 0.42
+    body.append(box("shelf", (-hw + WALL, -hd + 0.07, shelf_z - 0.012), (hw - WALL, hd - WALL, shelf_z + 0.012), steel, bevel=0.003))
+    bl, bw, bh = 0.16, 0.07, 0.045
+    def bar(x, y, z):
+        body.append(box("bar", (x - bl / 2, y - bw / 2, z), (x + bl / 2, y + bw / 2, z + bh), gold, bevel=0.008))
+    base = FEET + WALL
+    for row, n in enumerate((4, 3, 2)):
+        for k in range(n):
+            for y in (-0.05, 0.1):
+                bar((k - (n - 1) / 2) * (bl + 0.012), y, base + row * bh)
+    for k in range(3):
+        bar((k - 1) * (bl + 0.02), 0.03, shelf_z + 0.012)
+    # The door, hung on the front left edge: a thick slab inside the trim, the bouquet painted on
+    # its face, a brass dial and a gold three-spoked handle, two hinge barrels.
+    dx0, dx1 = -hw + t, hw - t
+    dz0, dz1 = FEET + t, TH - t
+    fy = -hd - 0.012
+    slab = box("door", (dx0 + 0.003, fy, dz0 + 0.003), (dx1 - 0.003, -hd + 0.05, dz1 - 0.003), paint, bevel=0.012)
+    tag(slab, "deco", 0.0)
+    tag(slab, "deco", 1.0, lambda p: p.normal.y < -0.9)
+    tag(slab, "deco", 3.0, lambda p: p.normal.y > 0.9)
+    door.append(slab)
+    mid_z = (dz0 + dz1) / 2
+    dial_at = Vector((0.12, fy, mid_z + 0.16))
+    Yn = Vector((0, -1, 0))
+    door.append(arsenal.lathe("dial", [(0.0, 0.0), (0.05, 0.0), (0.05, 0.012), (0.044, 0.02), (0.012, 0.024), (0.0, 0.026)], brass,
+                              seg=32, axis=Yn, origin=dial_at))
+    door.append(arsenal.lathe("dial_ring", [(0.054, 0.0), (0.062, 0.0), (0.062, 0.004), (0.054, 0.004)], gold, seg=32, axis=Yn,
+                              origin=dial_at))
+    hub = Vector((0.12, fy, mid_z - 0.04))
+    door.append(arsenal.lathe("hub", [(0.0, 0.0), (0.026, 0.0), (0.026, 0.03), (0.018, 0.038), (0.0, 0.038)], gold, seg=20, axis=Yn, origin=hub))
+    for k in range(3):
+        a = math.radians(90 + 120 * k)
+        d = Vector((math.cos(a), 0, math.sin(a)))
+        a0 = hub + Yn * 0.03 + d * 0.02
+        a1 = hub + Yn * 0.03 + d * 0.085
+        door.append(arsenal.tube("spoke", [a0, a0.lerp(a1, 0.5), a1], lambda u: 0.007, gold, seg=10, up=Vector((0, 1, 0))))
+        door.append(arsenal.lathe("knob", [(0.0, -0.016), (0.012, -0.012), (0.014, 0.0), (0.012, 0.012), (0.0, 0.016)], gold, seg=14,
+                                  origin=a1))
+    door.append(box("plate", (-0.03, fy - 0.004, mid_z - 0.24), (0.03, fy + 0.002, mid_z - 0.16), brass, bevel=0.004))
+    door.append(box("keyhole", (-0.006, fy - 0.0055, mid_z - 0.225), (0.006, fy - 0.003, mid_z - 0.185), steel, bevel=0.001))
+    for z in (dz0 + 0.12, dz1 - 0.12):
+        door.append(arsenal.lathe("hinge", [(0.0, -0.06), (0.016, -0.06), (0.016, 0.06), (0.0, 0.06)], brass, seg=14,
+                                  origin=Vector((dx0 - 0.004, fy - 0.004, z))))
+    mark_lid(door)
+    for o in body:
         if "lid" not in o.data.attributes:
             o.data.attributes.new("lid", "FLOAT", "CORNER")
-    mark_lid(lid)
-    # About 1.1 m tall on its thali.
-    bake_split("kalash", body + lid, hinge=(0.0, 0.0, 0.182), scale=4.2, res=1024)
+        if "deco" not in o.data.attributes:
+            tag(o, "deco", 0.0)
+    for o in door:
+        if "deco" not in o.data.attributes:
+            tag(o, "deco", 0.0)
+    bake_split("tijori", body + door, hinge=(dx0 - 0.004, fy - 0.004, 0.0), res=1024)
 
 
 def main():
-    for build in (peti, kalash):
+    names = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    for build in (peti, tijori):
+        if names and build.__name__ not in names:
+            continue
         export.reset_scene()
         build()
 

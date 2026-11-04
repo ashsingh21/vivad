@@ -308,7 +308,7 @@ fn prompts(
     } else if let Some((_, c)) = chests.iter().filter(|(t, c)| !c.opened && t.translation.distance(me) < INTERACT_RANGE).next() {
         s = match c.kind {
             ChestKind::Peti => "[E] Peti kholo".into(),
-            ChestKind::Kalash => "[E] Sone ka Kalash kholo".into(),
+            ChestKind::Tijori => "[E] Tijori kholo".into(),
         };
     } else if let Some((_, p)) = pickups
         .iter()

@@ -93,7 +93,7 @@ pub struct Palette {
     zone: Handle<StandardMaterial>,
     pub(crate) models: HashMap<&'static str, ModelHandles>,
     /// The chests (tools/blender/props/chests.py): body and lid (its origin on the hinge). Their
-    /// material is in `models`, as "chest_peti" and "chest_kalash".
+    /// material is in `models`, as "chest_peti" and "chest_tijori".
     chests: HashMap<ChestKind, (Handle<Mesh>, Handle<Mesh>)>,
 }
 
@@ -306,7 +306,7 @@ fn setup_assets(
         models: WEAPON_MODELS
             .iter()
             .map(|&id| (id, format!("models/weapons/{id}.glb")))
-            .chain(["chest_peti", "chest_kalash"].map(|id| (id, format!("models/props/{id}.glb"))))
+            .chain(["chest_peti", "chest_tijori"].map(|id| (id, format!("models/props/{id}.glb"))))
             .map(|(id, path)| {
                 (id, ModelHandles {
                     mesh: assets.load(format!("{path}#Mesh0/Primitive0")),
@@ -317,7 +317,7 @@ fn setup_assets(
             })
             .collect(),
         string: materials.add(StandardMaterial { base_color: Color::srgb(0.86, 0.82, 0.70), perceptual_roughness: 0.8, ..default() }),
-        chests: [(ChestKind::Peti, "peti"), (ChestKind::Kalash, "kalash")]
+        chests: [(ChestKind::Peti, "peti"), (ChestKind::Tijori, "tijori")]
             .into_iter()
             .map(|(kind, name)| {
                 let path = format!("models/props/chest_{name}.glb");
@@ -773,46 +773,60 @@ pub fn spawn_weapon_model(commands: &mut Commands, parent: Entity, id: &str, _ra
 #[derive(Component)]
 struct ChestLid;
 
-/// Where each chest's lid hinges, in the chest's frame: the peti's back top edge, the kalash's mouth.
+/// The glow of the gold inside an open tijori.
+#[derive(Component)]
+struct TijoriGlow;
+
+/// Where each chest's lid hinges, in the chest's frame: the peti's back top edge, the tijori door's
+/// front left edge (chest_tijori.glb's hinge, tools/blender/props/chests.py).
 fn lid_hinge(kind: ChestKind) -> Vec3 {
     match kind {
         ChestKind::Peti => Vec3::new(0.0, 0.5, -0.324),
-        ChestKind::Kalash => Vec3::new(0.0, 0.764, 0.0),
+        ChestKind::Tijori => Vec3::new(-0.372, 0.0, 0.326),
     }
 }
 
 fn dress_chests(
     mut commands: Commands,
     added: Query<(Entity, &Chest), Added<Chest>>,
-    changed: Query<(&Chest, &Children), Changed<Chest>>,
+    changed: Query<(Entity, &Chest, &Children), Changed<Chest>>,
     mut lids: Query<&mut Transform, With<ChestLid>>,
+    glows: Query<(), With<TijoriGlow>>,
     palette: Res<Palette>,
 ) {
     for (e, c) in &added {
         let (body, lid) = palette.chests[&c.kind].clone();
-        let mat = palette.models[if c.kind == ChestKind::Peti { "chest_peti" } else { "chest_kalash" }].mat.clone();
+        let mat = palette.models[if c.kind == ChestKind::Peti { "chest_peti" } else { "chest_tijori" }].mat.clone();
         commands.entity(e).insert(Visibility::default()).with_children(|p| {
             p.spawn((Mesh3d(body), MeshMaterial3d(mat.clone())));
             p.spawn((ChestLid, Mesh3d(lid), MeshMaterial3d(mat), Transform::from_translation(lid_hinge(c.kind))));
-            // The kalash marked out from afar: a pool of divine light round its foot.
-            if c.kind == ChestKind::Kalash {
+            // The tijori marked out from afar: a pool of divine light round its feet.
+            if c.kind == ChestKind::Tijori {
                 p.spawn((Mesh3d(palette.pool_mesh.clone()), MeshMaterial3d(palette.rarity_pool[&Rarity::Divya].clone()),
                          Transform::from_xyz(0.0, 0.03, 0.0).with_scale(Vec3::splat(1.6)), bevy::light::NotShadowCaster));
             }
         });
     }
-    for (c, children) in &changed {
+    for (e, c, children) in &changed {
         if !c.opened {
             continue;
         }
+        if c.kind == ChestKind::Tijori && !children.iter().any(|ch| glows.contains(ch)) {
+            // The gold inside lit up: light pooled on the shelf and the floor.
+            let glow = |mesh: &Handle<Mesh>, mat: &Handle<StandardMaterial>, tf: Transform| {
+                (TijoriGlow, Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), tf, bevy::light::NotShadowCaster, bevy::light::NotShadowReceiver, ChildOf(e))
+            };
+            for y in [0.135, 0.565] {
+                commands.spawn(glow(&palette.pool_mesh, &palette.rarity_pool[&Rarity::Divya], Transform::from_xyz(0.0, y, -0.02).with_scale(Vec3::new(0.5, 1.0, 0.42))));
+            }
+        }
         for ch in children.iter() {
             if let Ok(mut t) = lids.get_mut(ch) {
-                // The peti's lid swung back on its hinge; the kalash's coconut and leaves lifted off
-                // and tipped back.
+                // The peti's lid swung back on its hinge; the tijori's door swung wide open.
                 let hinge = lid_hinge(c.kind);
                 (t.translation, t.rotation) = match c.kind {
                     ChestKind::Peti => (hinge, Quat::from_rotation_x(-1.9)),
-                    ChestKind::Kalash => (hinge + Vec3::new(0.0, 0.12, -0.42), Quat::from_rotation_x(-1.2)),
+                    ChestKind::Tijori => (hinge, Quat::from_rotation_y(-1.85)),
                 };
             }
         }

@@ -300,7 +300,7 @@ fn seg_dist(p: Vec2, a: Vec2, b: Vec2) -> f32 {
     p.distance(a + ab * t)
 }
 
-/// What's on the made hills: a chhatri to look out from on the big one, with a kalash (worth the
+/// What's on the made hills: a chhatri to look out from on the big one, with a tijori (worth the
 /// climb) under it; boulders to hide behind on the rocky ones' tops and down every hill's slopes.
 fn dress_hills(b: &mut Builder, rng: &mut SmallRng, made: &[Hill]) {
     let w = Frame::new(Vec3::ZERO, 0.0);
@@ -316,7 +316,7 @@ fn dress_hills(b: &mut Builder, rng: &mut SmallRng, made: &[Hill]) {
         match h.crown {
             Crown::Lookout => {
                 b.chhatri(w, top, 4.2, Mat::Sandstone);
-                b.chest(w, top, rng.random_range(0.0..std::f32::consts::TAU), ChestKind::Kalash);
+                b.chest(w, top, rng.random_range(0.0..std::f32::consts::TAU), ChestKind::Tijori);
             }
             Crown::Rocks => {
                 for k in 0..4 {

@@ -324,7 +324,7 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
             }
             if i % 9 == 2 || i + 3 == n {
                 let rad = if blk % 2 == 0 { r.ro - 2.0 } else { r.ri + 2.0 };
-                b.chest(radial, Vec3::new(rad, r.g, 0.0), -FRAC_PI_2, ChestKind::Kalash);
+                b.chest(radial, Vec3::new(rad, r.g, 0.0), -FRAC_PI_2, ChestKind::Tijori);
             }
             if rng.random_bool(0.3) {
                 let rad = if rng.random_bool(0.5) { r.ro - r.ver / 2.0 } else { r.ri + r.ver / 2.0 };

@@ -53,7 +53,7 @@ const NAMES: [&str; 67] = [
     "sword_hit_flesh", "sword_hit_stone", "bow_release", "bow_release_heavy", "bow_draw", "arrow_impact_wood",
     "arrow_impact_stone", "gun_tamancha", "gun_dunali", "gun_katta", "gulel_release", "bullet_impact_stone",
     "bullet_impact_wood", "katta_click", "katta_backfire", "chakra_throw", "brahmastra_blast", "hit_flesh", "hit_shield", "hitmarker", "hitmarker_head", "hurt", "jump", "land", "glider_open",
-    "glide_loop", "freefall_loop", "vimana_loop", "chest_open", "kalash_open", "pickup", "drink", "reload", "fire_ignite",
+    "glide_loop", "freefall_loop", "vimana_loop", "chest_open", "tijori_open", "pickup", "drink", "reload", "fire_ignite",
     "fire_loop", "wind_gust", "throw", "zone_warn", "zone_loop", "kill", "eliminated", "victory", "amb_day", "amb_river",
 ];
 
@@ -363,7 +363,7 @@ fn world_events(
     }
     for (c, tf) in &chests {
         if c.opened {
-            play.at(if c.kind == ChestKind::Kalash { "kalash_open" } else { "chest_open" }, tf.translation, ITEM, 40.0);
+            play.at(if c.kind == ChestKind::Tijori { "tijori_open" } else { "chest_open" }, tf.translation, ITEM, 40.0);
         }
     }
     if !me_dead.is_empty() {

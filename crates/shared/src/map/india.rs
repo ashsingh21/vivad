@@ -352,7 +352,7 @@ fn river_and_ghats(b: &mut Builder, rng: &mut SmallRng) {
     for (i, zc) in BURJ_Z.into_iter().enumerate() {
         b.chhatri(w, Vec3::new(BURJ_TIP, GHAT_DECK, zc), 3.2, Mat::Sandstone);
         if i == chest_at {
-            b.chest(w, Vec3::new(BURJ_TIP, GHAT_DECK, zc), -FRAC_PI_2, ChestKind::Kalash);
+            b.chest(w, Vec3::new(BURJ_TIP, GHAT_DECK, zc), -FRAC_PI_2, ChestKind::Tijori);
         }
     }
     // On the landings: Shiva shrines on the upper one, cane umbrellas over chowkis lower down.
@@ -837,7 +837,7 @@ fn haveli(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, mat: Ma
     b.span(f, Vec3::new(-0.6, 0.0, -0.6), Vec3::new(0.6, 0.8, 0.6), trim);
     b.deco(f, Vec3::new(0.0, 0.85, 0.0), Vec3::new(1.4, 0.1, 1.4), trim);
     b.map.props.push(Prop { model: BUSH_LANTANA, pos: f.p(Vec3::new(0.0, 0.85, 0.0)), yaw: rng.random_range(0.0..PI), scale: 0.35, trunk: None });
-    b.chest(f, Vec3::new(0.0, 0.0, -cz + 1.0), 0.0, ChestKind::Kalash);
+    b.chest(f, Vec3::new(0.0, 0.0, -cz + 1.0), 0.0, ChestKind::Tijori);
     // Roof: merloned parapet with a bracketed eave outside, a plain parapet round the court.
     let ry = floors as f32 * FLOOR_H;
     for i in 0..4 {
@@ -932,7 +932,7 @@ fn temple_blocks(b: &mut Builder, rng: &mut SmallRng, f: Frame, scale: f32) {
     b.wall(sf, Vec2::new(-r, -r), Vec2::new(-r, r), 0.0, h, 0.6, Mat::Sandstone, &[]);
     b.span(sf, Vec3::new(-r, h, -r), Vec3::new(r, h + 0.5, r), Mat::Sandstone);
     b.tower(sf, Vec3::new(0.0, h + 0.5, 0.0), 2.0 * r, 2.0 * r, 14.0 * s, 7, 0.65, Mat::Sandstone);
-    let kind = if rng.random_bool(0.6) { ChestKind::Kalash } else { ChestKind::Peti };
+    let kind = if rng.random_bool(0.6) { ChestKind::Tijori } else { ChestKind::Peti };
     b.chest(sf, Vec3::new(0.0, 0.0, -r + 1.4), 0.0, kind);
 }
 
@@ -1028,7 +1028,7 @@ fn stepwell(b: &mut Builder, rng: &mut SmallRng) {
     let (wx, wr) = STEPWELL_WELL;
     hidden(b, |b| b.cyl(f, Vec3::new(wx, -dp, 0.0), wr, 0.9, Mat::Sandstone));
     b.push(f.p(Vec3::new(wx, -dp + 0.6, 0.0)), Quat::IDENTITY, super::Shape::Cylinder { radius: wr - 0.55, height: 0.05 }, Mat::Water, false, true);
-    b.chest(f, Vec3::new(wx + 5.5, -dp, -hw + 1.5), 0.0, ChestKind::Kalash);
+    b.chest(f, Vec3::new(wx + 5.5, -dp, -hw + 1.5), 0.0, ChestKind::Tijori);
     for s in [-1.0, 1.0] {
         samai(b, f, Vec3::new(wx + 1.0, -dp, s * (wr + 1.3)));
     }
@@ -1247,7 +1247,7 @@ fn hampi(b: &mut Builder, rng: &mut SmallRng) {
         b.tower(gf, Vec3::new(0.0, 8.0, 0.0), 16.0, 5.5, 14.0, 6, 0.6, Mat::Brick);
     });
     b.map.props.push(Prop { model: GOPURAM, pos: gf.origin, yaw: gf.yaw, scale: 1.0, trunk: None });
-    b.chest(gf, Vec3::new(-1.8, 0.0, 1.5), 0.0, ChestKind::Kalash); // in the gateway passage
+    b.chest(gf, Vec3::new(-1.8, 0.0, 1.5), 0.0, ChestKind::Tijori); // in the gateway passage
     // Loot: in the cloisters, on the walk, in the bazaar galleries and on their roofs.
     for c in cloister_pillars().into_iter().step_by(7) {
         b.loot(f, Vec3::new(c.x + c.x.signum() * 2.0, 0.3, c.y)); // under the cloister roof
@@ -1554,7 +1554,7 @@ fn fort(b: &mut Builder, rng: &mut SmallRng) {
     let pf = f.child(Vec3::new(0.0, top, -4.0), 0.0);
     // Char-bagh: a marble platform with the treasure, water channels running out in a cross.
     b.cyl(pf, Vec3::ZERO, 2.2, 0.5, Mat::Marble);
-    b.chest(pf, Vec3::new(0.0, 0.5, 0.0), 0.0, ChestKind::Kalash);
+    b.chest(pf, Vec3::new(0.0, 0.5, 0.0), 0.0, ChestKind::Tijori);
     // Visual only, ankle high: kerbs that collided would stop anyone crossing the court.
     for (dir, len) in [(Vec2::X, 7.5), (Vec2::NEG_X, 7.5), (Vec2::NEG_Y, 5.1), (Vec2::Y, 14.0)] {
         let cf = pf.child(Vec3::ZERO, (-dir.y).atan2(dir.x));
@@ -1769,7 +1769,7 @@ fn caves_and_stupa(b: &mut Builder, rng: &mut SmallRng) {
     for (i, &hz) in halls.iter().enumerate() {
         let hf = Frame::new(Vec3::new(face_x, 0.0, hz), 0.0);
         if i % 2 == 0 {
-            b.chest(hf, Vec3::new(-hall_d + 7.5, 0.0, 0.0), FRAC_PI_2, ChestKind::Kalash);
+            b.chest(hf, Vec3::new(-hall_d + 7.5, 0.0, 0.0), FRAC_PI_2, ChestKind::Tijori);
         } else {
             b.chest(hf, Vec3::new(-hall_d + 2.0, 0.0, 3.5), FRAC_PI_2, ChestKind::Peti);
             b.loot(hf, Vec3::new(-8.0, 0.3, 0.0));

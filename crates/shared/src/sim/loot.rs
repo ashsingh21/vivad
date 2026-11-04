@@ -1,4 +1,4 @@
-//! Chests (peti, kalash), floor loot and pickups.
+//! Chests (peti, tijori), floor loot and pickups.
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -82,7 +82,7 @@ pub fn spawn_pickup(commands: &mut Commands, id: PickupId, at: Vec3, stack: Item
 
 fn roll_rarity(kind: Option<ChestKind>, rng: &mut impl rand::Rng) -> Rarity {
     let w: [f32; 5] = match kind {
-        Some(ChestKind::Kalash) => [5.0, 25.0, 38.0, 24.0, 8.0],
+        Some(ChestKind::Tijori) => [5.0, 25.0, 38.0, 24.0, 8.0],
         Some(ChestKind::Peti) => [42.0, 33.0, 17.0, 7.0, 1.0],
         None => [60.0, 28.0, 10.0, 2.0, 0.0],
     };
@@ -178,7 +178,7 @@ pub fn chest_contents(db: &ItemDb, seed: u64, index: usize, kind: ChestKind) -> 
     out.extend(roll_item(db, rarity, is_weapon, &mut rng));
     out.extend(roll_item(db, roll_rarity(Some(kind), &mut rng), is_consumable, &mut rng));
     out.push(make_stack(db, "arrows", Rarity::Common));
-    if kind == ChestKind::Kalash {
+    if kind == ChestKind::Tijori {
         out.extend(roll_item(db, Rarity::Legendary, is_consumable, &mut rng));
     }
     out

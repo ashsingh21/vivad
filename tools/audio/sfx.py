@@ -403,6 +403,22 @@ def chest_open():
     return fade(norm(at(d, (0, latch), (0.05, creak)) + coins))
 
 
+def tijori_open():
+    """The iron safe: the dial ticking round, the bolts thrown with a heavy clunk, the door's low
+    creak on its hinges, then a shimmer of gold and a bright little chime."""
+    d = 2.2
+    ticks = [at(d, (0.02 + 0.055 * k, band(white(0.012), 2500, 7000) * env(0.012, 0.0002, 0.004) * (0.5 + 0.1 * k))) for k in range(5)]
+    clunk = at(0.4, (0.0, modes(0.4, [70, 110, 190], [0.18, 0.12, 0.08], [1.0, 0.6, 0.3])), (0.0, band(white(0.08), 200, 1500) * env(0.08, 0.0005, 0.03) * 0.6))
+    creak = svf(band((rng.random(int(0.7 * SR)) < 0.004) * 1.0, 80, 1500) + 0.03 * white(0.7),
+                np.linspace(180, 320, int(0.7 * SR)), q=12) * adsr(0.7, 0.08, 0.8, 0.15)
+    shimmer = np.zeros(int(d * SR))
+    for _ in range(14):
+        c = modes(0.35, [rng.uniform(3500, 7000), rng.uniform(7500, 10000)], [0.2, 0.12], [1, 0.5])
+        shimmer = shimmer + at(d, (rng.uniform(0.75, 1.3), c * rng.uniform(0.12, 0.3)))
+    chime = bell(1240, 1.2, 0.35)
+    return fade(norm(sum(ticks) + at(d, (0.32, clunk), (0.5, creak * 0.8), (0.8, chime)) + shimmer))
+
+
 def bell(f0=620, dur=3.0, gain=1.0):
     """Temple ghanta: the inharmonic partials of a cast bell with a slow beat."""
     ratios = [0.56, 0.92, 1.19, 1.71, 2.0, 2.74, 3.0, 3.76, 4.07]
@@ -580,7 +596,7 @@ SOUNDS = {
     "freefall_loop": lambda: wind_loop(8.0, 3000, 0.3, 0.05),
     "vimana_loop": vimana_loop,
     "chest_open": chest_open,
-    "kalash_open": lambda: fade(norm(bell(620, 3.0))),
+    "tijori_open": tijori_open,
     "pickup": pickup,
     "drink": drink,
     "reload": reload,

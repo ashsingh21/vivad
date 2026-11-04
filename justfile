@@ -39,7 +39,7 @@ auto:
     {{blender}} -b --factory-startup -P tools/blender/props/auto.py 2>&1 | grep -E '^\[|Error|Traceback' || true
 
 # Turntable renders of a model from six angles: just orbit assets/models/props/auto.glb previews/auto
-# The two loot chests (peti, kalash), body and hinged lid, baked: assets/models/props/chest_*.glb.
+# The two loot chests (peti, tijori), body and hinged lid, baked: assets/models/props/chest_*.glb.
 chests:
     {{blender}} -b --factory-startup -P tools/blender/props/chests.py 2>&1 | grep -E '^\[|Error|Traceback' || true
 

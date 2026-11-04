@@ -171,10 +171,11 @@ impl Plugin for AutoshotPlugin {
                     ("cp_hall_out", v(80.0, 1.8, 128.0), v(62.0, 2.6, 133.0)),
                     ("cp_hall_in", v(52.0, 1.7, 134.0), v(70.0, 1.8, 134.0)),
                     ("cp_hall_in2", v(57.0, 1.7, 128.0), v(57.0, 1.8, 145.0)),
-                    // A peti near the park's edge, closed and opened; the kalash on the big hill.
+                    // A peti near the park's edge, closed and opened; the tijori on the big hill.
                     ("cp_chest_peti", v(0.0, 0.0, 0.0), v(0.0, 0.0, 0.0)),
                     ("cp_chest_peti_open", v(0.0, 0.0, 0.0), v(0.0, 0.0, 0.0)),
-                    ("cp_chest_kalash", v(0.0, 0.0, 0.0), v(0.0, 0.0, 0.0)),
+                    ("cp_chest_tijori", v(0.0, 0.0, 0.0), v(0.0, 0.0, 0.0)),
+                    ("cp_chest_tijori_open", v(0.0, 0.0, 0.0), v(0.0, 0.0, 0.0)),
                     ("cp_hills_air", v(70.0, 70.0, 50.0), v(-10.0, 0.0, -60.0)),
                     ("cp_hill_top", v(-30.0, 12.9, -101.0), v(40.0, 6.0, 10.0)),
                     ("cp_hill_foot", v(10.0, 1.8, -60.0), v(-32.7, 7.0, -104.2)),
@@ -356,8 +357,8 @@ fn run_tour(
     }
     if name.starts_with("2") && name.contains("haveli") {
         // The bazaar's layout follows the map seed: find a courtyard haveli by its court's
-        // kalash chest (off the chowk), and frame it from the street, the gallery and the air.
-        if let Some((_, t)) = chests.iter().find(|(c, t)| c.kind == shared::map::ChestKind::Kalash && t.translation.x.abs() > 16.0 && t.translation.x.abs() < 60.0 && t.translation.z.abs() < 30.0) {
+        // tijori chest (off the chowk), and frame it from the street, the gallery and the air.
+        if let Some((_, t)) = chests.iter().find(|(c, t)| c.kind == shared::map::ChestKind::Tijori && t.translation.x.abs() > 16.0 && t.translation.x.abs() < 60.0 && t.translation.z.abs() < 30.0) {
             let chest = t.translation;
             let side = chest.z.signum();
             let court = chest + t.rotation * Vec3::Z * 2.5;
@@ -371,7 +372,7 @@ fn run_tour(
     if name.starts_with("cp_chest") {
         // The nearest chest of the kind to the park's middle, from 2.5 m off in front and a little
         // above; "_open" opens it first (the lid's own animation, as when a player opens it).
-        let kind = if name.contains("kalash") { shared::map::ChestKind::Kalash } else { shared::map::ChestKind::Peti };
+        let kind = if name.contains("tijori") { shared::map::ChestKind::Tijori } else { shared::map::ChestKind::Peti };
         let park = Vec3::new(0.0, 0.0, -40.0);
         if let Some((mut c, t)) = chests.iter_mut().filter(|(c, _)| c.kind == kind).min_by(|a, b| a.1.translation.distance(park).total_cmp(&b.1.translation.distance(park))) {
             let front = t.rotation * Vec3::Z;

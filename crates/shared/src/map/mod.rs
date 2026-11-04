@@ -151,10 +151,10 @@ pub struct Block {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Reflect)]
 pub enum ChestKind {
-    /// Carved wooden temple chest.
+    /// The painted steel trunk.
     Peti,
-    /// Golden urn: better odds of high rarity.
-    Kalash,
+    /// An old iron safe, gold inside: better odds of high rarity.
+    Tijori,
 }
 
 #[derive(Clone, Debug, Reflect)]
