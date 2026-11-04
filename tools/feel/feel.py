@@ -73,6 +73,9 @@ SCENES = [
                                           (3.8, "-KeyW"), (3.8, "-ShiftLeft")]),
     ("rifle_aim_strafe", "bandook", 4.2, [(0.5, "+MouseRight"), (0.7, "+KeyA"), (1.9, "-KeyA"), (1.9, "+KeyD"), (3.1, "-KeyD"),
                                           (3.5, "-MouseRight")]),
+    # Drinking a lassi on the run: the free arm should keep swinging. (The first click takes the
+    # cursor, as in the game; the second drinks.)
+    ("drink_run", "amrita", 5.0, [(0.5, "+KeyW"), (0.6, "+MouseLeft"), (0.65, "-MouseLeft"), (0.8, "+MouseLeft"), (0.9, "-MouseLeft"), (4.5, "-KeyW")]),
 ]
 FIRST = 9.0
 

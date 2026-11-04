@@ -58,13 +58,23 @@ const OPTIONAL_LOCOMOTION: [&str; 48] = [
     "pistol_run_f", "pistol_run_b", "pistol_run_l", "pistol_run_r",
     "pistol_sprint_f", "pistol_crouch_f", "pistol_crouch_b",
 ];
-const UPPER_BODY: [&str; 6] = ["melee_guard", "melee_swing", "melee_swing_b", "bow_draw", "rifle_aim", "consume"];
+const UPPER_BODY: [&str; 5] = ["melee_guard", "melee_swing", "melee_swing_b", "bow_draw", "rifle_aim"];
+/// Actions of the drinking arm alone (and the head, tipped back): the walk or run keeps the rest,
+/// the other arm swinging with the stride (played over the whole upper body, it hung still).
+const ARM_ONLY: [&str; 1] = ["consume"];
 /// Upper-body actions the file may have (Mixamo's): a pistol's two-handed aim.
 const OPTIONAL_UPPER: [&str; 1] = ["pistol_aim"];
 /// Bones driven by the legs layer; everything else is upper body.
 const LOWER_BONES: [&str; 10] = ["Root", "pelvis", "thigh_l", "thigh_r", "calf_l", "calf_r", "foot_l", "foot_r", "ball_l", "ball_r"];
 const LOWER: u32 = 0;
 const UPPER: u32 = 1;
+/// The right arm (collarbone to fingertips, and the gun bone) and the head: `ARM_ONLY`'s bones.
+const ARM: u32 = 2;
+
+fn arm_bone(name: &str) -> bool {
+    name == "head"
+        || name.ends_with("_r") && ["clavicle", "upperarm", "lowerarm", "hand", "thumb", "index", "middle", "ring", "pinky", "weapon"].iter().any(|b| name.starts_with(b))
+}
 /// The authored swing lasts this long (melee_swing is 12 frames at 30 fps).
 const SWING_TIME: f32 = 0.4;
 /// The slide clip's drop into it and its get-up (tools/blender/characters/anims.py SLIDE_IN,
@@ -91,6 +101,8 @@ struct AnimSet {
     graph: Option<Handle<AnimationGraph>>,
     /// Clip name -> (full-body node, masked node: legs-only for locomotion, torso-only for actions).
     nodes: HashMap<&'static str, (AnimationNodeIndex, Option<AnimationNodeIndex>)>,
+    /// Locomotion clip name -> its node for everything but `ARM` (under an `ARM_ONLY` action).
+    beside_arm: HashMap<&'static str, AnimationNodeIndex>,
     durations: HashMap<&'static str, f32>,
     /// Bone name -> path from the rig root, to tag targets in spawned characters.
     paths: HashMap<String, Vec<Name>>,
@@ -133,7 +145,10 @@ impl WarriorAnim {
         let mut out: Vec<_> = self
             .weights
             .iter()
-            .filter_map(|(node, &(w, _))| set.nodes.iter().find_map(|(n, (full, mask))| if full == node { Some((*n, false, w)) } else if *mask == Some(*node) { Some((*n, true, w)) } else { None }))
+            .filter_map(|(node, &(w, _))| {
+                set.nodes.iter().find_map(|(n, (full, mask))| if full == node { Some((*n, false, w)) } else if *mask == Some(*node) { Some((*n, true, w)) } else { None })
+                    .or_else(|| set.beside_arm.iter().find_map(|(n, b)| (b == node).then_some((*n, true, w))))
+            })
             .collect();
         out.sort_by(|a, b| b.2.total_cmp(&a.2));
         out
@@ -200,6 +215,7 @@ fn load_sets(mut commands: Commands, assets: Res<AssetServer>) {
         gltf: assets.load(format!("models/characters/{v}_anims.glb")),
         graph: None,
         nodes: HashMap::new(),
+        beside_arm: HashMap::new(),
         durations: HashMap::new(),
         paths: HashMap::new(),
     };
@@ -220,7 +236,7 @@ fn build_graphs(
             continue;
         }
         let Some(gltf) = gltfs.get(&set.gltf) else { continue };
-        let all: Vec<&'static str> = LOCOMOTION.iter().chain(&FULL_BODY).chain(&UPPER_BODY).copied().collect();
+        let all: Vec<&'static str> = LOCOMOTION.iter().chain(&FULL_BODY).chain(&UPPER_BODY).chain(&ARM_ONLY).copied().collect();
         // Wait for every clip the file has to load; one it lacks (an animations file older than
         // the code: the clip came later) stands in with a near one, rather than leaving every
         // warrior unanimated.
@@ -256,7 +272,7 @@ fn build_graphs(
         }
         let mut graph = AnimationGraph::new();
         for (name, path) in &paths {
-            let group = if LOWER_BONES.contains(&name.as_str()) { LOWER } else { UPPER };
+            let group = if LOWER_BONES.contains(&name.as_str()) { LOWER } else if arm_bone(name) { ARM } else { UPPER };
             graph.add_target_to_mask_group(AnimationTargetId::from_names(path.iter()), group);
         }
         let root = graph.root;
@@ -266,9 +282,12 @@ fn build_graphs(
             set.durations.insert(name, clips.get(&h).map(|c| c.duration()).unwrap_or(1.0).max(1e-3));
             let full = graph.add_clip(h.clone(), 1.0, root);
             let masked = if LOCOMOTION.contains(&name) || OPTIONAL_LOCOMOTION.contains(&name) {
-                Some(graph.add_clip_with_mask(h, 1 << UPPER, 1.0, root))
+                set.beside_arm.insert(name, graph.add_clip_with_mask(h.clone(), 1 << ARM, 1.0, root));
+                Some(graph.add_clip_with_mask(h, (1 << UPPER) | (1 << ARM), 1.0, root))
             } else if UPPER_BODY.contains(&name) || OPTIONAL_UPPER.contains(&name) {
                 Some(graph.add_clip_with_mask(h, 1 << LOWER, 1.0, root))
+            } else if ARM_ONLY.contains(&name) {
+                Some(graph.add_clip_with_mask(h, (1 << LOWER) | (1 << UPPER), 1.0, root))
             } else {
                 None
             };
@@ -675,9 +694,15 @@ fn drive(
         }
         let pose_dt = std::mem::take(&mut anim.since_pose);
         let mut targets: HashMap<AnimationNodeIndex, (f32, f32)> = HashMap::new();
+        // Under an arm-only action (drinking), the masked locomotion keeps all but that arm.
+        let arm_only = want.last().is_some_and(|w| w.1 && ARM_ONLY.contains(&w.0));
         for (n, masked, w, t) in want {
             let Some(&(full, mask)) = set.nodes.get(n) else { continue };
-            let node = if masked { mask.unwrap_or(full) } else { full };
+            let node = match set.beside_arm.get(n) {
+                Some(&beside) if masked && arm_only => beside,
+                _ if masked => mask.unwrap_or(full),
+                _ => full,
+            };
             targets.insert(node, (w, t));
         }
         let mut all: Vec<AnimationNodeIndex> = anim.weights.keys().copied().collect();

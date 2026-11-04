@@ -339,8 +339,13 @@ fn stage_scenes(
     let filter = SpatialQueryFilter::from_excluded_entities(warriors.iter());
     let (spot, yaw) = *sc.spot.get_or_insert_with(|| run_spot(&layout, &spatial, &filter));
     let due = sc.list.iter().rposition(|s| m.elapsed >= s.at);
+    // With a drink in hand, no armour (so it can be drunk).
+    let drink = due.is_some_and(|i| {
+        let item = &sc.list[i].item;
+        !item.is_empty() && item != "bat" && matches!(db.get(item).kind, ItemKind::Consumable { .. })
+    });
     health.hp = 100.0;
-    health.shield = 100.0;
+    health.shield = if drink { 0.0 } else { 100.0 };
     for (bot, mut btf, mut bkin, mut bhp) in &mut bots {
         commands.entity(bot).remove::<shared::sim::bots::BotBrain>();
         // Behind the start, off the run.
