@@ -1247,7 +1247,7 @@ def arms_from(rig, base, hold, name=None):
 # Carrying a long gun on the move (not aiming): the chest turns with each stride, the way a runner's
 # shoulders counter the hips, so the gun swings across the body to one side and back to the other
 # (held dead still in front, it read as a statue's arms on running legs). Degrees of turn each way.
-GUN_SWAY = {**{f"rifle_walk_{d}": 4.0 for d in "fblr"}, **{f"rifle_run_{d}": 10.0 for d in "fblr"}}
+GUN_SWAY = {**{f"rifle_walk_{d}": 4.0 for d in "fblr"}, **{f"rifle_run_{d}": 10.0 for d in "fblr"}, "rifle_sprint_f": 14.0}
 
 
 def gun_sway(rig, name, deg):
@@ -1275,17 +1275,20 @@ def gun_sway(rig, name, deg):
         rig.key(i + 1)
 
 
-# The one-handed sprint's gun: the barrel up and ahead, a little across toward the left shoulder.
-ONE_HAND_BARREL = Vector((0.2, -0.55, 0.8)).normalized()
-# How far the gun arm is held to its most forward pose (1: still; 0: pumping as the free arm).
-ONE_HAND_HOLD = 0.65
+# Sprinting with a long gun, as in Fortnite: both hands on it, carried across the chest, the barrel
+# up toward the left shoulder (and a little ahead), the grip in front of the right of the belly.
+# In the chest's frame (across to the left, up, ahead), so the gun turns with the shoulders.
+PORT_BARREL = (0.55, 0.5, 0.6)
+# The grip from between the shoulders (m): across to the right, down, ahead.
+PORT_GRIP = (0.08, 0.3, 0.3)
 
 
-def one_hand(rig, name, src, ref):
-    """`src` (a sprint, both arms pumping) as `name`, a long gun carried in the right fist: the
-    weapon bone turned every frame so the barrel points up and ahead (ONE_HAND_BARREL), the top of
-    the gun back toward the body, the fingers closed on the grip. The gun's axes come from `ref`
-    (an aim, the barrel straight ahead). The game lets go of the fore-end while it plays."""
+def port_arms(rig, name, src, ref):
+    """`src` (a sprint) as `name`, a long gun held in both hands across the chest at port arms: the
+    right wrist placed (IK) so the grip sits at PORT_GRIP and the gun bone turned so the barrel runs
+    along PORT_BARREL, every frame in the frame of the shoulders (so it rides the chest's twist);
+    the left hand under the fore-end (the game fits it to the wood). The gun's axes, the hand's
+    hold on it and the right fingers come from `ref` (an aim, the barrel straight ahead)."""
     sc = bpy.context.scene
     rig.obj.animation_data.action = bpy.data.actions[ref]
     sc.frame_set(int(bpy.data.actions[ref].frame_range[0]))
@@ -1293,9 +1296,9 @@ def one_hand(rig, name, src, ref):
     near = lambda d: max((Vector(a) * k for a in ((1, 0, 0), (0, 1, 0), (0, 0, 1)) for k in (1, -1)), key=lambda a: (w @ a).dot(d))
     barrel, top = near(FWD), near(UP)
     local = Matrix((barrel, top, barrel.cross(top))).transposed()
-    d = ONE_HAND_BARREL
-    u = (UP - d * UP.dot(d)).normalized()
-    want = (Matrix((d, u, d.cross(u))).transposed() @ local.inverted()).to_quaternion()
+    # The gun in the hand, and the right fingers round its grip.
+    in_hand = rig.world_rot("hand_r").inverted() @ rig.world_rot("weapon_r")
+    fist = {pb.name: pb.matrix_basis.copy() for pb in rig.pb if pb.name.endswith("_r") and pb.name.split("_")[0] in ("thumb", "index", "middle", "ring", "pinky", "weapon")}
     act = bpy.data.actions[src]
     rig.obj.animation_data.action = act
     f0, f1 = map(int, act.frame_range)
@@ -1303,31 +1306,40 @@ def one_hand(rig, name, src, ref):
     for f in range(f0, f1 + 1):
         sc.frame_set(f)
         poses.append({pb.name: pb.matrix_basis.copy() for pb in rig.pb})
-    # The gun arm swings far less than the free one: held near its most forward (the gun up in
-    # front, not behind the hip as the arm swings back), a third of its pump left.
-    def ahead(pose):
-        for pb in rig.pb:
-            pb.matrix_basis = pose[pb.name]
-        bpy.context.view_layer.update()
-        return rig.head("hand_r").dot(FWD)
-    front = poses[max(range(len(poses)), key=lambda i: ahead(poses[i]))]
-    gun_arm = ("clavicle_r", "upperarm_r", "lowerarm_r", "hand_r")
     if name in bpy.data.actions:
         bpy.data.actions.remove(bpy.data.actions[name])
     new_action(rig, name)
+    off = 0.0
     for i, pose in enumerate(poses):
         for pb in rig.pb:
-            pb.matrix_basis = pose[pb.name]
-            if pb.name in gun_arm:
-                q = pose[pb.name].to_quaternion().slerp(front[pb.name].to_quaternion(), ONE_HAND_HOLD)
-                pb.matrix_basis = Matrix.Translation(pose[pb.name].to_translation()) @ q.to_matrix().to_4x4()
+            pb.matrix_basis = fist.get(pb.name, pose[pb.name])
         bpy.context.view_layer.update()
-        # Closed further than the sprint's loose fist, round the grip.
-        relax_fingers(rig, "r", 0.4)
-        rig.set_world_rot("weapon_r", want)
+        sl, sr = rig.head("upperarm_l"), rig.head("upperarm_r")
+        side = (sl - sr).normalized()
+        ahead = side.cross(UP).normalized()
+        up = ahead.cross(side)
+        x, y, z = PORT_BARREL
+        d = (side * x + up * y + ahead * z).normalized()
+        # The gun's top toward the chest and up, the sights by the chin.
+        u = (up * 0.3 - ahead) - d * (up * 0.3 - ahead).dot(d)
+        u.normalize()
+        gun = (Matrix((d, u, d.cross(u))).transposed() @ local.inverted()).to_quaternion()
+        hand = gun @ in_hand.inverted()
+        gx, gy, gz = PORT_GRIP
+        grip = (sl + sr) * 0.5 - side * gx - up * gy + ahead * gz
+        wrist = grip.copy()
+        for _ in range(4):
+            arm_ik(rig, "r", wrist, -side - ahead * 0.4 - up * 0.5)
+            rig.set_world_rot("hand_r", hand)
+            wrist += grip - rig.head("weapon_r")
+        off = max(off, (grip - rig.head("weapon_r")).length)
+        # The left hand under the fore-end, the elbow down and out.
+        arm_ik(rig, "l", rig.head("weapon_r") + d * RIFLE_FOREND - u * 0.06, side * 0.6 - up - ahead * 0.2)
+        rig.aim("hand_l", d - side * 0.4)
+        relax_fingers(rig, "l", 0.85)
         rig.key(i + 1)
     bpy.data.actions.remove(act)
-    print(f"[anims] {name}: {src}, the gun in the right hand")
+    print(f"[anims] {name}: {src}, the gun across the chest in both hands (grip off {100 * off:.1f} cm at most)")
 
 
 def idle(rig):
@@ -1805,9 +1817,9 @@ def main():
     # The sprint's steps are a runner's; only its bounce (14 cm) calmed, to about 9.
     cycles["run_f"] = mocap(rig, src, acts, "run_f", "Jog_Fwd_Loop", RUN, stride=0.72, calm=0.35, ball=True, kick=0.9, lift=0.05)
     cycles["sprint_f"] = transfer(rig, src, acts, "sprint_f", "Sprint_Loop", SPRINT, keep=TORSO_KEEP, calm=0.65)
-    # Sprinting with a long gun, as in Fortnite: the gun in the right fist, both arms pumping (the
-    # sprint's own), at the rifle sprint's speed in a runner's steps (shortened, not slowed: at its
-    # own stride, 6.2 m/s is 120 bounding steps a minute). Becomes rifle_sprint_f (`one_hand`).
+    # Sprinting with a long gun, as in Fortnite: the sprint's body at the rifle sprint's speed in a
+    # runner's steps (shortened, not slowed: at its own stride, 6.2 m/s is 120 bounding steps a
+    # minute), the gun across the chest in both hands. Becomes rifle_sprint_f (`port_arms`).
     cycles["sprint_1h"] = mocap(rig, src, acts, "sprint_1h", "Sprint_Loop", RIFLE_SPRINT, stride=0.75, calm=0.6, ball=True, lift=0.03)
     transfer(rig, src, acts, "idle", "Idle_Loop", 0.0, keep=TORSO_KEEP)
     # A stroll, its steps a little longer than the clip's (it walks slowly).
@@ -1905,7 +1917,7 @@ def main():
         arms_from(rig, "slide", "rifleaim_idle", "rifle_slide")
         level_gun(rig, "rifle_slide", "rifleaim_idle")
     if "sprint_1h" in bpy.data.actions and "rifleaim_idle" in bpy.data.actions:
-        one_hand(rig, "rifle_sprint_f", "sprint_1h", "rifleaim_idle")
+        port_arms(rig, "rifle_sprint_f", "sprint_1h", "rifleaim_idle")
     for name, deg in GUN_SWAY.items():
         if name in bpy.data.actions:
             gun_sway(rig, name, deg)

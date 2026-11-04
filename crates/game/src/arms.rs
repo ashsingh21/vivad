@@ -366,10 +366,7 @@ fn orient_bows(
         }
         // A long gun's fore-end in the left hand, wherever the clip left that hand: the palm under
         // the barrel a fore-end's length ahead of the grip, fingers wrapping round its far side.
-        // Sprinting, the gun is in the right fist alone and the left arm pumps: let go by the
-        // one-handed sprint's weight.
-        let hold = (1.0 - anim.one_hand).clamp(0.0, 1.0);
-        if gun && long && hold > 1e-3 {
+        if gun && long {
             let (_, rot, _) = socket_g.to_scale_rotation_translation();
             let (along, up, right) = (rot * Vec3::NEG_Z, rot * Vec3::Y, rot * Vec3::X);
             // Under the fore-end, the palm up against the wood, the hand angled across the barrel
@@ -390,29 +387,19 @@ fn orient_bows(
                 tf.get(hand).map(|(_, g)| g.transform_point(body.knuckle_l * 0.55 + body.palm_l * 0.022)).unwrap_or(contact)
             };
             let mut wrist = tf.get(hand).map(|(_, g)| g.translation()).unwrap_or(contact);
-            let (own_at, own_rot) = tf.get(hand).map(|(_, g)| (g.translation(), g.rotation())).unwrap_or((contact, want));
-            // The clip's own elbow, the way it bends: letting go, the arm bends that way, not the
-            // hold's (a pole switched as the hold fades snapped the elbow across).
-            let pole = {
-                let at = |e: Entity| tf.get(e).map(|(_, g)| g.translation()).unwrap_or(Vec3::ZERO);
-                let own = at(lower) - (at(upper) + own_at) * 0.5;
-                let hold_pole = Vec3::NEG_Y - right * 0.7;
-                own.normalize_or(hold_pole).lerp(hold_pole.normalize(), hold).normalize_or(hold_pole)
-            };
             // VIVAD_RAW_HANDS: the clip's own left hand, uncorrected (the armoury's [guncheck] then
             // says how far off the captured hold lands).
             let raw = std::env::var_os("VIVAD_RAW_HANDS").is_some();
             let gap0 = (palm_at(&tf) - contact).length();
             for _ in 0..(if raw { 0 } else { 2 }) {
-                reach(upper, lower, hand, wrist, pole, want, &kids, &mut tf);
+                reach(upper, lower, hand, wrist, Vec3::NEG_Y - right * 0.7, want, &kids, &mut tf);
                 wrist += contact - palm_at(&tf);
             }
             if !raw {
-                // Part way, letting go: between the clip's own hand and the hold.
-                reach(upper, lower, hand, own_at.lerp(wrist, hold), pole, own_rot.slerp(want, hold), &kids, &mut tf);
+                reach(upper, lower, hand, wrist, Vec3::NEG_Y - right * 0.7, want, &kids, &mut tf);
             }
             // Only while the gun shows (it's put away in the air).
-            if local.contains(wv.sim) && std::env::var_os("VIVAD_GRIPCHECK").is_some() && shown.get(e).is_ok_and(|v| v.get()) && hold > 0.99 {
+            if local.contains(wv.sim) && std::env::var_os("VIVAD_GRIPCHECK").is_some() && shown.get(e).is_ok_and(|v| v.get()) {
                 let now = elapsed.as_ref().map_or(0.0, |m| m.elapsed);
                 let g = grips.0.entry(anim.showing).or_insert(Grip { pitch: (f32::MAX, f32::MIN), span: (now, now), ..default() });
                 let (pitch, off) = (along.y.asin().to_degrees(), (palm_at(&tf) - contact).length());
@@ -436,7 +423,7 @@ fn orient_bows(
             for &f in body.fingers_l.iter().filter(|_| !raw) {
                 let Ok((_, g)) = tf.get(f) else { continue };
                 let (at, axis) = (g.translation(), fingers.cross(palm));
-                turn_subtree(f, at, Quat::from_axis_angle(axis, GRIP_CURL * hold), &kids, &mut tf);
+                turn_subtree(f, at, Quat::from_axis_angle(axis, GRIP_CURL), &kids, &mut tf);
             }
         }
     }
