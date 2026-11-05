@@ -247,6 +247,17 @@ fn restart(world: &mut World) {
         world.resource_mut::<Outbox>().0.push(NetMsg::Restart { generation, map: map.index() });
     }
     world.resource_mut::<StartedBy>().0 = by;
+    clear_match(world);
+    if map != config.map {
+        super::load_map(world, map);
+    }
+    start_match(world);
+}
+
+/// Everything of the match gone (its warriors, chests, pickups, shots, fires, the vimana) and its
+/// votes and loot claims forgotten: before the next match starts (a restart, or the start screen
+/// going online from behind the solo match).
+pub fn clear_match(world: &mut World) {
     world.resource_mut::<MapVotes>().0.clear();
     world.resource_mut::<super::loot::Claims>().0.clear();
     let mut doomed: Vec<Entity> = vec![];
@@ -256,10 +267,6 @@ fn restart(world: &mut World) {
     for e in doomed {
         world.despawn(e);
     }
-    if map != config.map {
-        super::load_map(world, map);
-    }
-    start_match(world);
 }
 
 #[allow(clippy::type_complexity)]

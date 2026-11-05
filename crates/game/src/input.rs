@@ -285,7 +285,12 @@ fn grab_cursor(
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     mut cursor: Single<&mut CursorOptions>,
+    menu: Res<crate::menu::MenuOpen>,
 ) {
+    // The start screen's buttons need the pointer.
+    if menu.0 {
+        return;
+    }
     if mouse.just_pressed(MouseButton::Left) && cursor.grab_mode == CursorGrabMode::None {
         cursor.grab_mode = CursorGrabMode::Locked;
         cursor.visible = false;

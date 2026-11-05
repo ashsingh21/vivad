@@ -9,7 +9,8 @@ pub struct LobbyPlugin;
 
 impl Plugin for LobbyPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn.run_if(resource_exists::<Lobby>))
+        // From launch, or once the start screen (crate::menu) opens a lobby.
+        app.add_systems(Update, spawn.run_if(resource_added::<Lobby>))
             .add_systems(Update, show.run_if(resource_exists::<Lobby>));
     }
 }
