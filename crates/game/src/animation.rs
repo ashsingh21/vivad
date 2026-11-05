@@ -109,7 +109,7 @@ struct AnimSet {
 }
 
 #[derive(Resource)]
-pub struct AnimSets([AnimSet; 2]);
+pub struct AnimSets([AnimSet; 3]);
 
 impl AnimSet {
     fn has(&self, name: &str) -> bool {
@@ -219,7 +219,7 @@ fn load_sets(mut commands: Commands, assets: Res<AssetServer>) {
         durations: HashMap::new(),
         paths: HashMap::new(),
     };
-    commands.insert_resource(AnimSets([set("male"), set("female")]));
+    commands.insert_resource(AnimSets([set("male"), set("female"), set(&crate::characters::anime_model())]));
 }
 
 /// Once a set's glTF is in, build its graph: every clip once full-body, locomotion again

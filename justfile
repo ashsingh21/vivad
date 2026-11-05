@@ -269,3 +269,9 @@ stylecheck *args:
 # The style guide's trees and bushes (Delhi's maps): assets/models/props/stylised_*.gltf
 stylised-trees:
     {{blender}} -b --factory-startup -P tools/blender/nature/stylised_trees.py 2>&1 | grep -E '^\[|Error|Traceback' -A3 || true
+
+# A character made in VRoid Studio (a .vrm) onto our skeleton as the anime body, then her own clips:
+# just vroid build/vroid/heroine.vrm (needs the VRM add-on: blender -c extension install vrm)
+vroid vrm variant="anime" drop="":
+    {{blender}} -b -P tools/blender/characters/vroid.py -- {{vrm}} {{variant}} $([ -n "{{drop}}" ] && echo --drop {{drop}}) 2>&1 | grep -E '^\[|Error|Traceback' || true
+    {{blender}} -b -t 1 -P tools/blender/characters/anims.py -- {{variant}} 2>&1 | grep -E '^\[anims\] (exported|unarched)|Error|Traceback' || true

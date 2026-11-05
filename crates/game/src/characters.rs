@@ -26,6 +26,12 @@ impl Plugin for CharacterArtPlugin {
     }
 }
 
+/// The anime body's model and clips (models/characters/<this>.glb and <this>_anims.glb): the VRoid
+/// heroine (tools/blender/characters/vroid.py); VIVAD_ANIME=<name> tries another build of her.
+pub(crate) fn anime_model() -> String {
+    std::env::var("VIVAD_ANIME").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "anime".into())
+}
+
 #[derive(Resource)]
 struct Models {
     male: Handle<WorldAsset>,
@@ -39,7 +45,7 @@ fn load_models(mut commands: Commands, assets: Res<AssetServer>, layout: Res<Map
     commands.insert_resource(Models {
         male: assets.load(GltfAssetLabel::Scene(0).from_asset("models/characters/male.glb")),
         female: assets.load(GltfAssetLabel::Scene(0).from_asset("models/characters/female.glb")),
-        anime: assets.load(GltfAssetLabel::Scene(0).from_asset("models/characters/anime.glb")),
+        anime: assets.load(GltfAssetLabel::Scene(0).from_asset(format!("models/characters/{}.glb", anime_model()))),
         props: prop_models(&assets, &layout),
     });
 }
@@ -180,10 +186,10 @@ struct CharacterModel;
 fn dress_warriors(mut commands: Commands, q: Query<(Entity, &WarriorVisual), Added<WarriorVisual>>, warriors: Query<&Warrior>, models: Res<Models>) {
     for (vis, wv) in &q {
         let look = warriors.get(wv.sim).map(|w| w.look).unwrap_or(0);
-        // Three bodies in turn; the anime one has the female's proportions, so her clips (set 1).
-        let body = look % 3;
-        let variant = if body == 0 { 0 } else { 1 };
-        let scene = [&models.male, &models.female, &models.anime][body as usize].clone();
+        // Three bodies in turn, each on its own clips (its set in crate::animation's AnimSets: male
+        // 0, female 1, anime 2): the anime heroine first, so she's the player's by default.
+        let variant = [2usize, 0, 1][(look % 3) as usize];
+        let scene = [&models.male, &models.female, &models.anime][variant].clone();
         commands
             .spawn((
                 CharacterModel,
