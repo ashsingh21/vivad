@@ -326,26 +326,23 @@ def shop():
 
 
 def roof():
-    """Flat roofs, 2 m a repeat (crate::buildings::TILE): square clay tiles laid in cement, some
-    cracked, black water stains and dust in patches. Light grey-white so each roof's vertex colour
-    makes it terracotta, cement or lime-washed."""
+    """Flat roofs, 2 m a repeat (crate::buildings::TILE), painted to the style guide: square tiles
+    50 cm across in soft cement joints, a tone or two apart, a few broad pale stains where water
+    stood. Near-white: each roof's colour tints it."""
     rng = np.random.default_rng(45)
     n = 512
     L = Layer(n, n, rng)
     y, x = np.mgrid[0:n, 0:n].astype(np.float32)
-    t = n / 8  # eight tiles a repeat: 25 cm tiles
+    t = n / 4
     fu, fv = (x % t) / t, (y % t) / t
-    ti, tj = (x // t).astype(int), (y // t).astype(int)
-    k = rng.random((8, 8)).astype(np.float32)[tj, ti]
-    tile = bevelled(fu, fv, 0.03, 0.97, 0.03, 0.97, 0.05)
-    crack_line = ((np.abs(fu - 0.2 - 0.6 * fv) < 0.012) & (k > 0.8)).astype(np.float32)
-    dust = periodic_noise(n, n, rng, 4, 3)
-    stain = np.clip(periodic_noise(n, n, rng, 3, 2) * 2.2 - 1.3, 0, 1)
-    g = (0.80 + 0.12 * k - 0.10 * dust) * (0.55 + 0.45 * tile) * (1 - 0.5 * crack_line)
-    L.col = np.dstack([g, g * 0.98, g * 0.95]).astype(np.float32) * (1 - 0.55 * stain[..., None])
-    L.hgt = 1.2 * tile + 0.3 * dust - 0.8 * crack_line
-    L.rough[:] = 0.85 - 0.25 * stain
-    L.save("roof", 1.6)
+    k = rng.random((4, 4)).astype(np.float32)[(y // t).astype(int), (x // t).astype(int)]
+    tile = bevelled(fu, fv, 0.02, 0.98, 0.02, 0.98, 0.06) ** 0.7
+    stain = smooth(0.55, 0.8, periodic_noise(n, n, rng, 2, 2))
+    g = (0.96 - 0.05 * k - 0.06 * stain) * (0.74 + 0.26 * tile)
+    L.col = np.dstack([g, g, g]).astype(np.float32)
+    L.hgt = 1.0 * tile
+    L.rough[:] = 0.85
+    L.save("roof", 1.2, paint=0.25)
 
 
 def ground():
@@ -417,79 +414,101 @@ def wear():
 
 
 def stucco():
-    """Clean lime-washed stucco, 2 m a repeat (crate::buildings::TILE): Connaught Place's white.
-    Soft trowel marks and a fine sand grain; no cracks or grime, just a whisper of warmth."""
+    """Connaught Place's white stucco, 2 m a repeat (crate::buildings::TILE), painted to the style
+    guide (docs/style-guide.md section 4): a flat near-white, big slow patches (a few percent), and
+    a few soft broad trowel sweeps you'd see at 5 m. No grain."""
     rng = np.random.default_rng(51)
     n = 512
     L = Layer(n, n, rng)
-    trowel = periodic_noise(n, n, rng, 4, 3)
-    grain = rng.random((n, n)).astype(np.float32)
-    soft = periodic_noise(n, n, rng, 2, 2)
-    g = 0.86 - 0.03 * trowel - 0.015 * grain - 0.025 * soft
-    L.col = np.dstack([g, g * 0.975, g * 0.93]).astype(np.float32)
-    # Relief from the trowel only: per-pixel grain in the normals speckles the sheen on paint.
-    L.hgt = 0.35 * trowel
-    L.rough[:] = 0.92 - 0.03 * trowel
-    L.save("stucco", 1.2)
+    patches = periodic_noise(n, n, rng, 2, 2)
+    sweep = periodic_noise(n, n, rng, 3, 3)
+    g = 0.97 - 0.035 * patches - 0.015 * sweep
+    L.col = np.dstack([g, g, g]).astype(np.float32)
+    L.hgt = 0.25 * sweep
+    L.rough[:] = 0.88
+    L.save("stucco", 0.8, paint=0.2)
 
 
 def stone():
-    """Square stone floor tiles, 50 cm, 2 m a repeat: buff sandstone, each a shade of its own,
-    thin grout, worn smooth and a little glossy where walked."""
+    """The verandahs' floor, 2 m a repeat: 50 cm tiles in two tones laid as a chequer (the old
+    Connaught Place verandahs' patterned floors), each tile's edge rounded off, joints painted soft
+    and dark, a gentle sheen where walked. Near-white: Mat::Stone's token tints it."""
     rng = np.random.default_rng(53)
     n = 512
     L = Layer(n, n, rng)
     y, x = np.mgrid[0:n, 0:n].astype(np.float32)
     t = n / 4
     fu, fv = (x % t) / t, (y % t) / t
-    k = rng.random((4, 4)).astype(np.float32)[(y // t).astype(int), (x // t).astype(int)]
-    tile = bevelled(fu, fv, 0.01, 0.99, 0.01, 0.99, 0.02)
-    mottle = periodic_noise(n, n, rng, 4, 6)
-    g = (0.78 + 0.08 * k + 0.05 * (mottle - 0.5)) * (0.6 + 0.4 * tile)
-    L.col = np.dstack([g, g * 0.95, g * 0.86]).astype(np.float32)
-    L.hgt = 1.0 * tile + 0.15 * mottle
-    L.rough[:] = 0.55 + 0.25 * (1 - tile) + 0.1 * mottle
-    L.save("stone", 1.4)
+    i, j = (x // t).astype(int), (y // t).astype(int)
+    alt = ((i + j) % 2).astype(np.float32)
+    tile = bevelled(fu, fv, 0.015, 0.985, 0.015, 0.985, 0.06) ** 0.7
+    slow = periodic_noise(n, n, rng, 2, 2)
+    g = (0.97 - 0.11 * alt - 0.03 * slow) * (0.72 + 0.28 * tile)
+    L.col = np.dstack([g, g, g]).astype(np.float32)
+    L.hgt = 1.0 * tile
+    L.rough[:] = 0.6 + 0.25 * (1 - tile)
+    L.save("stone", 1.2, paint=0.25)
 
 
 def limewash():
-    """Limewash, 2 m a repeat, near-white to take the paint's colour: brushed on in coats that
-    fade unevenly in the sun, patches where it's been touched up, a faint damp bloom. The mottle
-    is what makes a painted Delhi wall read as old paint, not plastic."""
+    """Limewash under the shops' paint colours (Mat::Paint), 2 m a repeat, painted to the style
+    guide: the paint's own colour nearly flat, big soft coats a few percent apart, a broad brush
+    sweep. Old paint by its shapes, not by noise."""
     rng = np.random.default_rng(55)
     n = 512
     L = Layer(n, n, rng)
-    coats = periodic_noise(n, n, rng, 5, 3)
-    patches = np.clip((periodic_noise(n, n, rng, 3, 2) - 0.55) * 4, 0, 1)
-    brush = periodic_noise(n, n, rng, 3, 24)
-    damp = np.clip((periodic_noise(n, n, rng, 4, 4) - 0.6) * 3, 0, 1)
-    g = 0.97 - 0.10 * coats + 0.06 * patches - 0.03 * brush - 0.10 * damp
-    L.col = np.dstack([g, g * 0.985, g * 0.96]).astype(np.float32)
-    L.hgt = 0.3 * coats + 0.12 * brush
-    L.rough[:] = 0.95
-    L.save("limewash", 1.0)
+    coats = periodic_noise(n, n, rng, 2, 2)
+    brush = periodic_noise(n, n, rng, 3, 4)
+    g = 0.97 - 0.05 * coats - 0.02 * brush
+    L.col = np.dstack([g, g, g]).astype(np.float32)
+    L.hgt = 0.25 * coats + 0.1 * brush
+    L.rough[:] = 0.92
+    L.save("limewash", 0.8, paint=0.2)
 
 
 def rustic():
-    """Rusticated stucco, 2 m a repeat: the stucco cut into horizontal bands 50 cm high by deep
-    V-grooves, the band faces softly weathered, darker in the grooves where dust sits."""
+    """Rusticated stucco, 2 m a repeat: bands 50 cm high cut by broad, rounded grooves (chunky, 5 cm
+    across, so they read at 20 m), each band's top edge catching the light and the groove dark,
+    the faces flat white with big slow patches."""
     rng = np.random.default_rng(57)
     n = 512
     L = Layer(n, n, rng)
     y = np.mgrid[0:n, 0:n][0].astype(np.float32)
     fv = (y % (n / 4)) / (n / 4)
-    # A crisp, narrow channel at each joint (painted light puts a highlight on the band below
-    # and a shadow line under the one above), each band a touch different in tone.
-    band = np.clip(np.minimum(fv, 1 - fv) / 0.022, 0, 1) ** 0.6
-    row = (y // (n / 4)).astype(int)
-    tone = np.array([0.0, 0.025, -0.015, 0.012])[row % 4]
-    trowel = periodic_noise(n, n, rng, 3, 2)
-    weather = np.clip(periodic_noise(n, n, rng, 2, 2) * 1.5 - 0.5, 0, 1)
-    g = (0.90 + tone - 0.025 * trowel - 0.04 * weather) * (0.84 + 0.16 * band)
-    L.col = np.dstack([g, g * 0.98, g * 0.94]).astype(np.float32)
-    L.hgt = 2.0 * band + 0.3 * trowel
-    L.rough[:] = 0.9
-    L.save("rustic", 1.6)
+    # Rounded shoulders either side of each joint: 0 in the groove, 1 on the face.
+    d = np.minimum(fv, 1 - fv)
+    band = smooth(0.0, 0.09, d)
+    patches = periodic_noise(n, n, rng, 2, 2)
+    g = (0.97 - 0.03 * patches) * (0.80 + 0.20 * band)
+    L.col = np.dstack([g, g, g]).astype(np.float32)
+    L.hgt = 2.2 * band
+    L.rough[:] = 0.88
+    L.save("rustic", 1.4, paint=0.35)
+
+
+def wood():
+    """Painted wood, 2 m a repeat (the shopfronts' cladding, doors, frames: Mat::Wood), to the style
+    guide: planks 16 cm wide along v, each a tone of its own, soft dark joints, a few broad grain
+    streaks and the odd knot drawn as a soft ring. Near-white: the wood token tints it."""
+    rng = np.random.default_rng(59)
+    n = 512
+    L = Layer(n, n, rng)
+    y, x = np.mgrid[0:n, 0:n].astype(np.float32)
+    pw = n / 12.5
+    fu = (x % pw) / pw
+    k = rng.random(13).astype(np.float32)[(x // pw).astype(int) % 13]
+    plank = smooth(0.0, 0.08, np.minimum(fu, 1 - fu))
+    streak = periodic_noise(n, n, rng, 3, 2)
+    streak = smooth(0.35, 0.65, (np.sin((x * 0.06 + 6 * streak) * 2.0) + 1) / 2) * 0.5 + 0.5 * streak
+    g = (0.95 - 0.12 * k - 0.07 * streak) * (0.7 + 0.3 * plank)
+    for _ in range(5):
+        cx, cy, r = rng.uniform(0, n), rng.uniform(0, n), rng.uniform(4, 8)
+        dx, dy = (x - cx + n / 2) % n - n / 2, (y - cy + n / 2) % n - n / 2
+        g = g * (1 - 0.2 * smooth(r * 1.6, r * 0.6, np.hypot(dx * 1.6, dy * 0.6)))
+    L.col = np.dstack([g, g, g]).astype(np.float32)
+    L.hgt = 1.2 * plank + 0.15 * streak
+    L.rough[:] = 0.75
+    L.save("wood", 1.0, paint=0.3)
 
 
 # Stock on a shop's shelves, painted (the open shops on the city facades).
@@ -646,7 +665,7 @@ def carton(L, r, x, w, y0, y1):
     L.rough[y0:y1, x:x + w] = 0.85
 
 
-JOBS = {f.__name__: f for f in (facade, shop, rustic, limewash, stucco, stone, roof, ground, wear)}
+JOBS = {f.__name__: f for f in (facade, shop, rustic, limewash, stucco, stone, roof, ground, wear, wood)}
 # All of them, or just those named: python3 tools/textures/city.py shop
 for job in sys.argv[1:] or JOBS:
     JOBS[job]()

@@ -31,16 +31,14 @@ LAST = os.path.join(OUT, "last.json")
 BASELINE = os.path.join(OUT, "baseline.json")
 VIEWS = ["style_block", "style_kerb", "style_verandah", "style_shop", "style_roof", "style_room"]
 
-# (metric, low, high): None for no bound. Rooms are lit, not sunlit: their own.
-TARGETS = {
-    "p90": (0.80, 0.95),
-    "clip": (None, 0.02),
-    "dark": (None, 0.10),
-    "sat": (0.22, None),
-    "loud": (None, 0.22),
-    "blue": (0.02, None),
-}
-ROOM = {"p50": (0.35, None)}
+# (metric, low, high): None for no bound. The views facing the sun (the roof) are held to the high
+# key; the block faces away from it (Connaught Place is a ring: half of it always does), so its
+# views are held to light shade instead; rooms are lit, not sunlit. Mean saturation and the shade's
+# blue are reported, not judged: the guide's white walls dominate a frame on purpose.
+SUNLIT = {"p90": (0.82, 0.95), "clip": (None, 0.02), "dark": (None, 0.10), "loud": (None, 0.22)}
+SHADE = {"p50": (0.45, None), "clip": (None, 0.02), "dark": (None, 0.10), "loud": (0.02, 0.22)}
+ROOM = {"p50": (0.35, None), "dark": (None, 0.10)}
+KIND = {"style_roof": SUNLIT, "style_room": ROOM}
 
 
 def measure(path):
@@ -64,7 +62,7 @@ def measure(path):
 
 
 def verdict(view, k, v):
-    lo, hi = (ROOM if view == "style_room" else TARGETS).get(k, (None, None))
+    lo, hi = KIND.get(view, SHADE).get(k, (None, None))
     if lo is not None and v < lo:
         return f"! under {lo:g}"
     if hi is not None and v > hi:

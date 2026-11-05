@@ -117,19 +117,21 @@ pub enum Mat {
     Rustic,
 }
 
-/// Paint colours (sRGB): Delhi's sun-faded limewash, as on Chandni's walls (crate::buildings::
-/// WALLS in the game): dusty rose, ochre, mint, powder blue, cream, terracotta, lilac, and the old
-/// green of shutters.
-pub const PAINT: [[f32; 3]; 8] = [
-    [0.88, 0.64, 0.58],
-    [0.90, 0.72, 0.46],
-    [0.66, 0.80, 0.70],
-    [0.62, 0.74, 0.86],
-    [0.94, 0.88, 0.74],
-    [0.82, 0.54, 0.42],
-    [0.76, 0.68, 0.82],
-    [0.36, 0.52, 0.42],
-];
+/// Paint colours (sRGB): Delhi's limewash, the style guide's `paint` tokens
+/// (assets/style/palette.json) in order: rose, ochre, mint, powder blue, cream, terracotta, lilac,
+/// and the old green of shutters; then the kerbs' yellow and black (KERB_YELLOW, KERB_BLACK).
+/// `k` wraps.
+pub fn paint(k: u8) -> [f32; 3] {
+    const NAMES: [&str; 10] = [
+        "paint.rose", "paint.ochre", "paint.mint", "paint.powder_blue", "paint.cream", "paint.terracotta", "paint.lilac", "paint.old_green",
+        "ground.kerb_yellow", "ground.kerb_black",
+    ];
+    crate::style::srgb(NAMES[k as usize % NAMES.len()])
+}
+
+/// Delhi's kerbs, painted in yellow and black stripes: `Mat::Paint` of these.
+pub const KERB_YELLOW: u8 = 8;
+pub const KERB_BLACK: u8 = 9;
 
 #[derive(Clone, Copy, Debug, PartialEq, Reflect)]
 pub enum Shape {

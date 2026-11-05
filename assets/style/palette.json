@@ -10,7 +10,7 @@
   },
   "light": {
     "sun": "#ffe8c4",
-    "sky_fill": "#bcd0f5",
+    "sky_fill": "#c6d3ef",
     "room": "#ffd9a8",
     "fog": "#cfe9f7"
   },
@@ -30,7 +30,7 @@
     "paving_joint": "#a89a84"
   },
   "architecture": {
-    "stucco": "#f5efe3",
+    "stucco": "#f8eedc",
     "stucco_trim": "#fffaf0",
     "stucco_groove": "#cfc4b0",
     "stucco_stain": "#d9cbb2",

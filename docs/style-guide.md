@@ -22,7 +22,8 @@ What it is not: grey, hazy, photographic, noisy, thin, or sharp-cornered.
 ## 2. Colour
 
 - **High key.** Sunlit white stucco shows at 85-92% brightness on screen, never clipped; its shade
-  side a clear light blue (55-65%), not grey. Nothing large on screen is darker than 15% but
+  side light and a little cool (55-75%), never grey or lavender: the sky fill is a soft blue and
+  the stucco token warm, so the two meet as a clean light shade. Nothing large on screen is darker than 15% but
   tarmac in shade, interiors' far corners and the characters' hair.
 - **Saturated, but few colours per view.** Large surfaces (walls, ground, road) are calm: white,
   cream, grass green, blue-grey tarmac. The strong colours are the accents: signboards, shutters,

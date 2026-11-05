@@ -70,6 +70,11 @@ fn matte(h: Handle<StandardMaterial>, materials: &mut Assets<StandardMaterial>) 
     h
 }
 
+/// A style guide colour token (assets/style/palette.json) as a colour.
+fn tok(name: &str) -> Color {
+    Color::srgb_from_array(shared::style::srgb(name))
+}
+
 fn material_for(mat: Mat, sets: &HashMap<&'static str, TexSet>, materials: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
     let textured = |set: &str, tint: Color, rough: f32, materials: &mut Assets<StandardMaterial>| {
         let s = &sets[set];
@@ -90,15 +95,15 @@ fn material_for(mat: Mat, sets: &HashMap<&'static str, TexSet>, materials: &mut 
         Mat::PlasterBlue => textured("plaster", Color::srgb(0.55, 0.72, 0.95), 0.9, materials),
         Mat::Marble => textured("plaster", Color::srgb(1.0, 0.99, 0.97), 0.35, materials),
         Mat::Brick => textured("brick", Color::WHITE, 0.9, materials),
-        Mat::Wood => textured("wood", Color::WHITE, 0.75, materials),
+        Mat::Wood => textured("panga_wood", tok("wood.teak_dark"), 0.75, materials),
         Mat::Thatch => textured("thatch", Color::WHITE, 0.95, materials),
-        Mat::Stucco => matte(textured("stucco", Color::WHITE, 0.92, materials), materials),
-        Mat::Stone => textured("stone", Color::WHITE, 0.6, materials),
-        // Cream, as the ring's limewash weathers (pure white read blue-grey in the verandahs' shade).
-        Mat::Rustic => matte(textured("rustic", Color::srgb(1.0, 0.95, 0.86), 0.9, materials), materials),
+        // Connaught Place: the style guide's tokens (docs/style-guide.md) over its painted textures.
+        Mat::Stucco => matte(textured("stucco", tok("architecture.stucco"), 0.92, materials), materials),
+        Mat::Stone => textured("stone", tok("architecture.floor_tile"), 0.6, materials),
+        Mat::Rustic => matte(textured("rustic", tok("architecture.stucco"), 0.9, materials), materials),
         Mat::Paint(k) => {
             // Over the limewash's near-white mottle (tools/textures/city.py).
-            let c = shared::map::PAINT[k as usize % shared::map::PAINT.len()];
+            let c = shared::map::paint(k);
             matte(textured("limewash", Color::srgb(c[0], c[1], c[2]), 0.95, materials), materials)
         }
         Mat::Dirt => textured("sandstone", Color::srgb(0.75, 0.62, 0.48), 0.95, materials),
@@ -247,9 +252,12 @@ impl MeshBuf {
     }
 
     fn add_box(&mut self, b: &Block, size: Vec3) {
-        // Soft edges near (docs/style-guide.md section 3): a bevel the light catches.
+        // Soft edges near (docs/style-guide.md section 3): a bevel the light catches. On the trim
+        // only (what's drawn and not walked into: cornices, plinths, beams, frames, slats): a
+        // bevel cuts a groove where two boxes meet, and the walls' and slabs' grooves let the sun
+        // through into the rooms in the shadow map.
         let bev = BEVEL.min(size.min_element() * 0.3);
-        if !self.coarse && bev > 0.004 {
+        if !self.coarse && !b.collide && bev > 0.004 {
             self.bevelled_box(b, size, bev);
             return;
         }
@@ -1207,6 +1215,7 @@ fn build_chunks(
     for name in ["stucco", "stone", "limewash", "rustic"] {
         sets.insert(name, load_set(&assets, &mut pending, &format!("panga/{name}")));
     }
+    sets.insert("panga_wood", load_set(&assets, &mut pending, "panga/wood"));
     let mut groups: HashMap<(i32, i32, Mat, bool), MeshBuf> = HashMap::new();
     for b in layout.blocks.iter().filter(|b| is_static_visual(b)) {
         for coarse in [false, true] {

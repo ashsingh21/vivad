@@ -220,8 +220,9 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 b.map.signs.push(super::ShopSign {
                     pos: r.at(rad, am, (3.35 + r.g - SLAB) / 2.0 + 0.05),
                     facing: out_dir(am) * toward,
-                    width: (chord * 0.82).min(3.6),
-                    height: 0.78,
+                    // Big, the bay's width (docs/style-guide.md section 6).
+                    width: (chord * 0.94).min(4.2),
+                    height: 1.0,
                     kind: SignKind::Board,
                 });
             }
@@ -490,9 +491,10 @@ pub fn markings(b: &mut Builder, r: &Ring, clear: &OuterClear) {
                 }
             }
         }
-        for rad in [r0 - 0.15, r1 + 0.15] {
-            let h = 0.14;
-            let n = (tau * rad / 2.4) as usize;
+        for rad in [r0 - 0.18, r1 + 0.18] {
+            // Chunky (docs/style-guide.md section 3), in Delhi's yellow and black stripes.
+            let h = 0.18;
+            let n = (tau * rad / 1.2) as usize;
             for k in 0..n {
                 let a = tau * (k as f32 + 0.5) / n as f32;
                 // The kerb dips at the crossings and where the radial streets join.
@@ -500,7 +502,8 @@ pub fn markings(b: &mut Builder, r: &Ring, clear: &OuterClear) {
                     continue;
                 }
                 let y = ground(b, rad, a);
-                b.deco(Frame::new(r.center, -a), Vec3::new(rad, y + h / 2.0 - 0.02, 0.0), Vec3::new(0.3, h + 0.04, tau * rad / n as f32 + 0.02), Mat::Granite);
+                let stripe = if k % 2 == 0 { super::KERB_YELLOW } else { super::KERB_BLACK };
+                b.deco(Frame::new(r.center, -a), Vec3::new(rad, y + h / 2.0 - 0.02, 0.0), Vec3::new(0.36, h + 0.04, tau * rad / n as f32 + 0.01), Mat::Paint(stripe));
             }
         }
         // Where the road stops at a building, a kerb across its end.
@@ -510,7 +513,7 @@ pub fn markings(b: &mut Builder, r: &Ring, clear: &OuterClear) {
                 if runs(a) != runs(next) {
                     let at = if runs(a) { a } else { next };
                     let y = ground(b, mid, at);
-                    b.deco(Frame::new(r.center, -at), Vec3::new(mid, y + 0.05, 0.0), Vec3::new(r1 - r0 + 0.6, 0.18, 0.3), Mat::Granite);
+                    b.deco(Frame::new(r.center, -at), Vec3::new(mid, y + 0.07, 0.0), Vec3::new(r1 - r0 + 0.6, 0.22, 0.36), Mat::Paint(super::KERB_YELLOW));
                 }
             }
         }
