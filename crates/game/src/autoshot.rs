@@ -157,6 +157,9 @@ impl Plugin for AutoshotPlugin {
                     ("ch_room", v(12.6, 1.6, -104.4), v(5.2, 0.6, -106.5)),
                     ("ch_room_tv", v(6.4, 1.5, -106.2), v(14.4, 0.8, -103.9)),
                     ("ch_air", v(-25.0, 30.0, -25.0), v(-2.0, 0.0, -47.0)),
+                    // A house from its doorway in (seed 7), its ground floor and the one above.
+                    ("ch_home_in", v(-39.5, 1.6, -73.4), v(-39.6, 1.3, -79.0)),
+                    ("ch_home_up", v(-39.5, 5.0, -73.6), v(-39.6, 4.6, -79.0)),
                     // Down Chandni's lanes and a road, at eye height.
                     ("ch_lane", v(52.1, 1.8, 4.5), v(49.7, 4.0, 34.5)),
                     ("ch_lane2", v(48.1, 1.8, 57.0), v(50.5, 4.0, 27.0)),

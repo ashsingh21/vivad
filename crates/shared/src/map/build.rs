@@ -132,6 +132,26 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// The paint on a wall's inner face (the side toward `inside`, in the frame's plane): a drawn
+    /// skin just off it with the wall's openings, stopped short of the corners (its ends would show
+    /// through the next wall's outside): each end inside the next wall's skin, so the corner is closed
+    /// and no face is shared. For rooms limewashed in a light paint (docs/style-guide.md).
+    pub fn line_inside(&mut self, f: Frame, a: Vec2, b: Vec2, y0: f32, height: f32, thick: f32, inside: Vec2, mat: Mat, openings: &[Opening]) {
+        let len = a.distance(b);
+        let cut = thick * 0.5 + 0.012;
+        if len < 2.0 * cut + 0.2 {
+            return;
+        }
+        let dir = (b - a) / len;
+        let mut n = dir.perp();
+        if n.dot(inside - (a + b) * 0.5) < 0.0 {
+            n = -n;
+        }
+        let skin = n * (thick * 0.5 + 0.012);
+        let ops: Vec<Opening> = openings.iter().map(|o| Opening { at: o.at - cut, ..*o }).collect();
+        self.lining(f, a + dir * cut + skin, b - dir * cut + skin, y0 + 0.02, height - 0.04, 0.02, mat, &ops);
+    }
+
     /// Visual-only box (no collider): trims, mouldings and ornament.
     pub fn deco(&mut self, f: Frame, local: Vec3, size: Vec3, mat: Mat) {
         if size.min_element() <= 0.001 {
@@ -256,6 +276,15 @@ impl<'a> Builder<'a> {
     }
 
     /// Slab with a rectangular hole (for stair wells). Rects are (min, max) in local XZ.
+    /// A slab drawn only (no collider): a skin of tiles over a floor, of plaster under a ceiling.
+    pub fn skin(&mut self, f: Frame, min: Vec2, max: Vec2, y: f32, thick: f32, hole: Option<(Vec2, Vec2)>, mat: Mat) {
+        let first = self.map.blocks.len();
+        self.slab_with_hole(f, min, max, y, thick, hole, mat);
+        for blk in &mut self.map.blocks[first..] {
+            blk.collide = false;
+        }
+    }
+
     pub fn slab_with_hole(&mut self, f: Frame, min: Vec2, max: Vec2, y: f32, thick: f32, hole: Option<(Vec2, Vec2)>, mat: Mat) {
         let rects = match hole {
             None => vec![(min, max)],

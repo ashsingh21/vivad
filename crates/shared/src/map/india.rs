@@ -566,7 +566,7 @@ fn house_with(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, flo
     let lane_z = |k: u32| -hd + t + 0.15 + lane_w / 2.0 + (k % 2) as f32 * (lane_w + 0.1);
 
     // Ground-floor paving (visual; the terrain below is the collider).
-    b.push(f.p(Vec3::new(0.0, 0.03, 0.0)), f.rot(), super::Shape::Box(Vec3::new(w - 0.1, 0.06, d - 0.1)), Mat::Sandstone, false, true);
+    b.push(f.p(Vec3::new(0.0, 0.03, 0.0)), f.rot(), super::Shape::Box(Vec3::new(w - 0.1, 0.06, d - 0.1)), Mat::Stone, false, true);
     let mut top_balconies = vec![];
     for k in 0..floors {
         let y0 = k as f32 * FLOOR_H;
@@ -599,6 +599,13 @@ fn house_with(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, flo
         b.wall(f, corners[1], corners[2], y0, FLOOR_H, t, mat, &win(d));
         b.wall(f, corners[2], corners[3], y0, FLOOR_H, t, mat, &[]);
         b.wall(f, corners[3], corners[0], y0, FLOOR_H, t, mat, &win(d));
+        // Limewashed inside a warm light colour a floor (the outside's strong ochres and blues read
+        // dark and loud in a room; lilac and powder blue go violet in its sky light).
+        // (From where the house stands, not the rng: the map's layout stays as it was.)
+        let wash = Mat::Paint([0u8, 1, 2, 4][((f.origin.x * 7.0 + f.origin.z * 13.0) as i32 + k as i32).rem_euclid(4) as usize]);
+        for (i, ops) in [front.clone(), win(d), vec![], win(d)].iter().enumerate() {
+            b.line_inside(f, corners[i], corners[(i + 1) % 4], y0, FLOOR_H, t, Vec2::ZERO, wash, ops);
+        }
         let trim = trim_for(mat);
         let arched: Vec<Opening> = front.iter().copied().filter(|o| !balconies.iter().any(|&at| (o.at - at).abs() < 0.1)).collect();
         b.arch_openings(f, corners[0], corners[1], y0, t, &arched);
@@ -631,7 +638,23 @@ fn house_with(b: &mut Builder, rng: &mut SmallRng, f: Frame, w: f32, d: f32, flo
         }
         // Slab above, with the whole flight's footprint open for headroom.
         let hole = (Vec2::new(sx - 0.05, lz - lane_w / 2.0 - 0.05), Vec2::new(sx + run + 0.05, lz + lane_w / 2.0 + 0.05));
-        b.slab_with_hole(f, Vec2::new(-hw, -hd), Vec2::new(hw, hd), y0 + FLOOR_H, 0.25, Some(hole), mat);
+        // (Plastered: it's only seen inside, round the stair well; its edges are in the walls.)
+        b.slab_with_hole(f, Vec2::new(-hw, -hd), Vec2::new(hw, hd), y0 + FLOOR_H, 0.25, Some(hole), Mat::Stucco);
+        // The rooms' own surfaces, inside the walls (docs/style-guide.md: rooms light, floors tiled):
+        // tiles a hair over the slab, the room below's ceiling plastered a hair under it.
+        // Out under the walls (hidden in them), so no edge of the slab shows.
+        let (lo, hi) = (Vec2::new(-hw + 0.02, -hd + 0.02), Vec2::new(hw - 0.02, hd - 0.02));
+        b.skin(f, lo, hi, y0 + FLOOR_H + 0.012, 0.01, Some(hole), Mat::Stone);
+        b.skin(f, lo, hi, y0 + FLOOR_H - 0.26, 0.01, Some(hole), Mat::Stucco);
+        // Warm light in the room (its windows let in the sky's blue alone): an unseen fill.
+        let warm = crate::style::linear("light.room");
+        b.map.lamps.push(super::Lamp {
+            pos: f.p(Vec3::new(0.0, y0 + FLOOR_H - 0.9, hd * 0.3)),
+            color: Vec3::new(warm[0], warm[1], warm[2]),
+            lumens: 260_000.0,
+            range: (w.max(d) * 0.9).clamp(6.0, 12.0),
+            flames: None,
+        });
         // Furnished as a home: a room a floor, kept off the stairs, the doorway and the front
         // corners (where a chest may stand).
         let floor = if k == 0 { 0.06 } else { y0 };
