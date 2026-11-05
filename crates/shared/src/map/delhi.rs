@@ -597,6 +597,9 @@ fn hall(b: &mut Builder, rng: &mut SmallRng, pts: &[Vec2], others: &[Vec<Vec2>])
         .collect();
     let built = |p: Vec2| others.iter().any(|o| o[0].distance(p) < 150.0 && super::footprint::contains(o, p));
     let c = pts.iter().sum::<Vec2>() / n as f32;
+    // Inside, the walls limewashed one of the warm light paints (docs/style-guide.md: rooms light and
+    // warm; lilac and powder blue go a deep violet in a hall's mostly sky-blue light).
+    let wash = Mat::Paint([0u8, 1, 2, 4][rng.random_range(0..4)]);
     // Which sides face the street; with none (a building in a courtyard), its longest side does.
     let side_len = |i: usize| pts[i].distance(pts[(i + 1) % n]);
     let mut street: Vec<bool> = (0..n)
@@ -639,6 +642,14 @@ fn hall(b: &mut Builder, rng: &mut SmallRng, pts: &[Vec2], others: &[Vec<Vec2>])
         }
         // Up into the building above, its top hidden there.
         b.wall(w, a, q, 0.0, HALL + 0.1, T, Mat::Rustic, &ops);
+        // The paint inside: a skin just off the wall's inner face, stopped short of the corners (its
+        // ends would show through the next wall's outside), with the wall's openings.
+        let cut = T + 0.02;
+        if len > 2.0 * cut + 0.2 {
+            let skin = -out * (T * 0.5 + 0.012);
+            let lops: Vec<Opening> = ops.iter().map(|o| Opening { at: o.at - cut, ..*o }).collect();
+            b.lining(w, a + dir * cut + skin, q - dir * cut + skin, 0.02, HALL - 0.02, 0.02, wash, &lops);
+        }
         // A blank wall inside is lined with shelves of goods, a bay every 3.5 m.
         if ops.is_empty() && len > 4.0 {
             let k = ((len - 1.0) / 3.5).floor() as usize;
@@ -691,6 +702,17 @@ fn hall(b: &mut Builder, rng: &mut SmallRng, pts: &[Vec2], others: &[Vec<Vec2>])
         }
         x += grid;
     }
+    // Warm light inside, as the style guide's rooms (the hall is shut but for its street side, and
+    // the tube lights are drawn, not lit): an unseen fill under the ceiling.
+    let reach = (hi - lo).max_element();
+    let warm = crate::style::linear("light.room");
+    b.map.lamps.push(super::Lamp {
+        pos: Vec3::new(c.x, HALL - 0.8, c.y),
+        color: Vec3::new(warm[0], warm[1], warm[2]),
+        lumens: 600_000.0,
+        range: (reach * 0.75).clamp(9.0, 18.0),
+        flames: None,
+    });
     // A few things to take cover behind, not a warehouse of them.
     while free.len() > 10 {
         free.swap_remove(rng.random_range(0..free.len()));

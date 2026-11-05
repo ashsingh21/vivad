@@ -123,6 +123,15 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// A wall drawn only (no colliders): a lining of paint on another wall's face.
+    pub fn lining(&mut self, f: Frame, a: Vec2, b: Vec2, y0: f32, height: f32, thick: f32, mat: Mat, openings: &[Opening]) {
+        let first = self.map.blocks.len();
+        self.wall(f, a, b, y0, height, thick, mat, openings);
+        for blk in &mut self.map.blocks[first..] {
+            blk.collide = false;
+        }
+    }
+
     /// Visual-only box (no collider): trims, mouldings and ornament.
     pub fn deco(&mut self, f: Frame, local: Vec3, size: Vec3, mat: Mat) {
         if size.min_element() <= 0.001 {

@@ -734,7 +734,10 @@ fn build_footprints(
         let split = if raised { fp.base } else { (fp.base + STOREY).min(fp.top) };
         if raised {
             let t = trims.entry((cx, cz)).or_default();
-            let ceiling = lin([0.86, 0.84, 0.80]);
+            // The ceiling token, made up for the sky shading every face turned down gets (into_mesh).
+            let l = tok("architecture.ceiling").to_linear();
+            let k = 1.0 / (1.0 - SKY_SHADE);
+            let ceiling = [l.red * k, l.green * k, l.blue * k, 1.0];
             for [i, j, k] in shared::map::footprint::triangulate(&fp.pts) {
                 let p = [fp.pts[i as usize], fp.pts[j as usize], fp.pts[k as usize]].map(|q| Vec3::new(q.x, fp.base, q.y));
                 let p = if (p[1] - p[0]).cross(p[2] - p[0]).y <= 0.0 { p } else { [p[0], p[2], p[1]] };
