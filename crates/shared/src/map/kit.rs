@@ -108,7 +108,7 @@ pub(super) fn shelving(b: &mut Builder, back: Vec3, facing: Vec2, width: f32, se
 }
 
 /// The yaw that faces the model (-Z forward) along `dir` (x, z).
-fn facing(dir: Vec2) -> f32 {
+pub(super) fn facing(dir: Vec2) -> f32 {
     (-dir.x).atan2(-dir.y)
 }
 

@@ -98,6 +98,19 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
             } else {
                 slab(b, core0, core1, r.g + lift);
             }
+            // The rooms upstairs floored in the verandahs' tiles, drawn only, a hair over the slab (as
+            // the terrace's below), in strips round the curve; the stair well left open.
+            let well = if stairs(i) { Some((core0, well_to)) } else { None };
+            for k in 0..4 {
+                let (q0, q1) = (r.ri + (r.ro - r.ri) * k as f32 / 4.0, r.ri + (r.ro - r.ri) * (k + 1) as f32 / 4.0);
+                let spans: Vec<(f32, f32)> = match well {
+                    Some((w0, w1)) => [(q0, q1.min(w0)), (q0.max(w1), q1)].into_iter().filter(|(a, b)| b - a > 0.05).collect(),
+                    None => vec![(q0, q1)],
+                };
+                for (a0, a1) in spans {
+                    b.deco(radial, Vec3::new((a0 + a1) / 2.0, r.g + lift + 0.01, 0.0), Vec3::new(a1 - a0 - 0.01, 0.02, chord_at(a1)), Mat::Stone);
+                }
+            }
             // Roof, a stone-tiled terrace, its parapets and cornices (their tops 5 cm under the
             // slabs' they run along).
             slab(b, r.ri - 0.3, r.ro + 0.3, r.g + r.u + lift);
@@ -316,8 +329,9 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
             // stairs come up).
             if i % 2 == 0 && i > 0 {
                 let (p, q) = (xz(r.ri + 0.36, s0), xz(r.ro - 0.36, s0));
-                let room = (blk * 5 + i) % 7;
-                b.wall(w, p, q, r.g + lift, r.u - SLAB, 0.2, Mat::Paint(room as u8), &[Opening::door(p.distance(q) * 0.35), Opening::door(p.distance(q) * 0.65)]);
+                // The lighter paints only (not terracotta or the old green: rooms read dark in them).
+                let room = [0u8, 1, 2, 3, 4, 6][(blk * 5 + i) % 6];
+                b.wall(w, p, q, r.g + lift, r.u - SLAB, 0.2, Mat::Paint(room), &[Opening::door(p.distance(q) * 0.35), Opening::door(p.distance(q) * 0.65)]);
                 // A storeroom's racks on both faces, between the doorways.
                 let tangent = Vec2::new(-s0.sin(), s0.cos());
                 let at = p.lerp(q, 0.5);
@@ -337,7 +351,32 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
             if i % 2 == 1 && !stairs(i) {
                 for (rad, len) in [((r.ri * 2.0 + r.ro) / 3.0, 1.2), ((r.ri + r.ro * 2.0) / 3.0, 1.2)] {
                     b.map.signs.push(super::ShopSign { pos: r.at(rad, am, r.g + r.u - SLAB - 0.03 + lift), facing: out_dir(am), width: 0.14, height: len, kind: SignKind::Light });
-                    b.map.signs.push(super::ShopSign { pos: r.at(rad, am, r.g + lift + 0.015), facing: out_dir(am), width: 3.4, height: 3.4, kind: SignKind::Pool });
+                    b.map.signs.push(super::ShopSign { pos: r.at(rad, am, r.g + lift + 0.03), facing: out_dir(am), width: 3.4, height: 3.4, kind: SignKind::Pool });
+                }
+            }
+            // Each room's clutter (docs/style-guide.md section 6), on and by the partition it
+            // starts at: a calendar, a clock and a god's picture on the wall over the racks, a
+            // matka, a bucket, slippers and a plant on the floor (clear of the doorways).
+            if i % 2 == 0 && i > 0 && !stairs(i) {
+                let (p, q) = (xz(r.ri + 0.36, s0), xz(r.ro - 0.36, s0));
+                let tangent = Vec2::new(-s0.sin(), s0.cos());
+                let on = |t: f32, side: f32, y: f32, out: f32| {
+                    let f = p.lerp(q, t) + tangent * side * (0.1 + out);
+                    Vec3::new(f.x, r.g + lift + y, f.y)
+                };
+                for side in [-1.0f32, 1.0] {
+                    let face = super::kit::facing(tangent * side);
+                    let k = rng.random_range(0..3);
+                    let (w0, w1) = [("calendar", "god_photo"), ("clock", "calendar"), ("god_photo", "clock")][k];
+                    super::kit::place(b, w0, on(0.2, side, 1.7, 0.0), face);
+                    super::kit::place(b, w1, on(0.5, side, 2.45, 0.0), face);
+                    super::kit::place(b, "clock", on(0.8, side, 2.1, 0.0), face);
+                    let floor = [("matka", 0.12), ("bucket", 0.88), ("pot", 0.2), ("slippers", 0.42)];
+                    for (name, t) in floor {
+                        if rng.random_bool(0.7) {
+                            super::kit::place(b, name, on(t, side, 0.0, 0.35), face + rng.random_range(-0.3..0.3));
+                        }
+                    }
                 }
             }
             if i % 2 == 0 && !stairs(i) && !stairs(i + 1) && i + 1 < n {
@@ -503,7 +542,7 @@ pub fn markings(b: &mut Builder, r: &Ring, clear: &OuterClear) {
                 }
                 let y = ground(b, rad, a);
                 let stripe = if k % 2 == 0 { super::KERB_YELLOW } else { super::KERB_BLACK };
-                b.deco(Frame::new(r.center, -a), Vec3::new(rad, y + h / 2.0 - 0.02, 0.0), Vec3::new(0.36, h + 0.04, tau * rad / n as f32 + 0.01), Mat::Paint(stripe));
+                b.deco(Frame::new(r.center, -a), Vec3::new(rad, y + h / 2.0 - 0.02, 0.0), Vec3::new(0.36, h + 0.04, tau * rad / n as f32 - 0.005), Mat::Paint(stripe));
             }
         }
         // Where the road stops at a building, a kerb across its end.

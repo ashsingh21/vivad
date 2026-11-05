@@ -882,6 +882,92 @@ def stove():
     return p.finish(0.02)
 
 
+# Room clutter (docs/style-guide.md section 6: 4-8 small things a room), in vertex colour. The
+# wall pieces hang from their origin, on the wall's face, standing out toward +Y.
+def calendar():
+    """A wall calendar: a picture on top (a hill, the sun), the month's grid below, a hook."""
+    p = Piece("calendar")
+    p.box((-0.17, 0.0, -0.25), (0.17, 0.012, 0.25), style.srgb("accent.cream"), round=False)
+    p.box((-0.15, 0.012, 0.02), (0.15, 0.016, 0.22), style.srgb("accent.blue"), round=False)
+    p.box((-0.15, 0.016, 0.02), (0.15, 0.02, 0.1), style.srgb("accent.green"), round=False)
+    p.ball((0.06, 0.018, 0.16), 0.035, style.srgb("accent.yellow"))
+    for r in range(4):
+        for c in range(5):
+            p.box((-0.14 + c * 0.058, 0.012, -0.22 + r * 0.055), (-0.1 + c * 0.058, 0.016, -0.185 + r * 0.055), style.srgb("accent.red" if (r, c) == (1, 3) else "metal.steel_dark"), round=False)
+    p.cyl((0, 0.0, 0.25), (0, 0.03, 0.27), 0.01, "black", 6)
+    return p.finish(0.0)
+
+
+def clock():
+    """A round wall clock: a fat rim, a white face, the hands at ten past ten."""
+    p = Piece("clock")
+    p.cyl((0, 0.0, 0), (0, 0.05, 0), 0.17, style.srgb("accent.saffron"), 20)
+    p.cyl((0, 0.05, 0), (0, 0.056, 0), 0.14, "white", 20)
+    for a, ln in ((math.radians(-60), 0.07), (math.radians(60), 0.1)):
+        d, n = Vector((math.sin(a), 0, math.cos(a))), Vector((math.cos(a), 0, -math.sin(a)))
+        p.hull([tuple(d * t + n * w + Vector((0, y, 0))) for t in (0.0, ln) for w in (-0.008, 0.008) for y in (0.056, 0.062)], "black")
+    return p.finish(0.0)
+
+
+def god_photo():
+    """A framed picture of a god, as in every Delhi shop and home: a gold frame, a saffron
+    glow and a figure in it, a marigold garland hung across, a lamp shelf under it."""
+    p = Piece("god_photo")
+    p.box((-0.2, 0.0, -0.26), (0.2, 0.04, 0.26), style.srgb("furniture.brass"))
+    p.box((-0.16, 0.04, -0.22), (0.16, 0.046, 0.22), style.srgb("accent.saffron"), round=False)
+    p.ball((0, 0.05, 0.06), 0.1, style.srgb("accent.yellow"), 1, 1.0)
+    p.box((-0.07, 0.046, -0.2), (0.07, 0.06, 0.04), style.srgb("accent.blue"))
+    p.ball((0, 0.06, 0.08), 0.045, style.srgb("paint.ochre"))
+    for k in range(13):
+        t = k / 12
+        x = -0.2 + 0.4 * t
+        z = 0.2 - 0.32 * math.sin(math.pi * t)
+        p.ball((x, 0.07, z), 0.03, style.srgb("foliage.flower_orange" if k % 2 else "accent.yellow"))
+    p.box((-0.16, 0.0, -0.36), (0.16, 0.14, -0.33), style.srgb("wood.teak"))
+    p.cyl((0, 0.08, -0.33), (0, 0.08, -0.3), 0.03, style.srgb("paint.terracotta"), 10)
+    p.ball((0, 0.08, -0.27), 0.012, style.srgb("accent.yellow"))
+    return p.finish(0.008)
+
+
+def bucket():
+    """A plastic bucket with its handle and a mug on the rim."""
+    p = Piece("bucket")
+    p.cyl((0, 0, 0), (0, 0, 0.34), 0.13, style.srgb("accent.blue"), 16, 0.17)
+    p.cyl((0, 0, 0.33), (0, 0, 0.36), 0.175, style.srgb("accent.blue"), 16)
+    p.cyl((0, 0, 0.36), (0, 0, 0.362), 0.16, style.srgb("vehicle.glass"), 16)
+    p.cyl((-0.17, 0, 0.36), (0.17, 0, 0.36), 0.008, style.srgb("metal.steel_dark"), 6)
+    p.cyl((0.1, 0.1, 0.3), (0.1, 0.1, 0.42), 0.045, style.srgb("accent.red"), 12)
+    return p.finish(0.01)
+
+
+def matka():
+    """The clay water pot on its iron stand, a lid and a steel tumbler on top."""
+    p = Piece("matka")
+    for a in range(3):
+        ang = a * 2 * math.pi / 3
+        p.cyl((0.2 * math.cos(ang), 0.2 * math.sin(ang), 0), (0.15 * math.cos(ang), 0.15 * math.sin(ang), 0.42), 0.015, style.srgb("metal.iron"), 6)
+    p.cyl((0, 0, 0.36), (0, 0, 0.4), 0.2, style.srgb("metal.iron"), 16)
+    p.ball((0, 0, 0.62), 0.24, style.srgb("paint.terracotta"), 2, 1.0, soft=True)
+    p.cyl((0, 0, 0.8), (0, 0, 0.88), 0.09, style.srgb("paint.terracotta"), 14, 0.1)
+    p.cyl((0, 0, 0.88), (0, 0, 0.9), 0.12, style.srgb("paint.terracotta"), 14)
+    p.cyl((0.03, 0, 0.9), (0.03, 0, 1.0), 0.035, style.srgb("metal.steel"), 12, 0.04)
+    return p.finish(0.0)
+
+
+def slippers():
+    """A pair of chappals left by the door."""
+    p = Piece("slippers")
+    for x, a in ((-0.07, 0.12), (0.08, -0.08)):
+        r = Matrix.Rotation(a, 3, "Z")
+        q = lambda v: tuple(Vector((x, 0, 0)) + r @ Vector(v))  # noqa: E731
+        p.hull([q((sx * w, y, z)) for (y, w) in ((-0.12, 0.04), (0.0, 0.05), (0.12, 0.045)) for sx in (-1, 1) for z in (0.0, 0.02)], style.srgb("accent.saffron"))
+        p.hull([q((sx * 0.045, y, z)) for y in (0.02, 0.06) for sx in (-1, 1) for z in (0.02, 0.05)], style.srgb("accent.blue"))
+    return p.finish(0.008)
+
+
+CLUTTER = (calendar, clock, god_photo, bucket, matka, slippers)
+
+
 FURNITURE = (charpai, almirah, dining, sofa, tv, fridge, fan, dari, desk, stove)
 
 
@@ -1051,7 +1137,7 @@ def main():
         objs += build(Piece)
     for name in CARS:
         objs += car(name)
-    for build in FURNITURE:
+    for build in FURNITURE + CLUTTER:
         objs += build()
     bpy.ops.object.select_all(action="DESELECT")
     for o in objs:
