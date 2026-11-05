@@ -115,6 +115,8 @@ pub enum Mat {
     Paint(u8),
     /// Rusticated stucco: white, cut in horizontal bands (Connaught Place's ground storey).
     Rustic,
+    /// Pale buff sandstone (Lutyens' Delhi: India Gate, Kartavya Path's buildings).
+    Buff,
 }
 
 /// Paint colours (sRGB): Delhi's limewash, the style guide's `paint` tokens

@@ -88,6 +88,7 @@ fn material_for(mat: Mat, sets: &HashMap<&'static str, TexSet>, materials: &mut 
     };
     match mat {
         Mat::Sandstone => textured("sandstone", Color::WHITE, 0.85, materials),
+        Mat::Buff => textured("stucco", tok("architecture.buff"), 0.88, materials),
         Mat::RedSandstone => textured("sandstone", Color::srgb(0.86, 0.50, 0.40), 0.85, materials),
         Mat::Granite => textured("granite", Color::WHITE, 0.8, materials),
         Mat::Plaster => textured("plaster", Color::srgb(0.97, 0.95, 0.90), 0.9, materials),

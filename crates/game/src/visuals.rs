@@ -104,6 +104,10 @@ fn mat_color(m: Mat) -> (Color, f32, f32) {
         Mat::Grass => (Color::srgb(0.42, 0.50, 0.25), 0.95, 0.0),
         Mat::Dirt => (Color::srgb(0.62, 0.48, 0.33), 0.95, 0.0),
         Mat::Sandstone => (Color::srgb(0.84, 0.66, 0.45), 0.85, 0.0),
+        Mat::Buff => {
+            let c = shared::style::srgb("architecture.buff");
+            (Color::srgb(c[0], c[1], c[2]), 0.88, 0.0)
+        }
         Mat::RedSandstone => (Color::srgb(0.66, 0.30, 0.22), 0.85, 0.0),
         Mat::Granite => (Color::srgb(0.58, 0.55, 0.52), 0.9, 0.0),
         Mat::Plaster => (Color::srgb(0.92, 0.90, 0.85), 0.9, 0.0),
@@ -141,7 +145,7 @@ fn setup_assets(
     let all = [
         Mat::Grass, Mat::Dirt, Mat::Sandstone, Mat::RedSandstone, Mat::Granite, Mat::Plaster, Mat::PlasterOchre,
         Mat::PlasterBlue, Mat::Brick, Mat::Wood, Mat::Cloth, Mat::Foliage, Mat::Bark, Mat::Water, Mat::Gold,
-        Mat::Marble, Mat::Thatch, Mat::Stucco, Mat::Stone, Mat::Rustic,
+        Mat::Marble, Mat::Thatch, Mat::Stucco, Mat::Stone, Mat::Rustic, Mat::Buff,
         Mat::Paint(0), Mat::Paint(1), Mat::Paint(2), Mat::Paint(3), Mat::Paint(4), Mat::Paint(5), Mat::Paint(6), Mat::Paint(7),
     ];
     for m in all {

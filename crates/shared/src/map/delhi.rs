@@ -391,33 +391,75 @@ fn water(b: &mut Builder, data: &Data) {
 /// India Gate (Lutyens, 1931): a 42 m arch of buff sandstone on a red base, its 9 m opening on the
 /// east-west axis down Kartavya Path; an attic with cornices above, a stepped crown and a shallow
 /// bowl at the top. On a marble plaza.
+/// India Gate, stylised (docs/style-guide.md: chunky, soft, big shadow lines) to its own
+/// proportions: broad for its 42 m, a great arch through it and a smaller one through each pier,
+/// deep cornices, the attic with its inscription panel, the stepped crown and the bowl. Pale buff
+/// stone over a red sandstone base. Its faces look along x; it spans z.
 fn india_gate(b: &mut Builder, c: Vec3) {
     let f = Frame::new(c, 0.0);
-    let (depth, half_w, open) = (4.6, 10.6, 4.55);
-    b.bx(f, Vec3::new(0.0, -0.1, 0.0), Vec3::new(36.0, 0.26, 44.0), Mat::Marble);
+    // Half depth, half width, the great arch's half opening, its springing and crown; the side
+    // arches' half opening and height.
+    let (d, hw, open, spring, crown) = (5.2f32, 15.0f32, 4.8f32, 18.0f32, 23.4f32);
+    let (side_open, side_h) = (2.3f32, 14.0f32);
+    let attic = 34.0;
+    b.bx(f, Vec3::new(0.0, -0.1, 0.0), Vec3::new(40.0, 0.26, 52.0), Mat::Marble);
     for s in [-1.0f32, 1.0] {
-        let z = s * (open + half_w) / 2.0;
-        let w = half_w - open;
-        // The piers, a red plinth and the buff shaft, with a band at the springing.
-        b.bx(f, Vec3::new(0.0, 1.2, z), Vec3::new(depth * 2.0 + 0.6, 2.4, w + 0.6), Mat::RedSandstone);
-        b.bx(f, Vec3::new(0.0, 2.4 + 8.8, z), Vec3::new(depth * 2.0, 17.6, w), Mat::Sandstone);
-        b.deco(f, Vec3::new(0.0, 15.6, z), Vec3::new(depth * 2.0 + 0.4, 0.6, w + 0.4), Mat::Sandstone);
-        // The arch's curve: steps corbelling in from each pier to the crown of the opening.
-        for k in 0..5 {
-            let y = 16.0 + k as f32 * 0.8;
-            let inset = open - (open * (1.0 - (1.0 - (k as f32 + 1.0) / 5.0).powi(2)).sqrt()).max(0.0);
-            b.bx(f, Vec3::new(0.0, y + 0.4, s * (open - inset / 2.0)), Vec3::new(depth * 2.0, 0.8, inset.max(0.05)), Mat::Sandstone);
+        let (z0, z1) = (open, hw);
+        let zc = (z0 + z1) / 2.0;
+        // The red base, a step proud all round.
+        b.bx(f, Vec3::new(0.0, 1.3, s * zc), Vec3::new(2.0 * d + 0.8, 2.6, z1 - z0 + 0.8), Mat::RedSandstone);
+        b.deco(f, Vec3::new(0.0, 2.7, s * zc), Vec3::new(2.0 * d + 1.0, 0.3, z1 - z0 + 1.0), Mat::Buff);
+        // The pier, cut through from end to end (along z) by its side arch, as the real one's ends are.
+        for x in [-1.0f32, 1.0] {
+            b.bx(f, Vec3::new(x * (d + side_open) / 2.0, 2.6 + (attic - 2.6) / 2.0, s * zc), Vec3::new(d - side_open, attic - 2.6, z1 - z0), Mat::Buff);
+        }
+        b.bx(f, Vec3::new(0.0, side_h + (attic - side_h) / 2.0, s * zc), Vec3::new(2.0 * side_open, attic - side_h, z1 - z0), Mat::Buff);
+        arch(b, Frame::new(c, std::f32::consts::FRAC_PI_2), Vec3::new(s * zc, side_h - 2.3, 0.0), z1 - z0, side_open, 2.3, 10);
+        // The impost band where the great arch springs, and a pilaster strip up each pier's outer corners.
+        b.deco(f, Vec3::new(0.0, spring - 0.3, s * zc), Vec3::new(2.0 * d + 0.7, 0.6, z1 - z0 + 0.2), Mat::Buff);
+        for x in [-1.0f32, 1.0] {
+            b.deco(f, Vec3::new(x * (d + 0.15), (2.9 + attic) / 2.0, s * (z1 - 0.7)), Vec3::new(0.3, attic - 2.9, 1.2), Mat::Buff);
         }
     }
-    // The attic over the arch, its cornices, the stepped crown and the bowl.
-    b.bx(f, Vec3::new(0.0, 20.0 + 6.5, 0.0), Vec3::new(depth * 2.0, 13.0, half_w * 2.0), Mat::Sandstone);
-    b.deco(f, Vec3::new(0.0, 33.2, 0.0), Vec3::new(depth * 2.0 + 0.8, 0.5, half_w * 2.0 + 0.8), Mat::Sandstone);
-    b.deco(f, Vec3::new(0.0, 22.0, 0.0), Vec3::new(depth * 2.0 + 0.5, 0.4, half_w * 2.0 + 0.5), Mat::Sandstone);
-    b.bx(f, Vec3::new(0.0, 33.45 + 1.6, 0.0), Vec3::new(depth * 1.6, 3.2, half_w * 1.4), Mat::Sandstone);
-    b.bx(f, Vec3::new(0.0, 36.65 + 1.2, 0.0), Vec3::new(depth * 1.2, 2.4, half_w * 0.9), Mat::Sandstone);
-    b.cyl(f, Vec3::new(0.0, 39.05, 0.0), 3.4, 1.0, Mat::Sandstone);
-    b.cyl(f, Vec3::new(0.0, 40.05, 0.0), 4.2, 1.2, Mat::Sandstone);
-    b.map.pois.push(Poi { name: "India Gate".into(), center: c, radius: 30.0 });
+    // The great arch's head: steps corbelling in from each pier to the crown, the attic over it.
+    arch(b, f, Vec3::new(0.0, spring, 0.0), 2.0 * d, open, crown - spring, 16);
+    b.bx(f, Vec3::new(0.0, (crown + attic) / 2.0, 0.0), Vec3::new(2.0 * d, attic - crown, 2.0 * open), Mat::Buff);
+    // An archivolt round the opening on both faces, and its keystone.
+    for x in [-1.0f32, 1.0] {
+        b.deco(f, Vec3::new(x * (d + 0.12), crown + 0.45, 0.0), Vec3::new(0.24, 0.9, 2.0 * open + 1.4), Mat::Buff);
+        b.deco(f, Vec3::new(x * (d + 0.2), crown - 0.2, 0.0), Vec3::new(0.4, 1.6, 1.1), Mat::Buff);
+        // The inscription panel on the attic, a slab proud of it.
+        b.deco(f, Vec3::new(x * (d + 0.1), crown + 4.6, 0.0), Vec3::new(0.2, 3.6, 2.0 * hw - 7.0), Mat::Buff);
+    }
+    // Deep cornices: under the attic and at its top, overhanging well (their shadows draw it).
+    b.deco(f, Vec3::new(0.0, crown + 1.4, 0.0), Vec3::new(2.0 * d + 1.0, 0.5, 2.0 * hw + 1.0), Mat::Buff);
+    b.deco(f, Vec3::new(0.0, attic + 0.35, 0.0), Vec3::new(2.0 * d + 1.6, 0.7, 2.0 * hw + 1.6), Mat::Buff);
+    b.deco(f, Vec3::new(0.0, attic - 0.25, 0.0), Vec3::new(2.0 * d + 0.9, 0.5, 2.0 * hw + 0.9), Mat::Buff);
+    // The stepped crown and the bowl on top.
+    b.bx(f, Vec3::new(0.0, attic + 0.7 + 1.5, 0.0), Vec3::new(2.0 * d - 1.0, 3.0, 2.0 * hw * 0.62), Mat::Buff);
+    b.deco(f, Vec3::new(0.0, attic + 3.85, 0.0), Vec3::new(2.0 * d - 0.4, 0.3, 2.0 * hw * 0.62 + 0.6), Mat::Buff);
+    b.bx(f, Vec3::new(0.0, attic + 4.0 + 1.1, 0.0), Vec3::new(2.0 * d - 3.0, 2.2, 2.0 * hw * 0.36), Mat::Buff);
+    b.cyl(f, Vec3::new(0.0, attic + 6.2, 0.0), 2.6, 0.9, Mat::Buff);
+    b.cyl(f, Vec3::new(0.0, attic + 7.1, 0.0), 3.4, 0.9, Mat::Buff);
+    b.map.pois.push(Poi { name: "India Gate".into(), center: c, radius: 34.0 });
+}
+
+/// An arch's head: from `at` (the springing, the opening's middle), steps corbelling in from both
+/// sides, `half` the opening, to a round crown `rise` up, `depth` through (along x), in `steps`.
+fn arch(b: &mut Builder, f: Frame, at: Vec3, depth: f32, half: f32, rise: f32, steps: usize) {
+    let h = rise / steps as f32;
+    for k in 0..steps {
+        // The opening's half width at the top of this step, on an ellipse.
+        let t = (k as f32 + 1.0) / steps as f32;
+        let w = half * (1.0 - t * t).max(0.0).sqrt();
+        let fill = half - w;
+        if fill < 0.02 {
+            continue;
+        }
+        for s in [-1.0f32, 1.0] {
+            b.bx(f, at + Vec3::new(0.0, (k as f32 + 0.5) * h, s * (half - fill / 2.0)), Vec3::new(depth, h, fill), Mat::Buff);
+        }
+    }
 }
 
 /// Invisible walls round the playable square (the city carries on beyond them).
