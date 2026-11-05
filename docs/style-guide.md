@@ -60,8 +60,12 @@ The painted recipe, the same for every material:
    foot (and under overhangs).
 3. **Edge light and corner dark**: convex edges a strip lighter (on models: baked from the bevels'
    curvature), concave corners and contact with the ground darker (baked AO, 15-25%).
-4. **Big, slow variation** only: patches 1-4 m across, no more than 4% in brightness. No grain,
-   speckle or photo texture.
+4. **Big, slow variation**: patches 1-4 m across. Since 2026-11-05 (the owner's call, against
+   Fortnite's current look) the ground and the masonry carry **mid-scale surface detail from
+   stylised CC0 scans** (tools/textures/scans.py): each brick, sett and tile its own tone, cracks
+   in the asphalt, pebbles in the earth, worn tile faces, plaster in soft patches. The scan's fine
+   grain is smoothed away and its crevices darkened; walls a game tints stay near-white so their
+   palette colour still reads. Still no speckle: up close, plaster patches broad, not grimy.
 5. **Painted detail** where it tells the story: tile joints, planks, a few drawn cracks, stains
    under a sill, wear on a step. Drawn as shapes with soft edges, not noise.
 

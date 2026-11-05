@@ -682,6 +682,9 @@ def carton(L, r, x, w, y0, y1):
 
 
 JOBS = {f.__name__: f for f in (facade, shop, rustic, limewash, stucco, stone, roof, ground, wear, wood, ashlar)}
-# All of them, or just those named: python3 tools/textures/city.py shop
-for job in sys.argv[1:] or JOBS:
+# All of them, or just those named: python3 tools/textures/city.py shop. Stucco, stone and the
+# ground detail are made from scans now (tools/textures/scans.py, which also repaints rustic and
+# facade with plaster over them): only when named.
+SCANNED = {"stucco", "stone", "ground"}
+for job in sys.argv[1:] or [j for j in JOBS if j not in SCANNED]:
     JOBS[job]()

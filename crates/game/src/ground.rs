@@ -1,10 +1,11 @@
 //! Ground detail: the terrain's standard material extended (assets/shaders/ground.wesl) with one
-//! small tiling texture of asphalt, paving slabs and trodden earth (tools/textures/city.py), mixed
-//! per vertex by what covers the ground there. It darkens joints and cracks and bends the light off
-//! them, so a lane reads as worn stone and a road as tarmac instead of flat paint.
+//! small tiling texture of asphalt, paving slabs and trodden earth (stylised scans,
+//! tools/textures/scans.py), mixed per vertex by what covers the ground there. It darkens joints and
+//! cracks and bends the light off them, so a lane reads as worn stone and a road as tarmac instead
+//! of flat paint, and (read again four times larger) tints it in broad patches.
 //!
-//! Mobile cost: one texture sample (512 px, ~1.4 MB with mips) and a few instructions per ground
-//! pixel; no extra draws. On at every quality level.
+//! Mobile cost: two samples of one texture (1024 px, ~5.6 MB with mips) and a few instructions per
+//! ground pixel; no extra draws. On at every quality level.
 
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
@@ -78,7 +79,7 @@ impl MaterialExtension for GroundDetail {
 
 impl GroundDetail {
     pub fn new(texture: Handle<Image>) -> Self {
-        Self { texture, params: Vec4::new(0.25, 0.55, 0.06, 0.0) }
+        Self { texture, params: Vec4::new(0.25, 0.55, 0.10, 0.0) }
     }
 }
 

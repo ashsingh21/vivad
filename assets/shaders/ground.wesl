@@ -33,7 +33,18 @@ fn fragment(vertex_output: VertexOutput, @builtin(front_facing) is_front: bool) 
     w = vec3<f32>(a.x, a.y, max(1.0 - a.x - a.y, 0.0));
 }
     let h = dot(d, w) - 0.5;
-    pbr_input.material.base_color = vec4<f32>(pbr_input.material.base_color.rgb * (1.0 + 2.0 * detail.y * h), pbr_input.material.base_color.a);
+    // Colour in broad patches (the detail read again four times larger, rotated so the two don't
+    // line up): asphalt from a cool dark to a warm grey, slabs a little either way, earth from a
+    // reddish brown to a pale ochre (on grass, its greens yellowed or deepened), as a painted
+    // ground's colour wanders. (A coarse mip of the same read instead came out in blocks up
+    // close.)
+    let q = in.world_position.xz * detail.x * 0.25;
+    let p = textureSample(detail_texture, detail_sampler, vec2<f32>(0.8 * q.x - 0.6 * q.y, 0.6 * q.x + 0.8 * q.y)).rgb;
+    let k = smoothstep(vec3<f32>(0.2), vec3<f32>(0.8), p);
+    let tint = w.x * mix(vec3<f32>(0.86, 0.89, 0.97), vec3<f32>(1.08, 1.05, 1.0), k.x)
+        + w.y * mix(vec3<f32>(0.92, 0.90, 0.88), vec3<f32>(1.06, 1.04, 1.0), k.y)
+        + w.z * mix(vec3<f32>(0.84, 0.78, 0.72), vec3<f32>(1.12, 1.08, 0.94), k.z);
+    pbr_input.material.base_color = vec4<f32>(pbr_input.material.base_color.rgb * tint * (1.0 + 2.0 * detail.y * h), pbr_input.material.base_color.a);
 
     // The detail as a height field `detail.z` metres deep: tilt the normal down its slope, from the
     // height's and the position's rates of change across the screen (Mikkelsen 2010).
