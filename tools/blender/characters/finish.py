@@ -32,13 +32,11 @@ def toon_name(variant, name):
 CLOTH = {
     # name prefix: (base sRGB, border sRGB or None, pattern, border width m). Longer prefixes first:
     # a garment takes the first that its name starts with.
-    # The anime character's (outfits.anime_street): a loose teal kurta bordered cream over indigo
-    # salwar; flat colour, cel shaded.
-    # The kurta's body (anime_kurtab) unbordered (its hem is hidden under the skirt's top), the
-    # skirt and panels bordered cream at the hem; salwar deep indigo (well clear of skin).
-    "anime_kurtab": ((0.08, 0.45, 0.48), None, "flat", 0.0),
-    "anime_kurta": ((0.08, 0.45, 0.48), (0.97, 0.92, 0.80), "flat", 0.03),
-    "anime_salwar": ((0.16, 0.20, 0.38), None, "flat", 0.0),
+    # The anime character's (outfits.anime_street): flat colour, cel shaded.
+    # A royal-blue hoodie (its drawstrings cream), olive cargo trousers: both well clear of skin.
+    "anime_hoodie_string": ((0.97, 0.92, 0.80), None, "flat", 0.0),
+    "anime_hoodie": ((0.17, 0.33, 0.68), None, "flat", 0.0),
+    "anime_cargo": ((0.27, 0.30, 0.20), None, "flat", 0.0),
     # Panga: modern desi clothes.
     "shirt_placket": ((0.80, 0.46, 0.04), None, "check", 0.0),
     "shirt": ((0.80, 0.46, 0.04), None, "check", 0.0),

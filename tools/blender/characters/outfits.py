@@ -7,7 +7,8 @@ procedural and baked in finish.py.
 import math
 
 import bmesh
-from mathutils import Vector
+import bpy
+from mathutils import Matrix, Vector
 from mathutils.bvhtree import BVHTree
 
 import garments as g
@@ -228,67 +229,162 @@ def female_tactical(ctx):
     return items
 
 
+def section(c, hw, hd, n=24, e=2.6):
+    """A rounded-rectangle ring (a superellipse, exponent `e`) round `c` in the XY plane:
+    `hw` across, `hd` deep (half sizes)."""
+    out = []
+    for k in range(n):
+        a = 2 * math.pi * k / n
+        ca, sa = math.cos(a), math.sin(a)
+        out.append(c + Vector((hw * math.copysign(abs(ca) ** (2 / e), ca), hd * math.copysign(abs(sa) ** (2 / e), sa), 0.0)))
+    return out
+
+
+def loft(ctx, name, rings, *, only=None, cap_bottom=False, thickness=0.004):
+    """A garment lofted through `rings` (lists of points, all the same length, top to bottom):
+    its own shape, not the body's, skinned from the nearest body vertices (`only` those groups)."""
+    bm = bmesh.new()
+    vs = [[bm.verts.new(p) for p in r] for r in rings]
+    n = len(rings[0])
+    for a, b in zip(vs, vs[1:]):
+        for k in range(n):
+            bm.faces.new((a[k], a[(k + 1) % n], b[(k + 1) % n], b[k]))
+    if cap_bottom:
+        bm.faces.new(list(reversed(vs[-1])))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    uv = bm.loops.layers.uv.new("UVMap")
+    for f in bm.faces:
+        for loop in f.loops:
+            loop[uv].uv = (loop.vert.co.x, loop.vert.co.z)
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    obj = g.new_object(name, me, ctx)
+    g.transfer_weights(obj, ctx, only=only)
+    g.finish_cloth(obj, thickness)
+    return obj
+
+
+def extent(ctx, z, groups, dz=0.02):
+    """The body's (x min, x max, y min, y max) in a slab round height `z`, over `groups`."""
+    pts = [p for i, p in enumerate(ctx.co) if abs(p[2] - z) < dz and ctx.w(i, *groups) > 0.5]
+    if not pts:
+        return -0.1, 0.1, -0.1, 0.1
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    return min(xs), max(xs), min(ys), max(ys)
+
+
 def anime_street(ctx):
-    """The anime character's: modest and loose, a desi street look. A kurta hanging straight from
-    the shoulders (not fitted to the figure), full sleeves, to the knee with side slits closed by
-    panels front and back; loose salwar gathered at the ankle. One glass bangle."""
+    """The anime character's: a loose hoodie over loose cargo trousers, modelled as garments in
+    their own right (lofted sections sized off the body's widest and deepest points and held
+    there, straight), so they never trace the figure."""
     L = Landmarks(ctx)
     items = []
-    waistline = L.waist - 0.02
-    ankle = L.ankle + 0.035
-    knee = L.knee + 0.03
+    torso = TORSO_GROUPS
+    # The torso at its widest and deepest anywhere from the chest to the hips: the hoodie's barrel.
+    zs = [L.chest + 0.05 - k * (L.chest + 0.05 - L.hip + 0.04) / 8 for k in range(9)]
+    ext = [extent(ctx, z, torso + ("thigh_l", "thigh_r")) for z in zs]
+    hw = max(max(abs(e[0]), abs(e[1])) for e in ext) + 0.04
+    front = min(e[2] for e in ext) - 0.035
+    back = max(e[3] for e in ext) + 0.035
+    yc, hd = (front + back) / 2, (back - front) / 2
+    neck = extent(ctx, L.clav + 0.04, ("neck_01", "spine_03"))
+    ny = (neck[2] + neck[3]) / 2
+    sx = abs(L.shoulder_l.x) + 0.05
+    hem = L.hip - 0.07
+    rings = [
+        section(Vector((0, ny, L.clav + 0.05)), 0.078, 0.075),
+        section(Vector((0, (ny + yc) / 2, L.clav + 0.005)), sx * 0.82, hd * 0.85, e=2.2),
+        section(Vector((0, yc, L.clav - 0.05)), sx, hd),
+        section(Vector((0, yc, L.chest)), hw, hd),
+        section(Vector((0, yc, (L.chest + L.waist) / 2)), hw, hd),
+        section(Vector((0, yc, L.waist)), hw, hd),
+        section(Vector((0, yc, hem + 0.06)), hw, hd),
+        # The ribbed hem: gathered in a little.
+        section(Vector((0, yc, hem + 0.05)), hw - 0.012, hd - 0.012),
+        section(Vector((0, yc, hem)), hw - 0.014, hd - 0.014),
+    ]
+    items.append((loft(ctx, "anime_hoodie", rings, only=torso + ("upperarm_l", "upperarm_r", "thigh_l", "thigh_r")), "cover"))
+    # Sleeves: roomy tubes down the arms to ribbed cuffs at the wrist.
+    for side in ("l", "r"):
+        sh, _ = ctx.bone(f"upperarm_{side}")
+        el, _ = ctx.bone(f"lowerarm_{side}")
+        wr, _ = ctx.bone(f"hand_{side}")
+        sh = sh + (sh - el).normalized() * 0.04
 
-    # Salwar: roomy through the legs, gathered at the ankle, less on the inside of the legs.
-    def salwar_offset(co, n):
-        t = min(max((waistline - co.z) / (waistline - ankle), 0.0), 1.0)
-        # Easy over the hips (the kurta hangs over them), fullest through the shins.
-        loose = 0.012 + 0.04 * smoothstep(0.15, 0.6, t) * (1.0 - smoothstep(0.85, 1.0, t))
-        inner = 1.0 - 0.6 * max(0.0, -n.x * math.copysign(1.0, co.x)) * smoothstep(L.hip, L.knee, co.z)
-        return loose * inner
-
-    salwar = g.shell(ctx, "anime_salwar", lambda v: all_in(ctx, v, LEG_GROUPS, ankle, waistline), salwar_offset, smooth=6,
-                     snap=g.z_snap(ankle, waistline))
-    items.append((salwar, "cover"))
-    # The kurta's body: loose from the shoulders, its front falling in one flat plane from the
-    # chest (so it neither follows the figure nor balloons), easing out a little to the hips.
-    hem = L.hip - 0.05
-    plane = L.surface(0.0, L.chest).y - 0.008
-    # Behind: a plane just clear of the hips' furthest point, which the back falls to from the
-    # shoulder blades down (so the cloth neither shows the seat nor dips into its crease).
-    seat = max(L.surface(x, z, front=False).y for x in (-0.08, -0.04, 0.0, 0.04, 0.08) for z in (L.hip, L.hip - 0.05, L.hip - 0.1)) + 0.03
-    blades = L.chest + 0.04
-
-    def fall(co, n, base):
-        """`base` out, and the torso's front below the chest out to the front plane, its back
-        below the shoulder blades out to the back one; never more than 9 cm, not the sleeves."""
-        out = base
-        if abs(co.x) < 0.14:
-            if co.z < L.chest and n.y < -0.3:
-                out = max(out, min((co.y - plane) / max(-n.y, 0.5), 0.045))
-            if co.z < blades and n.y > 0.2:
-                out = max(out, min((seat - co.y) / max(n.y, 0.5), 0.09))
-        return out
-
-    def kurta_offset(co, n):
-        return fall(co, n, 0.025 + 0.015 * smoothstep(waistline, hem, co.z))
-
-    # A modest neckline: a little below the collarbone in front, up at the nape behind.
-    kurta = g.shell(ctx, "anime_kurtab", upper_body(ctx, L, hem, 1.0, 0.04, -0.03, lower_sleeve=0.85), kurta_offset,
-                    smooth=4, thickness=0.004, edge_iters=20)
-    items.append((kurta, "cover"))
-    # ...then over the salwar from the hips to the knee, open at the sides, panels front and back.
-    skirt = g.shell(ctx, "anime_kurta_skirt", lambda v: all_in(ctx, v, LEG_GROUPS, knee, hem + 0.03),
-                    lambda co, n: fall(co, n, 0.04 + 0.015 * smoothstep(hem, knee, co.z)), smooth=8,
-                    snap=g.z_snap(knee, hem + 0.03))
-    items.append((skirt, "cover"))
-    for k, front in enumerate((True, False)):
-        sgn = -1.0 if front else 1.0
-        top = L.surface(0.0, hem, front=front) + Vector((0.0, sgn * 0.06, 0.02))
-        drop = hem - knee - 0.01
-        path = [top + Vector((0.0, sgn * 0.025 * s, -drop * s)) for s in [i / 7 for i in range(8)]]
-        items.append((g.strip(ctx, f"anime_kurta_panel{k}", path, [0.24 + 0.04 * i / 7 for i in range(8)],
-                              normals=[Vector((0, -1 if front else 1, 0))] * 8, thickness=0.004), "accessory"))
-    jewellery(ctx, items, armbands=False, kadas=1, anklets=False, neck=False)
+        def ring_at(p, d, r):
+            # A circle round `p` across direction `d`.
+            u = d.cross(Vector((0, 0, 1)))
+            u = u.normalized() if u.length > 1e-3 else Vector((1, 0, 0))
+            v = d.cross(u).normalized()
+            return [p + (u * math.cos(2 * math.pi * k / 16) + v * math.sin(2 * math.pi * k / 16)) * r for k in range(16)]
+        path = [(sh, 0.078), (sh.lerp(el, 0.5), 0.07), (el, 0.064), (el.lerp(wr, 0.6), 0.058), (wr - (wr - el).normalized() * 0.05, 0.054),
+                (wr - (wr - el).normalized() * 0.045, 0.043), (wr - (wr - el).normalized() * 0.005, 0.042)]
+        rs = []
+        for k, (p, r) in enumerate(path):
+            a = path[max(k - 1, 0)][0]
+            b = path[min(k + 1, len(path) - 1)][0]
+            rs.append(ring_at(p, (b - a).normalized(), r))
+        items.append((loft(ctx, f"anime_hoodie_sleeve_{side}", rs, only=(f"upperarm_{side}", f"lowerarm_{side}", f"hand_{side}", f"clavicle_{side}", "spine_03")), "cover"))
+    # The hood, down: bunched in a soft roll behind the neck.
+    bm = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=20, v_segments=12, radius=1.0,
+                              matrix=Matrix.Translation(Vector((0, neck[3] + 0.04, L.clav + 0.05))) @ Matrix.Diagonal((0.125, 0.06, 0.08, 1.0)))
+    me = bpy.data.meshes.new("anime_hoodie_hood")
+    bm.to_mesh(me)
+    bm.free()
+    hood = g.new_object("anime_hoodie_hood", me, ctx)
+    g.transfer_weights(hood, ctx, only=("spine_03", "neck_01", "clavicle_l", "clavicle_r"))
+    g.finish_cloth(hood, 0.0)
+    items.append((hood, "accessory"))
+    # The front pocket and the drawstrings.
+    pz = (L.waist + hem) / 2 + 0.01
+    for name, c, size in (("anime_hoodie_pocket", Vector((0, front + 0.004, pz)), (0.26, 0.014, 0.15)),):
+        bm = bmesh.new()
+        bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Translation(c) @ Matrix.Diagonal((*size, 1.0)))
+        me = bpy.data.meshes.new(name)
+        bm.to_mesh(me)
+        bm.free()
+        o = g.new_object(name, me, ctx)
+        g.transfer_weights(o, ctx, only=torso)
+        g.finish_cloth(o, 0.0)
+        items.append((o, "accessory"))
+    for side in (1.0, -1.0):
+        top = Vector((side * 0.035, neck[2] - 0.02, L.clav + 0.02))
+        path = [top + Vector((0, -0.01 * t, -0.16 * t)) for t in (0.0, 0.5, 1.0)]
+        items.append((g.strip(ctx, f"anime_hoodie_string{int(side)}", path, [0.012] * 3, thickness=0.004), "accessory"))
+    # Cargo trousers: a waist and seat section, then each leg a straight loose tube down its bones
+    # to a gathered ankle; a pocket on each thigh.
+    wx = extent(ctx, L.waist - 0.02, LEG_GROUPS)
+    hx = extent(ctx, L.hip, LEG_GROUPS)
+    seat = [section(Vector((0, (wx[2] + wx[3]) / 2, L.waist - 0.02)), max(abs(wx[0]), wx[1]) + 0.015, (wx[3] - wx[2]) / 2 + 0.015),
+            section(Vector((0, (hx[2] + hx[3]) / 2, L.hip)), max(abs(hx[0]), hx[1]) + 0.03, (hx[3] - hx[2]) / 2 + 0.03),
+            section(Vector((0, (hx[2] + hx[3]) / 2, L.hip - 0.09)), max(abs(hx[0]), hx[1]) + 0.025, (hx[3] - hx[2]) / 2 + 0.025)]
+    items.append((loft(ctx, "anime_cargo_seat", seat, only=LEG_GROUPS), "cover"))
+    for side in ("l", "r"):
+        th, _ = ctx.bone(f"thigh_{side}")
+        kn, _ = ctx.bone(f"calf_{side}")
+        an, _ = ctx.bone(f"foot_{side}")
+        # From the hip joint (inside the seat, no gap between them) down.
+        pts = [(th + Vector((0, 0, 0.02)), 0.1), (th.lerp(kn, 0.35), 0.098), (th.lerp(kn, 0.7), 0.088), (kn, 0.082), (kn.lerp(an, 0.5), 0.076),
+               (an + Vector((0, 0, 0.09)), 0.07), (an + Vector((0, 0, 0.05)), 0.05), (an + Vector((0, 0, 0.03)), 0.05)]
+        rs = []
+        for k, (p, r) in enumerate(pts):
+            # Straight down the leg (not round its curves): each section level, centred on the bone.
+            rs.append(section(Vector((p.x, p.y, p.z)), r, r * 0.95, n=24, e=2.2))
+        items.append((loft(ctx, f"anime_cargo_leg_{side}", rs, only=(f"thigh_{side}", f"calf_{side}", f"foot_{side}", "pelvis")), "cover"))
+        # The thigh pocket, on the outside.
+        sgn = 1.0 if side == "l" else -1.0
+        c = th.lerp(kn, 0.5) + Vector((sgn * 0.094, 0, 0))
+        bm = bmesh.new()
+        bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Translation(c) @ Matrix.Diagonal((0.03, 0.12, 0.15, 1.0)))
+        me = bpy.data.meshes.new(f"anime_cargo_pocket_{side}")
+        bm.to_mesh(me)
+        bm.free()
+        o = g.new_object(f"anime_cargo_pocket_{side}", me, ctx)
+        g.transfer_weights(o, ctx, only=(f"thigh_{side}", f"calf_{side}"))
+        g.finish_cloth(o, 0.0)
+        items.append((o, "accessory"))
     return items
 
 

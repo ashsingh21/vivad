@@ -84,7 +84,7 @@ VARIANTS = {
     # An original anime-styled heroine (cel shaded in game: her materials are toon_*, finish.py):
     # the female body and arm proportions (so the female clips and gun holds fit her), the face
     # pushed to anime proportions (big tall eyes, small nose and mouth, a pointed chin, a rounder
-    # head and higher forehead), a high ponytail, a loose kurta, salwar and dupatta.
+    # head and higher forehead), a high ponytail, a loose hoodie and cargo trousers.
     "anime": {
         # An ordinary build, not a pin-up's (we're not sexualising anyone): average weight and
         # proportions, a small bust.
@@ -104,8 +104,8 @@ VARIANTS = {
                  "head/head-round": 0.5, "forehead/forehead-scale-vert-incr": 0.5,
                  "cheek/l-cheek-bones-decr": 0.6, "cheek/r-cheek-bones-decr": 0.6},
         "shape": {"arms/measure-upperarm-length-incr": 0.47, "arms/measure-lowerarm-length-incr": 0.37},
-        # Cream shoes (recoloured flat, tools/textures/mh_clothes.py ANIME); her kurta, salwar and
-        # dupatta are grown on her (outfits.anime_street).
+        # Cream shoes (recoloured flat, tools/textures/mh_clothes.py ANIME); her hoodie and cargo
+        # trousers are modelled (outfits.anime_street).
         "clothes": ["shoes01"],
         "outfit": outfits.anime_street,
     },
