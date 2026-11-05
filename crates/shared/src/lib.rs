@@ -4,4 +4,5 @@
 pub mod items;
 pub mod map;
 pub mod sim;
+pub mod style;
 pub mod weapon;

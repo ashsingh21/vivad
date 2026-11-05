@@ -260,3 +260,8 @@ web serve="yes":
 # just clip-video female rifle_run_f,rifle_slide
 clip-video variant="male" clips="":
     {{blender}} -b -P tools/blender/characters/clip_video.py -- {{variant}} previews/clips_{{variant}}.mp4 {{clips}} 2>&1 | grep -E '^\[video\]|Error|Traceback' || true
+
+# The style board (docs/style-guide.md) by the numbers: brightness, clipping, saturation and shade
+# colour per style_* view, against the guide and the kept baseline; `just stylecheck keep` to keep.
+stylecheck *args:
+    python3 tools/stylecheck.py {{ if args == "keep" { "--keep" } else { args } }}

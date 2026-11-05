@@ -39,9 +39,9 @@ pub fn spawn_camera(mut commands: Commands) {
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection { fov: 70f32.to_radians(), near: 0.05, ..default() }),
         tonemapping(),
-        // Most of a stop under Bevy's default (9.7): the afternoon sun and sky were washing out the
-        // ground and plaster. VIVAD_EV overrides for tuning.
-        bevy::camera::Exposure { ev100: std::env::var("VIVAD_EV").ok().and_then(|s| s.parse().ok()).unwrap_or(11.1) },
+        // A stop under Bevy's default (9.7): the afternoon sun would wash out the white stucco, kept
+        // high key all the same (docs/style-guide.md section 5). VIVAD_EV overrides for tuning.
+        bevy::camera::Exposure { ev100: std::env::var("VIVAD_EV").ok().and_then(|s| s.parse().ok()).unwrap_or(10.7) },
         Msaa::Off,
         grading(),
         // A soft glow round the sun's glints, lamps and muzzle flashes, and the frame's edges
@@ -51,10 +51,11 @@ pub fn spawn_camera(mut commands: Commands) {
         DistanceFog {
             // The sky's horizon haze (crate::sky), so the far city fades into it. (A warm tint here
             // once turned the whole distant city orange.)
-            color: Color::srgb(crate::sky::HORIZON[0], crate::sky::HORIZON[1], crate::sky::HORIZON[2]),
+            color: Color::srgb_from_array(shared::style::srgb("light.fog")),
             directional_light_color: Color::srgba(1.0, 0.93, 0.82, 0.25),
             directional_light_exponent: 20.0,
-            falloff: FogFalloff::from_visibility_colors(2600.0, Color::srgb(0.60, 0.60, 0.60), Color::srgb(0.80, 0.84, 0.90)),
+            // Late and pale blue (docs/style-guide.md section 2): the near city keeps its colours.
+            falloff: FogFalloff::from_visibility_colors(4200.0, Color::srgb(0.62, 0.66, 0.72), Color::srgb_from_array(shared::style::srgb("light.fog"))),
         },
         Transform::from_xyz(0.0, 140.0, 60.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
@@ -80,12 +81,11 @@ fn post() -> (bevy::post_process::bloom::Bloom, bevy::post_process::effect_stack
     (Bloom { intensity: 0.1, ..Bloom::NATURAL }, Vignette { intensity: 0.22, radius: 0.9, smoothness: 2.5, ..default() })
 }
 
-/// AgX alone leaves the sunlit ground chalky: a little more saturation, midtone and highlight
-/// contrast (not in the shadows, which would crush the characters' brown skin), and highlights
-/// pulled down. Kept gentle: more read as toy-bright. VIVAD_GRADE="saturation,contrast,highlight gain" overrides for tuning.
+/// The style guide's grade (docs/style-guide.md section 5): colour lifted, a gentle S in the
+/// midtones and highlights (not in the shadows, which would crush the characters' brown skin). VIVAD_GRADE="saturation,contrast,highlight gain" overrides for tuning.
 fn grading() -> bevy::render::view::ColorGrading {
     let v: Vec<f32> = std::env::var("VIVAD_GRADE").unwrap_or_default().split(',').filter_map(|s| s.parse().ok()).collect();
-    let (sat, con, hi) = (v.first().copied().unwrap_or(1.1), v.get(1).copied().unwrap_or(1.08), v.get(2).copied().unwrap_or(0.86));
+    let (sat, con, hi) = (v.first().copied().unwrap_or(1.18), v.get(1).copied().unwrap_or(1.08), v.get(2).copied().unwrap_or(1.0));
     let mut g = bevy::render::view::ColorGrading::default();
     for s in [&mut g.shadows, &mut g.midtones, &mut g.highlights] {
         s.saturation = sat;

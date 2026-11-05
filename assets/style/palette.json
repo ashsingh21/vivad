@@ -1,0 +1,117 @@
+{
+  "_about": "Panga's colour tokens (docs/style-guide.md section 2), sRGB hex. Read by the game (shared::style) and the Blender and texture scripts (tools/style.py). Add a colour here, named for what it is, before using it anywhere.",
+  "sky": {
+    "zenith": "#3d86d9",
+    "upper": "#6aa9e8",
+    "horizon": "#cfe9f7",
+    "sun_glow": "#fff4d6",
+    "cloud": "#ffffff",
+    "cloud_shade": "#c9dcf2"
+  },
+  "light": {
+    "sun": "#ffe8c4",
+    "sky_fill": "#bcd0f5",
+    "room": "#ffd9a8",
+    "fog": "#cfe9f7"
+  },
+  "ground": {
+    "grass": "#6cbf45",
+    "grass_dark": "#4a9a36",
+    "grass_tip": "#a6d65a",
+    "dirt": "#d9a467",
+    "path": "#e6c99a",
+    "tarmac": "#4d5563",
+    "tarmac_patch": "#5a6372",
+    "road_white": "#f7f7f2",
+    "road_yellow": "#f6c63f",
+    "kerb_yellow": "#f2c230",
+    "kerb_black": "#2b2b2e",
+    "paving": "#d8cbb5",
+    "paving_joint": "#a89a84"
+  },
+  "architecture": {
+    "stucco": "#f5efe3",
+    "stucco_trim": "#fffaf0",
+    "stucco_groove": "#cfc4b0",
+    "stucco_stain": "#d9cbb2",
+    "column": "#fbf7ee",
+    "floor_tile": "#e3d6c2",
+    "floor_tile_alt": "#cdbfa8",
+    "floor_joint": "#a3947d",
+    "terrazzo": "#d9d2c6",
+    "roof": "#d7c9b3",
+    "roof_stain": "#b9a98f",
+    "interior_wall": "#f3e2c4",
+    "interior_wall_alt": "#cfe3d6",
+    "ceiling": "#fbf5ea",
+    "sandstone": "#e0a86a",
+    "red_sandstone": "#b8553c",
+    "brick": "#c25e3c",
+    "granite": "#9a948c"
+  },
+  "wood": {
+    "teak": "#a8663a",
+    "teak_dark": "#6e3c20",
+    "pine": "#d9a66a",
+    "laminate": "#e8cfa5",
+    "rope": "#d7b77a"
+  },
+  "metal": {
+    "steel": "#c7cdd4",
+    "steel_dark": "#7b848f",
+    "shutter": "#9aa6b2",
+    "iron": "#3c4149",
+    "rack": "#4a5260"
+  },
+  "accent": {
+    "saffron": "#ff8a1f",
+    "red": "#e5383b",
+    "green": "#1f9e59",
+    "blue": "#2c6fd6",
+    "yellow": "#ffc93c",
+    "magenta": "#d6338a",
+    "teal": "#1aa3a3",
+    "purple": "#7a4fd1",
+    "cream": "#fff3d6",
+    "shutter_green": "#3f8f6b",
+    "shutter_blue": "#3d78b8"
+  },
+  "paint": {
+    "_about": "Delhi limewash, brighter than the old dusty set: the PAINT colours of shared::map, in order (rose, ochre, mint, powder blue, cream, terracotta, lilac, shutter green).",
+    "rose": "#f29a8a",
+    "ochre": "#f2b45a",
+    "mint": "#8fd6b0",
+    "powder_blue": "#8cc2f0",
+    "cream": "#fbe9c4",
+    "terracotta": "#e07a52",
+    "lilac": "#b9a0e6",
+    "old_green": "#4f9a6c"
+  },
+  "vehicle": {
+    "auto_green": "#2fa84f",
+    "auto_yellow": "#ffd23f",
+    "car_white": "#f4f4f2",
+    "car_red": "#d9302f",
+    "car_silver": "#b9c0c9",
+    "car_blue": "#2f6fc4",
+    "tyre": "#2a2a2c",
+    "glass": "#7fb4d9"
+  },
+  "foliage": {
+    "neem": "#4fa23c",
+    "neem_dark": "#2f7a2e",
+    "neem_light": "#8fcf4f",
+    "bark": "#7a5a43",
+    "flower_pink": "#ff5fa8",
+    "flower_orange": "#ff9a3c"
+  },
+  "cloth": {
+    "sofa_red": "#c8343f",
+    "mattress_blue": "#2f5fb0",
+    "dari_red": "#e04a3a",
+    "dari_yellow": "#f2b33a",
+    "dari_blue": "#3a6fc8",
+    "awning_red": "#e0453a",
+    "awning_white": "#fff6e6"
+  }
+}

@@ -202,6 +202,15 @@ impl Plugin for AutoshotPlugin {
                     ("cp_rack_bartan", v(10.1, 7.0, 109.2), v(8.2, 6.5, 109.3)),
                     // Upstairs in the ring, along its rooms; inside a hall, toward its back wall.
                     ("cp_upper_room", v(79.5, 7.4, 82.4), v(69.0, 6.4, 95.4)),
+                    // The style board (docs/style-guide.md section 7): one inner-circle block, built
+                    // to the guide first. Across the road at it, its kerb, verandah, shopfronts,
+                    // roof and the room upstairs; `just stylecheck` measures these.
+                    ("style_block", v(58.0, 4.5, 58.0), v(77.0, 4.0, 86.0)),
+                    ("style_kerb", v(77.6, 1.7, 59.3), v(67.0, 0.8, 76.0)),
+                    ("style_verandah", v(73.2, 1.7, 77.1), v(51.7, 2.2, 88.0)),
+                    ("style_shop", v(68.4, 1.7, 78.5), v(74.3, 1.9, 90.3)),
+                    ("style_roof", v(92.3, 12.0, 78.2), v(77.0, 10.3, 93.4)),
+                    ("style_room", v(79.5, 7.4, 82.4), v(69.0, 6.4, 95.4)),
                     ("cp_loot", v(0.0, 0.0, 0.0), v(0.0, 0.0, 0.0)),
                     ("cp_loot_close", v(0.0, 0.0, 0.0), v(0.0, 0.0, 0.0)),
                     ("03_bazaar_roofs", v(-30.0, 26.0, 40.0), v(5.0, 2.0, 0.0)),

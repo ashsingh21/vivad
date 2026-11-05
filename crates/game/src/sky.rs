@@ -27,11 +27,11 @@ impl Plugin for SkyPlugin {
 
 /// Inside the camera's far plane (Bevy's default 1000 m).
 const RADIUS: f32 = 900.0;
-/// Sky colours (sRGB): the haze at the horizon, the blue above it, and overhead.
-pub const HORIZON: [f32; 3] = [0.92, 0.88, 0.84];
-const MID: [f32; 3] = [0.62, 0.77, 0.93];
-const ZENITH: [f32; 3] = [0.34, 0.56, 0.88];
-const SUN_GLOW: [f32; 3] = [1.0, 0.86, 0.62];
+/// Sky colours (sRGB, the style guide's `sky` tokens): the pale blue at the horizon (no warm haze:
+/// docs/style-guide.md section 2), the blue above it, and overhead.
+pub fn horizon() -> [f32; 3] {
+    shared::style::srgb("sky.horizon")
+}
 
 /// The sky rig's root, kept on the camera's position.
 #[derive(Component)]
@@ -74,7 +74,7 @@ fn sky_flags() -> (Transform, bevy::light::NotShadowCaster, bevy::light::NotShad
 /// A sphere seen from inside, its colour the sky's at each vertex.
 fn dome(to_sun: Vec3) -> Mesh {
     let (rings, segs) = (48u32, 96u32);
-    let (horizon, mid, zenith, glow) = (lin(HORIZON), lin(MID), lin(ZENITH), lin(SUN_GLOW));
+    let (horizon, mid, zenith, glow) = (lin(horizon()), lin(shared::style::srgb("sky.upper")), lin(shared::style::srgb("sky.zenith")), lin(shared::style::srgb("sky.sun_glow")));
     let (mut pos, mut nrm, mut col, mut idx) = (vec![], vec![], vec![], vec![]);
     for r in 0..=rings {
         let phi = PI * r as f32 / rings as f32;
@@ -127,7 +127,7 @@ fn clouds(to_sun: Vec3) -> Mesh {
     };
     let ball = Sphere::new(1.0).mesh().ico(2).expect("ico");
     // Brighter than white: unlit, they'd otherwise sit dimmer than the sky they hang in.
-    let (lit, shade, haze) = (Vec3::new(1.0, 0.97, 0.92) * 2.0, Vec3::new(0.86, 0.87, 0.98) * 1.35, Vec3::from(lin(HORIZON)) * 1.2);
+    let (lit, shade, haze) = (Vec3::new(1.0, 0.97, 0.92) * 2.0, Vec3::new(0.86, 0.87, 0.98) * 1.35, Vec3::from(lin(horizon())) * 1.2);
     let mut out: Option<Mesh> = None;
     let sun_az = to_sun.z.atan2(to_sun.x);
     for k in 0..22 {
