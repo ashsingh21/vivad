@@ -92,8 +92,24 @@ def material(name):
                 L(v, n.inputs[i])
         return n.outputs[0]
 
+    # The style guide's painted recipe (docs/style-guide.md section 4), the same for every
+    # material: the colour, lighter toward the top of the piece and darker at its foot, its rounded
+    # edges lit (from the bevels' curvature), and only broad, soft pattern over that.
+    sep = N("ShaderNodeSeparateXYZ")
+    L(tc.outputs["Object"], sep.inputs["Vector"])
+    grad = N("ShaderNodeMapRange")
+    grad.inputs["From Min"].default_value, grad.inputs["From Max"].default_value = 0.0, 1.8
+    grad.inputs["To Min"].default_value, grad.inputs["To Max"].default_value = 0.9, 1.06
+    L(sep.outputs["Z"], grad.inputs["Value"])
+    geo = N("ShaderNodeNewGeometry")
+    edge = N("ShaderNodeMapRange")
+    edge.inputs["From Min"].default_value, edge.inputs["From Max"].default_value = 0.5, 0.58
+    edge.inputs["To Min"].default_value, edge.inputs["To Max"].default_value = 1.0, 1.16
+    L(geo.outputs["Pointiness"], edge.inputs["Value"])
+    light = maths("MULTIPLY", grad.outputs[0], edge.outputs[0])
+
     def shade(fac, lo, hi):
-        """The colour scaled between lo and hi by `fac` (0-1)."""
+        """The colour scaled between lo and hi by `fac` (0-1), then lit by the recipe."""
         r = N("ShaderNodeMapRange")
         r.inputs["To Min"].default_value = lo
         r.inputs["To Max"].default_value = hi
@@ -101,7 +117,7 @@ def material(name):
         mul = N("ShaderNodeVectorMath")
         mul.operation = "SCALE"
         L(col.outputs["Color"], mul.inputs[0])
-        L(r.outputs[0], mul.inputs["Scale"])
+        L(maths("MULTIPLY", r.outputs[0], light), mul.inputs["Scale"])
         L(mul.outputs[0], bsdf.inputs["Base Color"])
 
     def relief(fac, strength):
@@ -111,85 +127,68 @@ def material(name):
         L(fac, b.inputs["Height"])
         L(b.outputs["Normal"], bsdf.inputs["Normal"])
 
+    def soft(scale, lo, hi):
+        """Big slow patches only: a smooth noise `scale` a metre, between lo and hi."""
+        n = tex("ShaderNodeTexNoise", scale, **{"Detail": 0.0})
+        shade(n.outputs["Fac"], lo, hi)
+        return n
+
     rough, metal = 0.6, 0.0
     if name == "wood":
-        # Grain: long rings, wavering, with darker streaks.
-        w = tex("ShaderNodeTexWave", 6.0, wave_type="RINGS", rings_direction="Z", Distortion=6.0, **{"Detail": 3.0})
-        n = tex("ShaderNodeTexNoise", 40.0)
-        g = maths("MULTIPLY", w.outputs["Fac"], maths("ADD", 0.6, maths("MULTIPLY", n.outputs["Fac"], 0.6)))
-        shade(g, 0.72, 1.12)
-        relief(g, 0.15)
-        rough = 0.55
+        # Painted wood: broad soft streaks along the grain, no rings.
+        w = tex("ShaderNodeTexWave", 3.0, wave_type="BANDS", bands_direction="X", Distortion=1.5, **{"Detail": 0.0})
+        shade(w.outputs["Fac"], 0.9, 1.04)
+        relief(w.outputs["Fac"], 0.05)
+        rough = 0.6
     elif name == "laminate":
-        w = tex("ShaderNodeTexWave", 3.0, wave_type="BANDS", bands_direction="X", Distortion=3.0)
-        shade(w.outputs["Fac"], 0.9, 1.05)
-        rough = 0.4
+        soft(1.5, 0.96, 1.03)
+        rough = 0.45
     elif name == "velvet":
-        # A fine pile, mottled where it's been sat on.
-        n = tex("ShaderNodeTexNoise", 9.0, **{"Detail": 6.0})
-        f = tex("ShaderNodeTexNoise", 300.0)
-        shade(maths("ADD", maths("MULTIPLY", n.outputs["Fac"], 0.7), maths("MULTIPLY", f.outputs["Fac"], 0.3)), 0.75, 1.15)
-        relief(f.outputs["Fac"], 0.25)
-        rough = 0.95
+        soft(2.0, 0.92, 1.04)
+        rough = 0.9
     elif name in ("rope", "cotton"):
-        # A basket weave: two sets of bands across each other.
-        a = tex("ShaderNodeTexWave", 70.0 if name == "rope" else 140.0, wave_type="BANDS", bands_direction="X")
-        b = tex("ShaderNodeTexWave", 70.0 if name == "rope" else 140.0, wave_type="BANDS", bands_direction="Y")
-        weave = maths("MULTIPLY", maths("ADD", a.outputs["Fac"], b.outputs["Fac"]), 0.5)
-        shade(weave, 0.7, 1.08)
-        relief(weave, 0.5 if name == "rope" else 0.25)
-        rough = 0.95
+        # A weave you can see at 5 m: broad soft bands, not the threads.
+        a = tex("ShaderNodeTexWave", 22.0 if name == "rope" else 9.0, wave_type="BANDS", bands_direction="X", **{"Detail": 0.0})
+        shade(a.outputs["Fac"], 0.9, 1.03)
+        relief(a.outputs["Fac"], 0.15)
+        rough = 0.92
     elif name == "enamel":
-        # Painted steel: smooth, faint orange-peel, a few scuffs.
-        n = tex("ShaderNodeTexNoise", 60.0)
-        s = tex("ShaderNodeTexNoise", 6.0, **{"Detail": 8.0})
-        shade(maths("ADD", maths("MULTIPLY", n.outputs["Fac"], 0.3), maths("MULTIPLY", s.outputs["Fac"], 0.7)), 0.88, 1.06)
-        relief(n.outputs["Fac"], 0.05)
-        rough = 0.32
-    elif name == "glass":
-        # Glass over what's in the jar: glossy, a faint streak of reflection, the contents grainy.
-        n = tex("ShaderNodeTexNoise", 150.0)
-        shade(n.outputs["Fac"], 0.8, 1.1)
-        relief(n.outputs["Fac"], 0.1)
-        rough = 0.06
-    elif name == "print":
-        # Printed card and plastic: fine bands of lettering and a mottle of ink.
-        w = tex("ShaderNodeTexWave", 90.0, wave_type="BANDS", bands_direction="Z", Distortion=2.0)
-        n = tex("ShaderNodeTexNoise", 25.0)
-        shade(maths("ADD", maths("MULTIPLY", w.outputs["Fac"], 0.5), maths("MULTIPLY", n.outputs["Fac"], 0.5)), 0.78, 1.08)
+        soft(1.5, 0.97, 1.02)
         rough = 0.35
+    elif name == "glass":
+        soft(2.0, 0.9, 1.1)
+        rough = 0.08
+    elif name == "print":
+        w = tex("ShaderNodeTexWave", 30.0, wave_type="BANDS", bands_direction="Z", Distortion=1.0, **{"Detail": 0.0})
+        shade(w.outputs["Fac"], 0.88, 1.04)
+        rough = 0.4
     elif name == "kraft":
-        # Corrugated card: its fibres, flutes showing faintly, scuffs.
-        f = tex("ShaderNodeTexNoise", 220.0, **{"Detail": 4.0})
-        w = tex("ShaderNodeTexWave", 160.0, wave_type="BANDS", bands_direction="Z")
-        s = tex("ShaderNodeTexNoise", 5.0)
-        mix = maths("ADD", maths("ADD", maths("MULTIPLY", f.outputs["Fac"], 0.4), maths("MULTIPLY", w.outputs["Fac"], 0.15)), maths("MULTIPLY", s.outputs["Fac"], 0.45))
-        shade(mix, 0.78, 1.1)
-        relief(w.outputs["Fac"], 0.15)
+        w = tex("ShaderNodeTexWave", 40.0, wave_type="BANDS", bands_direction="Z", **{"Detail": 0.0})
+        shade(w.outputs["Fac"], 0.92, 1.03)
+        relief(w.outputs["Fac"], 0.08)
         rough = 0.9
     elif name == "metal":
-        n = tex("ShaderNodeTexNoise", 120.0)
-        shade(n.outputs["Fac"], 0.9, 1.05)
-        rough, metal = 0.28, 1.0
+        soft(2.0, 0.94, 1.04)
+        rough, metal = 0.3, 1.0
     elif name == "plastic":
-        n = tex("ShaderNodeTexNoise", 200.0)
-        shade(n.outputs["Fac"], 0.9, 1.1)
+        soft(2.0, 0.95, 1.05)
         rough = 0.45
     elif name == "stone":
-        n = tex("ShaderNodeTexNoise", 30.0, **{"Detail": 10.0})
-        shade(n.outputs["Fac"], 0.6, 2.2)
-        rough = 0.25
+        soft(3.0, 0.85, 1.25)
+        rough = 0.3
     elif name == "tile":
-        # Glazed 15 cm tiles in grout lines.
-        b = tex("ShaderNodeTexBrick", 6.6, offset=0.0, **{"Mortar Size": 0.03})
+        # Glazed 15 cm tiles in soft grout.
+        b = tex("ShaderNodeTexBrick", 6.6, offset=0.0, **{"Mortar Size": 0.04, "Mortar Smooth": 0.6})
         b.inputs["Color1"].default_value = (1, 1, 1, 1)
-        b.inputs["Color2"].default_value = (0.92, 0.92, 0.92, 1)
-        b.inputs["Mortar"].default_value = (0.55, 0.55, 0.55, 1)
+        b.inputs["Color2"].default_value = (0.95, 0.95, 0.95, 1)
+        b.inputs["Mortar"].default_value = (0.7, 0.7, 0.7, 1)
         bw = N("ShaderNodeRGBToBW")
         L(b.outputs["Color"], bw.inputs["Color"])
         shade(bw.outputs["Val"], 0.0, 1.0)
-        relief(b.outputs["Fac"], 0.3)
-        rough = 0.2
+        relief(b.outputs["Fac"], 0.2)
+        rough = 0.25
+    else:
+        shade(grad.outputs[0], 1.0, 1.0)
     bsdf.inputs["Roughness"].default_value = rough
     bsdf.inputs["Metallic"].default_value = metal
     return m
@@ -252,6 +251,11 @@ def build(makers, prefix):
     export.strip_bake_data(whole)
     for c in list(whole.data.color_attributes):
         whole.data.color_attributes.remove(c)
+    # The joined pieces' meshes linger unused under their names: gone, so the split pieces get them
+    # (the game finds a piece by its mesh's name; a ".001" left it the old vertex-coloured one).
+    for m in list(bpy.data.meshes):
+        if m.users == 0:
+            bpy.data.meshes.remove(m)
     # Split back into the pieces, each keeping its origin (all were built about their own).
     out = []
     for i, name in enumerate(names):

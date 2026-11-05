@@ -113,5 +113,33 @@
     "dari_blue": "#3a6fc8",
     "awning_red": "#e0453a",
     "awning_white": "#fff6e6"
+  },
+  "furniture": {
+    "_about": "Indoor furniture (tools/blender/props/street_kit.py FURNITURE): bodies, cushions, enamel.",
+    "sofa": "#c8343f",
+    "sofa_dark": "#8f2430",
+    "almirah": "#7fa79b",
+    "almirah_dark": "#5c8478",
+    "fridge": "#d9443a",
+    "fridge_dark": "#a82f28",
+    "charpai_frame": "#b06a35",
+    "charpai_rope": "#e8d29a",
+    "charpai_rope_alt": "#3a6fc8",
+    "blanket": "#e0453a",
+    "pillow": "#fff3d6",
+    "table": "#c98a4b",
+    "table_top": "#dba468",
+    "desk": "#e8cfa5",
+    "desk_panel": "#a88462",
+    "screen": "#1d2a3a",
+    "plastic_black": "#2b2d33",
+    "counter": "#e9e4da",
+    "counter_tile": "#7fc4c9",
+    "counter_top": "#2f3238",
+    "cylinder": "#d9302f",
+    "steel": "#c7cdd4",
+    "fan": "#f4efe6",
+    "mirror": "#a9d3ea",
+    "brass": "#e0b44a"
   }
 }

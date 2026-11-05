@@ -22,6 +22,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "lib"))
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(HERE, "..", ".."))
 
 import bmesh  # noqa: E402
 import bpy  # noqa: E402
@@ -31,6 +32,7 @@ import bake  # noqa: E402
 import bikes  # noqa: E402
 import export  # noqa: E402
 import numpy as np  # noqa: E402
+import style  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 OUT = os.path.join(ROOT, "assets", "models", "props", "street_kit.glb")
@@ -51,7 +53,7 @@ C = {
 
 
 # Surfaces a piece's parts can be marked as (Piece.made_of), for furniture.py's materials.
-SURFACES = (None, "glass", "print", "kraft", "metal", "cotton", "wood", "plastic")
+SURFACES = (None, "glass", "print", "kraft", "metal", "cotton", "wood", "plastic", "velvet", "enamel", "rope", "laminate", "tile", "stone")
 
 
 def lin(rgb):
@@ -630,158 +632,236 @@ def bin():
 # ------------------------------------------------------------------ furniture (indoors)
 # Each stands on the floor at its origin, its front (the side you use it from) toward +Y.
 
-def legs(p, x0, x1, y0, y1, h, r, colour, inset=0.05):
+# Indoor furniture, to docs/style-guide.md section 3: chunky (tops 5 cm and more, legs and frames
+# never under 8 cm across where you'd see them), every edge rounded, cushions puffed, the part that
+# says what it is exaggerated. Colours are the palette's `furniture` tokens; each part says what it's
+# made of (Piece.made_of) for furniture.py's painted bake.
+def T(name):
+    return style.srgb(f"furniture.{name}")
+
+
+def made(p, what):
+    p.made_of = what
+    return p
+
+
+def legs(p, x0, x1, y0, y1, h, r, colour, inset=0.05, taper=0.8):
     for x in (x0 + inset, x1 - inset):
         for y in (y0 + inset, y1 - inset):
-            p.cyl((x, y, 0), (x, y, h), r, colour, 6)
+            p.cyl((x, y, 0), (x, y, h), r * taper, colour, 10, r)
 
 
 def charpai():
-    """The woven cot: a wooden frame on four turned legs, the rope webbing in stripes."""
+    """The woven cot, its legs turned fat (a bulge at the knee), a thick frame, the rope webbing
+    in broad stripes of natural and blue, a rolled blanket and a pillow at one end."""
     p = Piece("charpai")
-    legs(p, -0.95, 0.95, -0.46, 0.46, 0.46, 0.035, "wood", 0.04)
-    for y in (-0.46, 0.46):
-        p.box((-0.98, y - 0.035, 0.36), (0.98, y + 0.035, 0.44), "wood")
-    for x in (-0.95, 0.95):
-        p.box((x - 0.035, -0.46, 0.36), (x + 0.035, 0.46, 0.44), "wood")
-    for k in range(9):
-        x0 = -0.91 + k * 0.2022
-        p.box((x0, -0.43, 0.40), (x0 + 0.19, 0.43, 0.42), "rope" if k % 3 else (0.20, 0.36, 0.62), round=False)
-    return p.finish(0.0)
+    made(p, "wood")
+    frame = T("charpai_frame")
+    for x in (-0.9, 0.9):
+        for y in (-0.41, 0.41):
+            p.cyl((x, y, 0.0), (x, y, 0.18), 0.045, frame, 10, 0.06)
+            p.cyl((x, y, 0.18), (x, y, 0.46), 0.06, frame, 10, 0.045)
+    for y in (-0.44, 0.44):
+        p.box((-0.98, y - 0.05, 0.34), (0.98, y + 0.05, 0.45), frame)
+    for x in (-0.93, 0.93):
+        p.box((x - 0.05, -0.44, 0.34), (x + 0.05, 0.44, 0.45), frame)
+    made(p, "rope")
+    for k in range(7):
+        x0 = -0.88 + k * 0.251
+        p.box((x0, -0.39, 0.39), (x0 + 0.24, 0.39, 0.43), T("charpai_rope_alt") if k % 3 == 1 else T("charpai_rope"))
+    made(p, "cotton")
+    p.cyl((-0.72, -0.36, 0.53), (-0.72, 0.36, 0.53), 0.11, T("blanket"), 14)
+    p.box((0.52, -0.3, 0.43), (0.86, 0.3, 0.55), T("pillow"))
+    return p.finish(0.025)
 
 
 def almirah():
-    """The steel cupboard: two doors, a handle and a lock, on short feet; grey-green enamel."""
+    """The steel cupboard (the Delhi kind): a rounded body on short feet, a cornice across the top,
+    two doors, a long mirror on one, a chunky handle and lock plate, a drawer line low down."""
     p = Piece("almirah")
-    body = (0.42, 0.55, 0.52)
-    p.box((-0.46, -0.25, 0.06), (0.46, 0.25, 1.86), body)
-    legs(p, -0.46, 0.46, -0.25, 0.25, 0.07, 0.03, "black", 0.04)
-    p.box((-0.003, 0.25, 0.12), (0.003, 0.255, 1.80), tuple(c * 0.6 for c in body), round=False)
-    p.box((0.03, 0.25, 0.95), (0.06, 0.28, 1.15), "chrome")
-    p.box((-0.44, 0.25, 1.78), (0.44, 0.256, 1.8), tuple(c * 0.8 for c in body), round=False)
-    p.box((-0.48, -0.27, 1.86), (0.48, 0.27, 1.9), body)
-    return p.finish(0.01)
+    made(p, "enamel")
+    body, dark = T("almirah"), T("almirah_dark")
+    p.box((-0.46, -0.25, 0.08), (0.46, 0.25, 1.82), body)
+    p.box((-0.48, -0.27, 1.8), (0.48, 0.27, 1.9), dark)
+    p.box((-0.44, 0.24, 0.12), (-0.005, 0.262, 1.76), body)
+    p.box((0.005, 0.24, 0.12), (0.44, 0.262, 1.76), body)
+    p.box((-0.44, 0.24, 0.12), (0.44, 0.264, 0.36), dark)
+    made(p, "metal")
+    for x in (-0.4, 0.4):
+        for y in (-0.21, 0.21):
+            p.cyl((x, y, 0.0), (x, y, 0.09), 0.035, T("steel"), 8)
+    p.box((0.04, 0.262, 0.86), (0.08, 0.3, 1.2), T("steel"))
+    p.box((0.1, 0.262, 1.0), (0.17, 0.275, 1.1), T("brass"))
+    made(p, "glass")
+    p.box((-0.38, 0.262, 0.48), (-0.06, 0.27, 1.66), T("mirror"))
+    return p.finish(0.02)
 
 
 def dining():
-    """A wooden dining table and four chairs round it."""
+    """A dining table, a thick top on square tapering legs, and four chairs with slatted backs."""
     p = Piece("dining")
-    legs(p, -0.7, 0.7, -0.4, 0.4, 0.73, 0.03, "wood")
-    p.box((-0.72, -0.42, 0.72), (0.72, 0.42, 0.76), "wood_lt")
-    for (x, y, yaw) in ((-0.38, -0.62, 0.0), (0.38, -0.62, 0.0), (-0.38, 0.62, math.pi), (0.38, 0.62, math.pi)):
+    made(p, "wood")
+    for x in (-0.64, 0.64):
+        for y in (-0.34, 0.34):
+            p.cyl((x, y, 0), (x, y, 0.7), 0.032, T("table"), 4, 0.045)
+    p.box((-0.7, -0.38, 0.62), (0.7, 0.38, 0.7), T("table"))
+    p.box((-0.74, -0.43, 0.7), (0.74, 0.43, 0.77), T("table_top"))
+    for (x, y, yaw) in ((-0.36, -0.64, 0.0), (0.36, -0.64, 0.0), (-0.36, 0.64, math.pi), (0.36, 0.64, math.pi)):
         r = Matrix.Rotation(yaw, 3, "Z")
         o = Vector((x, y, 0))
         t = lambda q: tuple(o + r @ Vector(q))  # noqa: E731
-        for (lx, ly) in ((-0.18, -0.18), (0.18, -0.18), (-0.18, 0.18), (0.18, 0.18)):
-            p.cyl(t((lx, ly, 0)), t((lx, ly, 0.45)), 0.018, "wood", 6)
-        p.hull([t((a, b, z)) for a in (-0.21, 0.21) for b in (-0.2, 0.2) for z in (0.44, 0.48)], "wood")
-        p.hull([t((a, b, z)) for a in (-0.2, 0.2) for b in (-0.22, -0.18) for z in (0.48, 0.92)], "wood")
-    return p.finish(0.005)
+        for (lx, ly) in ((-0.17, -0.17), (0.17, -0.17), (-0.17, 0.17), (0.17, 0.17)):
+            p.cyl(t((lx, ly, 0)), t((lx, ly, 0.44)), 0.022, T("table"), 4, 0.03)
+        p.hull([t((a, b, z)) for a in (-0.21, 0.21) for b in (-0.21, 0.21) for z in (0.43, 0.49)], T("table_top"))
+        for sx in (-0.17, 0.17):
+            p.hull([t((a, b, z)) for a in (sx - 0.03, sx + 0.03) for b in (-0.22, -0.18) for z in (0.49, 0.95)], T("table"))
+        for z in (0.68, 0.86):
+            p.hull([t((a, b, zz)) for a in (-0.2, 0.2) for b in (-0.215, -0.185) for zz in (z, z + 0.08)], T("table"))
+    return p.finish(0.015)
 
 
 def sofa():
-    """A three-seater in maroon velvet: three seat cushions, back cushions, square arms, on
-    wooden feet."""
+    """A three-seater, puffed: fat rolled arms, three seat cushions with a bulge, three back
+    cushions leaning back, on stubby wooden feet."""
     p = Piece("sofa")
-    red, dark = (0.50, 0.10, 0.14), (0.38, 0.07, 0.10)
-    legs(p, -1.0, 1.0, -0.42, 0.42, 0.1, 0.03, "wood", 0.06)
-    p.box((-1.0, -0.42, 0.1), (1.0, 0.42, 0.32), dark)
-    p.box((-0.85, -0.42, 0.32), (0.85, -0.24, 0.62), dark)
+    made(p, "wood")
+    legs(p, -0.98, 0.98, -0.4, 0.4, 0.1, 0.04, T("table"), 0.08, 1.0)
+    made(p, "velvet")
+    red, dark = T("sofa"), T("sofa_dark")
+    p.box((-1.0, -0.43, 0.1), (1.0, 0.43, 0.34), dark)
+    p.box((-0.84, -0.43, 0.3), (0.84, -0.22, 0.66), dark)
     for k in range(3):
-        x0 = -0.84 + k * 0.56
-        p.box((x0 + 0.01, -0.26, 0.32), (x0 + 0.55, 0.40, 0.46), red)
-        p.box((x0 + 0.02, -0.40, 0.46), (x0 + 0.54, -0.22, 0.86), red)
+        x0 = -0.82 + k * 0.547
+        p.box((x0, -0.24, 0.3), (x0 + 0.54, 0.42, 0.5), red)
+        p.hull([(x0 + a, b, z) for a in (0.01, 0.53) for (b, z) in ((-0.38, 0.44), (-0.22, 0.46), (-0.28, 0.88), (-0.42, 0.86))], red)
     for x in (-1, 1):
-        p.box((x * 0.93 - 0.08, -0.42, 0.10), (x * 0.93 + 0.08, 0.42, 0.64), dark)
-    return p.finish(0.03)
+        p.box((x * 0.9 - 0.11, -0.43, 0.1), (x * 0.9 + 0.11, 0.43, 0.6), dark)
+        p.cyl((x * 0.9, -0.43, 0.6), (x * 0.9, 0.43, 0.6), 0.12, red, 14)
+    return p.finish(0.05)
 
 
 def tv():
-    """A low wooden cabinet with a flat TV on its stand."""
+    """A wooden cabinet with two drawers and round knobs, a TV on its stand, a thick bezel."""
     p = Piece("tv")
-    p.box((-0.7, -0.22, 0.0), (0.7, 0.22, 0.5), "wood")
+    made(p, "wood")
+    p.box((-0.7, -0.22, 0.06), (0.7, 0.22, 0.5), T("table"))
+    p.box((-0.72, -0.24, 0.48), (0.72, 0.24, 0.53), T("table_top"))
     for x in (-0.35, 0.35):
-        p.box((x - 0.33, 0.22, 0.06), (x + 0.33, 0.225, 0.44), "wood_lt", round=False)
-    p.box((-0.15, -0.1, 0.5), (0.15, 0.05, 0.52), "black")
-    p.box((-0.03, -0.04, 0.52), (0.03, 0.0, 0.62), "black")
-    p.box((-0.55, -0.05, 0.62), (0.55, 0.0, 1.24), "black")
-    p.box((-0.52, 0.0, 0.65), (0.52, 0.004, 1.21), (0.06, 0.09, 0.14), round=False)
-    return p.finish(0.005)
+        p.box((x - 0.32, 0.2, 0.12), (x + 0.32, 0.235, 0.44), T("table_top"))
+        p.ball((x, 0.25, 0.3), 0.025, T("brass"))
+    for x in (-0.64, 0.64):
+        p.box((x - 0.04, -0.2, 0.0), (x + 0.04, 0.2, 0.07), T("table"))
+    made(p, "plastic")
+    p.box((-0.18, -0.12, 0.53), (0.18, 0.06, 0.56), T("plastic_black"))
+    p.box((-0.04, -0.05, 0.56), (0.04, 0.0, 0.66), T("plastic_black"))
+    p.box((-0.58, -0.07, 0.64), (0.58, 0.0, 1.28), T("plastic_black"))
+    made(p, "glass")
+    p.box((-0.53, 0.0, 0.69), (0.53, 0.006, 1.23), T("screen"))
+    return p.finish(0.02)
 
 
 def fridge():
-    """A single-door fridge in maroon, the freezer's line near the top, a long handle."""
+    """A single-door fridge, rounded right off, the freezer door's line high up, a long chunky
+    handle, a black kick plate."""
     p = Piece("fridge")
-    body = (0.55, 0.12, 0.16)
-    p.box((-0.31, -0.32, 0.04), (0.31, 0.32, 1.56), body)
-    p.box((-0.3, -0.3, 0.0), (0.3, 0.3, 0.05), "black")
-    p.box((-0.29, 0.32, 1.22), (0.29, 0.325, 1.23), tuple(c * 0.6 for c in body), round=False)
-    p.box((0.22, 0.32, 0.6), (0.25, 0.36, 1.15), "chrome")
-    return p.finish(0.03)
+    made(p, "enamel")
+    body = T("fridge")
+    p.box((-0.31, -0.32, 0.06), (0.31, 0.3, 1.56), body)
+    p.box((-0.3, 0.29, 0.08), (0.3, 0.33, 1.18), body)
+    p.box((-0.3, 0.29, 1.21), (0.3, 0.33, 1.54), body)
+    made(p, "plastic")
+    p.box((-0.3, -0.3, 0.0), (0.3, 0.3, 0.07), T("plastic_black"))
+    made(p, "metal")
+    p.box((0.2, 0.33, 0.62), (0.25, 0.38, 1.12), T("steel"))
+    p.box((0.2, 0.33, 1.26), (0.25, 0.38, 1.44), T("steel"))
+    return p.finish(0.05)
 
 
 def fan():
-    """A ceiling fan hanging from its origin (the ceiling): a down-rod, the motor, three blades."""
+    """A ceiling fan hanging from its origin (the ceiling): a down-rod with a canopy, a fat motor,
+    three broad blades."""
     p = Piece("fan")
-    p.cyl((0, 0, 0), (0, 0, -0.32), 0.015, "white", 6)
-    p.cyl((0, 0, -0.30), (0, 0, -0.42), 0.11, "white", 14, 0.09)
+    made(p, "enamel")
+    p.cyl((0, 0, 0), (0, 0, -0.06), 0.07, T("fan"), 12, 0.05)
+    p.cyl((0, 0, -0.05), (0, 0, -0.3), 0.02, T("fan"), 8)
+    p.cyl((0, 0, -0.28), (0, 0, -0.44), 0.13, T("fan"), 16, 0.11)
     for k in range(3):
         a = k * 2 * math.pi / 3
         d, n = Vector((math.cos(a), math.sin(a), 0)), Vector((-math.sin(a), math.cos(a), 0))
         pts = []
-        for (r, w) in ((0.10, 0.04), (0.62, 0.065)):
+        for (r, w) in ((0.12, 0.05), (0.66, 0.085)):
             for side in (-1, 1):
-                for z in (-0.37, -0.355):
+                for z in (-0.39, -0.37):
                     q = d * r + n * w * side
-                    pts.append((q.x, q.y, z + 0.008 * side))
-        p.hull(pts, "cream")
-    return p.finish(0.0)
+                    pts.append((q.x, q.y, z + 0.01 * side))
+        p.hull(pts, T("fan"))
+    return p.finish(0.008)
 
 
 def dari():
-    """A cotton dari, flat on the floor: broad stripes of colour with thin bands between."""
+    """A cotton dari, flat on the floor and thick enough to show its edge: broad stripes, thin
+    bands between, a fringe of tassels at each end."""
     p = Piece("dari")
-    stripes = [(0.72, 0.18, 0.14), "cream", (0.16, 0.30, 0.55), "cream", (0.82, 0.55, 0.12), "cream", (0.72, 0.18, 0.14)]
+    made(p, "cotton")
+    stripes = ["cloth.dari_red", "cloth.awning_white", "cloth.dari_blue", "cloth.awning_white", "cloth.dari_yellow", "cloth.awning_white", "cloth.dari_red"]
     n = len(stripes)
     for k, c in enumerate(stripes):
         y0 = -0.8 + 1.6 * k / n
-        p.box((-1.2, y0, 0.0), (1.2, y0 + 1.6 / n, 0.012), c, round=False)
-    return p.finish(0.0)
+        p.box((-1.2, y0, 0.0), (1.2, y0 + 1.6 / n, 0.02), style.srgb(c))
+    for x in (-1.2, 1.2):
+        for k in range(9):
+            y = -0.72 + k * 0.18
+            x0 = x if x > 0 else x - 0.06
+            p.box((x0, y - 0.02, 0.0), (x0 + 0.06, y + 0.02, 0.012), style.srgb("cloth.dari_yellow"), round=False)
+    return p.finish(0.008)
 
 
 def desk():
-    """An office desk: a laminate top on panel ends, a drawer pedestal, a monitor and keyboard."""
+    """An office desk: a thick laminate top on panel ends, a drawer pedestal with chunky pulls, a
+    monitor with a thick bezel, a keyboard and a mug."""
     p = Piece("desk")
-    top, panel = (0.80, 0.70, 0.56), (0.55, 0.45, 0.35)
-    p.box((-0.7, -0.35, 0.72), (0.7, 0.35, 0.75), top)
-    p.box((-0.7, -0.35, 0.0), (-0.67, 0.35, 0.72), panel)
-    p.box((0.25, -0.33, 0.0), (0.68, 0.33, 0.72), panel)
-    for z in (0.18, 0.42, 0.62):
-        p.box((0.28, 0.33, z), (0.65, 0.335, z + 0.02), "chrome", round=False)
-    p.box((-0.65, -0.34, 0.25), (0.25, -0.32, 0.7), panel)
-    p.box((-0.12, -0.2, 0.75), (0.12, -0.08, 0.77), "black")
-    p.box((-0.02, -0.16, 0.77), (0.02, -0.12, 0.88), "black")
-    p.box((-0.27, -0.18, 0.86), (0.27, -0.15, 1.18), "black")
-    p.box((-0.25, -0.15, 0.88), (0.25, -0.148, 1.16), (0.10, 0.18, 0.28), round=False)
-    p.box((-0.22, 0.02, 0.75), (0.22, 0.16, 0.77), "grey", round=False)
-    return p.finish(0.005)
+    made(p, "laminate")
+    p.box((-0.72, -0.36, 0.7), (0.72, 0.36, 0.76), T("desk"))
+    p.box((-0.7, -0.33, 0.0), (-0.62, 0.33, 0.7), T("desk_panel"))
+    p.box((0.22, -0.33, 0.0), (0.68, 0.33, 0.7), T("desk_panel"))
+    p.box((-0.62, -0.33, 0.3), (0.22, -0.29, 0.7), T("desk_panel"))
+    made(p, "metal")
+    for z in (0.14, 0.36, 0.58):
+        p.box((0.36, 0.33, z), (0.54, 0.36, z + 0.035), T("steel"))
+    made(p, "plastic")
+    p.box((-0.14, -0.22, 0.76), (0.14, -0.08, 0.79), T("plastic_black"))
+    p.box((-0.03, -0.17, 0.79), (0.03, -0.12, 0.9), T("plastic_black"))
+    p.box((-0.3, -0.2, 0.88), (0.3, -0.14, 1.22), T("plastic_black"))
+    p.box((-0.24, 0.02, 0.76), (0.2, 0.18, 0.79), T("plastic_black"))
+    made(p, "enamel")
+    p.cyl((0.42, 0.05, 0.76), (0.42, 0.05, 0.86), 0.04, style.srgb("accent.yellow"), 12)
+    made(p, "glass")
+    p.box((-0.26, -0.141, 0.92), (0.26, -0.135, 1.18), T("screen"))
+    return p.finish(0.02)
 
 
 def stove():
-    """The kitchen: a tiled counter with a black stone top, a two-burner steel stove on it, the red
-    LPG cylinder at its end."""
+    """The kitchen: a tiled counter with a black stone top, a steel two-burner on it with black
+    grates, a kettle, and the red LPG cylinder at its end with its collar."""
     p = Piece("stove")
-    p.box((-0.8, -0.3, 0.0), (0.8, 0.3, 0.82), (0.86, 0.88, 0.84))
+    made(p, "tile")
+    p.box((-0.8, -0.3, 0.0), (0.8, 0.3, 0.82), T("counter_tile"))
+    made(p, "laminate")
     for x in (-0.4, 0.4):
-        p.box((x - 0.36, 0.3, 0.06), (x + 0.36, 0.305, 0.76), (0.36, 0.55, 0.62), round=False)
-    p.box((-0.82, -0.32, 0.82), (0.82, 0.32, 0.86), (0.08, 0.08, 0.09))
-    p.box((-0.35, -0.2, 0.86), (0.35, 0.18, 0.94), "steel")
+        p.box((x - 0.36, 0.29, 0.08), (x + 0.36, 0.32, 0.74), T("counter"))
+        p.box((x - 0.06, 0.32, 0.6), (x + 0.06, 0.345, 0.64), T("steel"))
+    made(p, "stone")
+    p.box((-0.83, -0.33, 0.82), (0.83, 0.33, 0.88), T("counter_top"))
+    made(p, "metal")
+    p.box((-0.36, -0.2, 0.88), (0.36, 0.2, 0.97), T("steel"))
     for x in (-0.17, 0.17):
-        p.cyl((x, -0.01, 0.94), (x, -0.01, 0.96), 0.08, "black", 12)
-    p.cyl((0.62, -0.05, 0.86), (0.62, -0.05, 0.98), 0.12, "kettle", 12)
-    p.cyl((-0.98, 0.0, 0.0), (-0.98, 0.0, 0.52), 0.15, (0.80, 0.10, 0.08), 14)
-    p.cyl((-0.98, 0.0, 0.52), (-0.98, 0.0, 0.6), 0.06, "chrome", 8)
-    return p.finish(0.01)
+        p.cyl((x, -0.01, 0.97), (x, -0.01, 1.0), 0.1, T("plastic_black"), 14)
+    p.cyl((0.62, -0.05, 0.88), (0.62, -0.05, 1.02), 0.11, T("steel"), 14, 0.09)
+    made(p, "enamel")
+    p.cyl((-1.0, 0.0, 0.0), (-1.0, 0.0, 0.5), 0.16, T("cylinder"), 16)
+    p.ball((-1.0, 0.0, 0.5), 0.16, T("cylinder"), 2, 0.5)
+    p.cyl((-1.0, 0.0, 0.54), (-1.0, 0.0, 0.66), 0.08, T("cylinder"), 12)
+    return p.finish(0.02)
 
 
 FURNITURE = (charpai, almirah, dining, sofa, tv, fridge, fan, dari, desk, stove)
