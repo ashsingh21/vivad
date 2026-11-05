@@ -229,9 +229,65 @@ def female_tactical(ctx):
 
 
 def anime_street(ctx):
-    """The anime character's: the modelled sports suit and shoes alone (retinted flat, its own
-    colours), a single glass bangle. No tactical kit: a clean silhouette reads best cel shaded."""
+    """The anime character's: modest and loose, a desi street look. A kurta hanging straight from
+    the shoulders (not fitted to the figure), full sleeves, to the knee with side slits closed by
+    panels front and back; loose salwar gathered at the ankle. One glass bangle."""
+    L = Landmarks(ctx)
     items = []
+    waistline = L.waist - 0.02
+    ankle = L.ankle + 0.035
+    knee = L.knee + 0.03
+
+    # Salwar: roomy through the legs, gathered at the ankle, less on the inside of the legs.
+    def salwar_offset(co, n):
+        t = min(max((waistline - co.z) / (waistline - ankle), 0.0), 1.0)
+        # Easy over the hips (the kurta hangs over them), fullest through the shins.
+        loose = 0.012 + 0.04 * smoothstep(0.15, 0.6, t) * (1.0 - smoothstep(0.85, 1.0, t))
+        inner = 1.0 - 0.6 * max(0.0, -n.x * math.copysign(1.0, co.x)) * smoothstep(L.hip, L.knee, co.z)
+        return loose * inner
+
+    salwar = g.shell(ctx, "anime_salwar", lambda v: all_in(ctx, v, LEG_GROUPS, ankle, waistline), salwar_offset, smooth=6,
+                     snap=g.z_snap(ankle, waistline))
+    items.append((salwar, "cover"))
+    # The kurta's body: loose from the shoulders, its front falling in one flat plane from the
+    # chest (so it neither follows the figure nor balloons), easing out a little to the hips.
+    hem = L.hip - 0.05
+    plane = L.surface(0.0, L.chest).y - 0.008
+    # Behind: a plane just clear of the hips' furthest point, which the back falls to from the
+    # shoulder blades down (so the cloth neither shows the seat nor dips into its crease).
+    seat = max(L.surface(x, z, front=False).y for x in (-0.08, -0.04, 0.0, 0.04, 0.08) for z in (L.hip, L.hip - 0.05, L.hip - 0.1)) + 0.03
+    blades = L.chest + 0.04
+
+    def fall(co, n, base):
+        """`base` out, and the torso's front below the chest out to the front plane, its back
+        below the shoulder blades out to the back one; never more than 9 cm, not the sleeves."""
+        out = base
+        if abs(co.x) < 0.14:
+            if co.z < L.chest and n.y < -0.3:
+                out = max(out, min((co.y - plane) / max(-n.y, 0.5), 0.045))
+            if co.z < blades and n.y > 0.2:
+                out = max(out, min((seat - co.y) / max(n.y, 0.5), 0.09))
+        return out
+
+    def kurta_offset(co, n):
+        return fall(co, n, 0.025 + 0.015 * smoothstep(waistline, hem, co.z))
+
+    # A modest neckline: a little below the collarbone in front, up at the nape behind.
+    kurta = g.shell(ctx, "anime_kurtab", upper_body(ctx, L, hem, 1.0, 0.04, -0.03, lower_sleeve=0.85), kurta_offset,
+                    smooth=4, thickness=0.004, edge_iters=20)
+    items.append((kurta, "cover"))
+    # ...then over the salwar from the hips to the knee, open at the sides, panels front and back.
+    skirt = g.shell(ctx, "anime_kurta_skirt", lambda v: all_in(ctx, v, LEG_GROUPS, knee, hem + 0.03),
+                    lambda co, n: fall(co, n, 0.04 + 0.015 * smoothstep(hem, knee, co.z)), smooth=8,
+                    snap=g.z_snap(knee, hem + 0.03))
+    items.append((skirt, "cover"))
+    for k, front in enumerate((True, False)):
+        sgn = -1.0 if front else 1.0
+        top = L.surface(0.0, hem, front=front) + Vector((0.0, sgn * 0.06, 0.02))
+        drop = hem - knee - 0.01
+        path = [top + Vector((0.0, sgn * 0.025 * s, -drop * s)) for s in [i / 7 for i in range(8)]]
+        items.append((g.strip(ctx, f"anime_kurta_panel{k}", path, [0.24 + 0.04 * i / 7 for i in range(8)],
+                              normals=[Vector((0, -1 if front else 1, 0))] * 8, thickness=0.004), "accessory"))
     jewellery(ctx, items, armbands=False, kadas=1, anklets=False, neck=False)
     return items
 

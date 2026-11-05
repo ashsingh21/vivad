@@ -32,6 +32,13 @@ def toon_name(variant, name):
 CLOTH = {
     # name prefix: (base sRGB, border sRGB or None, pattern, border width m). Longer prefixes first:
     # a garment takes the first that its name starts with.
+    # The anime character's (outfits.anime_street): a loose teal kurta bordered cream over indigo
+    # salwar; flat colour, cel shaded.
+    # The kurta's body (anime_kurtab) unbordered (its hem is hidden under the skirt's top), the
+    # skirt and panels bordered cream at the hem; salwar deep indigo (well clear of skin).
+    "anime_kurtab": ((0.08, 0.45, 0.48), None, "flat", 0.0),
+    "anime_kurta": ((0.08, 0.45, 0.48), (0.97, 0.92, 0.80), "flat", 0.03),
+    "anime_salwar": ((0.16, 0.20, 0.38), None, "flat", 0.0),
     # Panga: modern desi clothes.
     "shirt_placket": ((0.80, 0.46, 0.04), None, "check", 0.0),
     "shirt": ((0.80, 0.46, 0.04), None, "check", 0.0),
@@ -346,7 +353,11 @@ def cloth_material(name, base_rgb, border_rgb, pattern, border_w):
     gold = (*srgb_to_lin((0.80, 0.60, 0.22)), 1)
     metal = g.value(0.0)
     rough = g.add(0.78, g.mul(slub, 0.1))
-    if pattern in ("check", "check_fine"):
+    if pattern == "flat":
+        # The anime character's: one flat colour (cel shading draws the folds), its border only.
+        col = (*base, 1)
+        rough = g.value(0.8)
+    elif pattern in ("check", "check_fine"):
         # Madras check / gamchha: pale stripes crossing both ways, darker where they cross.
         k = 30.0 if pattern == "check" else 18.0
         sx = g.smooth(g.wave(g.mapping(co), k, 0.0, detail=0.0, direction="X"), 0.9, 0.95)
@@ -382,7 +393,7 @@ def cloth_material(name, base_rgb, border_rgb, pattern, border_w):
         if is_gold:
             metal = g.mix(band, metal, 0.85)
             rough = g.mix(band, rough, 0.32)
-    normal = g.bump(g.add(g.mul(weave, 0.5), g.mul(slub, 0.5)), 0.05, 0.0004)
+    normal = None if pattern == "flat" else g.bump(g.add(g.mul(weave, 0.5), g.mul(slub, 0.5)), 0.05, 0.0004)
     g.principled(col, metal, rough, normal)
     return m
 
@@ -630,8 +641,27 @@ def finish_character(variant, rig, proxy, parts, items, root):
             obj.data.materials.append(cloth_material(key, base, border, pattern, bw))
         opaque.append(obj)
 
+    from mathutils.kdtree import KDTree
     for o in opaque:
+        # The garment as grown, before its thickness is applied: Solidify moves a vertex millimetres,
+        # but at a sharp degenerate corner (an armpit) it can fling one a metre out. Anything that
+        # ends up over 5 cm from the shape it was grown as goes back to its nearest original point.
+        kd = None
+        if anime and o is not proxy and any(m.type == "SOLIDIFY" for m in o.modifiers):
+            kd = KDTree(len(o.data.vertices))
+            for v in o.data.vertices:
+                kd.insert(v.co, v.index)
+            kd.balance()
         apply_non_armature_modifiers(o)
+        if kd is not None:
+            pulled = 0
+            for v in o.data.vertices:
+                near, _, d = kd.find(v.co)
+                if d > 0.05:
+                    v.co = near
+                    pulled += 1
+            if pulled:
+                print(f"[{variant}] {o.name}: {pulled} stray vertices pulled back")
         prepare_uvs(o)
         flex_layer(o)
 

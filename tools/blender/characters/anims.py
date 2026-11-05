@@ -1854,6 +1854,56 @@ def render_previews(arm, out_dir):
                 sc.render.filepath = os.path.join(out_dir, f"{name}_{view}_{k}.png")
                 bpy.ops.render.render(write_still=True)
 
+# The female's clips bent this much further forward at the chest (degrees): MakeHuman's female rig
+# stands with a deeper curve in the small of the back than the male's, and the motion, moved onto
+# it as world turns, keeps the curve, so every clip read as a swayback (`just clipstats` arch
+# about 8 degrees over the male's, gripcheck's "back arched" on 17 of them). Not the look we want.
+UNARCH = {"female": 8.0}
+
+
+def fcurves_of(act):
+    """An action's F-curves (Blender 5's layered actions keep them in a slot's channel bag)."""
+    if hasattr(act, "fcurves"):
+        return list(act.fcurves)
+    from bpy_extras import anim_utils
+    out = []
+    for slot in act.slots:
+        bag = anim_utils.action_get_channelbag_for_slot(act, slot)
+        if bag is not None:
+            out += list(bag.fcurves)
+    return out
+
+
+def unarch(arm, degrees):
+    """Every clip's chest bent `degrees` forward from the waist at spine_03, the neck turned back
+    as much so the head keeps its line: a constant correction of the rig's posture, keyed into
+    each clip that animates the chest."""
+    import math as _m
+    from mathutils import Quaternion
+    side = LEFT  # the axis a forward bend turns about (up toward FWD, -Y)
+    fixed = 0
+    for bone, sign in (("spine_03", 1.0), ("neck_01", -1.0)):
+        rest = arm.data.bones[bone].matrix_local.to_3x3()
+        axis = (rest.inverted() @ side).normalized()
+        delta = Quaternion(axis, sign * _m.radians(degrees))
+        path = f'pose.bones["{bone}"].rotation_quaternion'
+        for act in bpy.data.actions:
+            curves = [next((c for c in fcurves_of(act) if c.data_path == path and c.array_index == i), None) for i in range(4)]
+            if any(c is None for c in curves):
+                continue
+            frames = sorted({k.co[0] for c in curves for k in c.keyframe_points})
+            values = [Quaternion([c.evaluate(f) for c in curves]) @ delta for f in frames]
+            for c in curves:
+                c.keyframe_points.clear()
+            for f, q in zip(frames, values):
+                for i, c in enumerate(curves):
+                    c.keyframe_points.insert(f, q[i], options={"FAST"})
+            for c in curves:
+                c.update()
+            fixed += bone == "spine_03"
+    print(f"[anims] unarched {fixed} clips by {degrees:.0f} deg")
+
+
 def main():
     variant = sys.argv[sys.argv.index("--") + 1] if "--" in sys.argv else "male"
     bpy.ops.wm.open_mainfile(filepath=os.path.join(ROOT, "build", f"char_{variant}_final.blend"))
@@ -2029,6 +2079,8 @@ def main():
     if preview:
         render_previews(arm, preview)
         return
+    if variant in UNARCH:
+        unarch(arm, UNARCH[variant])
     # One NLA track per action so the exporter writes each as its own glTF animation.
     arm.animation_data.action = None
     for act in bpy.data.actions:

@@ -84,10 +84,12 @@ VARIANTS = {
     # An original anime-styled heroine (cel shaded in game: her materials are toon_*, finish.py):
     # the female body and arm proportions (so the female clips and gun holds fit her), the face
     # pushed to anime proportions (big tall eyes, small nose and mouth, a pointed chin, a rounder
-    # head and higher forehead), a high ponytail, a teal tee and navy trousers.
+    # head and higher forehead), a high ponytail, a loose kurta, salwar and dupatta.
     "anime": {
-        "macro": {"gender": 0.0, "age": 0.42, "muscle": 0.55, "weight": 0.44, "proportions": 0.8, "height": 0.52,
-                  "cupsize": 0.4, "firmness": 0.6, "race": {"asian": 0.3, "caucasian": 0.42, "african": 0.28}},
+        # An ordinary build, not a pin-up's (we're not sexualising anyone): average weight and
+        # proportions, a small bust.
+        "macro": {"gender": 0.0, "age": 0.42, "muscle": 0.5, "weight": 0.52, "proportions": 0.5, "height": 0.52,
+                  "cupsize": 0.25, "firmness": 0.5, "race": {"asian": 0.3, "caucasian": 0.42, "african": 0.28}},
         "proxy": "proxymeshes/female_generic/female_generic.proxy",
         "skin": "skins/young_african_female/young_african_female.mhmat",
         "hair": "hair/ponytail01/ponytail01.mhclo",
@@ -102,9 +104,9 @@ VARIANTS = {
                  "head/head-round": 0.5, "forehead/forehead-scale-vert-incr": 0.5,
                  "cheek/l-cheek-bones-decr": 0.6, "cheek/r-cheek-bones-decr": 0.6},
         "shape": {"arms/measure-upperarm-length-incr": 0.47, "arms/measure-lowerarm-length-incr": 0.37},
-        # A full-length tee (not the sports suit's crop top) and trousers, recoloured flat
-        # (tools/textures/mh_clothes.py ANIME), cream shoes.
-        "clothes": ["female_casualsuit01", "shoes01"],
+        # Cream shoes (recoloured flat, tools/textures/mh_clothes.py ANIME); her kurta, salwar and
+        # dupatta are grown on her (outfits.anime_street).
+        "clothes": ["shoes01"],
         "outfit": outfits.anime_street,
     },
 }
