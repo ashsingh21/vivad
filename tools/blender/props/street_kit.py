@@ -52,6 +52,18 @@ C = {
 }
 
 
+# The kit's colours that have a palette token (docs/style-guide.md: the token is the one source).
+for _k, _t in {
+    "auto_green": "vehicle.auto_green", "auto_yellow": "vehicle.auto_yellow", "tyre": "vehicle.tyre", "glass": "vehicle.glass",
+    "chrome": "metal.steel", "steel": "metal.steel_dark", "red": "accent.red", "blue": "accent.blue", "wood": "wood.teak",
+    "wood_lt": "wood.pine", "orange": "accent.saffron", "leaf": "foliage.neem", "leaf_dk": "foliage.neem_dark", "tarp": "accent.blue",
+    "drum": "accent.blue", "crate_r": "accent.red", "crate_g": "accent.green", "crate_b": "accent.blue", "terracotta": "paint.terracotta",
+    "pink": "foliage.flower_pink", "saffron": "accent.saffron", "cream": "accent.cream", "door_green": "accent.shutter_green",
+    "rope": "wood.rope", "scooter": "vehicle.car_red", "white": "architecture.stucco_trim",
+}.items():
+    C[_k] = style.srgb(_t)
+
+
 # Surfaces a piece's parts can be marked as (Piece.made_of), for furniture.py's materials.
 SURFACES = (None, "glass", "print", "kraft", "metal", "cotton", "wood", "plastic", "velvet", "enamel", "rope", "laminate", "tile", "stone")
 
@@ -238,7 +250,7 @@ def bake_ao(o, strength=0.7):
 
 # The compact hatchbacks parked round the circles, by body colour (one piece each: the kit's
 # colours are in the vertices).
-CARS = {"car_white": (0.92, 0.92, 0.90), "car_red": (0.72, 0.08, 0.08), "car_silver": (0.62, 0.64, 0.66), "car_blue": (0.12, 0.24, 0.52)}
+CARS = {n: style.srgb(f"vehicle.{n}") for n in ("car_white", "car_red", "car_silver", "car_blue")}
 
 
 def car(name):
@@ -246,13 +258,14 @@ def car(name):
     a short bonnet sloping to the nose, a flat roof, the tail cut off square; bumpers, lamps,
     grille, mirrors and plates. 3.8 m long, 1.66 wide, 1.5 high; the nose toward +Y."""
     p = Piece(name)
-    body, dark = CARS[name], (0.12, 0.12, 0.13)
-    R = 0.31
+    body, dark = CARS[name], style.srgb("metal.iron")
+    # Chunky (docs/style-guide.md section 3): fat wheels, big hubs, round lamps, a soft body.
+    R = 0.34
     # Wheels: tyres across X with a silver hub; the body's flanks hide their tops.
-    for x in (-0.70, 0.70):
+    for x in (-0.68, 0.68):
         for y in (-1.22, 1.24):
-            p.cyl((x - 0.1, y, R), (x + 0.1, y, R), R, "tyre", 18)
-            p.cyl((x + math.copysign(0.1, x), y, R), (x + math.copysign(0.115, x), y, R), 0.17, "chrome", 14)
+            p.cyl((x - 0.13, y, R), (x + 0.13, y, R), R, "tyre", 20)
+            p.cyl((x + math.copysign(0.13, x), y, R), (x + math.copysign(0.15, x), y, R), 0.2, "chrome", 16)
     # The tub: tail to nose, its waist at about 0.85 m, the bonnet falling to the nose.
     bikes.loft(p, [((0, -1.90, 0.62), 0.78, 0.26, 0.35), ((0, -1.82, 0.60), 0.83, 0.30, 0.3), ((0, 0.9, 0.58), 0.83, 0.29, 0.3),
                    ((0, 1.6, 0.55), 0.81, 0.24, 0.32), ((0, 1.90, 0.50), 0.74, 0.17, 0.4)], body)
@@ -268,12 +281,12 @@ def car(name):
         # The door mirror.
         p.box((x * 0.86 - 0.06, 0.70, 0.90), (x * 0.86 + 0.06, 0.82, 1.0), body)
     # Bumpers in dark plastic; the grille between the headlamps; lamps and plates.
-    p.box((-0.82, 1.84, 0.30), (0.82, 1.98, 0.50), dark)
-    p.box((-0.82, -1.98, 0.30), (0.82, -1.86, 0.52), dark)
-    p.box((-0.34, 1.86, 0.55), (0.34, 1.92, 0.66), dark, round=False)
+    p.box((-0.84, 1.82, 0.28), (0.84, 2.0, 0.52), dark)
+    p.box((-0.84, -2.0, 0.28), (0.84, -1.84, 0.54), dark)
+    p.box((-0.3, 1.86, 0.55), (0.3, 1.93, 0.68), dark)
     for x in (-1, 1):
-        p.box((x * 0.58 - 0.17, 1.80, 0.62), (x * 0.58 + 0.17, 1.90, 0.73), "lamp")
-        p.box((x * 0.64 - 0.12, -1.93, 0.72), (x * 0.64 + 0.12, -1.86, 0.90), "red")
+        p.cyl((x * 0.56, 1.8, 0.58), (x * 0.56, 1.94, 0.58), 0.085, "lamp", 16)
+        p.box((x * 0.64 - 0.13, -1.94, 0.70), (x * 0.64 + 0.13, -1.85, 0.92), "red")
     p.box((-0.22, 1.98, 0.36), (0.22, 2.0, 0.46), "white", round=False)
     p.box((-0.22, -2.0, 0.60), (0.22, -1.98, 0.70), "white", round=False)
     # Door lines and handles, a shade darker than the paint.
@@ -282,7 +295,7 @@ def car(name):
         for y in (-0.36, 0.86):
             p.box((x * 0.832, y - 0.01, 0.38), (x * 0.838, y + 0.01, 0.85), shade, round=False)
         p.box((x * 0.832, 0.32, 0.78), (x * 0.842, 0.46, 0.81), shade, round=False)
-    return p.finish(0.03)
+    return p.finish(0.07)
 
 
 def auto():
@@ -392,50 +405,55 @@ def scooter():
 
 
 def thela():
-    """A fruit cart: a plank bed on two bicycle wheels and a prop leg, heaped with fruit."""
+    """A fruit cart, chunky: a thick plank bed with a raised rim on two fat bicycle wheels and a prop
+    leg, its handles out front, heaped high with big fruit."""
     p = Piece("thela")
-    p.box((-0.5, -1.0, 0.72), (0.5, 1.0, 0.80), "wood_lt")
-    for x in (-0.5, 0.5):
-        p.box((x - 0.03, -1.0, 0.80), (x + 0.03, 1.0, 0.92), "wood")
+    p.box((-0.52, -1.0, 0.7), (0.52, 1.0, 0.8), "wood_lt")
+    for x in (-0.52, 0.52):
+        p.box((x - 0.05, -1.0, 0.78), (x + 0.05, 1.0, 0.94), "wood")
     for y in (-1.0, 1.0):
-        p.box((-0.5, y - 0.03, 0.80), (0.5, y + 0.03, 0.92), "wood")
-    p.cyl((-0.15, 1.0, 0.76), (-0.15, 1.45, 0.76), 0.03, "wood", 6)
-    p.cyl((0.15, 1.0, 0.76), (0.15, 1.45, 0.76), 0.03, "wood", 6)
-    p.wheel((-0.6, 0.1, 0.36), 0.36, 0.05)
-    p.wheel((0.6, 0.1, 0.36), 0.36, 0.05)
-    p.cyl((0, -0.8, 0.0), (0, -0.8, 0.72), 0.04, "wood", 6)
-    k = 0
-    # Heaps of fruit, a kind to each end and the middle.
+        p.box((-0.52, y - 0.05, 0.78), (0.52, y + 0.05, 0.94), "wood")
+    p.cyl((-0.16, 1.0, 0.76), (-0.16, 1.5, 0.78), 0.045, "wood", 8)
+    p.cyl((0.16, 1.0, 0.76), (0.16, 1.5, 0.78), 0.045, "wood", 8)
+    p.wheel((-0.62, 0.1, 0.38), 0.38, 0.08)
+    p.wheel((0.62, 0.1, 0.38), 0.38, 0.08)
+    p.cyl((0, -0.8, 0.0), (0, -0.8, 0.72), 0.06, "wood", 8)
+    # Heaps of fruit, a kind to each end and the middle, piled in two layers.
     for i in range(3):
         for j in range(6):
             colour = ("orange", "apple", "banana")[j // 2]
             x, y = -0.3 + 0.3 * i, -0.75 + 0.3 * j
-            h = 0.95 + 0.06 * math.sin(i * 1.3 + j)
-            p.ball((x, y, h), 0.13, colour, 1, 0.8)
-            k += 1
-    return p.finish(0.0)
+            p.ball((x, y, 0.95 + 0.04 * math.sin(i * 1.3 + j)), 0.15, colour, 2, 0.85, soft=True)
+            if (i + j) % 2 == 0 and 0 < j < 5:
+                p.ball((x + 0.15, y + 0.15, 1.15), 0.14, colour, 2, 0.85, soft=True)
+    return p.finish(0.03)
 
 
 def chai():
-    """A chai stall: a plank counter with a stove, a kettle and glasses, a tin sheet on four poles,
-    a blue tarp, a bench in front."""
+    """A chai stall, chunky: a plank counter with a stove, a fat kettle and a row of glasses, a
+    striped awning on four stout poles, a blue tarp behind, a bench in front."""
     p = Piece("chai")
     p.box((-0.8, -0.35, 0.0), (0.8, 0.35, 0.95), "wood")
-    p.box((-0.85, -0.40, 0.95), (0.85, 0.40, 1.0), "wood_lt")
-    p.box((-0.6, -0.2, 1.0), (-0.2, 0.2, 1.12), "black")
-    p.cyl((-0.4, 0.0, 1.12), (-0.4, 0.0, 1.38), 0.12, "kettle", 20, 0.09)
-    p.cyl((-0.3, 0.0, 1.30), (-0.16, 0.0, 1.40), 0.025, "kettle", 6, 0.012)
+    p.box((-0.86, -0.42, 0.95), (0.86, 0.42, 1.02), "wood_lt")
+    p.box((-0.62, -0.2, 1.02), (-0.18, 0.2, 1.14), "black")
+    p.cyl((-0.4, 0.0, 1.14), (-0.4, 0.0, 1.42), 0.14, "kettle", 20, 0.1)
+    p.cyl((-0.28, 0.0, 1.32), (-0.12, 0.0, 1.44), 0.035, "kettle", 8, 0.018)
     for k in range(5):
-        p.cyl((0.1 + 0.12 * k, -0.15, 1.0), (0.1 + 0.12 * k, -0.15, 1.1), 0.035, "chai", 8)
+        p.cyl((0.1 + 0.13 * k, -0.15, 1.02), (0.1 + 0.13 * k, -0.15, 1.14), 0.045, "chai", 10, 0.05)
     for x in (-0.85, 0.85):
         for y in (-0.4, 1.6):
-            p.cyl((x, y, 0.0), (x, y, 2.3 if y < 0 else 2.1), 0.03, "wood", 6)
-    p.hull([(x, y, z) for x in (-1.0, 1.0) for (y, z) in ((-0.55, 2.32), (1.75, 2.10), (-0.55, 2.36), (1.75, 2.14))], "tin")
-    p.quad([(-0.9, 1.6, 2.1), (0.9, 1.6, 2.1), (0.9, 1.6, 1.6), (-0.9, 1.6, 1.6)], "tarp")
-    p.box((-0.7, 1.0, 0.40), (0.7, 1.3, 0.46), "wood_lt")
+            p.cyl((x, y, 0.0), (x, y, 2.3 if y < 0 else 2.1), 0.05, "wood", 8)
+    # The awning in red and white stripes, sloping to the back.
+    stripes = 6
+    for k in range(stripes):
+        x0, x1 = -1.0 + 2.0 * k / stripes, -1.0 + 2.0 * (k + 1) / stripes
+        c = style.srgb("cloth.awning_red" if k % 2 == 0 else "cloth.awning_white")
+        p.hull([(x, y, z) for x in (x0, x1) for (y, z) in ((-0.6, 2.32), (1.75, 2.10), (-0.6, 2.38), (1.75, 2.16))], c)
+    p.quad([(-0.9, 1.6, 2.1), (0.9, 1.6, 2.1), (0.9, 1.6, 1.5), (-0.9, 1.6, 1.5)], "tarp")
+    p.box((-0.72, 1.0, 0.40), (0.72, 1.32, 0.48), "wood_lt")
     for x in (-0.6, 0.6):
-        p.box((x - 0.04, 1.05, 0.0), (x + 0.04, 1.25, 0.40), "wood")
-    return p.finish(0.01)
+        p.box((x - 0.06, 1.05, 0.0), (x + 0.06, 1.27, 0.40), "wood")
+    return p.finish(0.025)
 
 
 def pole():
