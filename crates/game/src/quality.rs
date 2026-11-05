@@ -119,7 +119,7 @@ struct View3d {
 }
 
 #[derive(Component)]
-struct ViewImage;
+pub struct ViewImage;
 
 /// Set until the level has been chosen (the GPU's description may arrive after Startup).
 #[derive(Resource)]

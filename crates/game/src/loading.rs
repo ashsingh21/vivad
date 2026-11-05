@@ -34,7 +34,7 @@ pub fn settled(loading: Option<Res<Loading>>) -> bool {
 }
 
 #[derive(Component)]
-struct Screen;
+pub struct Screen;
 
 /// Shows the loading screen for `map`, then does `then` (the slow part) behind it.
 pub fn load(world: &mut World, map: MapId, then: impl FnOnce(&mut World) + Send + Sync + 'static) {
