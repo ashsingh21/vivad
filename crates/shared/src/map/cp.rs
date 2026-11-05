@@ -49,6 +49,9 @@ impl Ring {
     }
 }
 
+/// The base course's height: dressed stone along the walls' foot, to a stall board's top.
+const PLINTH: f32 = 0.9;
+
 pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
     let w = Frame::new(Vec3::ZERO, 0.0);
     let tau = std::f32::consts::TAU;
@@ -156,12 +159,13 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 if last && i + 1 != n {
                     continue;
                 }
-                // Fat Tuscan columns, white: a square plinth, a round moulding at the
-                // foot and a collar under the square abacus.
+                // Fat Tuscan columns, white: a square plinth of dressed stone (the base course's,
+                // docs/style-guide.md section 4), a round moulding at the foot and a collar under
+                // the square abacus.
                 for rad in [r.ro - 0.5, r.ri + 0.5] {
                     let base = r.at(rad, col, 0.0);
-                    b.push(base + Vec3::Y * 0.2, Quat::from_rotation_y(-col), super::Shape::Box(Vec3::new(1.0, 0.4, 1.0)), Mat::Stucco, false, true);
-                    b.deco_cyl(w, base + Vec3::Y * 0.4, 0.5, 0.16, Mat::Stucco);
+                    b.push(base + Vec3::Y * 0.3, Quat::from_rotation_y(-col), super::Shape::Box(Vec3::new(1.0, 0.6, 1.0)), Mat::Plinth, false, true);
+                    b.deco_cyl(w, base + Vec3::Y * 0.6, 0.5, 0.16, Mat::Stucco);
                     b.push(base + Vec3::Y * (r.g - SLAB) / 2.0, Quat::IDENTITY, super::Shape::Cylinder { radius: 0.4, height: r.g - SLAB }, Mat::Stucco, true, true);
                     b.deco_cyl(w, base + Vec3::Y * (r.g - SLAB - 0.55), 0.46, 0.12, Mat::Stucco);
                     b.push(base + Vec3::Y * (r.g - SLAB - 0.17), Quat::from_rotation_y(-col), super::Shape::Box(Vec3::new(1.0, 0.34, 1.0)), Mat::Stucco, false, true);
@@ -182,7 +186,8 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 let half = front.width / 2.0;
                 // Cladding: a dark backing either side and above, vertical slats over it with
                 // gaps between (the relief catches the light), a slatted fascia up top;
-                // the opening lined in wood too; grey stone skirting along the wall's foot.
+                // the opening lined in wood too; a base course of dressed stone along the wall's
+                // foot, under a capping ledge.
                 let slat = face + toward * 0.035;
                 for side in [-1.0f32, 1.0] {
                     b.deco(radial, Vec3::new(face, 1.85, side * (half + 0.22)), Vec3::new(0.03, 3.7, 0.44), Mat::Wood);
@@ -200,7 +205,9 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 for side in [-1.0f32, 1.0] {
                     let (z0, z1) = (half + 0.45, chord_mid / 2.0 - 0.02);
                     if z1 > z0 {
-                        b.deco(radial, Vec3::new(face - toward * 0.005, 0.18, side * (z0 + z1) / 2.0), Vec3::new(0.035, 0.36, z1 - z0), Mat::Granite);
+                        b.deco(radial, Vec3::new(face + toward * 0.01, PLINTH / 2.0, side * (z0 + z1) / 2.0), Vec3::new(0.06, PLINTH, z1 - z0), Mat::Plinth);
+                        // The ledge 1 cm short of the course's ends (their end faces would share).
+                        b.deco(radial, Vec3::new(face + toward * 0.025, PLINTH + 0.03, side * (z0 + z1) / 2.0), Vec3::new(0.09, 0.06, z1 - z0 - 0.02), Mat::Plinth);
                     }
                 }
                 if window {
@@ -337,6 +344,18 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                     let (p, q) = (xz(r0 + 0.15, col), xz(r1 - 0.15, col));
                     let door = if end { vec![Opening::door(p.distance(q) / 2.0)] } else { vec![] };
                     b.wall(w, p, q, 0.0, r.g - SLAB, 0.3, if end { Mat::Stucco } else { wash(i / 2 + 1) }, &door);
+                    // The end walls (on the radial streets) carry the base course too, both faces,
+                    // either side of the door.
+                    if end {
+                        let (a0, a1, dm) = (r0 + 0.15, r1 - 0.15, (r0 + r1) / 2.0);
+                        for (x0, x1) in [(a0, dm - 0.75), (dm + 0.75, a1)] {
+                            for out in [-1.0f32, 1.0] {
+                                let f = Frame::new(c, -col);
+                                b.deco(f, Vec3::new((x0 + x1) / 2.0, PLINTH / 2.0, out * 0.175), Vec3::new(x1 - x0, PLINTH, 0.05), Mat::Plinth);
+                                b.deco(f, Vec3::new((x0 + x1) / 2.0, PLINTH + 0.03, out * 0.19), Vec3::new(x1 - x0 - 0.02, 0.06, 0.08), Mat::Plinth);
+                            }
+                        }
+                    }
                     // Shelves down both faces of the party wall, from the back halfway to the front.
                     if !end {
                         // The shop's back is the middle wall: the inner row's far end, the outer row's near one.

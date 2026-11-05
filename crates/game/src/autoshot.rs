@@ -220,6 +220,10 @@ impl Plugin for AutoshotPlugin {
                     ("style_shop", v(68.4, 1.7, 78.5), v(74.3, 1.9, 90.3)),
                     ("style_roof", v(92.3, 12.0, 78.2), v(77.0, 10.3, 93.4)),
                     ("style_room", v(79.5, 7.4, 82.4), v(69.0, 6.4, 95.4)),
+                    // A block's end wall on a radial street, its stone base course: from the
+                    // street, and from inside the end shop.
+                    ("cp_endwall", v(112.2, 1.6, 48.5), v(114.6, 0.6, 45.3)),
+                    ("cp_endwall_in", v(117.0, 1.6, 42.1), v(114.6, 0.6, 45.3)),
                     ("cp_loot", v(0.0, 0.0, 0.0), v(0.0, 0.0, 0.0)),
                     ("cp_loot_close", v(0.0, 0.0, 0.0), v(0.0, 0.0, 0.0)),
                     ("03_bazaar_roofs", v(-30.0, 26.0, 40.0), v(5.0, 2.0, 0.0)),

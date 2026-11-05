@@ -39,6 +39,8 @@ SETS = {
     # 50 cm tiles on the old procedural floor's grid, laid as its two-tone chequer again.
     "panga/stone": dict(asset="worn_tile_floor", tint=True, contrast=0.15, cavity=1.0, smooth=5, normal=1.0, chequer=(4, 0.15), grout=0.4),
     "panga/stucco": dict(asset="grey_plaster_02", tint=True, contrast=0.2, cavity=0.6, smooth=7, normal=0.9),
+    # Connaught Place's base course (Mat::Plinth): in its own colours, a touch warmer.
+    "panga/plinth": dict(asset="medieval_blocks_03", tint=False, sat=1.1, gain=1.0, level=0.76, warm=(1.05, 1.0, 0.92), cavity=1.3, smooth=3, normal=1.2),
     "india/brick": dict(asset="red_brick_03", tint=False, sat=1.15, gain=1.12, cavity=1.4, smooth=3, normal=1.2),
     # Painted by tools/textures/city.py (its bands, bays and windows), the scan's patchy plaster
     # laid over them (`over`): its shading by `contrast`, its relief by `normal`.
@@ -147,7 +149,10 @@ def build(name, s):
         col = np.repeat(np.clip(g, 0.03, 1.0)[..., None], 3, axis=2)
     else:
         lum = (col @ np.array([0.2126, 0.7152, 0.0722], np.float32))[..., None]
-        col = (lum + (col - lum) * s["sat"]) * s["gain"]
+        col = (lum + (col - lum) * s["sat"]) * s["gain"] * np.array(s.get("warm", (1, 1, 1)), np.float32)
+        # `level`: brightened to this mean (sRGB), for a scan shot darker than the stone should be.
+        if "level" in s:
+            col *= srgb_to_lin(np.float32(s["level"])) / max(float((col @ np.array([0.2126, 0.7152, 0.0722], np.float32)).mean()), 1e-6)
     base = Image.fromarray((lin_to_srgb(col) * 255 + 0.5).astype(np.uint8))
     # The normal's tilt scaled (z rebuilt to unit length).
     n = arr(normal) * 2 - 1

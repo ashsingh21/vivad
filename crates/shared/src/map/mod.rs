@@ -117,6 +117,9 @@ pub enum Mat {
     Rustic,
     /// Pale buff sandstone (Lutyens' Delhi: India Gate, Kartavya Path's buildings).
     Buff,
+    /// Dressed grey-buff stone blocks: the base course along Connaught Place's walls and under its
+    /// columns.
+    Plinth,
 }
 
 /// Paint colours (sRGB): Delhi's limewash, the style guide's `paint` tokens
