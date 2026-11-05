@@ -36,6 +36,12 @@ from trees import Tree  # noqa: E402
 OUT = os.path.join(ROOT, "assets", "models", "props")
 LEAF_TEX = os.path.join(ROOT, "build", "textures", "stylised", "leaf_twigs.png")
 
+# The look, "dense" (the owner's pick, 2026-11-05, from a sheet of four): each leaf clump lit as
+# its own, cards of its colour packed till the masses hardly show. VIVAD_TREE_VARIANT builds the
+# others to compare: "clump" (fewer cards), "solid" (clumps alone), "fur" (one shading over the
+# crown, the first leaf-card version).
+VARIANT = os.environ.get("VIVAD_TREE_VARIANT", "dense")
+
 # Face kinds (an integer attribute, which survives joins): bark, leaf mass, leaf card, then flowers.
 BARK, MASS, CARD, FLOWER = 0, 1, 2, 3
 
@@ -128,13 +134,14 @@ class Crown:
         tries = 0
         while len(self.cards) < count and tries < count * 40:
             tries += 1
-            c, r = rng.choices(self.blobs, weights)[0]
+            bi = rng.choices(range(len(self.blobs)), weights)[0]
+            c, r = self.blobs[bi]
             d = Vector((rng.gauss(0, 1), rng.gauss(0, 1), rng.gauss(0, 1) * 0.8 + 0.2)).normalized()
             p = c + Vector((r.x * d.x, r.y * d.y, r.z * d.z))
             if any(o is not c and (Vector(((p.x - o.x) / q.x, (p.y - o.y) / q.y, (p.z - o.z) / q.z)).length < 0.95) for o, q in self.blobs):
                 continue
             n = Vector((d.x / r.x, d.y / r.y, d.z / r.z)).normalized()
-            self.cards.append((p, n, size * rng.uniform(0.8, 1.2), rng.uniform(0, 2 * math.pi), rng.uniform(0.35, 1.0)))
+            self.cards.append((p, n, size * rng.uniform(0.8, 1.2), rng.uniform(0, 2 * math.pi), rng.uniform(0.35, 1.0), bi))
 
     def flower_toks(self):
         return sorted({d[2] for d in self.dots})
@@ -142,15 +149,16 @@ class Crown:
     def build(self, name, subdiv, lump):
         bm = bmesh.new()
         uvl = bm.loops.layers.uv.new("UVMap")
-        kinds = []
+        kinds, owners = [], []
         for k, (c, r) in enumerate(self.blobs):
             ret = bmesh.ops.create_icosphere(bm, subdivisions=subdiv, radius=1.0, matrix=Matrix.Identity(4))
             for v in ret["verts"]:
                 d = v.co.normalized()
                 rr = Vector((r.x * d.x, r.y * d.y, r.z * d.z))
                 v.co = c + rr * (1.0 + lump * noise(c + rr * 1.6, self.seed + k))
+            owners += [k] * (len(bm.faces) - len(kinds))
             kinds += [MASS] * (len(bm.faces) - len(kinds))
-        for p, n, sz, spin, tilt in self.cards:
+        for p, n, sz, spin, tilt, bi in self.cards:
             # A card rooted just inside the mass, growing out along it and tilted off it: its tip
             # past the surface, so the outline is leaves. Both sides, wound apart, each lit as the
             # crown (no back face turned dark).
@@ -167,9 +175,11 @@ class Crown:
                 for loop, i in zip(f.loops, order):
                     loop[uvl].uv = uvs[i]
                 kinds.append(CARD)
+                owners.append(bi)
         toks = self.flower_toks()
         for p, rad, tok in self.dots:
             bmesh.ops.create_icosphere(bm, subdivisions=2 if rad > 0.2 else 1, radius=rad, matrix=Matrix.Translation(p))
+            owners += [0] * (len(bm.faces) - len(kinds))
             kinds += [FLOWER + toks.index(tok)] * (len(bm.faces) - len(kinds))
         me = bpy.data.meshes.new(name)
         bm.to_mesh(me)
@@ -177,6 +187,7 @@ class Crown:
         obj = bpy.data.objects.new(name, me)
         bpy.context.scene.collection.objects.link(obj)
         tag(obj, lambda f: kinds[f])
+        tag(obj, lambda f: owners[f], "blob")
         return obj
 
 
@@ -200,8 +211,10 @@ def colour_and_normals(obj, crown, bark_tok):
     normals = []
     corner = me.corner_normals
     kinds = me.attributes["kind"].data
+    owner = me.attributes["blob"].data
     for poly in me.polygons:
         kind = kinds[poly.index].value
+        bc, br = crown.blobs[min(owner[poly.index].value, len(crown.blobs) - 1)]
         for li in poly.loop_indices:
             p = me.vertices[me.loops[li].vertex_index].co
             own = corner[li].vector
@@ -222,19 +235,33 @@ def colour_and_normals(obj, crown, bark_tok):
             # Leaves: the sky's light from above, the crown's own shade inside and underneath; the
             # masses a step darker than the cards over them, so the cards read as leaves on top.
             q = Vector(((p.x - c.x) / rad.x, (p.y - c.y) / rad.y, (p.z - c.z) / rad.z))
-            up = (p.z - zlo) / (zhi - zlo)
-            g = mix(dark, mid, up * 1.5)
-            g = mix(g, light, (up - 0.6) * 2.2)
-            g = mix(g, dark, (0.75 - min(q.length, 1.0)) * 1.6)
-            v = (0.96 + 0.08 * noise(p * 0.8, crown.seed + 50)) * (1.0 if kind == CARD else 0.7)
-            col.data[li].color = (g[0] * v, g[1] * v, g[2] * v, 1.0)
             out = q.normalized() if q.length > 1e-4 else Vector((0, 0, 1))
-            normals.append((own * 0.4 + out * 0.6).normalized() if kind == MASS else out)
+            if VARIANT == "fur":
+                up = (p.z - zlo) / (zhi - zlo)
+                g = mix(dark, mid, up * 1.5)
+                g = mix(g, light, (up - 0.6) * 2.2)
+                g = mix(g, dark, (0.75 - min(q.length, 1.0)) * 1.6)
+                v = (0.96 + 0.08 * noise(p * 0.8, crown.seed + 50)) * (1.0 if kind == CARD else 0.7)
+                col.data[li].color = (g[0] * v, g[1] * v, g[2] * v, 1.0)
+                normals.append((own * 0.4 + out * 0.6).normalized() if kind == MASS else out)
+                continue
+            # Each clump lit as its own: light across its top, dark under it (Fortnite's read: the
+            # crown is a stack of clumps, each catching the sun), the whole crown a little darker
+            # low down and inside; the cards take their clump's colour.
+            bq = Vector(((p.x - bc.x) / br.x, (p.y - bc.y) / br.y, (p.z - bc.z) / br.z))
+            lup = min(max(bq.z * 0.5 + 0.5, 0.0), 1.0)
+            g = mix(dark, mid, lup * 1.8)
+            g = mix(g, light, (lup - 0.62) * 2.6)
+            cup = (p.z - zlo) / (zhi - zlo)
+            v = (0.82 + 0.2 * min(max(cup, 0.0), 1.0)) * (0.96 + 0.08 * noise(p * 0.8, crown.seed + 50))
+            col.data[li].color = (g[0] * v, g[1] * v, g[2] * v, 1.0)
+            bout = bq.normalized() if bq.length > 1e-4 else Vector((0, 0, 1))
+            normals.append((bout * 0.65 + out * 0.35).normalized())
     me.normals_split_custom_set(normals)
 
 
-def tag(obj, kind):
-    a = obj.data.attributes.new("kind", "INT", "FACE")
+def tag(obj, kind, name="kind"):
+    a = obj.data.attributes.new(name, "INT", "FACE")
     for f in range(len(obj.data.polygons)):
         a.data[f].value = kind(f)
 
@@ -280,10 +307,13 @@ def make(species, lod, leaf_img):
     # Enough sides round the trunk for its plates.
     tree.ring_segs = (28, 14, 6)[lod]
     crown = cfg["grow"](tree, rng, lod)
-    cards = (cfg["cards"], cfg["cards"] * 2 // 5, 0)[lod]
-    crown.leafy(rng, cards, cfg["card"] * (1.0 if lod == 0 else 1.35))
+    many = {"dense": 2.2, "solid": 0.0}.get(VARIANT, 1.0)
+    cards = int((cfg["cards"], cfg["cards"] * 2 // 5, 0)[lod] * many)
+    crown.leafy(rng, cards, cfg["card"] * (1.0 if lod == 0 else 1.35) * (1.2 if VARIANT == "dense" else 1.0))
     # Bushes are small on screen: a level less.
     subdiv, lump = (((3, 0.08), (2, 0.05), (2, 0.0)) if cfg["kind"] == "tree" else ((2, 0.06), (2, 0.0)))[lod]
+    if VARIANT == "solid":
+        lump *= 2.0
     if lod == 2:
         # The far distance: the crown's three biggest masses.
         crown.blobs = sorted(crown.blobs, key=lambda b: -b[1].x)[:3]
@@ -300,6 +330,7 @@ def make(species, lod, leaf_img):
                     v.co.x *= k
                     v.co.y *= k
         tag(bark, lambda f: BARK)
+        tag(bark, lambda f: 0, "blob")
         for name in [u.name for u in bark.data.uv_layers]:
             bark.data.uv_layers.remove(bark.data.uv_layers[name])
         bark.data.uv_layers.new(name="UVMap")
@@ -330,7 +361,8 @@ def limbs(tree, rng, top, targets, r0, r1):
 
 def grow_neem(tree, rng, lod, s=1.0, ring=6, tokens=("foliage.neem_dark", "foliage.neem", "foliage.neem_light")):
     """Neem: a short fat trunk, stout limbs up into a round crown of a dozen or so masses."""
-    tree.branch(Vector((0, 0, 0)), Vector((0.04, 0.02, 1)), 2.7 * s, 0.5 * s, 0.36 * s, flare=0.8, segments=6, wobble=0.04)
+    thick = 1.0 if VARIANT == "fur" else 0.8
+    tree.branch(Vector((0, 0, 0)), Vector((0.04, 0.02, 1)), 2.7 * s, 0.5 * s * thick, 0.36 * s * thick, flare=0.8, segments=6, wobble=0.04)
     top = Vector((0.0, 0.0, 2.5 * s))
     c = Vector((0, 0, 5.7 * s))
     crown = Crown(c, Vector((3.4, 3.4, 2.3)) * s, tokens, tree.rng.randrange(1000))
@@ -393,7 +425,7 @@ def grow_bougainvillea(tree, rng, lod):
 
 SPECIES = {
     "neem": dict(grow=grow_neem, bark="foliage.bark", seed=11, kind="tree", cards=380, card=0.9),
-    "peepal": dict(grow=grow_peepal, bark="foliage.bark_pale", seed=23, kind="tree", cards=440, card=1.05),
+    "peepal": dict(grow=grow_peepal, bark="foliage.bark", seed=23, kind="tree", cards=440, card=1.05),
     "lantana": dict(grow=grow_lantana, bark="foliage.bark", seed=53, kind="bush", cards=100, card=0.38),
     "bougainvillea": dict(grow=grow_bougainvillea, bark="foliage.bark", seed=61, kind="bush", cards=100, card=0.42),
 }
