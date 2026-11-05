@@ -655,6 +655,8 @@ fn footprints(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp
 
 /// The ground-floor hall's height, to the underside of the building above it.
 const HALL: f32 = 4.2;
+/// The base course's height along the halls' street walls.
+const PLINTH_H: f32 = 0.55;
 /// Halls a map, at most: each is a hundred-odd pieces.
 const MAX_HALLS: usize = 60;
 
@@ -726,6 +728,37 @@ fn hall(b: &mut Builder, rng: &mut SmallRng, pts: &[Vec2], others: &[Vec<Vec2>])
         }
         // Up into the building above, its top hidden there.
         b.wall(w, a, q, 0.0, HALL + 0.1, T, Mat::Rustic, &ops);
+        // Along the street, a base course of dressed stone under a capping ledge (as Connaught
+        // Place's and the city's buildings', crate::buildings::PLINTH_H), broken at the doorways.
+        if street[i] {
+            let yaw = Quat::from_rotation_y((-dir.y).atan2(dir.x));
+            // Past the wall's ends round a corner to the next street wall (6 cm on, so its ends never
+            // lie in the wall's end faces); short of the end where the next wall is blank (that
+            // wall runs on across this one's face, and the course would meet its end face flat).
+            // (Round an outside corner only: at an inside one the next wall comes back across
+            // this one's face.)
+            let edge = |k: usize| (line[(k + 1) % n] - line[k % n]).normalize_or(Vec2::X);
+            let prev = street[(i + n - 1) % n] && edge(i + n - 1).dot(out) > 0.0;
+            let next = street[(i + 1) % n] && edge(i + 1).dot(out) < 0.0;
+            // Short of the end by the wall's own run past the corner and the next wall's thickness.
+            let short = T * 0.5 + 0.015 + T + 0.05;
+            let mut s = if prev { -0.06 } else { short };
+            let mut runs = vec![];
+            for o in ops.iter().filter(|o| o.bottom < 0.1) {
+                runs.push((s, o.at - o.width * 0.5 - 0.05));
+                s = o.at + o.width * 0.5 + 0.05;
+            }
+            runs.push((s, if next { len + 0.06 } else { len - short }));
+            for (s0, s1) in runs.into_iter().filter(|(s0, s1)| s1 - s0 > 0.2) {
+                let m = a + dir * (s0 + s1) * 0.5;
+                // Its back sunk 2 cm into the wall (its face pressed flat on the wall's would fight).
+                for (h, y, deep, l) in [(PLINTH_H, PLINTH_H * 0.5, 0.06, s1 - s0), (0.07, PLINTH_H + 0.035, 0.09, s1 - s0 - 0.02)] {
+                    let p = m + out * (T * 0.5 + deep * 0.5 - 0.01);
+                    let deep = deep + 0.02;
+                    b.push(Vec3::new(p.x, y, p.y), yaw, super::Shape::Box(Vec3::new(l, h, deep)), Mat::Plinth, false, true);
+                }
+            }
+        }
         // The paint inside, with the wall's openings. (The wall runs on past its corners by half its
         // thickness; the skin is measured from the corners themselves.)
         let run = T * 0.5 + 0.015;

@@ -634,6 +634,11 @@ fn bunting(buf: &mut MeshBuf, a: Vec3, b: Vec3, sag: f32, seed: u32) {
 
 /// A city map's buildings (MapLayout::footprints), merged per chunk and material: walls in the
 /// facade, roofs in clay tile, trim in plaster.
+/// The street base course on the city's buildings: its height, and how far it stands proud of
+/// the wall (it's set as deep again into it).
+const PLINTH_H: f32 = 0.55;
+const PLINTH_DEEP: f32 = 0.08;
+
 fn build_footprints(
     commands: &mut Commands,
     layout: &MapLayout,
@@ -642,6 +647,7 @@ fn build_footprints(
     assets: &AssetServer,
     pending: &mut PendingMips,
     roof: Handle<StandardMaterial>,
+    plinth: Handle<StandardMaterial>,
 ) {
     if layout.footprints.is_empty() {
         return;
@@ -684,6 +690,9 @@ fn build_footprints(
     };
     let mut clutter: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     let mut trims: HashMap<(i32, i32), MeshBuf> = HashMap::new();
+    // The base course along the street (Mat::Plinth's dressed stone): its own buffers, its own
+    // material.
+    let mut plinths: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     let mut signs: HashMap<(i32, i32), MeshBuf> = HashMap::new();
     let tint = |m: Mat| match m {
         Mat::PlasterOchre => Color::srgb(0.95, 0.76, 0.48),
@@ -808,6 +817,17 @@ fn build_footprints(
                     let ext = |c: i8| c as f32 * DEEP;
                     let (s0, s1) = (-ext(corner[i]), len + ext(corner[(i + 1) % n]));
                     t.prism(at((s0 + s1) * 0.5, split + 0.04) + out * (DEEP - 0.1) * 0.5, rot, Vec3::new(s1 - s0, 0.3, DEEP + 0.1), 0.1, trim);
+                }
+                // A base course of dressed stone along the street at a building's foot, under a
+                // capping ledge (as Connaught Place's, crate::map::cp), half set into the wall;
+                // run round outside corners and stopped short of inside ones.
+                if street && fp.base < 0.5 {
+                    let ext = |c: i8| c as f32 * PLINTH_DEEP;
+                    let (s0, s1) = (-ext(corner[i]), len + ext(corner[(i + 1) % n]));
+                    let p = plinths.entry((cx, cz)).or_default();
+                    let stone = [v, v, v, 1.0];
+                    p.prism(at((s0 + s1) * 0.5, fp.base + PLINTH_H * 0.5), rot, Vec3::new(s1 - s0, PLINTH_H, 2.0 * PLINTH_DEEP), 0.03, stone);
+                    p.prism(at((s0 + s1) * 0.5, fp.base + PLINTH_H + 0.03), rot, Vec3::new(s1 - s0 + 0.04, 0.07, 2.0 * PLINTH_DEEP + 0.07), 0.025, stone);
                 }
                 // A pilaster up each outside corner.
                 if corner[i] > 0 {
@@ -1191,6 +1211,10 @@ fn build_footprints(
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(roof.clone()), Transform::from_translation(centre), range.0.clone(), range, OfMap));
     }
     info!("city: trim {trim_tris} triangles");
+    for (_, buf) in plinths {
+        let (mesh, centre) = buf.into_mesh();
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(plinth.clone()), Transform::from_translation(centre), OfMap, crate::quality::LodShadow));
+    }
     let (set, mr) = roof_tex;
     let roof_mat = materials.add(StandardMaterial {
         base_color: Color::WHITE,
@@ -1279,7 +1303,8 @@ fn build_chunks(
     }
     // City trim (parapets, ledges, pilasters) in the clean stucco.
     let roof = mat_cache.entry(Mat::Stucco).or_insert_with(|| material_for(Mat::Stucco, &sets, &mut materials)).clone();
-    build_footprints(&mut commands, &layout, &mut meshes, &mut materials, &assets, &mut pending, roof);
+    let plinth = mat_cache.entry(Mat::Plinth).or_insert_with(|| material_for(Mat::Plinth, &sets, &mut materials)).clone();
+    build_footprints(&mut commands, &layout, &mut meshes, &mut materials, &assets, &mut pending, roof, plinth);
     info!("architecture: {} static blocks merged into {} chunk meshes", layout.blocks.iter().filter(|b| is_static_visual(b)).count(), n);
     commands.insert_resource(pending);
 }

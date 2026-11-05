@@ -2,9 +2,9 @@
 //! same way and overlap, with different materials (same-material overlaps shade identically, since
 //! building textures are mapped in world space, so they can't be seen to fight).
 //!
-//! cargo run --release -p shared --bin zfight_check [-- --all] [--dump <file.json>]   (VIVAD_MAP and VIVAD_MAP_SEED pick the map)
+//! cargo run --release -p shared --bin zfight_check [-- --all] [--list] [--dump <file.json>]   (VIVAD_MAP and VIVAD_MAP_SEED pick the map)
 //!
-//! `--dump` also writes model placements, visible box faces and the terrain heights for
+//! `--list` prints every pair found (its faces' centres, normal and half sizes). `--dump` also writes model placements, visible box faces and the terrain heights for
 //! tools/zfight_models.py, which checks the models' own faces against both.
 
 use std::collections::HashMap;
@@ -75,6 +75,7 @@ fn inside(b: &Block, p: Vec3) -> bool {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let all = args.iter().any(|a| a == "--all");
+    let list = args.iter().any(|a| a == "--list");
     let dump = args.iter().position(|a| a == "--dump").and_then(|i| args.get(i + 1)).cloned();
     let map = shared::map::generate(shared::map::MapId::from_env(), shared::sim::map_seed());
     let blocks: Vec<&Block> = map.blocks.iter().chain(map.doors.iter()).collect();
@@ -119,6 +120,9 @@ fn main() {
                         continue;
                     }
                     total += 1;
+                    if list {
+                        println!("  {ma:?} at {:.3} (n {:.2}, {:.3} x {:.3}) vs {mb:?} at {:.3} ({:.3} x {:.3})", a.c, a.n, a.hu, a.hv, b.c, b.hu, b.hv);
+                    }
                     let dir = if a.n.y > 0.9 { "top" } else if a.n.y < -0.9 { "underside" } else { "side" };
                     let k = if format!("{ma:?}") <= format!("{mb:?}") { (ma, mb, dir) } else { (mb, ma, dir) };
                     let e = pairs.entry(k).or_insert((0, 0.0, a.c));
