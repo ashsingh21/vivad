@@ -715,7 +715,7 @@ fn build_footprints(
         let r = |k: u32| hash01(seed, k, 11);
         // Plastered walls take a colour from the palette; brick and stone keep their own (the
         // material's tint).
-        let painted = !matches!(fp.mat, Mat::Brick | Mat::RedSandstone | Mat::Sandstone);
+        let painted = !matches!(fp.mat, Mat::Brick | Mat::RedSandstone | Mat::Sandstone | Mat::Granite | Mat::Buff);
         let wall = if painted { WALLS[(r(4) * WALLS.len() as f32) as usize % WALLS.len()] } else { [1.0; 3] };
         let v = 0.96 + 0.06 * r(1);
         // Darker toward the street, and cooler there, as if in the lane's blue shade.

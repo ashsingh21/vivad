@@ -141,6 +141,9 @@ impl Plugin for AutoshotPlugin {
                 shots: vec![
                     ("01_overview", v(-60.0, 260.0, 300.0), v(0.0, 0.0, 0.0)),
                     ("02_bazaar_street", v(-45.0, 4.5, 2.0), v(20.0, 3.0, 0.0)),
+                    // Hauz Khas (VIVAD_MAP=hauzkhas): the madrasa's wings along the tank, from above and the lawn.
+                    ("hk_madrasa_air", v(-20.0, 45.0, 150.0), v(-35.0, 0.0, 75.0)),
+                    ("hk_madrasa", v(-10.0, 1.8, 120.0), v(-40.0, 5.0, 85.0)),
                     // India Gate (VIVAD_MAP=indiagate): from down Kartavya Path, and from the side.
                     ("ig_gate", v(30.0, 3.0, -4.6), v(115.8, 20.0, -4.6)),
                     ("ig_gate_side", v(115.8, 8.0, 70.0), v(115.8, 18.0, -4.6)),

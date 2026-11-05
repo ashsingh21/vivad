@@ -571,6 +571,12 @@ fn footprints(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp
             entered.push(pts);
             continue;
         }
+        // Ruins (Hauz Khas's madrasa and tombs): their own arcades, not a city block's shops.
+        if bld.kind == "ruins" {
+            let h = ruin(b, rng, &pts, bld.h);
+            b.map.footprints.push(Footprint { pts, base: h, top: h + 0.55, mat: Mat::Granite });
+            continue;
+        }
         let mat = match bld.kind.as_str() {
             "commercial" | "retail" | "cp" => Mat::Plaster,
             "mosque" => Mat::RedSandstone,
@@ -778,6 +784,78 @@ fn hall(b: &mut Builder, rng: &mut SmallRng, pts: &[Vec2], others: &[Vec<Vec2>])
             b.chest(w, Vec3::new(p.x, 0.0, p.y), yaw_u, ChestKind::Peti);
         }
     }
+}
+
+/// A ruin's arcades: rubble-stone walls along its outline, an arch every few metres on every side
+/// (open, as a ruined madrasa's are), piers down the middle of the wider wings, a little domed
+/// chhatri now and then along the roof's longest side, and a find or two inside. Returns the
+/// height its roof (the footprint, from there up) starts at.
+fn ruin(b: &mut Builder, rng: &mut SmallRng, pts: &[Vec2], h: f32) -> f32 {
+    const T: f32 = 0.6;
+    let top = h.clamp(4.5, 6.5) - 0.55;
+    let w = Frame::new(Vec3::ZERO, 0.0);
+    let n = pts.len();
+    let ccw = pts.iter().zip(pts.iter().cycle().skip(1)).map(|(a, b)| a.x * b.y - b.x * a.y).sum::<f32>() > 0.0;
+    let outward = |e: Vec2| if ccw { Vec2::new(e.y, -e.x) } else { Vec2::new(-e.y, e.x) }.normalize_or_zero();
+    let normals: Vec<Vec2> = (0..n).map(|i| outward(pts[(i + 1) % n] - pts[i])).collect();
+    let inset = T * 0.5 + 0.05;
+    let line: Vec<Vec2> = (0..n)
+        .map(|i| {
+            let (n0, n1) = (normals[(i + n - 1) % n], normals[i]);
+            let m = (n0 + n1).normalize_or(n1);
+            pts[i] - m * (inset / m.dot(n1).max(0.5))
+        })
+        .collect();
+    let mut longest = (0, 0.0f32);
+    for i in 0..n {
+        let (a, q) = (line[i], line[(i + 1) % n]);
+        let len = a.distance(q);
+        if len < 0.05 {
+            continue;
+        }
+        if len > longest.1 {
+            longest = (i, len);
+        }
+        let dir = (q - a) / len;
+        let (a, q) = (a - dir * (T * 0.5 + 0.015), q + dir * (T * 0.5 + 0.015));
+        let len = a.distance(q);
+        // Arches a bay of 3.6 m, piers 1.2 m between them.
+        let k = ((len - 1.2) / 3.6).floor() as usize;
+        let ops: Vec<Opening> = (0..k).map(|j| Opening::arch(len * 0.5 + (j as f32 - (k as f32 - 1.0) * 0.5) * 3.6, 2.4, (top - 1.2).min(3.6))).collect();
+        b.wall(w, a, q, 0.0, top + 0.1, T, Mat::Granite, &ops);
+        // A plinth along its foot and a moulding at the arches' springing, proud of the face.
+        let out = normals[i];
+        let mid = (a + q) * 0.5 + out * (T * 0.5 + 0.08);
+        let yaw = (-dir.y).atan2(dir.x);
+        b.deco(Frame::new(Vec3::new(mid.x, 0.0, mid.y), yaw), Vec3::new(0.0, top - 0.25, 0.0), Vec3::new(len, 0.3, 0.16), Mat::Buff);
+    }
+    // Piers down the middle of a wing wide enough to need them.
+    let (i, len) = longest;
+    let (a, q) = (line[i], line[(i + 1) % n]);
+    let dir = (q - a) / len.max(1e-3);
+    let inward = -normals[i];
+    let breadth = (0..n).map(|k| (pts[k] - pts[i]).dot(inward)).fold(0.0f32, f32::max);
+    if breadth > 8.0 {
+        let k = (len / 5.0).floor() as usize;
+        for j in 1..k {
+            let p = a + dir * (j as f32 * len / k as f32) + inward * breadth * 0.5;
+            if super::footprint::contains(pts, p) {
+                b.bx(Frame::new(Vec3::new(p.x, 0.0, p.y), (-dir.y).atan2(dir.x)), Vec3::new(0.0, top * 0.5, 0.0), Vec3::new(0.9, top, 0.9), Mat::Granite);
+                if j % 3 == 1 {
+                    b.loot(w, Vec3::new(p.x + inward.x * 1.5, 0.3, p.y + inward.y * 1.5));
+                }
+            }
+        }
+    }
+    // Chhatris along the roof over the longest side, every 18 m or so.
+    let k = (len / 18.0).floor() as usize;
+    for j in 0..k {
+        let p = a + dir * (len * (j as f32 + 0.5) / k as f32) + inward * 2.2;
+        if rng.random_bool(0.8) {
+            b.chhatri(w, Vec3::new(p.x, top + 0.55 + Builder::chhatri_floor(2.6), p.y), 2.6, Mat::Buff);
+        }
+    }
+    top
 }
 
 /// About how wide an outline is across its narrow side: the short side of the rectangle with its
