@@ -52,6 +52,7 @@
   "wood": {
     "teak": "#a8663a",
     "teak_dark": "#6e3c20",
+    "cladding": "#93705a",
     "pine": "#d9a66a",
     "laminate": "#e8cfa5",
     "rope": "#d7b77a"

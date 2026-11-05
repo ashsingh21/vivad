@@ -85,6 +85,11 @@ fn lin(c: [f32; 3]) -> LinearRgba {
     Color::srgb(c[0], c[1], c[2]).to_linear()
 }
 
+/// A palette token, linear.
+fn tok(name: &str) -> LinearRgba {
+    lin(shared::style::srgb(name))
+}
+
 /// Ground colour and grass cover on a city map, by what covers the ground there
 /// (shared::map::terrain::ground): asphalt, pavement, car parks and plazas bare, parks green.
 pub fn paint_city(x: f32, z: f32, h: f32, normal: Vec3, class: u8) -> (LinearRgba, f32) {
@@ -92,9 +97,11 @@ pub fn paint_city(x: f32, z: f32, h: f32, normal: Vec3, class: u8) -> (LinearRgb
     let mix = |a: LinearRgba, b: LinearRgba, t: f32| a.mix(&b, t.clamp(0.0, 1.0));
     let n = fbm(x / 3.0, z / 3.0, 2, 5);
     let (c, cover) = match class {
-        ground::ROAD => (mix(lin([0.34, 0.33, 0.34]), lin([0.42, 0.40, 0.38]), fbm(x / 9.0, z / 9.0, 2, 71) * 1.4 - 0.2), 0.0),
-        ground::PARKING => (lin([0.42, 0.41, 0.42]), 0.0),
-        ground::PLAZA => (mix(lin([0.62, 0.55, 0.47]), lin([0.55, 0.42, 0.36]), fbm(x / 4.0, z / 4.0, 2, 73)), 0.0),
+        // The style guide's tokens (assets/style/palette.json): blue-grey tarmac with big soft
+        // patches, light paving; slow variation only (docs/style-guide.md section 4).
+        ground::ROAD => (mix(tok("ground.tarmac"), tok("ground.tarmac_patch"), fbm(x / 9.0, z / 9.0, 2, 71) * 1.4 - 0.2), 0.0),
+        ground::PARKING => (tok("ground.tarmac_patch"), 0.0),
+        ground::PLAZA => (mix(tok("ground.paving"), tok("ground.path"), fbm(x / 12.0, z / 12.0, 2, 73) * 0.6), 0.0),
         ground::PARK => {
             let mut c = mix(lin([0.30, 0.44, 0.16]), lin([0.23, 0.38, 0.13]), fbm(x / 22.0, z / 22.0, 3, 91) * 1.6 - 0.3);
             // Hills read from afar: their tops sun-dried to a warm yellow-green, their steepest
@@ -108,11 +115,11 @@ pub fn paint_city(x: f32, z: f32, h: f32, normal: Vec3, class: u8) -> (LinearRgb
         // Under the water: silt (seen through the surface).
         ground::WATER => (mix(lin([0.22, 0.24, 0.18]), lin([0.30, 0.28, 0.20]), fbm(x / 5.0, z / 5.0, 2, 79)), 0.0),
         // Lanes and park paths: trodden earth and old brick.
-        ground::PATH => (mix(lin([0.55, 0.45, 0.34]), lin([0.50, 0.36, 0.28]), fbm(x / 3.0, z / 3.0, 2, 83)), 0.0),
-        // Pavement: worn sandstone-grey slabs, darker where it's dusty.
-        _ => (mix(lin([0.70, 0.66, 0.60]), lin([0.62, 0.57, 0.50]), fbm(x / 7.0, z / 7.0, 2, 77) * 1.4 - 0.2), 0.0),
+        ground::PATH => (mix(tok("ground.path"), tok("ground.dirt"), fbm(x / 6.0, z / 6.0, 2, 83) * 0.5), 0.0),
+        // Pavement: light slabs, a shade warmer where it's dusty.
+        _ => (mix(tok("ground.paving"), tok("ground.paving_joint"), fbm(x / 12.0, z / 12.0, 2, 77) * 0.5 - 0.1), 0.0),
     };
-    let v = 0.92 + 0.16 * n;
+    let v = 0.97 + 0.06 * n;
     (LinearRgba::new(c.red * v, c.green * v, c.blue * v, 1.0), cover)
 }
 

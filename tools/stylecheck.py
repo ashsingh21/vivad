@@ -29,7 +29,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 OUT = os.path.join(ROOT, "previews", "style")
 LAST = os.path.join(OUT, "last.json")
 BASELINE = os.path.join(OUT, "baseline.json")
-VIEWS = ["style_block", "style_kerb", "style_verandah", "style_shop", "style_roof", "style_room"]
+VIEWS = ["style_block", "style_facade", "style_kerb", "style_verandah", "style_shop", "style_roof", "style_room"]
 
 # (metric, low, high): None for no bound. The views facing the sun (the roof) are held to the high
 # key; the block faces away from it (Connaught Place is a ring: half of it always does), so its

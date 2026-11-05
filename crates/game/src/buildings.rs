@@ -95,7 +95,7 @@ fn material_for(mat: Mat, sets: &HashMap<&'static str, TexSet>, materials: &mut 
         Mat::PlasterBlue => textured("plaster", Color::srgb(0.55, 0.72, 0.95), 0.9, materials),
         Mat::Marble => textured("plaster", Color::srgb(1.0, 0.99, 0.97), 0.35, materials),
         Mat::Brick => textured("brick", Color::WHITE, 0.9, materials),
-        Mat::Wood => textured("panga_wood", tok("wood.teak_dark"), 0.75, materials),
+        Mat::Wood => textured("panga_wood", tok("wood.cladding"), 0.75, materials),
         Mat::Thatch => textured("thatch", Color::WHITE, 0.95, materials),
         // Connaught Place: the style guide's tokens (docs/style-guide.md) over its painted textures.
         Mat::Stucco => matte(textured("stucco", tok("architecture.stucco"), 0.92, materials), materials),
@@ -449,12 +449,20 @@ impl MeshBuf {
         let pos: Vec<[f32; 3]> = self.pos.iter().map(|p| (Vec3::from(*p) - c).to_array()).collect();
         let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
             .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
-            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.nrm)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.nrm.clone())
             .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, self.uv)
             .with_inserted_indices(Indices::U32(self.idx));
-        if !self.col.is_empty() {
-            m.insert_attribute(Mesh::ATTRIBUTE_COLOR, self.col);
-        }
+        // The sky's occlusion baked in: a face turned down sees none of the sky, so the undersides of
+        // cornices, sills, sunshades and ceilings come out darker even in shade, where the ambient
+        // alone would light every face the same (docs/style-guide.md section 4: corner dark). Free
+        // at run time.
+        let sky = |n: &[f32; 3]| 1.0 - SKY_SHADE * (-n[1]).max(0.0);
+        let col: Vec<[f32; 4]> = if self.col.is_empty() {
+            self.nrm.iter().map(|n| { let k = sky(n); [k, k, k, 1.0] }).collect()
+        } else {
+            self.col.iter().zip(&self.nrm).map(|(c, n)| { let k = sky(n); [c[0] * k, c[1] * k, c[2] * k, c[3]] }).collect()
+        };
+        m.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
         let _ = m.generate_tangents();
         (m, c)
     }
@@ -463,6 +471,9 @@ impl MeshBuf {
 /// How far the architecture's box edges are cut back near (metres; at most a third of a box's
 /// thinnest side): docs/style-guide.md section 3's 4-8 cm.
 const BEVEL: f32 = 0.05;
+
+/// How much darker a face turned straight down is than one facing up or sideways (baked sky occlusion).
+const SKY_SHADE: f32 = 0.26;
 
 /// A city facade's bay width and storey height, in metres.
 pub(crate) const BAY: f32 = 3.2;

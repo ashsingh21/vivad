@@ -108,7 +108,7 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                     None => vec![(q0, q1)],
                 };
                 for (a0, a1) in spans {
-                    b.deco(radial, Vec3::new((a0 + a1) / 2.0, r.g + lift + 0.01, 0.0), Vec3::new(a1 - a0 - 0.01, 0.02, chord_at(a1)), Mat::Stone);
+                    b.deco(radial, Vec3::new((a0 + a1) / 2.0, r.g + lift + 0.02, 0.0), Vec3::new(a1 - a0 - 0.01, 0.02, chord_at(a1)), Mat::Stone);
                 }
             }
             // Roof, a stone-tiled terrace, its parapets and cornices (their tops 5 cm under the
@@ -124,7 +124,11 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
             }
             for (rad, out) in [(r.ro + 0.15, 1.0f32), (r.ri - 0.15, -1.0)] {
                 b.wall(w, xz(rad, s0), xz(rad, s1), r.g + r.u + lift, 1.0, 0.3, Mat::Stucco, &[]);
-                b.deco(radial, Vec3::new(rad + out * 0.25, r.g + r.u - 0.2 + lift, 0.0), Vec3::new(0.5, 0.3, chord_at(rad) + 0.1), Mat::Stucco);
+                // A chunky cornice in two steps (docs/style-guide.md section 3), and a coping on the
+                // parapet: their shadow lines are what draw the block at a distance.
+                b.deco(radial, Vec3::new(rad + out * 0.4, r.g + r.u - 0.23 + lift, 0.0), Vec3::new(0.8, 0.36, chord_at(rad + 0.8) + 0.1), Mat::Stucco);
+                b.deco(radial, Vec3::new(rad + out * 0.24, r.g + r.u - 0.495 + lift, 0.0), Vec3::new(0.48, 0.19, chord_at(rad + 0.5) + 0.1), Mat::Stucco);
+                b.deco(radial, Vec3::new(rad, r.g + r.u + 1.03 + lift, 0.0), Vec3::new(0.5, 0.14, chord_at(rad + 0.25) + 0.08), Mat::Stucco);
                 b.deco(radial, Vec3::new(rad + out * 0.3, r.g - 0.25 + lift, 0.0), Vec3::new(0.6, 0.4, chord_at(rad) + 0.1), Mat::Stucco);
             }
             // A beam across each verandah from every column to the shop wall, under the ceiling: the
@@ -270,31 +274,57 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                     });
                 }
             }
-            // Upper storey: a tall window to each segment, front and back, framed outside by a sill,
-            // side mouldings and a hood.
-            let tall = |at: f32| Opening { at, width: 1.4, bottom: 0.8, top: 3.0 };
+            // Upper storey: a big window to each segment, front and back, in a deep surround with a
+            // sill and a chhajja (the sunshade slab) over it; a sill band along the whole front and
+            // pilasters between the bays (docs/style-guide.md section 3: chunky, soft, big shadow lines).
+            let (bot, top, hw) = (1.15, 3.3, 0.9);
+            let tall = |at: f32| Opening { at, width: 2.0 * hw, bottom: bot, top };
             for (rad, out) in [(r.ro - 0.2, 1.0f32), (r.ri + 0.2, -1.0)] {
                 let (p, q) = (xz(rad, s0), xz(rad, s1));
                 b.wall(w, p, q, r.g + lift, r.u - SLAB, 0.3, Mat::Stucco, &[tall(p.distance(q) / 2.0)]);
-                let face = rad + out * 0.15;
+                // The wall is a chord: in the segment's middle frame its face is a plane.
+                let face = rad * ((s1 - s0) / 2.0).cos() + out * 0.15;
                 let y0 = r.g + lift;
-                b.deco(radial, Vec3::new(face + out * 0.06, y0 + 0.74, 0.0), Vec3::new(0.12, 0.1, 1.75), Mat::Stucco);
-                b.deco(radial, Vec3::new(face + out * 0.05, y0 + 3.12, 0.0), Vec3::new(0.1, 0.16, 1.95), Mat::Stucco);
-                b.deco(radial, Vec3::new(face + out * 0.09, y0 + 3.24, 0.0), Vec3::new(0.18, 0.08, 2.1), Mat::Stucco);
+                // Trim from `o0` to `o1` proud of the face (from a centimetre inside it, so no face is shared).
+                let trim = |b: &mut Builder, o1: f32, ya: f32, yb: f32, z: f32, zw: f32| {
+                    b.deco(radial, Vec3::new(face + out * (o1 - 0.01) / 2.0, y0 + (ya + yb) / 2.0, z), Vec3::new(o1 + 0.01, yb - ya, zw), Mat::Stucco);
+                };
+                let len = p.distance(q);
+                trim(b, 0.1, bot - 0.22, bot - 0.1, 0.0, len + 0.02);
+                trim(b, 0.24, bot - 0.16, bot, 0.0, 2.0 * hw + 0.56);
+                for side in [-1.0f32, 1.0] {
+                    trim(b, 0.15, bot, top + 0.2, side * (hw + 0.1), 0.2);
+                }
+                trim(b, 0.15, top, top + 0.2, 0.0, 2.0 * hw + 0.4);
+                trim(b, 0.62, top + 0.3, top + 0.42, 0.0, 2.0 * hw + 0.9);
+                for side in [-1.0f32, 1.0] {
+                    trim(b, 0.34, top + 0.12, top + 0.3, side * (hw + 0.3), 0.14);
+                }
                 // Glazed, a blind or curtain drawn some way down behind the glass in a shop's colour,
                 // and now and then a window AC in the bottom of it (half out over the street).
                 let am = (s0 + s1) / 2.0;
-                b.map.signs.push(super::ShopSign { pos: r.at(rad + out * 0.02, am, y0 + 1.9), facing: Vec2::new(am.cos(), am.sin()) * out, width: 1.4, height: 2.2, kind: SignKind::Glass });
+                let (mid_y, h) = ((bot + top) / 2.0, top - bot);
+                b.map.signs.push(super::ShopSign { pos: r.at(rad + out * 0.02, am, y0 + mid_y), facing: Vec2::new(am.cos(), am.sin()) * out, width: 2.0 * hw, height: h, kind: SignKind::Glass });
                 let ac = rng.random_bool(0.2);
-                let drop = rng.random_range(0.5..if ac { 1.5 } else { 2.1 });
-                b.deco(radial, Vec3::new(rad - out * 0.12, y0 + 3.0 - drop / 2.0, 0.0), Vec3::new(0.03, drop, 1.36), Mat::Paint(rng.random_range(0..7)));
+                let drop = rng.random_range(0.5..if ac { 1.4 } else { 1.9 });
+                b.deco(radial, Vec3::new(rad - out * 0.12, y0 + top - drop / 2.0, 0.0), Vec3::new(0.03, drop, 2.0 * hw - 0.04), Mat::Paint(rng.random_range(0..7)));
                 if ac {
-                    b.deco(radial, Vec3::new(rad + out * 0.05, y0 + 1.1, 0.0), Vec3::new(0.62, 0.55, 0.8), Mat::Plaster);
+                    b.deco(radial, Vec3::new(rad + out * 0.05, y0 + bot + 0.3, 0.0), Vec3::new(0.62, 0.55, 0.8), Mat::Plaster);
                 }
-                for side in [-0.79f32, 0.79] {
-                    b.deco(radial, Vec3::new(face + out * 0.04, y0 + 1.9, side), Vec3::new(0.08, 2.24, 0.16), Mat::Stucco);
+                for side in [-1.0f32, 1.0] {
                     // Louvred shutters folded back either side, the ring's green.
-                    b.deco(radial, Vec3::new(face + out * 0.03, y0 + 1.9, side * 1.47), Vec3::new(0.06, 2.1, 0.58), Mat::Paint(7));
+                    trim(b, 0.07, bot + 0.05, top - 0.05, side * (hw + 0.48), 0.54);
+                    b.deco(radial, Vec3::new(face + out * 0.065, y0 + mid_y, side * (hw + 0.48)), Vec3::new(0.03, h - 0.14, 0.5), Mat::Paint(7));
+                }
+            }
+            // Pilasters between the bays upstairs (and at the block's ends), on the sill band up to the cornice.
+            for (col, last) in [(s0, false), (s1, true)] {
+                if last && i + 1 != n {
+                    continue;
+                }
+                for (rad, out) in [(r.ro - 0.05, 1.0f32), (r.ri + 0.05, -1.0)] {
+                    let (ya, yb) = (r.g + lift + bot - 0.1, r.g + r.u - 0.58 + lift);
+                    b.deco(Frame::new(c, -col), Vec3::new(rad + out * 0.07, (ya + yb) / 2.0, 0.0), Vec3::new(0.16, yb - ya, 0.42), Mat::Stucco);
                 }
             }
             // A party wall between every pair of shops; the block's ends close the shops and
@@ -351,7 +381,7 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
             if i % 2 == 1 && !stairs(i) {
                 for (rad, len) in [((r.ri * 2.0 + r.ro) / 3.0, 1.2), ((r.ri + r.ro * 2.0) / 3.0, 1.2)] {
                     b.map.signs.push(super::ShopSign { pos: r.at(rad, am, r.g + r.u - SLAB - 0.03 + lift), facing: out_dir(am), width: 0.14, height: len, kind: SignKind::Light });
-                    b.map.signs.push(super::ShopSign { pos: r.at(rad, am, r.g + lift + 0.03), facing: out_dir(am), width: 3.4, height: 3.4, kind: SignKind::Pool });
+                    b.map.signs.push(super::ShopSign { pos: r.at(rad, am, r.g + lift + 0.045), facing: out_dir(am), width: 3.4, height: 3.4, kind: SignKind::Pool });
                 }
             }
             // Each room's clutter (docs/style-guide.md section 6), on and by the partition it
