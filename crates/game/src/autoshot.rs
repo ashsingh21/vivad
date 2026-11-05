@@ -147,6 +147,7 @@ impl Plugin for AutoshotPlugin {
                     // India Gate (VIVAD_MAP=indiagate): from down Kartavya Path, and from the side.
                     ("ig_gate", v(30.0, 3.0, -4.6), v(115.8, 20.0, -4.6)),
                     ("ig_gate_side", v(115.8, 8.0, 70.0), v(115.8, 18.0, -4.6)),
+                    ("ig_gate_close", v(92.0, 1.8, 14.0), v(115.8, 12.0, -4.6)),
                     // Chandni Chowk's houses (VIVAD_MAP=chandni, seed 7): one from its lane,
                     // inside, and from above.
                     ("ch_house_n", v(-2.0, 2.0, -40.0), v(-2.0, 3.5, -50.0)),

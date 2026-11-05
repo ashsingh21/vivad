@@ -470,6 +470,38 @@ def rustic():
     L.save("rustic", 1.4, paint=0.35)
 
 
+def ashlar():
+    """Dressed sandstone in courses (India Gate, Lutyens' Delhi: Mat::Buff), 2 m a repeat: blocks
+    2 m long and 67 cm high, big as a monument's courses are (smaller reads as brick on one 40 m
+    tall), each row's joint a metre along from the last; joints rounded and soft (the block's top
+    edge catching the light, the groove dark), every block its own shade of the stone, soft
+    weathering streaks. Painted (style guide section 4): shapes, no grain. Near-white: the buff
+    token tints it."""
+    rng = np.random.default_rng(61)
+    n = 512
+    L = Layer(n, n, rng)
+    y, x = np.mgrid[0:n, 0:n].astype(np.float32)
+    ch, bw = n / 3, n
+    row = (y // ch).astype(int)
+    xs = (x + (row % 2) * bw / 2) % n
+    col = (xs // bw).astype(int)
+    fu, fv = (xs % bw) / bw, (y % ch) / ch
+    # Rounded shoulders: 0 in the joint, 1 on the face (the joints a touch narrower across).
+    face = smooth(0.0, 0.05, np.minimum(fu, 1 - fu) * 4.0) * smooth(0.0, 0.08, np.minimum(fv, 1 - fv))
+    # Each block's tone, and a light lip along its top where the sun from above catches the arris.
+    tone = rng.random(3).astype(np.float32)[row % 3]
+    lip = smooth(0.1, 0.03, fv) * smooth(0.0, 0.05, np.minimum(fu, 1 - fu))
+    patches = periodic_noise(n, n, rng, 2, 2)
+    # Weathering: soft darker streaks run down from some joints, and the odd paler block face.
+    streaks = smooth(0.55, 0.9, periodic_noise(n, n, rng, 8, 1)) * smooth(1.0, 0.2, fv)
+    # (Linear: near white, the gamma squeezes differences, so the steps are twice what they read as.)
+    g = (0.97 - 0.26 * tone - 0.07 * patches - 0.12 * streaks + 0.04 * lip) * (0.72 + 0.28 * face)
+    L.col = np.dstack([g, g * 0.995, g * 0.985]).astype(np.float32)
+    L.hgt = 1.6 * face
+    L.rough[:] = 0.85
+    L.save("ashlar", 1.3, paint=0.3)
+
+
 def wood():
     """Painted wood, 2 m a repeat (the shopfronts' cladding, doors, frames: Mat::Wood), to the style
     guide: planks 16 cm wide along v, each a tone of its own, soft dark joints, a few broad grain
@@ -649,7 +681,7 @@ def carton(L, r, x, w, y0, y1):
     L.rough[y0:y1, x:x + w] = 0.85
 
 
-JOBS = {f.__name__: f for f in (facade, shop, rustic, limewash, stucco, stone, roof, ground, wear, wood)}
+JOBS = {f.__name__: f for f in (facade, shop, rustic, limewash, stucco, stone, roof, ground, wear, wood, ashlar)}
 # All of them, or just those named: python3 tools/textures/city.py shop
 for job in sys.argv[1:] or JOBS:
     JOBS[job]()
