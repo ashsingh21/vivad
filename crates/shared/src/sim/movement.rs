@@ -48,10 +48,13 @@ impl Gait {
 /// at their own pace (sped up, mocap reads as fast-forward). Must match RIFLE_GAIT in
 /// tools/blender/characters/anims.py.
 pub const RIFLE_WALK: Gait = Gait([1.35, 1.12, 1.23, 1.27]);
-pub const RIFLE_RUN: Gait = Gait([5.16, 2.72, 4.36, 4.88]);
+// Running and the aimed jog near the unarmed pace in every direction, as Fortnite moves (what you
+// carry hardly slows you, nor does going backward much): the clips are retimed to these
+// (tools/blender/characters/anims.py RIFLE_GAIT), quicker steps, not sliding feet.
+pub const RIFLE_RUN: Gait = Gait([5.6, 5.0, 5.4, 5.4]);
 pub const RIFLE_CROUCH: Gait = Gait([0.93, 0.92, 1.12, 1.02]);
 pub const RIFLE_AIM_WALK: Gait = Gait([1.29, 1.19, 1.14, 1.10]);
-pub const RIFLE_AIM_RUN: Gait = Gait([3.02, 2.52, 3.50, 3.97]);
+pub const RIFLE_AIM_RUN: Gait = Gait([3.8, 3.4, 3.8, 3.8]);
 pub const RIFLE_AIM_CROUCH: Gait = Gait([0.88, 0.84, 1.09, 0.98]);
 /// As fast as the plain sprint: what's in your hands doesn't slow it (as in Fortnite).
 pub const RIFLE_SPRINT: f32 = SPRINT_SPEED;

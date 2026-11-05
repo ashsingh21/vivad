@@ -529,8 +529,10 @@ fn drive(
                         _ => None,
                     };
                     let aim_moves = gun == Some(true) && intent.held(btn::AIM) && !kin.sliding && set.has("rifleaim_run_f");
-                    // Sliding (low and still fast), or just out of it and getting up.
-                    let sliding = low && speed > CROUCH_SPEED + 1.2;
+                    // Sliding (the sim's slide, or low and still slide-fast), or just out of it and
+                    // getting up. Not merely low and moving: crouching out of an aimed jog (3.4-3.8
+                    // m/s) slows to a crouch, not a slide.
+                    let sliding = kin.sliding || (low && speed > WALK_SPEED - 0.5);
                     if sliding {
                         anim.slide_from.get_or_insert(clock);
                         anim.slide_end = None;

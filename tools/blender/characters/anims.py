@@ -389,11 +389,12 @@ MIXAMO = os.path.join(HERE, "mixamo")
 # over the Mixamo pack's.
 MOTUS = os.path.join(HERE, "mocaponline", "FBX_Rifle_Basic_27A2", "Animation", "In-Place")
 # Moving with a long gun, each gait's speed by direction (forward, back, left, right; m/s): the
-# pack's own, as recorded (measured on the male; the female's clips are set to the same, as both
+# pack's own as recorded for walking and crouching; running and the aimed jog near the unarmed pace
+# all round (Fortnite's responsiveness; the clips retimed to them) (measured on the male; the female's clips are set to the same, as both
 # move alike). Must match RIFLE_GAIT in crates/shared/src/sim/movement.rs.
 RIFLE_GAIT = {
-    "walk": (1.35, 1.12, 1.23, 1.27), "run": (5.16, 2.72, 4.36, 4.88), "crouch": (0.93, 0.92, 1.12, 1.02),
-    "aimwalk": (1.29, 1.19, 1.14, 1.10), "aimrun": (3.02, 2.52, 3.50, 3.97), "aimcrouch": (0.88, 0.84, 1.09, 0.98),
+    "walk": (1.35, 1.12, 1.23, 1.27), "run": (5.6, 5.0, 5.4, 5.4), "crouch": (0.93, 0.92, 1.12, 1.02),
+    "aimwalk": (1.29, 1.19, 1.14, 1.10), "aimrun": (3.8, 3.4, 3.8, 3.8), "aimcrouch": (0.88, 0.84, 1.09, 0.98),
 }
 # As fast as the plain sprint (Fortnite's sprint doesn't care what's in your hands).
 RIFLE_SPRINT = 8.6

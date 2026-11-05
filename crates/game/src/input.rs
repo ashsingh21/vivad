@@ -239,6 +239,12 @@ fn write_intent(
     if *walking {
         held |= btn::WALK;
     }
+    // Sprint by default, as Fortnite's: moving forward on foot (not aiming, walking or crouched)
+    // sprints without the key; VIVAD_AUTO_SPRINT=0 for hold-to-sprint. Set here in the intent, so
+    // every peer's sim sees the same.
+    if auto_sprint() && held & (btn::AIM | btn::WALK | btn::CROUCH) == 0 && intent.move_axis.y > 0.3 {
+        held |= btn::SPRINT;
+    }
     intent.released |= before & !held;
     intent.held = held;
 
@@ -263,6 +269,11 @@ fn write_intent(
             v
         }));
     }
+}
+
+fn auto_sprint() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("VIVAD_AUTO_SPRINT").map_or(true, |v| v != "0"))
 }
 
 thread_local! {
