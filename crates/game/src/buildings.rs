@@ -247,6 +247,12 @@ impl MeshBuf {
     }
 
     fn add_box(&mut self, b: &Block, size: Vec3) {
+        // Soft edges near (docs/style-guide.md section 3): a bevel the light catches.
+        let bev = BEVEL.min(size.min_element() * 0.3);
+        if !self.coarse && bev > 0.004 {
+            self.bevelled_box(b, size, bev);
+            return;
+        }
         let h = size * 0.5;
         // (normal axis, u axis, v axis) per face, all in local space; quads wound CCW from outside.
         let faces = [
@@ -267,6 +273,84 @@ impl MeshBuf {
             let wv = b.rot * v;
             let uv = world.map(|p| Vec2::new(p.dot(wu), p.dot(wv)) / TILE);
             self.quad(world, b.rot * n, uv);
+        }
+    }
+
+    /// A box with its edges cut back by `bev`, the cut shaded round: each face inset, a strip along
+    /// every edge whose normals run from one face's to the other's, a triangle at every corner.
+    /// 44 triangles to the plain box's 12.
+    fn bevelled_box(&mut self, b: &Block, size: Vec3, bev: f32) {
+        let h = size * 0.5;
+        let axis = |a: usize| [Vec3::X, Vec3::Y, Vec3::Z][a];
+        // The texture's axes for a face (as `add_box`'s), by its normal.
+        let frame = |n: Vec3| match (n.x, n.y, n.z) {
+            (x, ..) if x > 0.5 => (Vec3::NEG_Z, Vec3::Y),
+            (x, ..) if x < -0.5 => (Vec3::Z, Vec3::Y),
+            (_, y, _) if y > 0.5 => (Vec3::X, Vec3::NEG_Z),
+            (_, y, _) if y < -0.5 => (Vec3::X, Vec3::Z),
+            (.., z) if z > 0.5 => (Vec3::X, Vec3::Y),
+            _ => (Vec3::NEG_X, Vec3::Y),
+        };
+        // The vertex on face (axis `a`, side `sa`) toward corner signs `s`.
+        let vert = |a: usize, sa: f32, s: [f32; 3]| -> (Vec3, Vec3) {
+            let mut p = Vec3::ZERO;
+            for k in 0..3 {
+                p[k] = if k == a { sa * h[k] } else { s[k] * (h[k] - bev) };
+            }
+            (p, axis(a) * sa)
+        };
+        let mut emit = |verts: &[(Vec3, Vec3)]| {
+            let out: Vec3 = verts.iter().map(|v| v.1).sum();
+            let world: Vec<(Vec3, Vec3)> = verts.iter().map(|(p, n)| (b.pos + b.rot * *p, b.rot * *n)).collect();
+            let base = self.pos.len() as u32;
+            for (p, n) in &world {
+                let (u, v) = frame(b.rot.inverse() * *n);
+                let (wu, wv) = (b.rot * u, b.rot * v);
+                self.pos.push(p.to_array());
+                self.nrm.push(n.to_array());
+                self.uv.push((Vec2::new(p.dot(wu), p.dot(wv)) / TILE).to_array());
+            }
+            let wrong = (verts[1].0 - verts[0].0).cross(verts[2].0 - verts[0].0).dot(out) < 0.0;
+            for k in 1..verts.len() as u32 - 1 {
+                if wrong {
+                    self.idx.extend_from_slice(&[base, base + k + 1, base + k]);
+                } else {
+                    self.idx.extend_from_slice(&[base, base + k, base + k + 1]);
+                }
+            }
+        };
+        let sides = [-1.0f32, 1.0];
+        for a in 0..3 {
+            let (j, k) = ((a + 1) % 3, (a + 2) % 3);
+            for sa in sides {
+                // The face, inset.
+                let at = |sj: f32, sk: f32| {
+                    let mut s = [0.0; 3];
+                    s[j] = sj;
+                    s[k] = sk;
+                    vert(a, sa, s)
+                };
+                emit(&[at(-1.0, -1.0), at(1.0, -1.0), at(1.0, 1.0), at(-1.0, 1.0)]);
+                // The edges this face shares with the faces on axis j (the strip runs along k).
+                for sj in sides {
+                    let mut s0 = [0.0; 3];
+                    s0[a] = sa;
+                    s0[j] = sj;
+                    let mut s1 = s0;
+                    s0[k] = -1.0;
+                    s1[k] = 1.0;
+                    emit(&[vert(a, sa, s0), vert(a, sa, s1), vert(j, sj, s1), vert(j, sj, s0)]);
+                }
+            }
+        }
+        // The corners.
+        for sx in sides {
+            for sy in sides {
+                for sz in sides {
+                    let s = [sx, sy, sz];
+                    emit(&[vert(0, sx, s), vert(1, sy, s), vert(2, sz, s)]);
+                }
+            }
         }
     }
 
@@ -367,6 +451,10 @@ impl MeshBuf {
         (m, c)
     }
 }
+
+/// How far the architecture's box edges are cut back near (metres; at most a third of a box's
+/// thinnest side): docs/style-guide.md section 3's 4-8 cm.
+const BEVEL: f32 = 0.05;
 
 /// A city facade's bay width and storey height, in metres.
 pub(crate) const BAY: f32 = 3.2;
