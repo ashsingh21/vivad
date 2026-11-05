@@ -79,11 +79,6 @@ struct Typing {
     shown: Option<MapId>,
 }
 
-struct Fonts {
-    bold: Handle<Font>,
-    semi: Handle<Font>,
-    body: Handle<Font>,
-}
 
 /// The HUD's panels, hidden while the screen is up (put back when it goes).
 #[derive(Resource, Default)]
@@ -110,16 +105,7 @@ fn skipped() -> bool {
     }
 }
 
-// The screen's colours: ink, the title's gold, saffron for the main button, glass for the rest.
-const INK: Color = Color::srgba(0.03, 0.035, 0.06, 0.94);
-const GOLD: Color = Color::srgb(1.0, 0.82, 0.42);
-const MUTED: Color = Color::srgb(0.74, 0.77, 0.84);
-const SAFFRON: Color = Color::srgb(0.96, 0.52, 0.12);
-const SAFFRON_HOVER: Color = Color::srgb(1.0, 0.64, 0.25);
-const GLASS: Color = Color::srgba(1.0, 1.0, 1.0, 0.08);
-const GLASS_HOVER: Color = Color::srgba(1.0, 1.0, 1.0, 0.16);
-const FIELD: Color = Color::srgba(1.0, 1.0, 1.0, 0.07);
-const EDGE: Color = Color::srgba(1.0, 1.0, 1.0, 0.18);
+use crate::ui::{EDGE, FIELD, GLASS, GLASS_HOVER, GOLD, INK, MUTED, SAFFRON, SAFFRON_HOVER};
 
 /// The Delhi maps the picker offers: name, a line about it (Hinglish, as the game talks), and its
 /// card's picture (`just menu-thumbs`).
@@ -141,6 +127,7 @@ fn open(
     lobby: Option<Res<Lobby>>,
     config: Res<MatchConfig>,
     assets: Res<AssetServer>,
+    font: Res<crate::ui::UiFonts>,
     window: Single<&Window, With<PrimaryWindow>>,
 ) {
     if lobby.is_some() || skipped() {
@@ -156,15 +143,12 @@ fn open(
     let name = std::env::var("VIVAD_NAME").or_else(|_| std::env::var("USER")).unwrap_or_else(|_| "Warrior".into());
     #[cfg(target_arch = "wasm32")]
     let name = String::from("Warrior");
-    let font = Fonts { bold: assets.load("fonts/Poppins-ExtraBold.ttf"), semi: assets.load("fonts/Poppins-SemiBold.ttf"), body: assets.load("fonts/Poppins-Regular.ttf") };
     let map = if MAPS.iter().any(|m| m.0 == config.map) { config.map } else { MapId::Cp };
     commands.insert_resource(Typing { name, code: String::new(), focus: Field::Name, error: None, map, shown: None });
     // Everything in pixels at a 900 px tall window, scaled to this one (a phone's is smaller).
-    let k = (window.height() / 900.0).clamp(0.55, 1.6);
+    let k = crate::ui::scale(&window);
     let z = |v: f32| px(v * k);
-    let text = move |f: &Handle<Font>, s: &str, size: f32, c: Color| {
-        (Text::new(s), TextFont { font: bevy::text::FontSource::Handle(f.clone()), font_size: FontSize::Px(size * k), ..default() }, TextColor(c), Pickable::IGNORE)
-    };
+    let text = move |f: &Handle<Font>, s: &str, size: f32, c: Color| crate::ui::text(f, s, size, k, c);
     let field = |p: &mut ChildSpawnerCommands, f: Field| {
         p.spawn((
             f,
@@ -315,7 +299,8 @@ fn pointer(
 ) {
     let scale = window.scale_factor();
     let hover = window.physical_cursor_position();
-    let tap = touches.iter_just_released().map(|f| f.position() * scale).next().or(hover.filter(|_| mouse.just_released(MouseButton::Left)));
+    let touched = touches.iter_just_released().map(|f| f.position() * scale).next();
+    let tap = touched.or(hover.filter(|_| mouse.just_released(MouseButton::Left)));
     let hit = |node: &ComputedNode, at: &UiGlobalTransform, p: Option<Vec2>| p.is_some_and(|p| node.contains_point(*at, p));
     for (c, look, node, at, mut bg) in &mut buttons {
         let colour = if hit(node, at, hover) { look.1 } else { look.0 };
@@ -329,6 +314,15 @@ fn pointer(
     for (f, node, at) in &fields {
         if hit(node, at, tap) {
             t.focus = *f;
+            #[cfg(target_arch = "wasm32")]
+            if hit(node, at, touched) {
+                let now = if *f == Field::Name { t.name.clone() } else { t.code.clone() };
+                if let Some(text) = ask(*f, &now) {
+                    let s = if *f == Field::Name { &mut t.name } else { &mut t.code };
+                    s.clear();
+                    put(s, *f, text.trim());
+                }
+            }
         }
     }
     for (card, node, at) in &cards {
@@ -344,6 +338,12 @@ fn pointer(
 fn typing(mut keys: MessageReader<KeyboardInput>, held: Res<ButtonInput<KeyCode>>, mut t: ResMut<Typing>, mut commands: Commands) {
     let mut act = None;
     let command = held.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight, KeyCode::SuperLeft, KeyCode::SuperRight]);
+    #[cfg(target_arch = "wasm32")]
+    if let Some(text) = PASTED.lock().unwrap().take() {
+        let focus = t.focus;
+        let s = if focus == Field::Name { &mut t.name } else { &mut t.code };
+        put(s, focus, text.trim());
+    }
     for k in keys.read() {
         if !k.state.is_pressed() {
             continue;
@@ -372,14 +372,40 @@ fn typing(mut keys: MessageReader<KeyboardInput>, held: Res<ButtonInput<KeyCode>
     }
 }
 
-/// The clipboard's text (nothing in the browser, where the page has no key-free access to it).
+/// The clipboard's text. In the browser it comes later: the read is asked for here (a key press
+/// lets the page read the clipboard, perhaps after the browser asks), and its answer lands in
+/// `PASTED` for `typing` to take.
 fn paste() -> String {
     #[cfg(not(target_arch = "wasm32"))]
     {
         arboard::Clipboard::new().and_then(|mut c| c.get_text()).unwrap_or_default()
     }
     #[cfg(target_arch = "wasm32")]
-    String::new()
+    {
+        if let Some(w) = web_sys::window() {
+            let read = wasm_bindgen_futures::JsFuture::from(w.navigator().clipboard().read_text());
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Ok(text) = read.await
+                    && let Some(text) = text.as_string()
+                {
+                    *PASTED.lock().unwrap() = Some(text);
+                }
+            });
+        }
+        String::new()
+    }
+}
+
+/// The browser's clipboard text, once it has answered `paste`'s read.
+#[cfg(target_arch = "wasm32")]
+static PASTED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// On a phone in the browser the page can't raise the keyboard over the game: a tapped field asks
+/// with the browser's own prompt instead (its keyboard, and paste), the field's text to start.
+#[cfg(target_arch = "wasm32")]
+fn ask(field: Field, now: &str) -> Option<String> {
+    let q = if field == Field::Name { "Tumhara naam (your name)" } else { "Room code (paste or type it)" };
+    web_sys::window()?.prompt_with_message_and_default(q, now).ok().flatten()
 }
 
 /// Typed or pasted text into a field, keeping only what a name or a room code can hold.

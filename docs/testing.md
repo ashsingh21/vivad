@@ -30,6 +30,9 @@ Render switches for comparisons: `VIVAD_EV=9.7` (camera exposure, default 10.8),
 `VIVAD_PERF_LOG=1` the game logs FPS every 10 s; `VIVAD_NO_VSYNC=1` uncaps the frame rate so
 the numbers mean something (with vsync they stop at the display's 60).
 
+**Window size.** `VIVAD_WINDOW=844x390` (a phone held sideways) or any `WxH` opens the window at
+that size, for checking the start screen's and lobby's layouts (crate::ui scales to the height).
+
 **Frame rate per view.** `just perf` holds every tour view for 400 frames uncapped and prints
 its frame rate (`[tour-fps]`); compare runs before and after a change. `VIVAD_PERF_ALL=1` logs
 every diagnostic, including the GPU time of each render pass: the shadow pass is the largest.

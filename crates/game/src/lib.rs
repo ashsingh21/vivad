@@ -22,6 +22,7 @@ pub mod skyline;
 pub mod lobby;
 pub mod loading;
 pub mod menu;
+pub mod ui;
 pub mod studio_env;
 pub mod visuals;
 

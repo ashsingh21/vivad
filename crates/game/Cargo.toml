@@ -25,5 +25,7 @@ getrandom3 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 # WebGPU only (Chrome/Edge, Safari 26+): keeps the compute-driven sky and GPU culling.
 bevy = { workspace = true, features = ["webgpu"] }
 # The page's address, for ?map=, ?host and ?join=.
-web-sys = { version = "0.3", features = ["Window", "Location", "UrlSearchParams"] }
+web-sys = { version = "0.3", features = ["Window", "Location", "UrlSearchParams", "Navigator", "Clipboard"] }
+# The start screen's paste in the browser (navigator.clipboard, a promise).
+wasm-bindgen-futures = "0.4"
 

@@ -50,7 +50,8 @@ fn main() {
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         title: "Panga".into(),
-                        resolution: (1600u32, 900u32).into(),
+                        // VIVAD_WINDOW=WxH another size (a phone's, say: 844x390), for checking layouts.
+                        resolution: window_size().into(),
                         // VIVAD_NO_VSYNC=1 uncaps the frame rate, for measuring.
                         present_mode: if std::env::var("VIVAD_NO_VSYNC").is_ok() { bevy::window::PresentMode::AutoNoVsync } else { default() },
                         // In the browser: fill the page, and keep the keys and mouse for the game.
@@ -86,7 +87,7 @@ fn main() {
             }).or(Some(Default::default()))),
             ..default()
         });
-    app.add_plugins((net::TransportPlugin, game::lobby::LobbyPlugin, game::menu::MenuPlugin, game::loading::LoadingPlugin));
+    app.add_plugins((net::TransportPlugin, game::lobby::LobbyPlugin, game::menu::MenuPlugin, game::loading::LoadingPlugin, game::ui::UiPlugin));
     // GPU time per render pass, for the perf overlay (F3) and VIVAD_PERF_ALL=1's log. The browser
     // has no GPU timers. On macOS only when asked (VIVAD_PERF_ALL or VIVAD_GPU_TIMES=1): it makes
     // timer buffers for each frame still in flight, and Metal allows only a few, so the slow
@@ -97,6 +98,15 @@ fn main() {
         app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
     }
     app.run();
+}
+
+/// The window's size: 1600 x 900, or VIVAD_WINDOW=WxH.
+fn window_size() -> (u32, u32) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some((w, h)) = std::env::var("VIVAD_WINDOW").ok().and_then(|s| s.split_once('x').and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))) {
+        return (w, h);
+    }
+    (1600, 900)
 }
 
 /// A setting, by name ("host", "join", "name", "bots", "lan", "map"): natively from the

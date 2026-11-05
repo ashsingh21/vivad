@@ -40,7 +40,9 @@ pub struct Screen;
 pub fn load(world: &mut World, map: MapId, then: impl FnOnce(&mut World) + Send + Sync + 'static) {
     let since = world.resource::<Time<Real>>().elapsed_secs();
     world.insert_resource(Loading { wait: SETTLE, since, then: Some(Box::new(then)) });
-    let text = |s: String, px: f32, c: Color| (Text::new(s), TextFont { font_size: FontSize::Px(px), ..default() }, TextColor(c));
+    let font = world.get_resource::<crate::ui::UiFonts>().cloned();
+    let k = world.query_filtered::<&Window, With<bevy::window::PrimaryWindow>>().iter(world).next().map(crate::ui::scale).unwrap_or(1.0);
+    let face = |bold: bool| font.as_ref().map(|f| if bold { f.bold.clone() } else { f.semi.clone() }).unwrap_or_default();
     world
         .spawn((
             Screen,
@@ -53,12 +55,12 @@ pub fn load(world: &mut World, map: MapId, then: impl FnOnce(&mut World) + Send 
                 align_items: AlignItems::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgb(0.05, 0.06, 0.09)),
+            BackgroundColor(Color::srgb(0.03, 0.035, 0.06)),
             GlobalZIndex(30),
         ))
         .with_children(|p| {
-            p.spawn((text("PANGA".into(), 64.0, Color::srgb(1.0, 0.82, 0.42)), Node { margin: UiRect::bottom(px(16.0)), ..default() }));
-            p.spawn(text(format!("Loading {}...", map.title()), 24.0, Color::srgb(0.75, 0.78, 0.85)));
+            p.spawn((crate::ui::text(&face(true), "PANGA", 96.0, k, crate::ui::GOLD), Node { margin: UiRect::bottom(px(8.0 * k)), ..default() }));
+            p.spawn(crate::ui::text(&face(false), format!("{} load ho raha hai...", map.title()), 22.0, k, crate::ui::MUTED));
         });
 }
 

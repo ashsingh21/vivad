@@ -3474,6 +3474,7 @@ dependencies = [
  "ron",
  "serde",
  "shared",
+ "wasm-bindgen-futures",
  "web-sys",
 ]
 
