@@ -89,10 +89,18 @@ const TOON: Vec4 = Vec4::new(1.0, 0.08, 0.04, 0.12);
 const SHADE: Vec4 = Vec4::new(0.72, 0.70, 0.92, 1.0);
 
 /// Whether a material is cel shaded: the anime characters' materials are named `toon_*`
-/// (tools/blender/characters); VIVAD_TOON=1 shades every character so, to judge the look.
+/// (tools/blender/characters); VIVAD_TOON=1 shades every character so, to judge the look, and
+/// VIVAD_TOON=0 none (the standard shading for all: to rule the cel path out on a GPU).
 fn toon(name: Option<&GltfMaterialName>) -> bool {
-    static ALL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ALL.get_or_init(|| std::env::var("VIVAD_TOON").is_ok_and(|v| v == "1")) || name.is_some_and(|n| n.0.starts_with("toon"))
+    static MODE: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
+    match *MODE.get_or_init(|| match std::env::var("VIVAD_TOON").as_deref() {
+        Ok("1") => Some(true),
+        Ok("0") => Some(false),
+        _ => None,
+    }) {
+        Some(all) => all,
+        None => name.is_some_and(|n| n.0.starts_with("toon")),
+    }
 }
 
 fn convert(
