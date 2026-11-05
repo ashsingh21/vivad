@@ -120,12 +120,12 @@ def triangulate(obj):
     bpy.ops.object.modifier_apply(modifier=t.name)
 
 
-def export_glb(objs, path):
+def export_glb(objs, path, **extra):
     """Export `objs` to `path`. A `.glb` embeds everything; a `.gltf` (used for map props) writes
     its geometry next to it and its textures to the shared `../textures`, named by content, so
     models built from the same texture load (and upload to the GPU) one copy of it."""
     if path.endswith(".gltf"):
-        return _export_gltf_shared(objs, path)
+        return _export_gltf_shared(objs, path, **extra)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     bpy.ops.object.select_all(action="DESELECT")
     for o in objs:
@@ -141,11 +141,12 @@ def export_glb(objs, path):
         export_normals=True,
         export_materials="EXPORT",
         export_image_format="AUTO",
+        **extra,
     )
     return {o.name: tri_count(o) for o in objs}
 
 
-def _export_gltf_shared(objs, path):
+def _export_gltf_shared(objs, path, **extra):
     out_dir = os.path.dirname(path)
     tex_dir = os.path.join(os.path.dirname(out_dir), "textures")
     os.makedirs(tex_dir, exist_ok=True)
@@ -166,6 +167,7 @@ def _export_gltf_shared(objs, path):
             export_normals=True,
             export_materials="EXPORT",
             export_image_format="AUTO",
+            **extra,
         )
         with open(os.path.join(tmp, f"{stem}.gltf")) as f:
             doc = json.load(f)

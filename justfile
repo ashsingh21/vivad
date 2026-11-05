@@ -266,6 +266,6 @@ clip-video variant="male" clips="":
 stylecheck *args:
     python3 tools/stylecheck.py {{ if args == "keep" { "--keep" } else { args } }}
 
-# The style guide's trees and bushes (Delhi's maps): assets/models/props/stylised/
+# The style guide's trees and bushes (Delhi's maps): assets/models/props/stylised_*.gltf
 stylised-trees:
     {{blender}} -b --factory-startup -P tools/blender/nature/stylised_trees.py 2>&1 | grep -E '^\[|Error|Traceback' -A3 || true

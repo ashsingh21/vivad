@@ -761,10 +761,10 @@ fn enterable(pts: &[Vec2], map: &MapLayout) -> Option<(Vec2, f32, f32)> {
 }
 
 /// Delhi's trees and bushes, to the style guide (tools/blender/nature/stylised_trees.py).
-pub const NEEM: &str = "models/props/stylised/tree_neem.glb";
-pub const PEEPAL: &str = "models/props/stylised/tree_peepal.glb";
-pub const LANTANA: &str = "models/props/stylised/bush_lantana.glb";
-pub const BOUGAINVILLEA: &str = "models/props/stylised/bush_bougainvillea.glb";
+pub const NEEM: &str = "models/props/stylised_tree_neem.gltf";
+pub const PEEPAL: &str = "models/props/stylised_tree_peepal.gltf";
+pub const LANTANA: &str = "models/props/stylised_bush_lantana.gltf";
+pub const BOUGAINVILLEA: &str = "models/props/stylised_bush_bougainvillea.gltf";
 
 fn tree(b: &mut Builder, rng: &mut SmallRng, p: Vec2) {
     let model = [NEEM, PEEPAL, NEEM][rng.random_range(0..3)];
