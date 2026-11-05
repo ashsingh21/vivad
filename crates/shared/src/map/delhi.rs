@@ -428,8 +428,9 @@ fn india_gate(b: &mut Builder, c: Vec3) {
     for x in [-1.0f32, 1.0] {
         b.deco(f, Vec3::new(x * (d + 0.12), crown + 0.45, 0.0), Vec3::new(0.24, 0.9, 2.0 * open + 1.4), Mat::Buff);
         b.deco(f, Vec3::new(x * (d + 0.2), crown - 0.2, 0.0), Vec3::new(0.4, 1.6, 1.1), Mat::Buff);
-        // The inscription panel on the attic, a slab proud of it.
+        // The inscription panel on the attic, a slab proud of it, lettered.
         b.deco(f, Vec3::new(x * (d + 0.1), crown + 4.6, 0.0), Vec3::new(0.2, 3.6, 2.0 * hw - 7.0), Mat::Buff);
+        letters(b, c, x, d + 0.2, crown + 3.6, "INDIA");
     }
     // Deep cornices: under the attic and at its top, overhanging well (their shadows draw it).
     b.deco(f, Vec3::new(0.0, crown + 1.4, 0.0), Vec3::new(2.0 * d + 1.0, 0.5, 2.0 * hw + 1.0), Mat::Buff);
@@ -442,6 +443,41 @@ fn india_gate(b: &mut Builder, c: Vec3) {
     b.cyl(f, Vec3::new(0.0, attic + 6.2, 0.0), 2.6, 0.9, Mat::Buff);
     b.cyl(f, Vec3::new(0.0, attic + 7.1, 0.0), 3.4, 0.9, Mat::Buff);
     b.map.pois.push(Poi { name: "India Gate".into(), center: c, radius: 34.0 });
+}
+
+/// Chunky raised letters on a face of India Gate's attic (the face toward `side` x, at `face` out
+/// from the middle), their foot at `y`, centred: strokes 28 cm across, 12 cm proud, 2 m tall,
+/// in the base's red sandstone so they read even with the face in shade (the real ones are cut
+/// deep; a painted world shows that as contrast). Only the capitals used are drawn.
+fn letters(b: &mut Builder, c: Vec3, side: f32, face: f32, y: f32, text: &str) {
+    const H: f32 = 2.0;
+    const ADVANCE: f32 = 1.75;
+    const STROKE: f32 = 0.28;
+    // Strokes on a 1 wide by 1.6 high cell (u right, v up).
+    let strokes = |ch: char| -> &'static [((f32, f32), (f32, f32))] {
+        match ch {
+            'I' => &[((0.5, 0.0), (0.5, 1.6))],
+            'N' => &[((0.1, 0.0), (0.1, 1.6)), ((0.9, 0.0), (0.9, 1.6)), ((0.1, 1.6), (0.9, 0.0))],
+            'D' => &[((0.1, 0.0), (0.1, 1.6)), ((0.1, 1.6), (0.6, 1.6)), ((0.1, 0.0), (0.6, 0.0)), ((0.6, 1.6), (0.9, 1.2)), ((0.9, 1.2), (0.9, 0.4)), ((0.9, 0.4), (0.6, 0.0))],
+            'A' => &[((0.05, 0.0), (0.5, 1.6)), ((0.5, 1.6), (0.95, 0.0)), ((0.27, 0.62), (0.73, 0.62))],
+            _ => &[],
+        }
+    };
+    let k = H / 1.6;
+    let width = ADVANCE * (text.chars().count() as f32 - 1.0) + k;
+    // Read left to right from in front: on the +x face that runs toward -z, on the -x face toward +z.
+    let along = -side;
+    for (i, ch) in text.chars().enumerate() {
+        let u0 = -width / 2.0 + i as f32 * ADVANCE;
+        for &((u1, v1), (u2, v2)) in strokes(ch) {
+            let (p1, p2) = (Vec3::new(0.0, y + v1 * k, along * (u0 + u1 * k)), Vec3::new(0.0, y + v2 * k, along * (u0 + u2 * k)));
+            let dir = (p2 - p1).normalize();
+            let len = p1.distance(p2) + STROKE;
+            let rot = Quat::from_mat3(&Mat3::from_cols(dir, Vec3::X.cross(dir), Vec3::X));
+            let mid = (p1 + p2) * 0.5 + Vec3::X * side * (face + 0.06);
+            b.push(c + mid, rot, super::Shape::Box(Vec3::new(len, STROKE, 0.12)), Mat::RedSandstone, false, true);
+        }
+    }
 }
 
 /// An arch's head: from `at` (the springing, the opening's middle), steps corbelling in from both
