@@ -785,13 +785,27 @@ fn enterable(pts: &[Vec2], map: &MapLayout) -> Option<(Vec2, f32, f32)> {
 /// Delhi's trees and bushes, to the style guide (tools/blender/nature/stylised_trees.py).
 pub const NEEM: &str = "models/props/stylised_tree_neem.gltf";
 pub const PEEPAL: &str = "models/props/stylised_tree_peepal.gltf";
+pub const GULMOHAR: &str = "models/props/stylised_tree_gulmohar.gltf";
+pub const ASHOKA: &str = "models/props/stylised_tree_ashoka.gltf";
 pub const LANTANA: &str = "models/props/stylised_bush_lantana.gltf";
 pub const BOUGAINVILLEA: &str = "models/props/stylised_bush_bougainvillea.gltf";
 
+/// A tree's trunk collider radius (tools/blender/nature/stylised_trees.py's trunks).
+fn trunk(model: &str) -> f32 {
+    match model {
+        PEEPAL => 0.5,
+        GULMOHAR => 0.38,
+        ASHOKA => 0.26,
+        _ => 0.42,
+    }
+}
+
 fn tree(b: &mut Builder, rng: &mut SmallRng, p: Vec2) {
-    let model = [NEEM, PEEPAL, NEEM][rng.random_range(0..3)];
+    // A mix, each its own shape: round neems, the big peepal's dome, the gulmohar's flat red-flecked
+    // umbrella, the ashoka's narrow column.
+    let model = [NEEM, NEEM, NEEM, PEEPAL, PEEPAL, GULMOHAR, GULMOHAR, GULMOHAR, ASHOKA, ASHOKA][rng.random_range(0..10)];
     let scale = rng.random_range(0.85..1.2);
-    b.map.props.push(Prop { model, pos: Vec3::new(p.x, b.map.terrain.height(p.x, p.y), p.y), yaw: rng.random_range(0.0..std::f32::consts::TAU), scale, trunk: Some((0.42, 4.0)) });
+    b.map.props.push(Prop { model, pos: Vec3::new(p.x, b.map.terrain.height(p.x, p.y), p.y), yaw: rng.random_range(0.0..std::f32::consts::TAU), scale, trunk: Some((trunk(model), 4.0)) });
 }
 
 /// In front of a hall's doorway (within 3 m out and 1.8 m either side, plus `r`): kept clear.
@@ -862,7 +876,7 @@ fn trees(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp::Rin
             }
         }
     }
-    // Connaught Place's avenue: big neems down the outer colonnade's pavement, between it and the
+    // Connaught Place's avenue: big neems (and ashokas) down the outer colonnade's pavement, between it and the
     // outer circle, shading the shops.
     if ring.ri > 0.0 {
         for (rad, step) in [(ring.ro + 7.0, 18.0)] {
@@ -872,7 +886,9 @@ fn trees(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp::Rin
                 let p = ring.at(rad + rng.random_range(-0.6..0.6), a, 0.0).xz();
                 if p.abs().max_element() < HALF - 4.0 && free(b.map, houses, p, 2.5) {
                     let scale = rng.random_range(0.95..1.2);
-                    b.map.props.push(Prop { model: NEEM, pos: Vec3::new(p.x, b.map.terrain.height(p.x, p.y), p.y), yaw: rng.random_range(0.0..std::f32::consts::TAU), scale, trunk: Some((0.42, 4.0)) });
+                    // Neems, every third an ashoka's tall column for the avenue's rhythm.
+                    let model = if k % 3 == 1 { ASHOKA } else { NEEM };
+                    b.map.props.push(Prop { model, pos: Vec3::new(p.x, b.map.terrain.height(p.x, p.y), p.y), yaw: rng.random_range(0.0..std::f32::consts::TAU), scale, trunk: Some((trunk(model), 4.0)) });
                 }
             }
         }

@@ -124,6 +124,8 @@ class Crown:
         self.cards = []  # (position on a mass, outward normal, size, spin, tilt)
         self.dots = []  # (position, radius, colour token)
         self.trunk_top = 0.0  # bark below this is ridged
+        self.blossom = []  # (colour token, share of the cards): flowering cards (the gulmohar's)
+        self.droop = 0.0  # how far the cards hang (the ashoka's)
 
     def blob(self, c, r):
         self.blobs.append((c, r))
@@ -141,7 +143,13 @@ class Crown:
             if any(o is not c and (Vector(((p.x - o.x) / q.x, (p.y - o.y) / q.y, (p.z - o.z) / q.z)).length < 0.95) for o, q in self.blobs):
                 continue
             n = Vector((d.x / r.x, d.y / r.y, d.z / r.z)).normalized()
-            self.cards.append((p, n, size * rng.uniform(0.8, 1.2), rng.uniform(0, 2 * math.pi), rng.uniform(0.35, 1.0), bi))
+            tint, roll = 0, rng.random()
+            for k, (_, share) in enumerate(self.blossom):
+                if roll < share:
+                    tint = k + 1
+                    break
+                roll -= share
+            self.cards.append((p, n, size * rng.uniform(0.8, 1.2), rng.uniform(0, 2 * math.pi), rng.uniform(0.35, 1.0), bi, tint))
 
     def flower_toks(self):
         return sorted({d[2] for d in self.dots})
@@ -149,23 +157,26 @@ class Crown:
     def build(self, name, subdiv, lump):
         bm = bmesh.new()
         uvl = bm.loops.layers.uv.new("UVMap")
-        kinds, owners = [], []
+        kinds, owners, tints = [], [], []
         for k, (c, r) in enumerate(self.blobs):
             ret = bmesh.ops.create_icosphere(bm, subdivisions=subdiv, radius=1.0, matrix=Matrix.Identity(4))
             for v in ret["verts"]:
                 d = v.co.normalized()
                 rr = Vector((r.x * d.x, r.y * d.y, r.z * d.z))
                 v.co = c + rr * (1.0 + lump * noise(c + rr * 1.6, self.seed + k))
+            tints += [0] * (len(bm.faces) - len(kinds))
             owners += [k] * (len(bm.faces) - len(kinds))
             kinds += [MASS] * (len(bm.faces) - len(kinds))
-        for p, n, sz, spin, tilt, bi in self.cards:
+        for p, n, sz, spin, tilt, bi, tint in self.cards:
             # A card rooted just inside the mass, growing out along it and tilted off it: its tip
             # past the surface, so the outline is leaves. Both sides, wound apart, each lit as the
             # crown (no back face turned dark).
             t = Vector((0, 0, 1)) - n * n.z
             t = t.normalized() if t.length > 1e-3 else Vector((1, 0, 0))
             t = (Matrix.Rotation(spin, 3, n) @ t).normalized()
-            grow = (t * (1 - tilt) + n * tilt).normalized()
+            grow = (t * (1 - tilt) + n * tilt - Vector((0, 0, self.droop))).normalized()
+            if abs(grow.dot(n)) > 0.999:
+                grow = t
             side = grow.cross(n).normalized()
             root = p - n * sz * 0.15 - grow * sz * 0.1
             corners = [root - side * sz * 0.5, root + side * sz * 0.5, root + side * sz * 0.5 + grow * sz, root - side * sz * 0.5 + grow * sz]
@@ -176,9 +187,11 @@ class Crown:
                     loop[uvl].uv = uvs[i]
                 kinds.append(CARD)
                 owners.append(bi)
+                tints.append(tint)
         toks = self.flower_toks()
         for p, rad, tok in self.dots:
             bmesh.ops.create_icosphere(bm, subdivisions=2 if rad > 0.2 else 1, radius=rad, matrix=Matrix.Translation(p))
+            tints += [0] * (len(bm.faces) - len(kinds))
             owners += [0] * (len(bm.faces) - len(kinds))
             kinds += [FLOWER + toks.index(tok)] * (len(bm.faces) - len(kinds))
         me = bpy.data.meshes.new(name)
@@ -188,6 +201,7 @@ class Crown:
         bpy.context.scene.collection.objects.link(obj)
         tag(obj, lambda f: kinds[f])
         tag(obj, lambda f: owners[f], "blob")
+        tag(obj, lambda f: tints[f], "tint")
         return obj
 
 
@@ -212,8 +226,11 @@ def colour_and_normals(obj, crown, bark_tok):
     corner = me.corner_normals
     kinds = me.attributes["kind"].data
     owner = me.attributes["blob"].data
+    tint = me.attributes["tint"].data
+    blossom = [style.linear(t) for t, _ in crown.blossom]
     for poly in me.polygons:
         kind = kinds[poly.index].value
+        bloom = tint[poly.index].value
         bc, br = crown.blobs[min(owner[poly.index].value, len(crown.blobs) - 1)]
         for li in poly.loop_indices:
             p = me.vertices[me.loops[li].vertex_index].co
@@ -252,6 +269,10 @@ def colour_and_normals(obj, crown, bark_tok):
             lup = min(max(bq.z * 0.5 + 0.5, 0.0), 1.0)
             g = mix(dark, mid, lup * 1.8)
             g = mix(g, light, (lup - 0.62) * 2.6)
+            if bloom:
+                f = blossom[bloom - 1]
+                k = 0.72 + 0.4 * lup
+                g = (f[0] * k, f[1] * k, f[2] * k)
             cup = (p.z - zlo) / (zhi - zlo)
             v = (0.82 + 0.2 * min(max(cup, 0.0), 1.0)) * (0.96 + 0.08 * noise(p * 0.8, crown.seed + 50))
             col.data[li].color = (g[0] * v, g[1] * v, g[2] * v, 1.0)
@@ -315,8 +336,8 @@ def make(species, lod, leaf_img):
     if VARIANT == "solid":
         lump *= 2.0
     if lod == 2:
-        # The far distance: the crown's three biggest masses.
-        crown.blobs = sorted(crown.blobs, key=lambda b: -b[1].x)[:3]
+        # The far distance: every other mass (the crown's shape kept, a column's included).
+        crown.blobs = crown.blobs[::2] if len(crown.blobs) > 5 else crown.blobs
         crown.dots = []
     if lod > 0:
         crown.dots = crown.dots[::3]
@@ -331,6 +352,7 @@ def make(species, lod, leaf_img):
                     v.co.y *= k
         tag(bark, lambda f: BARK)
         tag(bark, lambda f: 0, "blob")
+        tag(bark, lambda f: 0, "tint")
         for name in [u.name for u in bark.data.uv_layers]:
             bark.data.uv_layers.remove(bark.data.uv_layers[name])
         bark.data.uv_layers.new(name="UVMap")
@@ -387,8 +409,67 @@ def grow_neem(tree, rng, lod, s=1.0, ring=6, tokens=("foliage.neem_dark", "folia
 
 
 def grow_peepal(tree, rng, lod):
-    """Peepal: taller and broader than a neem, paler bark, a lighter, brighter green."""
-    return grow_neem(tree, rng, lod, s=1.25, ring=7, tokens=("foliage.peepal_dark", "foliage.peepal", "foliage.peepal_light"))
+    """Peepal: the big one. A tall trunk dividing into spreading limbs under a broad high dome,
+    wider than it is tall; a lighter, brighter green."""
+    s = 1.0
+    tree.branch(Vector((0, 0, 0)), Vector((0.03, -0.02, 1)), 3.6, 0.55, 0.4, flare=0.9, segments=7, wobble=0.04)
+    top = Vector((0, 0, 3.4))
+    c = Vector((0, 0, 7.4))
+    crown = Crown(c, Vector((5.2, 5.2, 2.8)), ("foliage.peepal_dark", "foliage.peepal", "foliage.peepal_light"), tree.rng.randrange(1000))
+    crown.trunk_top = 3.3
+    crown.blob(c + Vector((0, 0, 0.6)), Vector((2.6, 2.6, 1.9)))
+    targets = []
+    for i in range(8):
+        a = 2 * math.pi * i / 8 + rng.uniform(-0.2, 0.2)
+        d = rng.uniform(2.8, 3.4)
+        p = c + Vector((math.cos(a) * d, math.sin(a) * d, rng.uniform(-0.7, 0.0)))
+        crown.blob(p, Vector((1.8, 1.8, 1.3)) * rng.uniform(0.9, 1.1))
+        if i % 2 == 0:
+            targets.append(p - Vector((0, 0, 0.5)))
+    for i in range(4):
+        a = 2 * math.pi * (i + 0.5) / 4
+        crown.blob(c + Vector((math.cos(a) * 1.6, math.sin(a) * 1.6, 1.3)), Vector((1.6, 1.6, 1.2)))
+    limbs(tree, rng, top, targets, 0.28, 0.13)
+    return crown
+
+
+def grow_gulmohar(tree, rng, lod):
+    """Gulmohar: a short leaning trunk forking into near-level limbs under a wide, flat umbrella of
+    fine leaves, a third of them in flame red and orange flowers."""
+    tree.branch(Vector((0, 0, 0)), Vector((0.18, 0.08, 1)), 2.4, 0.42, 0.3, flare=0.7, segments=6, wobble=0.06)
+    top = Vector((0.38, 0.17, 2.3))
+    c = Vector((0.3, 0.1, 5.0))
+    crown = Crown(c, Vector((5.0, 5.0, 1.5)), ("foliage.gulmohar_dark", "foliage.gulmohar", "foliage.gulmohar_light"), tree.rng.randrange(1000))
+    crown.trunk_top = 2.2
+    crown.blossom = [("foliage.gulmohar_flower", 0.22), ("foliage.gulmohar_flower_orange", 0.12)]
+    crown.blob(c + Vector((0, 0, 0.3)), Vector((2.4, 2.4, 1.0)))
+    targets = []
+    for i in range(7):
+        a = 2 * math.pi * i / 7 + rng.uniform(-0.2, 0.2)
+        d = rng.uniform(2.9, 3.5)
+        p = c + Vector((math.cos(a) * d, math.sin(a) * d, rng.uniform(-0.3, 0.15)))
+        crown.blob(p, Vector((1.9, 1.9, 0.85)) * rng.uniform(0.9, 1.1))
+        targets.append(p - Vector((0, 0, 0.3)))
+    limbs(tree, rng, top, targets[::2], 0.2, 0.09)
+    return crown
+
+
+def grow_ashoka(tree, rng, lod):
+    """Ashoka (the mast tree that lines Delhi's avenues): tall and narrow, a column of dark green
+    drooping leaves from near the ground to a pointed top, a slim trunk inside it."""
+    tree.branch(Vector((0, 0, 0)), Vector((0.0, 0.0, 1)), 9.0, 0.26, 0.08, flare=0.5, segments=8, wobble=0.02)
+    c = Vector((0, 0, 6.2))
+    crown = Crown(c, Vector((1.6, 1.6, 4.8)), ("foliage.ashoka_dark", "foliage.ashoka", "foliage.ashoka_light"), tree.rng.randrange(1000))
+    crown.trunk_top = 2.0
+    crown.droop = 0.8
+    for k in range(7):
+        t = k / 6
+        z = 2.4 + t * 8.0
+        r = 1.45 * (1.0 - t * 0.72)
+        a = rng.uniform(0, 2 * math.pi)
+        off = Vector((math.cos(a), math.sin(a), 0)) * 0.15
+        crown.blob(Vector((0, 0, z)) + off, Vector((r, r, 1.25 - 0.4 * t)))
+    return crown
 
 
 def grow_bush(tree, rng, lod, tokens, flowers, blobs=5, radius=1.0, height=1.3, dots=26):
@@ -425,7 +506,9 @@ def grow_bougainvillea(tree, rng, lod):
 
 SPECIES = {
     "neem": dict(grow=grow_neem, bark="foliage.bark", seed=11, kind="tree", cards=380, card=0.9),
-    "peepal": dict(grow=grow_peepal, bark="foliage.bark", seed=23, kind="tree", cards=440, card=1.05),
+    "peepal": dict(grow=grow_peepal, bark="foliage.bark", seed=23, kind="tree", cards=560, card=1.1),
+    "gulmohar": dict(grow=grow_gulmohar, bark="foliage.bark_grey", seed=29, kind="tree", cards=460, card=0.85),
+    "ashoka": dict(grow=grow_ashoka, bark="foliage.bark", seed=31, kind="tree", cards=300, card=0.75),
     "lantana": dict(grow=grow_lantana, bark="foliage.bark", seed=53, kind="bush", cards=100, card=0.38),
     "bougainvillea": dict(grow=grow_bougainvillea, bark="foliage.bark", seed=61, kind="bush", cards=100, card=0.42),
 }
