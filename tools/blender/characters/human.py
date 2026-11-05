@@ -81,6 +81,32 @@ VARIANTS = {
         "clothes": ["female_casualsuit01", "shoes03"],
         "outfit": outfits.female_tactical,
     },
+    # An original anime-styled heroine (cel shaded in game: her materials are toon_*, finish.py):
+    # the female body and arm proportions (so the female clips and gun holds fit her), the face
+    # pushed to anime proportions (big tall eyes, small nose and mouth, a pointed chin, a rounder
+    # head and higher forehead), a high ponytail, a teal tee and navy trousers.
+    "anime": {
+        "macro": {"gender": 0.0, "age": 0.42, "muscle": 0.55, "weight": 0.44, "proportions": 0.8, "height": 0.52,
+                  "cupsize": 0.4, "firmness": 0.6, "race": {"asian": 0.3, "caucasian": 0.42, "african": 0.28}},
+        "proxy": "proxymeshes/female_generic/female_generic.proxy",
+        "skin": "skins/young_african_female/young_african_female.mhmat",
+        "hair": "hair/ponytail01/ponytail01.mhclo",
+        "brows": "eyebrows/eyebrow001/eyebrow001.mhclo",
+        "eyes": "brown",
+        "face": {"eyes/l-eye-scale-incr": 1.0, "eyes/r-eye-scale-incr": 1.0, "eyes/l-eye-height2-incr": 1.0, "eyes/r-eye-height2-incr": 1.0,
+                 "eyes/l-eye-height1-incr": 0.6, "eyes/r-eye-height1-incr": 0.6,
+                 "nose/nose-scale-horiz-decr": 1.0, "nose/nose-scale-vert-decr": 0.7, "nose/nose-scale-depth-decr": 0.6,
+                 "nose/nose-point-width-decr": 1.0, "nose/nose-flaring-decr": 1.0, "nose/nose-volume-decr": 0.7,
+                 "mouth/mouth-scale-horiz-decr": 0.6, "mouth/mouth-lowerlip-volume-decr": 0.8, "mouth/mouth-upperlip-volume-decr": 0.8,
+                 "chin/chin-width-decr": 0.7, "chin/chin-triangle": 0.6, "chin/chin-height-decr": 0.3,
+                 "head/head-round": 0.5, "forehead/forehead-scale-vert-incr": 0.5,
+                 "cheek/l-cheek-bones-decr": 0.6, "cheek/r-cheek-bones-decr": 0.6},
+        "shape": {"arms/measure-upperarm-length-incr": 0.47, "arms/measure-lowerarm-length-incr": 0.37},
+        # A full-length tee (not the sports suit's crop top) and trousers, recoloured flat
+        # (tools/textures/mh_clothes.py ANIME), cream shoes.
+        "clothes": ["female_casualsuit01", "shoes01"],
+        "outfit": outfits.anime_street,
+    },
 }
 
 

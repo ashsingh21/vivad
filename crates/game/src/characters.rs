@@ -30,6 +30,8 @@ impl Plugin for CharacterArtPlugin {
 struct Models {
     male: Handle<WorldAsset>,
     female: Handle<WorldAsset>,
+    /// The anime-styled heroine (cel shaded: crate::rim), on the female's animations.
+    anime: Handle<WorldAsset>,
     props: HashMap<&'static str, Handle<WorldAsset>>,
 }
 
@@ -37,6 +39,7 @@ fn load_models(mut commands: Commands, assets: Res<AssetServer>, layout: Res<Map
     commands.insert_resource(Models {
         male: assets.load(GltfAssetLabel::Scene(0).from_asset("models/characters/male.glb")),
         female: assets.load(GltfAssetLabel::Scene(0).from_asset("models/characters/female.glb")),
+        anime: assets.load(GltfAssetLabel::Scene(0).from_asset("models/characters/anime.glb")),
         props: prop_models(&assets, &layout),
     });
 }
@@ -177,8 +180,10 @@ struct CharacterModel;
 fn dress_warriors(mut commands: Commands, q: Query<(Entity, &WarriorVisual), Added<WarriorVisual>>, warriors: Query<&Warrior>, models: Res<Models>) {
     for (vis, wv) in &q {
         let look = warriors.get(wv.sim).map(|w| w.look).unwrap_or(0);
-        let variant = (look % 2) as usize;
-        let scene = if variant == 0 { models.male.clone() } else { models.female.clone() };
+        // Three bodies in turn; the anime one has the female's proportions, so her clips (set 1).
+        let body = look % 3;
+        let variant = if body == 0 { 0 } else { 1 };
+        let scene = [&models.male, &models.female, &models.anime][body as usize].clone();
         commands
             .spawn((
                 CharacterModel,

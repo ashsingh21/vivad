@@ -14,6 +14,7 @@ use bevy::mesh::MeshTag;
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
 use bevy::render::render_resource::AsBindGroup;
+use bevy::gltf::GltfMaterialName;
 use bevy::shader::ShaderRef;
 
 pub struct RimPlugin;
@@ -34,6 +35,13 @@ pub struct Rim {
     /// rgb: colour (linear), a: strength.
     #[uniform(100)]
     pub rim: Vec4,
+    /// Cel shading (rim.wesl's `cel`): x on, y the light band's N.L, z its half-width, w the sun
+    /// kept on the shaded side. Off (x 0) for the standard look.
+    #[uniform(101)]
+    pub toon: Vec4,
+    /// rgb: the shaded side's tint, for cel shading.
+    #[uniform(102)]
+    pub shade: Vec4,
 }
 
 impl MaterialExtension for Rim {
@@ -62,7 +70,11 @@ struct Sways(Entity);
 /// The rimmed copy of each material, made once and shared by every warrior wearing it (the
 /// motion goes per mesh, in its tag, so the materials never change and batch together).
 #[derive(Resource, Default)]
-struct Converted(HashMap<AssetId<StandardMaterial>, Handle<RimMaterial>>);
+struct Converted(HashMap<AssetId<StandardMaterial>, Handle<RimMaterial>>, Option<Handle<StandardMaterial>>);
+
+/// The anime characters' ink outline (their `toon_outline` hull, tools/blender/characters/finish.py):
+/// flat, unlit, the ink of their lash lines.
+const INK: Color = Color::srgb(0.10, 0.05, 0.045);
 
 /// Each warrior's last position and smoothed velocity.
 #[derive(Resource, Default)]
@@ -71,16 +83,41 @@ struct Cloth(HashMap<Entity, (Option<Vec3>, Vec3)>);
 /// A pale sky-warm white: reads as light, not as a coloured outline.
 const RIM: Vec4 = Vec4::new(1.0, 0.95, 0.88, 0.22);
 
+/// Cel shading's band (rim.wesl's `toon`): the light's edge just past side-on, hard, a little sun
+/// kept in the shade; and the shade's tint, a cool lilac-blue as an anime shadow is.
+const TOON: Vec4 = Vec4::new(1.0, 0.08, 0.04, 0.12);
+const SHADE: Vec4 = Vec4::new(0.72, 0.70, 0.92, 1.0);
+
+/// Whether a material is cel shaded: the anime characters' materials are named `toon_*`
+/// (tools/blender/characters); VIVAD_TOON=1 shades every character so, to judge the look.
+fn toon(name: Option<&GltfMaterialName>) -> bool {
+    static ALL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ALL.get_or_init(|| std::env::var("VIVAD_TOON").is_ok_and(|v| v == "1")) || name.is_some_and(|n| n.0.starts_with("toon"))
+}
+
 fn convert(
     mut commands: Commands,
-    q: Query<(Entity, &MeshMaterial3d<StandardMaterial>, &RimTarget)>,
-    standard: Res<Assets<StandardMaterial>>,
+    q: Query<(Entity, &MeshMaterial3d<StandardMaterial>, &RimTarget, Option<&GltfMaterialName>)>,
+    mut standard: ResMut<Assets<StandardMaterial>>,
     mut rimmed: ResMut<Assets<RimMaterial>>,
     mut done: ResMut<Converted>,
 ) {
-    for (e, m, target) in &q {
-        let Some(base) = standard.get(&m.0) else { continue };
-        let handle = done.0.entry(m.0.id()).or_insert_with(|| rimmed.add(ExtendedMaterial { base: base.clone(), extension: Rim { rim: RIM } })).clone();
+    for (e, m, target, name) in &q {
+        if name.is_some_and(|n| n.0 == "toon_outline") {
+            let ink = done.1.get_or_insert_with(|| standard.add(StandardMaterial { base_color: INK, unlit: true, ..default() })).clone();
+            commands.entity(e).remove::<RimTarget>().insert((MeshMaterial3d(ink), bevy::light::NotShadowCaster));
+            continue;
+        }
+        let Some(base) = standard.get(&m.0).cloned() else { continue };
+        let cel = toon(name);
+        let handle = done
+            .0
+            .entry(m.0.id())
+            .or_insert_with(|| {
+                let (toon, shade) = if cel { (TOON, SHADE) } else { (Vec4::ZERO, Vec4::ONE) };
+                rimmed.add(ExtendedMaterial { base, extension: Rim { rim: RIM, toon, shade } })
+            })
+            .clone();
         commands
             .entity(e)
             .remove::<(MeshMaterial3d<StandardMaterial>, RimTarget)>()

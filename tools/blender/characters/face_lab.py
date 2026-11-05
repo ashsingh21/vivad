@@ -46,16 +46,28 @@ def main():
     proxy = parts["proxy"]
     ctx = garments.BodyContext(proxy, rig, human.bone_weight_map(proxy))
     for o, _ in face.decorate(variant, proxy, parts, ctx):
-        o.data.materials.append(finish.hair_mesh_material(o.name))
+        if o.get("kind") == "decal":
+            o.data.materials.append(finish.decal_material(o.name, finish.anime_eye_decal(os.path.join(out, "anime_eye_decal.png"))))
+        elif o.get("kind") == "toonhair":
+            cap = o.name.startswith("anime_hair_cap")
+            o.data.materials.append(finish.anime_hair_material("anime_hair_cap" if cap else "anime_hair", ring=cap))
+        elif o.get("kind") == "lacquer":
+            o.data.materials.append(finish.metal_material("lacquer", (0.62, 0.06, 0.08), 0.18, 0.0))
+        else:
+            o.data.materials.append(finish.hair_mesh_material(o.name))
     skin_img = finish.find_image(proxy)
     for o in [proxy, parts["eyes"]]:
         finish.prepare_uvs(o)
     marks = {"beard": "beard" in proxy.data.attributes, "eyes": proxy.get("eyes"), "bindi": proxy.get("bindi")}
     proxy.data.materials.clear()
-    proxy.data.materials.append(finish.skin_material(variant, skin_img, marks))
-    eye_img = finish.find_image(parts["eyes"])
+    anime = variant == finish.ANIME
+    proxy.data.materials.append(finish.anime_skin_material(skin_img, marks) if anime else finish.skin_material(variant, skin_img, marks))
     parts["eyes"].data.materials.clear()
-    parts["eyes"].data.materials.append(finish.eye_material("eyes", eye_img))
+    if anime:
+        eye_img = finish.anime_eye_image(os.path.join(out, "anime_eye.png"))
+        parts["eyes"].data.materials.append(finish.textured_material("eyes", eye_img, 0.35))
+    else:
+        parts["eyes"].data.materials.append(finish.eye_material("eyes", finish.find_image(parts["eyes"])))
     for key, tint, strength in finish.CARDS:
         o = parts.get(key)
         if o is not None:

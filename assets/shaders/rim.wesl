@@ -9,17 +9,59 @@ import bevy_pbr::render::{
     skinning,
     pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
     pbr_fragment::pbr_input_from_standard_material,
+    pbr_types::PbrInput,
     forward_io::{Vertex, VertexOutput, FragmentOutput, decompress_vertex},
     view_transformations::position_world_to_clip,
 };
 import super::cloth::{sway, unpack_velocity};
 import bevy_pbr::render::mesh_view_bindings::globals;
+import bevy_pbr::render::mesh_view_bindings as view_bindings;
+import bevy_pbr::render::mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT;
+import bevy_pbr::render::mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT;
+import bevy_pbr::render::shadows;
 
 @if(VISIBILITY_RANGE_DITHER)
 import bevy_pbr::render::pbr_functions::visibility_range_dither;
 
 // rgb: rim colour (linear), a: strength.
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> rim: vec4<f32>;
+// Cel shading (the anime characters): x on (> 0.5), y where the light's band falls (N.L), z its
+// half-width (how hard the edge is), w the sun kept on the shaded side.
+@group(constants::MATERIAL_BIND_GROUP) @binding(101) var<uniform> toon: vec4<f32>;
+// rgb: the shaded side's tint (an anime shadow is a cooler, deeper colour, not grey).
+@group(constants::MATERIAL_BIND_GROUP) @binding(102) var<uniform> shade: vec4<f32>;
+
+const PI: f32 = 3.141592653589793;
+
+// Cel lighting: the sun in two flat bands (lit or shaded, its edge hard), its shadow banded the
+// same, the ambient under both, the shaded side tinted; the rim's glow on top as emission.
+// Point and spot lights are left out (a cel band can't take a soft fill).
+fn cel(pbr_input: PbrInput) -> vec4<f32> {
+    let albedo = pbr_input.material.base_color.rgb;
+    var lit = 0.0;
+    var sun = vec3<f32>(0.0);
+    if (view_bindings::lights.n_directional_lights > 0u) {
+        let light = view_bindings::lights.directional_lights[0];
+        let n_dot_l = dot(pbr_input.N, light.direction_to_light);
+        var shadow = 1.0;
+        if ((pbr_input.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u && (light.flags & DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u) {
+            let view_z = dot(vec4<f32>(
+                view_bindings::view.view_from_world[0].z,
+                view_bindings::view.view_from_world[1].z,
+                view_bindings::view.view_from_world[2].z,
+                view_bindings::view.view_from_world[3].z
+            ), pbr_input.world_position);
+            shadow = shadows::fetch_directional_shadow(0u, pbr_input.world_position, pbr_input.world_normal, view_z, pbr_input.frag_coord.xy);
+        }
+        lit = smoothstep(toon.y - toon.z, toon.y + toon.z, n_dot_l) * smoothstep(0.35, 0.65, shadow);
+        sun = light.color.rgb * (1.0 / PI) * mix(toon.w, 1.0, lit);
+    }
+    let ambient = view_bindings::lights.ambient_color.rgb * mix(shade.rgb, vec3<f32>(1.0), lit);
+    let light = albedo * (sun + ambient) * view_bindings::view.exposure;
+    let e = pbr_input.material.emissive;
+    let emitted = e.rgb * mix(1.0, view_bindings::view.exposure, e.a);
+    return vec4<f32>(light + emitted, pbr_input.material.base_color.a);
+}
 
 // bevy_pbr's mesh vertex stage (skinned; no morph targets, which the characters don't have), the
 // loose cloth swayed in world space after skinning.
@@ -74,7 +116,11 @@ fn fragment(vertex_output: VertexOutput, @builtin(front_facing) is_front: bool) 
     pbr_input.material.emissive = vec4<f32>(pbr_input.material.emissive.rgb + glow, pbr_input.material.emissive.a);
 
     var out: FragmentOutput;
-    out.color = apply_pbr_lighting(pbr_input);
+    if (toon.x > 0.5) {
+        out.color = cel(pbr_input);
+    } else {
+        out.color = apply_pbr_lighting(pbr_input);
+    }
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     return out;
 }

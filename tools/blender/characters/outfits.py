@@ -228,6 +228,14 @@ def female_tactical(ctx):
     return items
 
 
+def anime_street(ctx):
+    """The anime character's: the modelled sports suit and shoes alone (retinted flat, its own
+    colours), a single glass bangle. No tactical kit: a clean silhouette reads best cel shaded."""
+    items = []
+    jewellery(ctx, items, armbands=False, kadas=1, anklets=False, neck=False)
+    return items
+
+
 # ------------------------------------------------------------------ Vivad: the ancient warriors
 
 def male_warrior(ctx):

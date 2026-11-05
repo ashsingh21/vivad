@@ -18,7 +18,16 @@ from nodes import Graph, new_material
 # Alpha cards: (part, tint sRGB, how far the texture is pulled to the tint).
 CARDS = (("hair", (0.075, 0.055, 0.045), 0.92), ("eyebrows", (0.035, 0.025, 0.02), 0.85), ("eyelashes", (0.03, 0.02, 0.02), 0.6))
 
-SKIN_TONE = {"male": (0.66, 0.44, 0.31), "female": (0.71, 0.48, 0.35)}
+SKIN_TONE = {"male": (0.66, 0.44, 0.31), "female": (0.71, 0.48, 0.35), "anime": (0.74, 0.51, 0.38)}
+
+# The anime character's (crate::rim's cel shading): its materials are named toon_* so the game
+# shades them in flat bands; its colours are flat, its features painted as line and shape.
+ANIME = "anime"
+INK = (0.10, 0.05, 0.045)
+
+
+def toon_name(variant, name):
+    return f"toon_{name}" if variant == ANIME else name
 
 CLOTH = {
     # name prefix: (base sRGB, border sRGB or None, pattern, border width m). Longer prefixes first:
@@ -131,6 +140,159 @@ def skin_material(variant, img, marks=None):
         rough = g.mix(dot, rough, 0.45)
     normal = g.bump(g.add(g.mul(pores, 0.6), g.mul(mottle, 0.2)), 0.015, 0.0005)
     g.principled(col, 0.0, rough, normal)
+    return m
+
+
+def anime_skin_material(img, marks):
+    """Anime skin: one flat warm-brown tone (no pores, no mottling, the texture only for its lips
+    and cheeks, faintly), a soft blush across the cheeks and a bold ink lash line along each upper
+    lid, sweeping out at the corner, with a fine one beneath."""
+    m = new_material(f"{ANIME}_skin")
+    g = Graph(m)
+    uv = g.node("ShaderNodeUVMap", uv_map="src").outputs["UV"]
+    tex = g.node("ShaderNodeTexImage", {"Vector": uv}, image=img)
+    mean = image_mean(img)
+    target = srgb_to_lin(SKIN_TONE[ANIME])
+    ratio = g.vec("MULTIPLY", tex.outputs["Color"], g.combine(*(t / max(mu, 1e-3) for t, mu in zip(target, mean))))
+    col = g.mixc(0.85, ratio, (*target, 1))
+    co = g.texcoord("Object")
+    xyz = g.node("ShaderNodeSeparateXYZ", {"Vector": co}).outputs
+    e = list(marks["eyes"])
+    el, er, rad = e[0:3], e[3:6], e[6]
+    for c in (el, er):
+        # Blush: a soft pink oval below and out from each eye.
+        side = 1.0 if c[0] > 0 else -1.0
+        bx = g.mul(g.sub(xyz["X"], c[0] + side * 0.4 * rad), 1.0 / (1.6 * rad))
+        bz = g.mul(g.sub(xyz["Z"], c[2] - 2.0 * rad), 1.0 / (0.8 * rad))
+        bd = g.vec("LENGTH", g.combine(bx, bz, 0.0))
+        col = g.mixc(g.mul(g.smooth(bd, 1.0, 0.2), 0.35), col, (*srgb_to_lin((0.86, 0.42, 0.40)), 1))
+        # The lash line: an ellipse round the lid opening, thick above (and out past the corner).
+        dx = g.mul(g.sub(xyz["X"], c[0]), 1.0 / (0.85 * rad))
+        dz = g.sub(xyz["Z"], c[2])
+        d = g.vec("LENGTH", g.combine(dx, g.mul(dz, 1.0 / (0.5 * rad)), 0.0))
+        upper = g.smooth(dz, -0.05 * rad, 0.15 * rad)
+        hi = g.add(1.02, g.mul(upper, 0.28))
+        line = g.mul(g.smooth(d, 0.84, 0.9), g.smooth(d, g.add(hi, 0.06), hi))
+        line = g.mul(line, g.add(0.45, g.mul(upper, 0.55)))
+        col = g.mixc(line, col, (*srgb_to_lin(INK), 1))
+    g.principled(col, 0.0, 0.6)
+    return m
+
+
+def anime_eye_image(path, size=1024):
+    """The anime eye, painted on MakeHuman's eye layout (two eyeballs, irises at uv (0.70, 0.70)
+    and (0.29, 0.29)): warm white, a big tall iris (dark across its top under the lid, warm amber
+    below, a deep rim), a large pupil, two white catch-lights."""
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32) / size
+    v = 1.0 - yy
+    rgb = np.ones((size, size, 3), np.float32) * np.array([0.97, 0.94, 0.90], np.float32)
+    top, low, rim = np.array([0.16, 0.07, 0.03]), np.array([0.78, 0.42, 0.10]), np.array([0.07, 0.03, 0.02])
+    for cu, cv in ((0.703, 0.702), (0.288, 0.292)):
+        du, dv = (xx - cu) / 0.13, (v - cv) / 0.16
+        r = np.sqrt(du * du + dv * dv)
+        iris = np.clip((1.0 - r) / 0.03, 0, 1)
+        t = np.clip(dv * 0.5 + 0.5, 0, 1)[..., None]
+        col = low * (1 - t) + top * t
+        col = col * (1 - np.clip((r - 0.78) / 0.22, 0, 1))[..., None] + rim * np.clip((r - 0.78) / 0.22, 0, 1)[..., None]
+        pupil = np.clip((0.42 - np.sqrt((du / 0.85) ** 2 + dv * dv)) / 0.04, 0, 1)[..., None]
+        col = col * (1 - pupil) + rim * pupil
+        for hu, hv, hr in ((-0.38, 0.40, 0.24), (0.36, -0.42, 0.11)):
+            h = np.clip((hr - np.sqrt((du - hu) ** 2 + (dv - hv) ** 2)) / 0.03, 0, 1)[..., None]
+            col = col * (1 - h) + np.array([1.0, 1.0, 1.0]) * h
+        rgb = rgb * (1 - iris[..., None]) + col * iris[..., None]
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    img = bpy.data.images.new(os.path.basename(path), size, size, alpha=True)
+    rgba = np.dstack([np.clip(rgb, 0, 1), np.ones((size, size), np.float32)])
+    # Painted in sRGB terms; Blender holds a byte image's pixels as they are, bottom row first.
+    img.pixels.foreach_set(np.ascontiguousarray(rgba[::-1]).ravel().astype(np.float32))
+    img.filepath_raw = path
+    img.file_format = "PNG"
+    img.save()
+    return img
+
+
+def anime_eye_decal(path, w=512, h=384):
+    """The painted anime eye for face.anime_eyes' cards, inner corner (u 0) to outer (u 1): an
+    almond opening under a high arched upper lid, the white shaded lilac under the lid, a tall
+    amber iris (dark across its top) with a deep pupil and two catch-lights, a thick ink lash line
+    along the lid flicking up at the outer corner, a short fine one beneath it outside. Alpha
+    clear elsewhere (the skin shows)."""
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    u, v = xx / w, 1.0 - yy / h
+    px = 1.5 / h
+    # Both lids meet at pointed corners (inner low, outer a little higher); the upper arches high,
+    # its peak a little outward, the lower is a shallow curve.
+    t = np.clip((u - 0.05) / 0.92, 0, 1)
+    line = 0.40 + 0.16 * t
+    top = line + 0.42 * np.sin(np.pi * t ** 0.85) ** 0.6
+    bot = line - 0.24 * np.sin(np.pi * t) ** 0.9
+    inside = np.clip((top - v) / px, 0, 1) * np.clip((v - bot) / px, 0, 1) * ((u > 0.05) & (u < 0.97))
+    rgb = np.ones((h, w, 3), np.float32) * np.array([0.97, 0.95, 0.92], np.float32)
+    lid = np.clip((v - (top - 0.16)) / 0.16, 0, 1)[..., None]
+    rgb = rgb * (1 - lid * 0.8) + np.array([0.70, 0.66, 0.86]) * lid * 0.8
+    du, dv = (u - 0.52) / 0.21, (v - 0.47) / 0.33
+    r = np.sqrt(du * du + dv * dv)
+    iris = np.clip((1.0 - r) * 40, 0, 1)[..., None]
+    t = np.clip(dv * 0.5 + 0.5, 0, 1)[..., None]
+    icol = np.array([0.86, 0.48, 0.12]) * (1 - t) + np.array([0.20, 0.08, 0.03]) * t
+    ring = np.clip((r - 0.8) / 0.2, 0, 1)[..., None]
+    icol = icol * (1 - ring) + np.array([0.08, 0.035, 0.02]) * ring
+    pupil = np.clip((0.4 - np.sqrt((du / 0.8) ** 2 + dv * dv)) * 30, 0, 1)[..., None]
+    icol = icol * (1 - pupil) + np.array([0.05, 0.02, 0.015]) * pupil
+    for hu, hv, hr in ((-0.35, 0.38, 0.26), (0.34, -0.4, 0.12)):
+        hl = np.clip((hr - np.sqrt((du - hu) ** 2 + (dv - hv) ** 2)) * 30, 0, 1)[..., None]
+        icol = icol * (1 - hl) + hl
+    rgb = rgb * (1 - iris) + icol * iris
+    # The lash line over the lid, thickening outward, flicking up past the outer corner.
+    thick = 0.05 + 0.06 * u
+    lash = np.clip((v - (top - 0.02)) / px, 0, 1) * np.clip((top + thick - v) / px, 0, 1) * np.clip((u - 0.02) / 0.03, 0, 1)
+    lash = lash * (u < 0.98)
+    # The flick: on past the outer corner, up and out.
+    fu = np.clip((u - 0.9) / 0.1, 0, 1)
+    flick = np.clip((0.03 * (1.0 - fu) + 0.006 - np.abs(v - (0.56 + 0.02 + fu * 0.12))) / px, 0, 1) * (u > 0.9)
+    lower = np.clip((bot - v) / px, 0, 1) * np.clip((v - (bot - 0.022)) / px, 0, 1) * np.clip((u - 0.55) / 0.08, 0, 1) * (u < 0.95)
+    ink = np.clip(lash + flick + lower, 0, 1)
+    rgb = rgb * (1 - ink[..., None]) + np.array(INK) * ink[..., None]
+    alpha = np.clip(inside + ink, 0, 1)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    img = bpy.data.images.new(os.path.basename(path), w, h, alpha=True)
+    rgba = np.dstack([np.clip(rgb, 0, 1), alpha])
+    img.pixels.foreach_set(np.ascontiguousarray(rgba[::-1]).ravel().astype(np.float32))
+    img.filepath_raw = path
+    img.file_format = "PNG"
+    img.save()
+    return img
+
+
+def anime_hair_material(name, ring=True):
+    """Anime hair: flat near-black brown; on the crown's shell (`ring`), a lighter, cooler band
+    where the sky catches it (the "angel ring"), soft-edged in height. The locks are plain."""
+    m = new_material(name)
+    g = Graph(m)
+    base = (*srgb_to_lin((0.10, 0.06, 0.055)), 1)
+    if not ring:
+        g.principled(base, 0.0, 0.5)
+        return m
+    co = g.texcoord("Object")
+    z = g.node("ShaderNodeSeparateXYZ", {"Vector": co}).outputs["Z"]
+    band = g.band(z, ANIME_RING[0], ANIME_RING[1], 0.005)
+    col = g.mixc(g.mul(band, 0.7), base, (*srgb_to_lin((0.26, 0.19, 0.18)), 1))
+    g.principled(col, 0.0, 0.5)
+    return m
+
+
+# The angel ring's height (m, rest pose), set from the head when the hair is built (face.anime_hair).
+ANIME_RING = [1.55, 1.57]
+
+
+def decal_material(name, img):
+    """An alpha-tested card showing `img` as painted, matte (the anime eyes)."""
+    m = new_material(name)
+    g = Graph(m)
+    uv = g.node("ShaderNodeUVMap", uv_map="UVMap").outputs["UV"]
+    tex = g.node("ShaderNodeTexImage", {"Vector": uv}, image=img)
+    p = g.principled(tex.outputs["Color"], 0.0, 0.5)
+    g.set(p.inputs["Alpha"], g.math("GREATER_THAN", tex.outputs["Alpha"], 0.5))
     return m
 
 
@@ -376,12 +538,42 @@ def hair_flex(obj):
     flex_uvs(obj, flex)
 
 
-def mh_material(name, root):
+def outline(lod, rig, width):
+    """`lod`'s inverted hull: a copy `width` out along its normals with its faces reversed, in the
+    one `toon_outline` material (drawn flat ink in game, crate::rim)."""
+    import bmesh
+    o = lod.copy()
+    o.data = lod.data.copy()
+    o.name = o.data.name = lod.name.replace("_LOD", "_outline_LOD")
+    bpy.context.scene.collection.objects.link(o)
+    bm = bmesh.new()
+    bm.from_mesh(o.data)
+    bm.normal_update()
+    for v in bm.verts:
+        v.co += v.normal * width
+    bmesh.ops.reverse_faces(bm, faces=bm.faces)
+    bm.to_mesh(o.data)
+    bm.free()
+    o.data.materials.clear()
+    m = new_material("toon_outline")
+    g = Graph(m)
+    g.principled((*srgb_to_lin(INK), 1), 0.0, 1.0)
+    o.data.materials.append(m)
+    o.parent = rig
+    return o
+
+
+def mh_material(name, root, variant=None):
     """A MakeHuman library garment in its own textures: its colour (a cleaned copy from
     tools/textures/mh_clothes.py when there is one) and its normal map, so the bake carries its
     sculpted folds into the atlas."""
     lib = os.path.expanduser(f"~/.config/blender/5.2/mpfb/data/clothes/{name}")
     cleaned = os.path.join(root, "build", "clothes", f"{name}_diffuse.png")
+    # The anime character's flat recolour (tools/textures/mh_clothes.py), without the folds' normal
+    # map: cel shading draws the form.
+    flat = os.path.join(root, "build", "clothes", f"anime_{name}_diffuse.png")
+    if variant == ANIME and os.path.exists(flat):
+        cleaned = flat
     diffuse = bpy.data.images.load(cleaned if os.path.exists(cleaned) else os.path.join(lib, f"{name}_diffuse.png"))
     m = new_material(f"mh_{name}")
     g = Graph(m)
@@ -390,7 +582,7 @@ def mh_material(name, root):
     # Not every garment has a normal map (the shoes don't).
     nmap = None
     path = os.path.join(lib, f"{name}_normal.png")
-    if os.path.exists(path):
+    if os.path.exists(path) and variant != ANIME:
         normal = bpy.data.images.load(path)
         normal.colorspace_settings.name = "Non-Color"
         ntex = g.node("ShaderNodeTexImage", {"Vector": uv}, image=normal)
@@ -404,14 +596,18 @@ def finish_character(variant, rig, proxy, parts, items, root):
     skin_img = find_image(proxy)
     proxy.data.materials.clear()
     marks = {"beard": "beard" in proxy.data.attributes, "eyes": proxy.get("eyes"), "bindi": proxy.get("bindi")}
-    proxy.data.materials.append(skin_material(variant, skin_img, marks))
+    anime = variant == ANIME
+    proxy.data.materials.append(anime_skin_material(skin_img, marks) if anime else skin_material(variant, skin_img, marks))
     eyes = parts["eyes"]
-    eye_img = find_image(eyes)
+    eye_img = anime_eye_image(os.path.join(root, "build", "textures", variant, "anime_eye.png")) if anime else find_image(eyes)
     eyes.data.materials.clear()
-    eyes.data.materials.append(eye_material(f"{variant}_eyes", eye_img))
+    eyes.data.materials.append(textured_material(f"{variant}_eyes", eye_img, 0.35) if anime else eye_material(f"{variant}_eyes", eye_img))
     opaque = [proxy, eyes]
+    decals = [obj for obj, _ in items if obj.get("kind") == "decal"]
     for obj, role in items:
         kind = obj.get("kind", "cloth")
+        if kind == "decal":
+            continue
         obj.data.materials.clear()
         if kind == "gold":
             obj.data.materials.append(metal_material("gold", (1.0, 0.76, 0.36)))
@@ -419,10 +615,13 @@ def finish_character(variant, rig, proxy, parts, items, root):
             obj.data.materials.append(metal_material("silver", (0.86, 0.87, 0.89), 0.25))
         elif kind == "hairmesh":
             obj.data.materials.append(hair_mesh_material(obj.name))
+        elif kind == "toonhair":
+            cap = obj.name.startswith("anime_hair_cap")
+            obj.data.materials.append(anime_hair_material("anime_hair_cap" if cap else "anime_hair", ring=cap))
         elif kind == "lacquer":
             obj.data.materials.append(metal_material("lacquer", (0.62, 0.06, 0.08), 0.18, 0.0))
         elif kind == "mh":
-            obj.data.materials.append(mh_material(obj.name, root))
+            obj.data.materials.append(mh_material(obj.name, root, variant))
         else:
             key = next((k for k in CLOTH if obj.name.startswith(k)), "dhoti")
             base, border, pattern, bw = CLOTH[key]
@@ -453,7 +652,7 @@ def finish_character(variant, rig, proxy, parts, items, root):
     tex_dir = os.path.join(root, "build", "textures", variant)
     images = bake.bake_texture_set(body, tex_dir, variant, res=int(os.environ.get("BAKE_RES", "2048")))
     body.data.materials.clear()
-    body.data.materials.append(export.game_material(variant, images))
+    body.data.materials.append(export.game_material(toon_name(variant, variant), images))
     body.data.uv_layers.remove(body.data.uv_layers["src"])
     # UVMap first (TEXCOORD_0, the texture's), Flex second.
     body.data.uv_layers.active = body.data.uv_layers["UVMap"]
@@ -467,12 +666,20 @@ def finish_character(variant, rig, proxy, parts, items, root):
             continue
         img = find_image(o)
         o.data.materials.clear()
-        o.data.materials.append(alpha_card_material(f"{variant}_{key}", img, tint, strength))
+        o.data.materials.append(alpha_card_material(toon_name(variant, f"{variant}_{key}"), img, tint, strength))
         apply_non_armature_modifiers(o)
         if key == "hair":
             # Hair sways like the cloth (crate::rim): still at the scalp, free toward the tips,
             # long hair most.
             hair_flex(o)
+        cards.append(o)
+
+    # The anime eyes: painted cards, alpha-tested.
+    for o in decals:
+        img = anime_eye_decal(os.path.join(root, "build", "textures", variant, "anime_eye_decal.png"))
+        o.data.materials.clear()
+        o.data.materials.append(decal_material(toon_name(variant, f"{variant}_eyes"), img))
+        apply_non_armature_modifiers(o)
         cards.append(o)
 
     # --- LODs (decimate keeps vertex groups, so skinning survives). LOD0 is held to ~30k tris.
@@ -487,6 +694,10 @@ def finish_character(variant, rig, proxy, parts, items, root):
     lods = export.make_lods(body, (0.45, 0.18))
     for lod in lods[1:]:
         lod.parent = rig
+    if variant == ANIME:
+        # The ink outline: each near LOD's copy pushed out along its normals and turned inside
+        # out (only its far side draws, a rim round the silhouette), skinned as the body is.
+        lods += [outline(lod, rig, w) for lod, w in zip(lods[:2], (0.006, 0.01))]
     out = os.path.join(root, "assets", "models", "characters", f"{variant}.glb")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     # The weapon bone a long gun rides (skeleton.py), in the saved rig the clips are made on too.
