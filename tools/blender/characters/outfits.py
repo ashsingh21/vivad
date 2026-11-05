@@ -229,7 +229,7 @@ def female_tactical(ctx):
     return items
 
 
-def section(c, hw, hd, n=24, e=2.6):
+def section(c, hw, hd, n=32, e=2.6):
     """A rounded-rectangle ring (a superellipse, exponent `e`) round `c` in the XY plane:
     `hw` across, `hd` deep (half sizes)."""
     out = []
@@ -260,6 +260,14 @@ def loft(ctx, name, rings, *, only=None, cap_bottom=False, thickness=0.004):
     bm.to_mesh(me)
     bm.free()
     obj = g.new_object(name, me, ctx)
+    # Smoothed now (one subdivision, applied): the cel band's edge follows the surface's normals,
+    # and over a coarse loft it zigzagged across the facets in blotches. Applied here, so the
+    # hems' trim (finish.py, from the distance to the open edges) is measured on the smooth mesh.
+    sub = obj.modifiers.new("Smooth", "SUBSURF")
+    sub.levels = sub.render_levels = 1
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.modifier_move_to_index(modifier="Smooth", index=0)
+    bpy.ops.object.modifier_apply(modifier="Smooth")
     g.transfer_weights(obj, ctx, only=only)
     g.finish_cloth(obj, thickness)
     return obj
@@ -360,9 +368,7 @@ def anime_street(ctx):
         out = Vector((math.cos(a), math.sin(a), 0.0))
         rings.append([c + (out * math.cos(2 * math.pi * q / 12) + Vector((0, 0, 1)) * math.sin(2 * math.pi * q / 12)) * r for q in range(12)])
     items.append((loft(ctx, "anime_hoodie_hood", rings, only=("spine_03", "neck_01", "clavicle_l", "clavicle_r"), thickness=0.0), "accessory"))
-    # The front pocket and the drawstrings.
-    pz = (L.waist + hem) / 2 + 0.01
-    items.append((rounded_box(ctx, "anime_hoodie_pocket", Vector((0, front + 0.002, pz)), (0.26, 0.016, 0.15), torso, bevel=0.007), "accessory"))
+    # The drawstrings. (No front pocket: a box on the belly stood off it like a plate when she bent.)
     for side in (1.0, -1.0):
         top = Vector((side * 0.035, neck[2] - 0.02, L.clav + 0.02))
         path = [top + Vector((0, -0.01 * t, -0.16 * t)) for t in (0.0, 0.5, 1.0)]

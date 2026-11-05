@@ -34,9 +34,11 @@ CLOTH = {
     # a garment takes the first that its name starts with.
     # The anime character's (outfits.anime_street): flat colour, cel shaded.
     # A royal-blue hoodie (its drawstrings cream), olive cargo trousers: both well clear of skin.
+    # Trim colour-blocked a deeper shade at every hem, cuff and neckline (polished anime clothing).
     "anime_hoodie_string": ((0.97, 0.92, 0.80), None, "flat", 0.0),
-    "anime_hoodie": ((0.17, 0.33, 0.68), None, "flat", 0.0),
-    "anime_cargo": ((0.27, 0.30, 0.20), None, "flat", 0.0),
+    "anime_hoodie": ((0.17, 0.33, 0.68), (0.07, 0.13, 0.33), "flat", 0.05),
+    "anime_cargo_flap": ((0.23, 0.26, 0.17), None, "flat", 0.0),
+    "anime_cargo": ((0.27, 0.30, 0.20), (0.14, 0.16, 0.10), "flat", 0.045),
     # Panga: modern desi clothes.
     "shirt_placket": ((0.80, 0.46, 0.04), None, "check", 0.0),
     "shirt": ((0.80, 0.46, 0.04), None, "check", 0.0),
@@ -279,9 +281,14 @@ def anime_hair_material(name, ring=True):
         g.principled(base, 0.0, 0.5)
         return m
     co = g.texcoord("Object")
-    z = g.node("ShaderNodeSeparateXYZ", {"Vector": co}).outputs["Z"]
-    band = g.band(z, ANIME_RING[0], ANIME_RING[1], 0.005)
-    col = g.mixc(g.mul(band, 0.7), base, (*srgb_to_lin((0.26, 0.19, 0.18)), 1))
+    xyz = g.node("ShaderNodeSeparateXYZ", {"Vector": co}).outputs
+    # The shine, drawn as anime hair's is: a band round the crown broken into zigzag strands (its
+    # height wavering with the angle round the head), in pieces, not a ring.
+    ang = g.math("ARCTAN2", xyz["X"], xyz["Y"])
+    z = g.add(xyz["Z"], g.mul(g.math("SINE", g.mul(ang, 14.0)), 0.006))
+    band = g.band(z, ANIME_RING[0], ANIME_RING[1], 0.002)
+    strands = g.smooth(g.math("SINE", g.mul(ang, 7.0)), 0.0, 0.5)
+    col = g.mixc(g.mul(g.mul(band, strands), 0.6), base, (*srgb_to_lin((0.22, 0.15, 0.14)), 1))
     g.principled(col, 0.0, 0.5)
     return m
 
@@ -644,18 +651,21 @@ def finish_character(variant, rig, proxy, parts, items, root):
         # The garment as grown, before its thickness is applied: Solidify moves a vertex millimetres,
         # but at a sharp degenerate corner (an armpit) it can fling one a metre out. Anything that
         # ends up over 5 cm from the shape it was grown as goes back to its nearest original point.
-        kd = None
+        # (Measured to its surface, not its vertices: a subdivision's new points lie mid-face.)
+        tree = None
         if anime and o is not proxy and any(m.type == "SOLIDIFY" for m in o.modifiers):
-            kd = KDTree(len(o.data.vertices))
-            for v in o.data.vertices:
-                kd.insert(v.co, v.index)
-            kd.balance()
+            from mathutils.bvhtree import BVHTree
+            import bmesh as _bm
+            b = _bm.new()
+            b.from_mesh(o.data)
+            tree = BVHTree.FromBMesh(b)
+            b.free()
         apply_non_armature_modifiers(o)
-        if kd is not None:
+        if tree is not None:
             pulled = 0
             for v in o.data.vertices:
-                near, _, d = kd.find(v.co)
-                if d > 0.05:
+                near, _, _, d = tree.find_nearest(v.co)
+                if near is not None and d > 0.05:
                     v.co = near
                     pulled += 1
             if pulled:
@@ -725,7 +735,8 @@ def finish_character(variant, rig, proxy, parts, items, root):
     if variant == ANIME:
         # The ink outline: each near LOD's copy pushed out along its normals and turned inside
         # out (only its far side draws, a rim round the silhouette), skinned as the body is.
-        lods += [outline(lod, rig, w) for lod, w in zip(lods[:2], (0.006, 0.01))]
+        # 4 mm near (thicker, a crease between sleeve and body filled with ink as a black wedge).
+        lods += [outline(lod, rig, w) for lod, w in zip(lods[:2], (0.004, 0.009))]
     out = os.path.join(root, "assets", "models", "characters", f"{variant}.glb")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     # The weapon bone a long gun rides (skeleton.py), in the saved rig the clips are made on too.
