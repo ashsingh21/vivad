@@ -207,6 +207,7 @@ impl Plugin for AutoshotPlugin {
                     // roof and the room upstairs; `just stylecheck` measures these.
                     ("style_block", v(58.0, 4.5, 58.0), v(77.0, 4.0, 86.0)),
                     ("style_facade", v(64.2, 1.8, 67.2), v(77.0, 7.6, 86.0)),
+                    ("style_trees", v(53.0, 2.0, 37.0), v(39.9, 4.2, 47.1)),
                     ("style_kerb", v(77.6, 1.7, 59.3), v(67.0, 0.8, 76.0)),
                     ("style_verandah", v(73.2, 1.7, 77.1), v(51.7, 2.2, 88.0)),
                     ("style_shop", v(68.4, 1.7, 78.5), v(74.3, 1.9, 90.3)),

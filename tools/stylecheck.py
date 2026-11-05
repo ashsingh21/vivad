@@ -29,7 +29,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 OUT = os.path.join(ROOT, "previews", "style")
 LAST = os.path.join(OUT, "last.json")
 BASELINE = os.path.join(OUT, "baseline.json")
-VIEWS = ["style_block", "style_facade", "style_kerb", "style_verandah", "style_shop", "style_roof", "style_room"]
+VIEWS = ["style_block", "style_facade", "style_trees", "style_kerb", "style_verandah", "style_shop", "style_roof", "style_room"]
 
 # (metric, low, high): None for no bound. The views facing the sun (the roof) are held to the high
 # key; the block faces away from it (Connaught Place is a ring: half of it always does), so its
@@ -38,7 +38,10 @@ VIEWS = ["style_block", "style_facade", "style_kerb", "style_verandah", "style_s
 SUNLIT = {"p90": (0.82, 0.95), "clip": (None, 0.02), "dark": (None, 0.10), "loud": (None, 0.22)}
 SHADE = {"p50": (0.45, None), "clip": (None, 0.02), "dark": (None, 0.10), "loud": (0.02, 0.22)}
 ROOM = {"p50": (0.35, None), "dark": (None, 0.10)}
-KIND = {"style_roof": SUNLIT, "style_room": ROOM}
+# The park: open sky and lawn fill most of the frame, both strongly coloured by design, so its
+# loudness isn't judged; only that it's bright and nothing blows out or goes black.
+PARK = {"p50": (0.45, None), "clip": (None, 0.02), "dark": (None, 0.10)}
+KIND = {"style_roof": SUNLIT, "style_room": ROOM, "style_trees": PARK}
 
 
 def measure(path):

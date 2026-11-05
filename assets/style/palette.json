@@ -102,7 +102,12 @@
     "neem": "#4fa23c",
     "neem_dark": "#2f7a2e",
     "neem_light": "#8fcf4f",
+    "peepal": "#62b847",
+    "peepal_dark": "#3d8a35",
+    "peepal_light": "#a3d95c",
     "bark": "#7a5a43",
+    "bark_pale": "#8c7764",
+    "bougainvillea": "#e0338f",
     "flower_pink": "#ff5fa8",
     "flower_orange": "#ff9a3c"
   },

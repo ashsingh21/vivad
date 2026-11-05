@@ -265,3 +265,7 @@ clip-video variant="male" clips="":
 # colour per style_* view, against the guide and the kept baseline; `just stylecheck keep` to keep.
 stylecheck *args:
     python3 tools/stylecheck.py {{ if args == "keep" { "--keep" } else { args } }}
+
+# The style guide's trees and bushes (Delhi's maps): assets/models/props/stylised/
+stylised-trees:
+    {{blender}} -b --factory-startup -P tools/blender/nature/stylised_trees.py 2>&1 | grep -E '^\[|Error|Traceback' -A3 || true

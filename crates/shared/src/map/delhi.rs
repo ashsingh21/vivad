@@ -760,10 +760,16 @@ fn enterable(pts: &[Vec2], map: &MapLayout) -> Option<(Vec2, f32, f32)> {
     Some(((mid - c).normalize_or_zero(), edges[k].length(), edges[(k + 1) % 4].length()))
 }
 
+/// Delhi's trees and bushes, to the style guide (tools/blender/nature/stylised_trees.py).
+pub const NEEM: &str = "models/props/stylised/tree_neem.glb";
+pub const PEEPAL: &str = "models/props/stylised/tree_peepal.glb";
+pub const LANTANA: &str = "models/props/stylised/bush_lantana.glb";
+pub const BOUGAINVILLEA: &str = "models/props/stylised/bush_bougainvillea.glb";
+
 fn tree(b: &mut Builder, rng: &mut SmallRng, p: Vec2) {
-    let model = [super::india::TREE_NEEM, super::india::TREE_PEEPAL, super::india::TREE_NEEM][rng.random_range(0..3)];
+    let model = [NEEM, PEEPAL, NEEM][rng.random_range(0..3)];
     let scale = rng.random_range(0.85..1.2);
-    b.map.props.push(Prop { model, pos: Vec3::new(p.x, b.map.terrain.height(p.x, p.y), p.y), yaw: rng.random_range(0.0..std::f32::consts::TAU), scale, trunk: Some((0.25, 4.0)) });
+    b.map.props.push(Prop { model, pos: Vec3::new(p.x, b.map.terrain.height(p.x, p.y), p.y), yaw: rng.random_range(0.0..std::f32::consts::TAU), scale, trunk: Some((0.42, 4.0)) });
 }
 
 /// In front of a hall's doorway (within 3 m out and 1.8 m either side, plus `r`): kept clear.
@@ -844,7 +850,7 @@ fn trees(b: &mut Builder, rng: &mut SmallRng, data: &Data, ring: &super::cp::Rin
                 let p = ring.at(rad + rng.random_range(-0.6..0.6), a, 0.0).xz();
                 if p.abs().max_element() < HALF - 4.0 && free(b.map, houses, p, 2.5) {
                     let scale = rng.random_range(0.95..1.2);
-                    b.map.props.push(Prop { model: super::india::TREE_NEEM, pos: Vec3::new(p.x, b.map.terrain.height(p.x, p.y), p.y), yaw: rng.random_range(0.0..std::f32::consts::TAU), scale, trunk: Some((0.3, 4.0)) });
+                    b.map.props.push(Prop { model: NEEM, pos: Vec3::new(p.x, b.map.terrain.height(p.x, p.y), p.y), yaw: rng.random_range(0.0..std::f32::consts::TAU), scale, trunk: Some((0.42, 4.0)) });
                 }
             }
         }
