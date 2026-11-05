@@ -97,7 +97,7 @@ upper limb toward the thumb, edge or bow's back along the hand); see `crates/gam
 |---|---|---|---|
 | studio_small_08 HDRI (2k) | [Poly Haven](https://polyhaven.com/a/studio_small_08) | CC0 | Preview renders only |
 | studio_small_09 HDRI (2k) | [Poly Haven](https://polyhaven.com/a/studio_small_09) | CC0 | Preview renders (alternative) |
-| Texture scans: grey_plaster_02, worn_tile_floor, red_brick_03, asphalt_02, concrete_pavers_02, dry_ground_rocks | [Poly Haven](https://polyhaven.com/textures) | CC0 | Stylised by tools/textures/scans.py into panga/{stucco,stone,rustic,facade}, india/brick and panga/ground_detail (the raw downloads in build/scans/, not committed) |
+| Texture scans: grey_plaster_02, worn_tile_floor, red_brick_03, asphalt_02, concrete_pavers_02, dry_ground_rocks, medieval_blocks_03 | [Poly Haven](https://polyhaven.com/textures) | CC0 | Stylised by tools/textures/scans.py into panga/{stucco,stone,rustic,facade,plinth}, india/brick and panga/ground_detail (the raw downloads in build/scans/, not committed) |
 
 | Seed-san (VRM sample model) | [github.com/vrm-c/vrm-specification/samples/Seed-san](https://github.com/vrm-c/vrm-specification/tree/master/samples/Seed-san) | [VRM Public License 1.0](https://vrm.dev/en/licenses/1.0/): commercial use (corporations), redistribution and modified redistribution allowed; **credit required: "Seed-san model by VirtualCast, Inc."** | The anime body (assets/models/characters/anime.glb, by tools/blender/characters/vroid.py; its mech arms and backpack left out). The source .vrm is not in the repository (build/vroid/). |
 | VRM Add-on for Blender | [extensions.blender.org/add-ons/vrm](https://extensions.blender.org/add-ons/vrm/) | MIT (tool only) | Importing VRM characters (vroid.py) |
