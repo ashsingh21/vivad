@@ -88,9 +88,14 @@ fn main() {
         });
     app.add_plugins((net::TransportPlugin, game::lobby::LobbyPlugin, game::menu::MenuPlugin, game::loading::LoadingPlugin));
     // GPU time per render pass, for the perf overlay (F3) and VIVAD_PERF_ALL=1's log. The browser
-    // has no GPU timers.
+    // has no GPU timers. On macOS only when asked (VIVAD_PERF_ALL or VIVAD_GPU_TIMES=1): it makes
+    // timer buffers for each frame still in flight, and Metal allows only a few, so the slow
+    // frames of a map load ran out and lost the device (DeviceLost after "Failed to create
+    // counter sample buffer").
     #[cfg(not(target_arch = "wasm32"))]
-    app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    if !cfg!(target_os = "macos") || std::env::var_os("VIVAD_PERF_ALL").is_some() || std::env::var("VIVAD_GPU_TIMES").as_deref() == Ok("1") {
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    }
     app.run();
 }
 

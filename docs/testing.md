@@ -33,6 +33,8 @@ the numbers mean something (with vsync they stop at the display's 60).
 **Frame rate per view.** `just perf` holds every tour view for 400 frames uncapped and prints
 its frame rate (`[tour-fps]`); compare runs before and after a change. `VIVAD_PERF_ALL=1` logs
 every diagnostic, including the GPU time of each render pass: the shadow pass is the largest.
+On macOS the GPU pass timers are off unless `VIVAD_PERF_ALL` or `VIVAD_GPU_TIMES=1` is set
+(Metal's limit on timer buffers lost the device during map loads).
 Knobs for comparisons: `VIVAD_GRASS=<0..1>` (share of blades; default 0.5),
 `VIVAD_CASCADES=n` (default 3), `VIVAD_SHADOW_FAR=m` (default 200).
 
