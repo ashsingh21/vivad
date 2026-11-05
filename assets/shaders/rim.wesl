@@ -51,7 +51,11 @@ fn cel(pbr_input: PbrInput) -> vec4<f32> {
                 view_bindings::view.view_from_world[2].z,
                 view_bindings::view.view_from_world[3].z
             ), pbr_input.world_position);
-            shadow = shadows::fetch_directional_shadow(0u, pbr_input.world_position, pbr_input.world_normal, view_z, pbr_input.frag_coord.xy);
+            // Looked up 60 cm toward the sun: her own hair, arms and gun (within arm's reach) cast
+            // no shade on her (the ponytail's, at the shadow map's resolution, lay on her back as
+            // hard squares); trees and buildings, metres off, still shade her.
+            let probe = vec4<f32>(pbr_input.world_position.xyz + light.direction_to_light * 0.6, 1.0);
+            shadow = shadows::fetch_directional_shadow(0u, probe, pbr_input.world_normal, view_z, pbr_input.frag_coord.xy);
         }
         lit = smoothstep(toon.y - toon.z, toon.y + toon.z, n_dot_l) * smoothstep(0.35, 0.65, shadow);
         sun = light.color.rgb * (1.0 / PI) * mix(toon.w, 1.0, lit);

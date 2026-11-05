@@ -265,6 +265,21 @@ def loft(ctx, name, rings, *, only=None, cap_bottom=False, thickness=0.004):
     return obj
 
 
+def rounded_box(ctx, name, c, size, only, bevel=0.012):
+    """A box with its edges rounded (`bevel` m, three segments): a pocket or a flap."""
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Translation(c) @ Matrix.Diagonal((*size, 1.0)))
+    bmesh.ops.bevel(bm, geom=list(bm.edges), offset=min(bevel, min(size) * 0.45), segments=3, affect="EDGES", profile=0.5)
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    for p in me.polygons:
+        p.use_smooth = True
+    o = g.new_object(name, me, ctx)
+    g.transfer_weights(o, ctx, only=only)
+    return o
+
+
 def extent(ctx, z, groups, dz=0.02):
     """The body's (x min, x max, y min, y max) in a slab round height `z`, over `groups`."""
     pts = [p for i, p in enumerate(ctx.co) if abs(p[2] - z) < dz and ctx.w(i, *groups) > 0.5]
@@ -310,7 +325,9 @@ def anime_street(ctx):
         sh, _ = ctx.bone(f"upperarm_{side}")
         el, _ = ctx.bone(f"lowerarm_{side}")
         wr, _ = ctx.bone(f"hand_{side}")
-        sh = sh + (sh - el).normalized() * 0.04
+        # Rooted inside the body, narrow, the root riding the collarbone (below), so the sleeve
+        # leaves the hoodie's shoulder cleanly and covers the shoulder's top.
+        root = sh + (sh - el).normalized() * 0.07
 
         def ring_at(p, d, r):
             # A circle round `p` across direction `d`.
@@ -318,37 +335,34 @@ def anime_street(ctx):
             u = u.normalized() if u.length > 1e-3 else Vector((1, 0, 0))
             v = d.cross(u).normalized()
             return [p + (u * math.cos(2 * math.pi * k / 16) + v * math.sin(2 * math.pi * k / 16)) * r for k in range(16)]
-        path = [(sh, 0.078), (sh.lerp(el, 0.5), 0.07), (el, 0.064), (el.lerp(wr, 0.6), 0.058), (wr - (wr - el).normalized() * 0.05, 0.054),
+        path = [(root, 0.045), (sh, 0.07), (sh.lerp(el, 0.5), 0.07), (el, 0.064), (el.lerp(wr, 0.6), 0.058), (wr - (wr - el).normalized() * 0.05, 0.054),
                 (wr - (wr - el).normalized() * 0.045, 0.043), (wr - (wr - el).normalized() * 0.005, 0.042)]
         rs = []
         for k, (p, r) in enumerate(path):
             a = path[max(k - 1, 0)][0]
             b = path[min(k + 1, len(path) - 1)][0]
             rs.append(ring_at(p, (b - a).normalized(), r))
-        items.append((loft(ctx, f"anime_hoodie_sleeve_{side}", rs, only=(f"upperarm_{side}", f"lowerarm_{side}", f"hand_{side}", f"clavicle_{side}", "spine_03")), "cover"))
-    # The hood, down: bunched in a soft roll behind the neck.
-    bm = bmesh.new()
-    bmesh.ops.create_uvsphere(bm, u_segments=20, v_segments=12, radius=1.0,
-                              matrix=Matrix.Translation(Vector((0, neck[3] + 0.04, L.clav + 0.05))) @ Matrix.Diagonal((0.125, 0.06, 0.08, 1.0)))
-    me = bpy.data.meshes.new("anime_hoodie_hood")
-    bm.to_mesh(me)
-    bm.free()
-    hood = g.new_object("anime_hoodie_hood", me, ctx)
-    g.transfer_weights(hood, ctx, only=("spine_03", "neck_01", "clavicle_l", "clavicle_r"))
-    g.finish_cloth(hood, 0.0)
-    items.append((hood, "accessory"))
+        sleeve = loft(ctx, f"anime_hoodie_sleeve_{side}", rs, only=(f"upperarm_{side}", f"lowerarm_{side}", f"hand_{side}", f"clavicle_{side}", "spine_03"))
+        # The buried root rides the collarbone (with the torso), not the arm, which would swing it
+        # out through the hoodie's back.
+        root_vs = [v.index for v in sleeve.data.vertices if (v.co - root).length < 0.06]
+        for grp in sleeve.vertex_groups:
+            grp.remove(root_vs)
+        sleeve.vertex_groups[f"clavicle_{side}"].add(root_vs, 1.0, "REPLACE")
+        items.append((sleeve, "cover"))
+    # The hood, down: a soft roll round the back of the neck, standing proud of the back (its ends
+    # sunk into the shoulders), not lying flat against it.
+    rings = []
+    for k in range(9):
+        a = math.pi * (0.1 + 0.8 * k / 8)
+        c = Vector((0.11 * math.cos(a), ny + 0.075 * math.sin(a), L.clav + 0.035 + 0.025 * math.sin(a)))
+        r = 0.035 + 0.02 * math.sin(a)
+        out = Vector((math.cos(a), math.sin(a), 0.0))
+        rings.append([c + (out * math.cos(2 * math.pi * q / 12) + Vector((0, 0, 1)) * math.sin(2 * math.pi * q / 12)) * r for q in range(12)])
+    items.append((loft(ctx, "anime_hoodie_hood", rings, only=("spine_03", "neck_01", "clavicle_l", "clavicle_r"), thickness=0.0), "accessory"))
     # The front pocket and the drawstrings.
     pz = (L.waist + hem) / 2 + 0.01
-    for name, c, size in (("anime_hoodie_pocket", Vector((0, front + 0.004, pz)), (0.26, 0.014, 0.15)),):
-        bm = bmesh.new()
-        bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Translation(c) @ Matrix.Diagonal((*size, 1.0)))
-        me = bpy.data.meshes.new(name)
-        bm.to_mesh(me)
-        bm.free()
-        o = g.new_object(name, me, ctx)
-        g.transfer_weights(o, ctx, only=torso)
-        g.finish_cloth(o, 0.0)
-        items.append((o, "accessory"))
+    items.append((rounded_box(ctx, "anime_hoodie_pocket", Vector((0, front + 0.002, pz)), (0.26, 0.016, 0.15), torso, bevel=0.007), "accessory"))
     for side in (1.0, -1.0):
         top = Vector((side * 0.035, neck[2] - 0.02, L.clav + 0.02))
         path = [top + Vector((0, -0.01 * t, -0.16 * t)) for t in (0.0, 0.5, 1.0)]
@@ -373,18 +387,12 @@ def anime_street(ctx):
             # Straight down the leg (not round its curves): each section level, centred on the bone.
             rs.append(section(Vector((p.x, p.y, p.z)), r, r * 0.95, n=24, e=2.2))
         items.append((loft(ctx, f"anime_cargo_leg_{side}", rs, only=(f"thigh_{side}", f"calf_{side}", f"foot_{side}", "pelvis")), "cover"))
-        # The thigh pocket, on the outside.
+        # The thigh pocket, on the outside, set into the leg, rounded, under a flap a little wider.
         sgn = 1.0 if side == "l" else -1.0
-        c = th.lerp(kn, 0.5) + Vector((sgn * 0.094, 0, 0))
-        bm = bmesh.new()
-        bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Translation(c) @ Matrix.Diagonal((0.03, 0.12, 0.15, 1.0)))
-        me = bpy.data.meshes.new(f"anime_cargo_pocket_{side}")
-        bm.to_mesh(me)
-        bm.free()
-        o = g.new_object(f"anime_cargo_pocket_{side}", me, ctx)
-        g.transfer_weights(o, ctx, only=(f"thigh_{side}", f"calf_{side}"))
-        g.finish_cloth(o, 0.0)
-        items.append((o, "accessory"))
+        c = th.lerp(kn, 0.5) + Vector((sgn * 0.088, 0, 0))
+        leg = (f"thigh_{side}", f"calf_{side}")
+        items.append((rounded_box(ctx, f"anime_cargo_pocket_{side}", c, (0.028, 0.115, 0.13), leg), "accessory"))
+        items.append((rounded_box(ctx, f"anime_cargo_flap_{side}", c + Vector((sgn * 0.005, 0, 0.07)), (0.03, 0.125, 0.035), leg, bevel=0.01), "accessory"))
     return items
 
 
