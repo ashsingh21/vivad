@@ -684,14 +684,11 @@ fn hall(b: &mut Builder, rng: &mut SmallRng, pts: &[Vec2], others: &[Vec<Vec2>])
         }
         // Up into the building above, its top hidden there.
         b.wall(w, a, q, 0.0, HALL + 0.1, T, Mat::Rustic, &ops);
-        // The paint inside: a skin just off the wall's inner face, stopped short of the corners (its
-        // ends would show through the next wall's outside), with the wall's openings.
-        let cut = T + 0.02;
-        if len > 2.0 * cut + 0.2 {
-            let skin = -out * (T * 0.5 + 0.012);
-            let lops: Vec<Opening> = ops.iter().map(|o| Opening { at: o.at - cut, ..*o }).collect();
-            b.lining(w, a + dir * cut + skin, q - dir * cut + skin, 0.02, HALL - 0.02, 0.02, wash, &lops);
-        }
+        // The paint inside, with the wall's openings. (The wall runs on past its corners by half its
+        // thickness; the skin is measured from the corners themselves.)
+        let run = T * 0.5 + 0.015;
+        let lops: Vec<Opening> = ops.iter().map(|o| Opening { at: o.at - run, ..*o }).collect();
+        b.line_inside(w, a + dir * run, q - dir * run, 0.0, HALL, T, (a + q) * 0.5 - out, wash, &lops);
         // A blank wall inside is lined with shelves of goods, a bay every 3.5 m.
         if ops.is_empty() && len > 4.0 {
             let k = ((len - 1.0) / 3.5).floor() as usize;
