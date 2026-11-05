@@ -3464,6 +3464,7 @@ dependencies = [
 name = "game"
 version = "0.1.0"
 dependencies = [
+ "arboard",
  "avian3d",
  "bevy",
  "getrandom 0.3.4",

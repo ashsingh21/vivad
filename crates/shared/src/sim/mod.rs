@@ -486,7 +486,7 @@ impl Plugin for SimPlugin {
                 )
                     .distributive_run_if(|hold: Res<Hold>| !hold.0),
             )
-            .add_systems(Startup, spawn_map)
+            .add_systems(Startup, spawn_map.run_if(not(resource_exists::<DeferMap>)))
             .add_systems(FixedFirst, record_prev_positions)
             .add_systems(FixedUpdate, clear_latched_input.in_set(SimSet::Cleanup))
             .add_plugins((
@@ -500,6 +500,19 @@ impl Plugin for SimPlugin {
                 net::NetPlugin,
             ));
     }
+}
+
+/// Present before startup: the map isn't built then (neither its entities nor, in the game, its
+/// art), but by `load_deferred` later; the game first draws its loading screen, which a frame
+/// spent building and uploading the city would keep off the window.
+#[derive(Resource)]
+pub struct DeferMap;
+
+/// The map `DeferMap` held back, built as a reload (so the client's `map_reloaded` builders run).
+pub fn load_deferred(world: &mut World) {
+    world.remove_resource::<DeferMap>();
+    let map = world.resource::<MatchConfig>().map;
+    load_map(world, map);
 }
 
 fn spawn_map(mut commands: Commands, layout: Res<MapLayout>) {

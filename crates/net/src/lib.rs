@@ -779,7 +779,12 @@ impl Lobby {
     /// With relays the match gets a room code (`room`, from `new_room`; the map seed must be
     /// `room_map_seed` of it); without, a long code carrying our addresses.
     pub fn host(name: String, relay: bool, room: Option<String>, players: Option<usize>, bots: u32, map: MapId, map_seed: u64) -> Lobby {
-        let (lobby, news) = Lobby::new(true);
+        let (mut lobby, news) = Lobby::new(true);
+        // A room code is known before we're online (it names the room, not our address): shown
+        // at once, so there is something to share while the relay is still being reached.
+        if relay {
+            lobby.code = room.clone();
+        }
         let go = lobby.go.clone();
         background(move |rt| async move {
             let node = match (rt, &room) {

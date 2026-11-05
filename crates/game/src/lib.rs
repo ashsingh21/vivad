@@ -20,6 +20,7 @@ pub mod sky;
 pub mod street;
 pub mod skyline;
 pub mod lobby;
+pub mod loading;
 pub mod menu;
 pub mod studio_env;
 pub mod visuals;

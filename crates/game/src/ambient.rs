@@ -17,7 +17,7 @@ pub struct AmbientPlugin;
 
 impl Plugin for AmbientPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (setup, spawn_sky.after(setup)))
+        app.add_systems(Startup, (setup, spawn_sky.after(setup).run_if(not(resource_exists::<shared::sim::DeferMap>))))
             .add_systems(Update, (spawn_sky.run_if(map_reloaded), add_blobs, place_blobs, fly_kites, fly_pigeons));
     }
 }

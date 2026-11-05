@@ -11,7 +11,7 @@ pub struct LampsPlugin;
 
 impl Plugin for LampsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_lamps).add_systems(Update, (spawn_lamps.run_if(map_reloaded), flicker));
+        app.add_systems(Startup, spawn_lamps.run_if(not(resource_exists::<shared::sim::DeferMap>))).add_systems(Update, (spawn_lamps.run_if(map_reloaded), flicker));
     }
 }
 

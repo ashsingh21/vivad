@@ -13,7 +13,7 @@ pub struct SkylinePlugin;
 
 impl Plugin for SkylinePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_skyline).add_systems(Update, spawn_skyline.run_if(map_reloaded));
+        app.add_systems(Startup, spawn_skyline.run_if(not(resource_exists::<shared::sim::DeferMap>))).add_systems(Update, spawn_skyline.run_if(map_reloaded));
     }
 }
 

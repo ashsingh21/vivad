@@ -23,7 +23,7 @@ pub struct StreetPlugin;
 
 impl Plugin for StreetPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, load_kit).add_systems(Update, (rebuild.run_if(map_reloaded), build_kit).chain());
+        app.add_systems(Startup, load_kit).add_systems(Update, (rebuild.run_if(map_reloaded), build_kit.run_if(crate::loading::settled)).chain());
     }
 }
 
@@ -47,16 +47,23 @@ fn project_uvs(mesh: &mut Mesh) {
     else {
         return;
     };
-    let uv: Vec<[f32; 2]> = pos
+    // The tangents too, from the projection (u runs along `du`, v against `dv`; `w` as
+    // mikktspace gives it, bar at the seams of the projection): mikktspace on
+    // the merged chunks took ten seconds at launch.
+    let (uv, tangent): (Vec<[f32; 2]>, Vec<[f32; 4]>) = pos
         .iter()
         .zip(nrm)
         .map(|(p, n)| {
-            let (p, a) = (Vec3::from(*p), Vec3::from(*n).abs());
-            let (u, v) = if a.x > a.y && a.x > a.z { (p.z, p.y) } else if a.z > a.y { (p.x, p.y) } else { (p.x, p.z) };
-            [u / WEAR_TILE, -v / WEAR_TILE]
+            let (p, n) = (Vec3::from(*p), Vec3::from(*n));
+            let a = n.abs();
+            let (u, v, du, dv) = if a.x > a.y && a.x > a.z { (p.z, p.y, Vec3::Z, Vec3::Y) } else if a.z > a.y { (p.x, p.y, Vec3::X, Vec3::Y) } else { (p.x, p.z, Vec3::X, Vec3::Z) };
+            let t = (du - n * n.dot(du)).normalize_or(Vec3::X);
+            let w = if n.cross(t).dot(dv) < 0.0 { -1.0 } else { 1.0 };
+            ([u / WEAR_TILE, -v / WEAR_TILE], [t.x, t.y, t.z, w])
         })
-        .collect();
+        .unzip();
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uv);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, tangent);
 }
 
 #[derive(Resource)]
@@ -178,10 +185,11 @@ fn build_kit(
         // The origin at the chunk's centre: LOD distances are measured from it.
         let centre = Vec3::new((cx as f32 + 0.5) * CHUNK, 0.0, (cz as f32 + 0.5) * CHUNK);
         let mut mesh = mesh.translated_by(-centre);
-        if !mesh.contains_attribute(Mesh::ATTRIBUTE_TANGENT) {
+        let material = mat.and_then(|id| own_materials.get(&id).cloned()).unwrap_or_else(|| kit.material.clone());
+        let bumpy = materials.get(&material).is_some_and(|m| m.normal_map_texture.is_some());
+        if bumpy && !mesh.contains_attribute(Mesh::ATTRIBUTE_TANGENT) {
             let _ = mesh.generate_tangents();
         }
-        let material = mat.and_then(|id| own_materials.get(&id).cloned()).unwrap_or_else(|| kit.material.clone());
         let (s, e) = ranges[lod].clone();
         let range = LodRange(VisibilityRange { start_margin: s, end_margin: e, use_aabb: false }, lod);
         let mut piece = commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(material), Transform::from_translation(centre), range.0.clone(), range, OfMap));

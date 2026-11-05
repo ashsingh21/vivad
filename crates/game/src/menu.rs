@@ -8,6 +8,7 @@ use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::prelude::*;
 use bevy::ui::UiGlobalTransform;
 use bevy::window::PrimaryWindow;
+use crate::loading::{self, Loading};
 use net::Lobby;
 use shared::sim::{Hold, MatchConfig};
 
@@ -15,9 +16,14 @@ pub struct MenuPlugin;
 
 impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
+        // With the screen up, the map is built behind the loading screen (not at startup, when
+        // nothing could be drawn yet and the window sat black).
+        if !skipped() {
+            app.insert_resource(shared::sim::DeferMap);
+        }
         app.init_resource::<MenuOpen>()
             .add_systems(Startup, open)
-            .add_systems(Update, (pointer, typing, refresh).chain().run_if(|m: Res<MenuOpen>| m.0));
+            .add_systems(Update, (pointer, typing, refresh).chain().run_if(|m: Res<MenuOpen>, l: Option<Res<Loading>>| m.0 && l.is_none()));
     }
 }
 
@@ -84,6 +90,10 @@ fn open(mut commands: Commands, mut menu: ResMut<MenuOpen>, mut hold: ResMut<Hol
     }
     menu.0 = true;
     hold.0 = true;
+    commands.queue(|w: &mut World| {
+        let map = w.resource::<MatchConfig>().map;
+        loading::load(w, map, shared::sim::load_deferred);
+    });
     #[cfg(not(target_arch = "wasm32"))]
     let name = std::env::var("VIVAD_NAME").or_else(|_| std::env::var("USER")).unwrap_or_else(|_| "Warrior".into());
     #[cfg(target_arch = "wasm32")]
@@ -135,7 +145,7 @@ fn open(mut commands: Commands, mut menu: ResMut<MenuOpen>, mut hold: ResMut<Hol
                 field(p, "Your name", Field::Name);
                 button(p, "Play solo", Choice::Solo);
                 button(p, "Host online match", Choice::Host);
-                p.spawn((text("or join a friend's match: type their room code", 18.0, Color::srgb(0.75, 0.78, 0.85)), Node { margin: UiRect::top(px(14.0)), ..default() }));
+                p.spawn((text("Got a room code from a friend? Type or paste it here:", 18.0, Color::srgb(0.75, 0.78, 0.85)), Node { margin: UiRect::top(px(14.0)), ..default() }));
                 field(p, "", Field::Code);
                 button(p, "Join", Choice::Join);
                 p.spawn((ErrorText, text("", 18.0, Color::srgb(1.0, 0.45, 0.4))));
@@ -175,9 +185,11 @@ fn pointer(
     }
 }
 
-/// Keys into the focused field (letters, digits, dashes; Backspace; Tab switches; Enter acts).
-fn typing(mut keys: MessageReader<KeyboardInput>, mut t: ResMut<Typing>, mut commands: Commands) {
+/// Keys into the focused field (letters, digits, dashes; Backspace; Tab switches; Enter acts;
+/// Ctrl/Cmd+V pastes).
+fn typing(mut keys: MessageReader<KeyboardInput>, held: Res<ButtonInput<KeyCode>>, mut t: ResMut<Typing>, mut commands: Commands) {
     let mut act = None;
+    let command = held.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight, KeyCode::SuperLeft, KeyCode::SuperRight]);
     for k in keys.read() {
         if !k.state.is_pressed() {
             continue;
@@ -191,14 +203,13 @@ fn typing(mut keys: MessageReader<KeyboardInput>, mut t: ResMut<Typing>, mut com
             Key::Tab => t.focus = if focus == Field::Name { Field::Code } else { Field::Name },
             Key::Enter => act = Some(if focus == Field::Code { Choice::Join } else { Choice::Solo }),
             Key::Space if focus == Field::Name && s.len() < 20 => s.push(' '),
-            Key::Character(c) => {
-                for ch in c.chars() {
-                    let ok = ch.is_alphanumeric() || ch == '-' || (focus == Field::Name && (ch == '_' || ch == '.'));
-                    if ok && s.len() < if focus == Field::Name { 20 } else { 200 } {
-                        s.push(if focus == Field::Code { ch.to_ascii_lowercase() } else { ch });
-                    }
+            Key::Character(c) if command => {
+                if c.eq_ignore_ascii_case("v") {
+                    let pasted = paste();
+                    put(s, focus, pasted.trim());
                 }
             }
+            Key::Character(c) => put(s, focus, c),
             _ => {}
         }
     }
@@ -207,12 +218,38 @@ fn typing(mut keys: MessageReader<KeyboardInput>, mut t: ResMut<Typing>, mut com
     }
 }
 
-fn refresh(t: Res<Typing>, mut texts: Query<(&FieldText, &mut Text)>, mut fields: Query<(&Field, &mut BackgroundColor)>, mut err: Query<&mut Text, (With<ErrorText>, Without<FieldText>)>) {
-    for (f, mut text) in &mut texts {
+/// The clipboard's text (nothing in the browser, where the page has no key-free access to it).
+fn paste() -> String {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        arboard::Clipboard::new().and_then(|mut c| c.get_text()).unwrap_or_default()
+    }
+    #[cfg(target_arch = "wasm32")]
+    String::new()
+}
+
+/// Typed or pasted text into a field, keeping only what a name or a room code can hold.
+fn put(s: &mut String, focus: Field, text: &str) {
+    for ch in text.chars() {
+        let ok = ch.is_alphanumeric() || ch == '-' || (focus == Field::Name && (ch == '_' || ch == '.'));
+        if ok && s.len() < if focus == Field::Name { 20 } else { 200 } {
+            s.push(if focus == Field::Code { ch.to_ascii_lowercase() } else { ch });
+        }
+    }
+}
+
+fn refresh(t: Res<Typing>, mut texts: Query<(&FieldText, &mut Text, &mut TextColor)>, mut fields: Query<(&Field, &mut BackgroundColor)>, mut err: Query<&mut Text, (With<ErrorText>, Without<FieldText>)>) {
+    for (f, mut text, mut colour) in &mut texts {
         let s = if f.0 == Field::Name { &t.name } else { &t.code };
-        let shown = if t.focus == f.0 { format!("{s}|") } else if s.is_empty() && f.0 == Field::Code { "chai-tiger-kulfi-42".into() } else { s.clone() };
+        // An empty code field shows what a code looks like, dimmed so it doesn't read as one.
+        let hint = s.is_empty() && f.0 == Field::Code;
+        let shown = if hint { format!("{}e.g. chai-tiger-kulfi-42", if t.focus == f.0 { "|" } else { "" }) } else if t.focus == f.0 { format!("{s}|") } else { s.clone() };
         if text.0 != shown {
             text.0 = shown;
+        }
+        let c = if hint { Color::srgb(0.45, 0.48, 0.55) } else { Color::WHITE };
+        if colour.0 != c {
+            colour.0 = c;
         }
     }
     for (f, mut bg) in &mut fields {
@@ -233,31 +270,32 @@ fn choose(In(choice): In<Choice>, world: &mut World) {
         let name = if t.name.trim().is_empty() { "Warrior".to_string() } else { t.name.trim().to_string() };
         (name, t.code.trim().to_string())
     };
-    let lobby = match choice {
+    let online = match choice {
         Choice::Solo => None,
         Choice::Join => {
             let Ok((_, map, map_seed)) = net::read_code(&code) else {
                 world.resource_mut::<Typing>().error = Some(if code.is_empty() { "Type the room code first".into() } else { "That isn't a room code".into() });
                 return;
             };
-            go_online(world, map, map_seed, 0);
-            Some(Lobby::join(name, true, code))
+            Some((map, map_seed, Lobby::join(name, true, code)))
         }
         Choice::Host => {
             let map = world.resource::<MatchConfig>().map;
             let room = net::new_room_for(map);
             let (map, seed) = (net::room_map(&room), net::room_map_seed(&room));
-            go_online(world, map, seed, 0);
-            Some(Lobby::host(name, true, Some(room), None, 0, map, seed))
+            Some((map, seed, Lobby::host(name, true, Some(room), None, 0, map, seed)))
         }
     };
     for e in world.query_filtered::<Entity, With<Menu>>().iter(world).collect::<Vec<_>>() {
         world.despawn(e);
     }
     world.resource_mut::<MenuOpen>().0 = false;
-    match lobby {
+    match online {
         // The lobby holds the match until everyone has loaded it.
-        Some(l) => world.insert_resource(l),
+        Some((map, seed, lobby)) => loading::load(world, map, move |w| {
+            go_online(w, map, seed, 0);
+            w.insert_resource(lobby);
+        }),
         None => world.resource_mut::<Hold>().0 = false,
     }
 }

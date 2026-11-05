@@ -14,6 +14,10 @@ serde = { workspace = true }
 # Online play over iroh (in the browser through its relays).
 net = { path = "../net" }
 
+# Pasting a friend's room code on the start screen.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+arboard = { version = "3.7", default-features = false }
+
 # The browser build: randomness from the Web Crypto API (see .cargo/config.toml).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.4", features = ["wasm_js"] }

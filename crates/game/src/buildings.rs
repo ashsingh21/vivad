@@ -27,7 +27,8 @@ pub struct BuildingsPlugin;
 
 impl Plugin for BuildingsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, build_chunks)
+        app.init_resource::<PendingMips>()
+            .add_systems(Startup, build_chunks.run_if(not(resource_exists::<shared::sim::DeferMap>)))
             .add_systems(Update, (build_chunks.run_if(map_reloaded), queue_model_mips, mipmap_textures).chain());
     }
 }

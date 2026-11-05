@@ -86,7 +86,7 @@ fn main() {
             }).or(Some(Default::default()))),
             ..default()
         });
-    app.add_plugins((net::TransportPlugin, game::lobby::LobbyPlugin, game::menu::MenuPlugin));
+    app.add_plugins((net::TransportPlugin, game::lobby::LobbyPlugin, game::menu::MenuPlugin, game::loading::LoadingPlugin));
     // GPU time per render pass, for the perf overlay (F3) and VIVAD_PERF_ALL=1's log. The browser
     // has no GPU timers.
     #[cfg(not(target_arch = "wasm32"))]

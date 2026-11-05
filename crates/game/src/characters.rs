@@ -20,7 +20,7 @@ pub struct CharacterArtPlugin;
 impl Plugin for CharacterArtPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, load_models)
-            .add_systems(Startup, spawn_ornaments.after(load_models))
+            .add_systems(Startup, spawn_ornaments.after(load_models).run_if(not(resource_exists::<shared::sim::DeferMap>)))
             .add_systems(Update, (load_props, spawn_ornaments).chain().run_if(map_reloaded).before(dress_props))
             .add_systems(Update, (dress_props, dress_warriors, bind_animations, swap_weapons));
     }
