@@ -35,7 +35,7 @@ pub fn horizon() -> [f32; 3] {
 
 /// The sky rig's root, kept on the camera's position.
 #[derive(Component)]
-struct SkyRig;
+pub(crate) struct SkyRig;
 
 fn lin(c: [f32; 3]) -> Vec3 {
     let l = Color::srgb(c[0], c[1], c[2]).to_linear();
@@ -192,7 +192,7 @@ fn clouds(to_sun: Vec3) -> Mesh {
     m
 }
 
-fn follow_camera(cam: Query<&Transform, (With<MainCamera>, Without<SkyRig>)>, mut rig: Query<&mut Transform, With<SkyRig>>) {
+pub(crate) fn follow_camera(cam: Query<&Transform, (With<MainCamera>, Without<SkyRig>)>, mut rig: Query<&mut Transform, With<SkyRig>>) {
     let (Ok(c), Ok(mut r)) = (cam.single(), rig.single_mut()) else { return };
     r.translation = c.translation;
 }

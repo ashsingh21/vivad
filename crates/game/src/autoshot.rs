@@ -6,6 +6,9 @@
 //!   VIVAD_TOUR_DRIFT=m   during a burst, slide the camera sideways m metres per frame.
 //!   VIVAD_TOUR_SETTLE=n  frames to hold each view before its shot; above 120 it prints each view's
 //!                        frame rate (`[tour-fps]`; run with VIVAD_NO_VSYNC=1).
+//! VIVAD_FLYOVER=<dir>  fly the camera smoothly over the NCR's districts (VIVAD_MAP=ncr), the HUD
+//!                        hidden, a frame a 30th of a second on and each saved (<dir>/f00000.png...)
+//!                        for a video (ffmpeg -framerate 30 -i <dir>/f%05d.png); exits when done.
 //! VIVAD_SHOTS=<dir>     with VIVAD_AUTOPILOT=1: screenshot the match at set times, then exit.
 //!   VIVAD_SHOTS_AT=a,b   at these match times (seconds) instead.
 //!   VIVAD_SHOTS_MATCHES=n then start the next match (the next map in turn) and shoot it too, n
@@ -289,7 +292,10 @@ impl Plugin for AutoshotPlugin {
                 let keys: Vec<String> = only.split(',').map(str::to_owned).collect();
                 app.world_mut().resource_mut::<Tour>().shots.retain(|s| keys.iter().any(|k| s.0.contains(k.as_str())));
             }
-            app.add_systems(PostUpdate, run_tour.after(crate::camera::CameraSystems).before(TransformSystems::Propagate));
+            app.add_systems(PostUpdate, run_tour.after(crate::camera::CameraSystems).before(crate::sky::follow_camera).before(TransformSystems::Propagate));
+        }
+        if let Ok(dir) = std::env::var("VIVAD_FLYOVER") {
+            app.insert_resource(Flyover { dir, ..default() }).add_systems(PostUpdate, fly.after(crate::camera::CameraSystems).before(crate::sky::follow_camera).before(TransformSystems::Propagate));
         }
         if let Ok(list) = std::env::var("VIVAD_SHOWCASE") {
             // Every item used in turn, from the player's own camera, for a video: VIVAD_SHOWCASE=all
@@ -886,5 +892,70 @@ fn showcase_actor(
             }
         }
         ItemKind::Arrows { .. } => {}
+    }
+}
+
+/// The flyover's path over the NCR (crate::map::compose::PLACES): at each time (seconds), where the
+/// camera is and what it looks at, (x, metres over the ground, z). Down Chandni Chowk's lane, up and
+/// over to Connaught Place, along Kartavya Path to India Gate, over Hauz Khas to Cyber City's towers.
+const FLYOVER: [(f32, [f32; 3], [f32; 3]); 13] = [
+    (0.0, [-342.9, 4.0, -1445.0], [-345.3, 4.0, -1400.0]),
+    (7.0, [-345.0, 9.0, -1395.0], [-347.0, 7.0, -1340.0]),
+    (14.0, [-385.0, 60.0, -1330.0], [-600.0, 0.0, -900.0]),
+    (26.0, [-640.0, 70.0, -840.0], [-740.0, 0.0, -740.0]),
+    (33.0, [-640.0, 38.0, -630.0], [-740.0, 5.0, -740.0]),
+    (40.0, [-700.0, 45.0, -500.0], [-560.0, 5.0, -250.0]),
+    (50.0, [-480.0, 14.0, -5.0], [-327.0, 16.0, -5.0]),
+    (56.0, [-395.0, 16.0, -5.0], [-327.0, 18.0, -5.0]),
+    (61.0, [-360.0, 80.0, 70.0], [-700.0, 0.0, 400.0]),
+    (73.0, [-850.0, 60.0, 520.0], [-980.0, 0.0, 620.0]),
+    (80.0, [-1060.0, 50.0, 700.0], [-1400.0, 20.0, 900.0]),
+    (90.0, [-1480.0, 160.0, 1120.0], [-1670.0, 40.0, 960.0]),
+    (98.0, [-1350.0, 240.0, 1300.0], [-1700.0, 0.0, 850.0]),
+];
+
+#[derive(Resource, Default)]
+struct Flyover {
+    dir: String,
+    /// When the flight starts (real seconds): once the map has had a few seconds to settle.
+    from: Option<f64>,
+    frame: u32,
+}
+
+fn fly(
+    mut commands: Commands,
+    mut fly: ResMut<Flyover>,
+    mut cam: Query<&mut Transform, With<MainCamera>>,
+    mut ui: Query<&mut Visibility, (With<Node>, Without<ChildOf>, Without<crate::quality::ViewImage>)>,
+    layout: Res<MapLayout>,
+    time: Res<Time<Real>>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    let Ok(mut ct) = cam.single_mut() else { return };
+    for mut v in &mut ui {
+        *v = Visibility::Hidden;
+    }
+    let now = time.elapsed_secs_f64();
+    let from = *fly.from.get_or_insert(now + 8.0);
+    // A 30th of a second a frame once started, however long a frame takes to save.
+    let t = if now < from { 0.0 } else { fly.frame as f32 / 30.0 };
+    let ground = |p: [f32; 3]| Vec3::new(p[0], layout.terrain.height(p[0], p[2]) + p[1], p[2]);
+    let k = FLYOVER.iter().rposition(|w| w.0 <= t).unwrap_or(0).min(FLYOVER.len() - 2);
+    let u = ((t - FLYOVER[k].0) / (FLYOVER[k + 1].0 - FLYOVER[k].0)).clamp(0.0, 1.0);
+    // Catmull-Rom through the points either side, eased in at the start and out at the end.
+    let at = |i: usize, f: fn(&(f32, [f32; 3], [f32; 3])) -> [f32; 3]| ground(f(&FLYOVER[i.min(FLYOVER.len() - 1)]));
+    let curve = |f: fn(&(f32, [f32; 3], [f32; 3])) -> [f32; 3]| {
+        let (p0, p1, p2, p3) = (at(k.saturating_sub(1), f), at(k, f), at(k + 1, f), at(k + 2, f));
+        let (u2, u3) = (u * u, u * u * u);
+        0.5 * (2.0 * p1 + (p2 - p0) * u + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * u2 + (3.0 * p1 - p0 - 3.0 * p2 + p3) * u3)
+    };
+    let (pos, look) = (curve(|w| w.1), curve(|w| w.2));
+    *ct = Transform::from_translation(pos).looking_at(look, Vec3::Y);
+    if now >= from {
+        commands.spawn(Screenshot::primary_window()).observe(save_to_disk(format!("{}/f{:05}.png", fly.dir, fly.frame)));
+        fly.frame += 1;
+    }
+    if t > FLYOVER[FLYOVER.len() - 1].0 + 1.0 {
+        exit.write(AppExit::Success);
     }
 }
