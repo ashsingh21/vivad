@@ -31,6 +31,12 @@ Mac; never tried in a browser.) Worktree at `build/gp`.
 
 ## 3. Drawn on main (next)
 
+Tried as it is (5 Nov, RTX 3060, `VIVAD_MAP=ncr VIVAD_MENU=0`): out of GPU memory within 30 s
+(17 GB resident). Main's renderer builds the NCR as it builds a small map: 13,244 street kit chunk
+meshes, 29,640 tree and bush meshes, a million triangles of trim, every one drawn. So the branch's
+renderer for it comes too: its long-range terrain (visuals/clipmap, heightmap), building tiers
+(buildings/tiers) and their LODs, ported the way step 2 was.
+
 - Render the NCR with main's renderer (and the branch's long-range terrain only if needed);
   measure frame rate and memory on this machine.
 - The street kit's gumti and tanki models (the branch's tools/blender/props/street_kit.py).
