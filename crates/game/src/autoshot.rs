@@ -238,6 +238,12 @@ impl Plugin for AutoshotPlugin {
                     ("cp_rack_bartan", v(10.1, 7.0, 109.2), v(8.2, 6.5, 109.3)),
                     // Upstairs in the ring, along its rooms; inside a hall, toward its back wall.
                     ("cp_upper_room", v(79.5, 7.4, 82.4), v(69.0, 6.4, 95.4)),
+                    // A shop's stairs (seed 7): up them from the shop, the well from upstairs, and
+                    // the upstairs room's windows from inside.
+                    ("cp_stair_up", v(10.2, 1.7, 97.2), v(10.0, 4.6, 110.0)),
+                    ("cp_stair_side", v(14.2, 2.0, 104.0), v(9.2, 2.6, 106.5)),
+                    ("cp_stair_well", v(11.0, 7.6, 116.0), v(10.0, 4.8, 104.0)),
+                    ("cp_upper_window", v(10.6, 7.3, 121.0), v(10.0, 6.9, 128.0)),
                     // The style board (docs/style-guide.md section 7): one inner-circle block, built
                     // to the guide first. Across the road at it, its kerb, verandah, shopfronts,
                     // roof and the room upstairs; `just stylecheck` measures these.

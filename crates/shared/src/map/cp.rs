@@ -232,8 +232,11 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                         height: front.top - front.bottom,
                         kind: SignKind::Glass,
                     });
-                    // A rack of goods just behind the glass, seen from the verandah.
-                    super::kit::shelving(b, r.at(rad - toward * 0.62, am, 0.03 + lift / 2.0), out_dir(am) * toward, front.width, (blk * 97 + i * 13) as u32 + toward as u32);
+                    // A rack of goods just behind the glass, seen from the verandah (not on the
+                    // foot of a flight of stairs).
+                    if !(stairs(i) && rad == core0) {
+                        super::kit::shelving(b, r.at(rad - toward * 0.62, am, 0.03 + lift / 2.0), out_dir(am) * toward, front.width, (blk * 97 + i * 13) as u32 + toward as u32);
+                    }
                 }
             }
             // The back-to-back wall between the two rows of shops, limewashed a shop's colour (Delhi's
@@ -264,6 +267,10 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 // A wall of goods across the back, a tube light down the middle of the ceiling.
                 for (rad, toward, front) in [(mid - 0.16, -1.0f32, core0), (mid + 0.16, 1.0, core1)] {
                     super::kit::shelving(b, r.at(rad, am, 0.03 + lift / 2.0), out_dir(am) * toward, chord_at(rad) * 0.96, (blk * 97 + i * 13 + 5) as u32 + toward as u32);
+                    // The inner shop's ceiling is the stair well, where it has the stairs.
+                    if stairs(i) && front == core0 {
+                        continue;
+                    }
                     b.map.signs.push(super::ShopSign {
                         pos: r.at((front + mid) / 2.0, am, r.g - SLAB - 0.03),
                         facing: out_dir(am),
@@ -299,6 +306,7 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
             for (rad, out) in [(r.ro - 0.2, 1.0f32), (r.ri + 0.2, -1.0)] {
                 let (p, q) = (xz(rad, s0), xz(rad, s1));
                 b.wall(w, p, q, r.g + lift, r.u - SLAB, 0.3, Mat::Stucco, &[tall(p.distance(q) / 2.0)]);
+                b.inside_frame(w, p, q, r.g + lift, 0.3, r.at((r.ri + r.ro) / 2.0, (s0 + s1) / 2.0, 0.0).xz(), &tall(p.distance(q) / 2.0), Mat::Wood);
                 // The wall is a chord: in the segment's middle frame its face is a plane.
                 let face = rad * ((s1 - s0) / 2.0).cos() + out * 0.15;
                 let y0 = r.g + lift;
@@ -380,7 +388,10 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 }
                 if end {
                     let (p, q) = (xz(r.ri + 0.2, col), xz(r.ro - 0.2, col));
-                    b.wall(w, p, q, r.g, r.u - SLAB, 0.3, Mat::Stucco, &[Opening::window(p.distance(q) / 2.0)]);
+                    let o = Opening::window(p.distance(q) / 2.0);
+                    b.wall(w, p, q, r.g, r.u - SLAB, 0.3, Mat::Stucco, &[o]);
+                    let into = if i == 0 { s0 + 0.05 } else { s1 - 0.05 };
+                    b.inside_frame(w, p, q, r.g, 0.3, r.at((r.ri + r.ro) / 2.0, into, 0.0).xz(), &o, Mat::Wood);
                 }
             }
             // Upstairs, the long floor divided into rooms: a limewashed partition every two segments
@@ -390,7 +401,15 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 let (p, q) = (xz(r.ri + 0.36, s0), xz(r.ro - 0.36, s0));
                 // The lighter paints only (not terracotta or the old green: rooms read dark in them).
                 let room = [0u8, 1, 2, 3, 4, 6][(blk * 5 + i) % 6];
-                b.wall(w, p, q, r.g + lift, r.u - SLAB, 0.2, Mat::Paint(room), &[Opening::door(p.distance(q) * 0.35), Opening::door(p.distance(q) * 0.65)]);
+                // Beside a stair well its doorways go where the floor is: one on the verandah's side
+                // of the well, one past its far end.
+                let doors = if stairs(i) || stairs(i - 1) {
+                    let well_to = if split { mid } else { core1 };
+                    [Opening::door((core0 - r.ri - 0.36) / 2.0), Opening::door((well_to + r.ro - 0.36) / 2.0 - r.ri - 0.36)]
+                } else {
+                    [Opening::door(p.distance(q) * 0.35), Opening::door(p.distance(q) * 0.65)]
+                };
+                b.wall(w, p, q, r.g + lift, r.u - SLAB, 0.2, Mat::Paint(room), &doors);
                 // A storeroom's racks on both faces, between the doorways (not over a stair well:
                 // each face stands in the bay on its side).
                 let tangent = Vec2::new(-s0.sin(), s0.cos());
@@ -454,7 +473,29 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
             }
             // Stairs up through the shop, climbing outwards onto the floor beyond the well.
             if stairs(i) {
-                b.stairs(radial, Vec3::new(core0 + 0.5, 0.0, 0.0), well_to - core0 - 0.5, r.g, 1.6, Mat::Stucco);
+                // As wide as the shop leaves beside the racks on its party wall (2.4 m on the real
+                // ring), handrails up both sides, and a guard rail round the well upstairs where no
+                // partition closes it.
+                let wide = (chord_at(core0) - 2.3).clamp(1.6, 2.4);
+                let (x0, x1, up) = (core0 + 0.5, well_to, r.g + lift);
+                b.stairs(radial, Vec3::new(x0, 0.0, 0.0), x1 - x0, r.g, wide, Mat::Stucco);
+                for side in [-1.0f32, 1.0] {
+                    let z = side * (wide / 2.0 - 0.06);
+                    b.railing(radial.p(Vec3::new(x0, 0.0, z)), radial.p(Vec3::new(x1, r.g, z)), 0.9, Mat::Wood);
+                    // Across the top of the well either side of the flight, on the floor past it.
+                    let edge = chord_at(x1) / 2.0 - 0.1;
+                    b.railing(radial.p(Vec3::new(x1 + 0.06, up, z)), radial.p(Vec3::new(x1 + 0.06, up, side * edge)), 1.0, Mat::Wood);
+                }
+                let edge = chord_at(core0) / 2.0 - 0.1;
+                b.railing(radial.p(Vec3::new(core0 - 0.06, up, -edge)), radial.p(Vec3::new(core0 - 0.06, up, edge)), 1.0, Mat::Wood);
+                // The well's sides on the segment's edges: open where no partition stands on the
+                // edge (one starts each even segment past the first; the block's ends are walled).
+                for (j, col, out) in [(i, s0, -1.0f32), (i + 1, s1, 1.0)] {
+                    if j % 2 == 1 && j < n {
+                        let f = Frame::new(c, -col);
+                        b.railing(f.p(Vec3::new(core0, up, out * 0.06)), f.p(Vec3::new(x1, up, out * 0.06)), 1.0, Mat::Wood);
+                    }
+                }
             }
             // Loot: a chest in every third shop (the back row too, in deep blocks), an urn
             // upstairs now and then, loose finds on the verandahs. A chest spills what it holds

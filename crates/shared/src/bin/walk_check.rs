@@ -104,7 +104,50 @@ fn main() {
         for b in blocked.iter().take(12) {
             println!("  blocked at ({:.1}, {:.1})", b.x, b.y);
         }
-        std::process::exit(blocked.len() as i32);
+        // And up every flight of stairs (Builder::stairs: a hidden ramp 0.3 m thick under the
+        // steps), from its foot (in the room: on Connaught Place a shop window stands just
+        // before it): on the floor at its top within 6 s.
+        let (mut up, mut stuck) = (0, vec![]);
+        let ramps: Vec<_> = layout.blocks.iter().filter_map(|b| match b.shape {
+            shared::map::Shape::Box(sz) if b.collide && !b.visible && (sz.y - 0.3).abs() < 1e-3 && sz.x > 2.0 && (b.rot * Vec3::Y).y < 0.97 => Some((b.pos, b.rot * Vec3::X * sz.x)),
+            _ => None,
+        }).collect();
+        for &(mid, run) in &ramps {
+            let run = if run.y < 0.0 { -run } else { run };
+            let (foot, top) = (mid - run / 2.0, mid + run / 2.0);
+            let flat = run.with_y(0.0).normalize();
+            let start = foot + flat * 0.4;
+            let id = app
+                .world_mut()
+                .spawn((
+                    Walker,
+                    Kinematic { mode: MoveMode::Ground, ..default() },
+                    PlayerIntent { move_axis: Vec2::Y, yaw: yaw_for(flat), ..default() },
+                    Transform::from_xyz(start.x, start.y + HALF_HEIGHT + 0.4, start.z),
+                    RigidBody::Kinematic,
+                    shared::sim::warrior_collider(false),
+                    Health::default(),
+                    Inventory::new("khadga"),
+                    shared::sim::Warrior { name: "visitor".into(), is_bot: false, look: 0, kills: 0 },
+                    CollisionLayers::new(Layer::Character, [Layer::World, Layer::Door]),
+                ))
+                .id();
+            for _ in 0..360 {
+                app.update();
+            }
+            let p = app.world().get::<Transform>(id).unwrap().translation;
+            if p.y - HALF_HEIGHT > top.y - 0.6 {
+                up += 1;
+            } else {
+                stuck.push((foot, p));
+            }
+            app.world_mut().despawn(id);
+        }
+        println!("stairs: {up} of {} climbed", ramps.len());
+        for (f, p) in stuck.iter().take(12) {
+            println!("  from the foot at ({:.1}, {:.1}, {:.1}) only to ({:.1}, {:.1}, {:.1})", f.x, f.y, f.z, p.x, p.y, p.z);
+        }
+        std::process::exit((blocked.len() + stuck.len()) as i32);
     }
     let ground = |x: f32, z: f32| Vec3::new(x, layout.terrain.height(x, z) + HALF_HEIGHT + 0.3, z);
     let everywhere = || Box::new(|_: Vec3| true) as Box<dyn Fn(Vec3) -> bool>;

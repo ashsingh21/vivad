@@ -265,6 +265,52 @@ impl<'a> Builder<'a> {
         self.push(f.p(mid - normal * thick / 2.0), rot, Shape::Box(Vec3::new(len, thick, width)), mat, true, false);
     }
 
+    /// A railing from `a` to `b` (world points on the floor or a flight's nosing line, level or
+    /// sloping): a handrail `height` over that line on square balusters, and one invisible
+    /// collider under the rail to lean on.
+    pub fn railing(&mut self, a: Vec3, b: Vec3, height: f32, mat: Mat) {
+        let d = b - a;
+        let flat = d.xz().length();
+        if flat < 0.05 {
+            return;
+        }
+        let yaw = Quat::from_rotation_y((-d.z).atan2(d.x));
+        let rot = yaw * Quat::from_rotation_z(d.y.atan2(flat));
+        let len = d.length();
+        let mid = (a + b) / 2.0;
+        self.push(mid + Vec3::Y * height, rot, Shape::Box(Vec3::new(len + 0.06, 0.06, 0.07)), mat, false, true);
+        self.push(mid + Vec3::Y * 0.12, rot, Shape::Box(Vec3::new(len, 0.04, 0.05)), mat, false, true);
+        // (Stucco: an unseen wooden box is how the NCR's kit colliders are told apart.)
+        self.push(mid + Vec3::Y * height / 2.0, rot, Shape::Box(Vec3::new(len, height, 0.08)), Mat::Stucco, true, false);
+        let n = (flat / 0.28).ceil().max(1.0) as i32;
+        for i in 0..=n {
+            let p = a + d * (i as f32 / n as f32);
+            self.push(p + Vec3::Y * (height - 0.03) / 2.0, yaw, Shape::Box(Vec3::new(0.035, height - 0.03, 0.035)), mat, false, true);
+        }
+    }
+
+    /// A window's frame and sill on a wall's inner face (the side toward `inside`), for a wall
+    /// built with `wall()` that has none in the room: jambs and a head 6 cm proud, lapping 2 cm
+    /// into the opening (no face in the reveal's plane), and a sill board over the opening's foot.
+    pub fn inside_frame(&mut self, f: Frame, a: Vec2, b: Vec2, y0: f32, thick: f32, inside: Vec2, o: &Opening, mat: Mat) {
+        if o.bottom <= 0.0 {
+            return;
+        }
+        let dir = (b - a).normalize_or(Vec2::X);
+        let wf = f.child(Vec3::new(a.x, y0, a.y), (-dir.y).atan2(dir.x));
+        let side = if dir.perp().dot(inside - (a + b) * 0.5) < 0.0 { -1.0 } else { 1.0 };
+        let z = side * (thick / 2.0 + 0.035);
+        let (hw, jw) = (o.width / 2.0, 0.13);
+        for x in [o.at - hw - jw / 2.0 + 0.02, o.at + hw + jw / 2.0 - 0.02] {
+            self.deco(wf, Vec3::new(x, (o.bottom + 0.03 + o.top + jw) / 2.0, z), Vec3::new(jw, o.top + jw - o.bottom - 0.03, 0.06), mat);
+        }
+        self.deco(wf, Vec3::new(o.at, o.top + (jw - 0.01) / 2.0, z), Vec3::new(o.width + 2.0 * jw + 0.02, jw + 0.03, 0.062), mat);
+        // The sill: from a little into the reveal out over the wall's face, its top 3 cm over the
+        // opening's foot.
+        let (s0, s1) = (thick / 2.0 - 0.12, thick / 2.0 + 0.17);
+        self.deco(wf, Vec3::new(o.at, o.bottom - 0.015, side * (s0 + s1) / 2.0), Vec3::new(o.width + 0.3, 0.09, s1 - s0), mat);
+    }
+
     /// Plain ramp (visible) from `start` along +X.
     pub fn ramp(&mut self, f: Frame, start: Vec3, run: f32, rise: f32, width: f32, thick: f32, mat: Mat) {
         let len = (run * run + rise * rise).sqrt();

@@ -948,6 +948,9 @@ fn hall(b: &mut Builder, rng: &mut SmallRng, pts: &[Vec2], others: &[Vec<Vec2>])
         let run = T * 0.5 + 0.015;
         let lops: Vec<Opening> = ops.iter().map(|o| Opening { at: o.at - run, ..*o }).collect();
         b.line_inside(w, a + dir * run, q - dir * run, 0.0, HALL, T, (a + q) * 0.5 - out, wash, &lops);
+        for o in &ops {
+            b.inside_frame(w, a, q, 0.0, T + 0.064, (a + q) * 0.5 - out, o, Mat::Wood);
+        }
         // A blank wall inside is lined with shelves of goods, a bay every 3.5 m.
         if ops.is_empty() && len > 4.0 {
             let k = ((len - 1.0) / 3.5).floor() as usize;
