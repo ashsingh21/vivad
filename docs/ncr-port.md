@@ -145,11 +145,19 @@ Then the districts and the match:
   the river. Now each picks a chest a dive from the flight's line, inside the ring, and leaps as
   the flight passes it.
 
-Left: bots on a roof with no way down (seen once); the camera close behind a warrior by walls.
+Then the match itself (7 Nov), from the branch: the glider comes back off a tall roof and bots
+step off one (`ROOF=1 just sim`: 8 of 16 stranded before, none after); the Yamuna waded at 2.4 m/s;
+the flight at 500 m and 60 m/s, leaping anywhere over the map (it was only within 240 m of the
+middle, a small map's rule: nobody could leap until the flight ended), the leap a dive; bots look
+250 m for a chest.
 
-## 4. On the start screen
+Left: the camera close behind a warrior by walls; bots take mostly floor loot (1,600 finds),
+opening few of the 170 chests.
 
-A fifth card, desktop only until its memory comes down.
+## 4. On the start screen (done, merged to main 7 Nov)
+
+A fifth card, Dilli NCR, desktop only until its memory comes down (about 2 GB of GPU memory; the
+iOS target is 1.5 GB a map). Solo only: a room's code names one of the Delhi maps.
 
 ## 5. Later, if wanted
 
