@@ -463,7 +463,9 @@ impl MeshBuf {
         let (lo, hi) = self.pos.iter().fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| (lo.min(Vec3::from(*p)), hi.max(Vec3::from(*p))));
         let c = (lo + hi) / 2.0;
         let pos: Vec<[f32; 3]> = self.pos.iter().map(|p| (Vec3::from(*p) - c).to_array()).collect();
-        let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        // Kept on the GPU only (nothing reads a building's mesh back; its bounds are cached): the
+        // NCR's city is 2.5 GB of vertices, held twice otherwise.
+        let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
             .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
             .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.nrm.clone())
             .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, self.uv)
@@ -1271,7 +1273,7 @@ fn build_chunks(
     }
     sets.insert("panga_wood", load_set(&assets, &mut pending, "panga/wood"));
     let mut groups: HashMap<(i32, i32, Mat, bool), MeshBuf> = HashMap::new();
-    for b in layout.blocks.iter().filter(|b| is_static_visual(b)) {
+    for b in layout.blocks.iter().filter(|b| is_static_visual(b) && !crate::diag::skip("blocks")) {
         for coarse in [false, true] {
             let small = match b.shape {
                 Shape::Box(s) => s.max_element() <= TRIM,
@@ -1316,7 +1318,9 @@ fn build_chunks(
     // City trim (parapets, ledges, pilasters) in the clean stucco.
     let roof = mat_cache.entry(Mat::Stucco).or_insert_with(|| material_for(Mat::Stucco, &sets, &mut materials)).clone();
     let plinth = mat_cache.entry(Mat::Plinth).or_insert_with(|| material_for(Mat::Plinth, &sets, &mut materials)).clone();
-    build_footprints(&mut commands, &layout, &mut meshes, &mut materials, &assets, &mut pending, roof, plinth);
+    if !crate::diag::skip("city") {
+        build_footprints(&mut commands, &layout, &mut meshes, &mut materials, &assets, &mut pending, roof, plinth);
+    }
     info!("architecture: {} static blocks merged into {} chunk meshes", layout.blocks.iter().filter(|b| is_static_visual(b)).count(), n);
     commands.insert_resource(pending);
 }

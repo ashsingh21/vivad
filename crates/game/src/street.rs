@@ -98,6 +98,9 @@ fn rebuild(mut kit: ResMut<Kit>) {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Above this many pieces each is its own entity, drawn instanced, instead of merged per chunk.
+const INSTANCE_ABOVE: usize = 8000;
+
 fn build_kit(
     mut commands: Commands,
     mut kit: ResMut<Kit>,
@@ -109,6 +112,10 @@ fn build_kit(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     if kit.built {
+        return;
+    }
+    if crate::diag::skip("kit") {
+        kit.built = true;
         return;
     }
     let Some(file) = gltfs.get(&kit.file) else { return };
@@ -138,11 +145,58 @@ fn build_kit(
         Some((meshes.get(&prim.mesh)?.clone(), own))
     };
     let mut templates: HashMap<(&str, usize), Option<(Mesh, Option<Handle<StandardMaterial>>)>> = HashMap::new();
+    let indoor = |name: &str| name.starts_with("rack_");
+    // A big map's kit (the NCR's 9,000 pieces), each piece its own entity sharing its model's mesh,
+    // drawn instanced: merged, every copy's vertices repeat at every LOD (2.7 GB on the NCR). The
+    // wear's projected UVs are then the piece's own, not the world's.
+    if layout.kit.len() > INSTANCE_ABOVE {
+        // First every piece's meshes (`mesh_of` holds the asset stores while it's in use), then
+        // each made once into a shared mesh.
+        for piece in &layout.kit {
+            for lod in 0..3 {
+                templates.entry((piece.name, lod)).or_insert_with(|| mesh_of(piece.name, lod));
+            }
+        }
+        let mut shared: HashMap<(&str, usize), Option<(Handle<Mesh>, Handle<StandardMaterial>)>> = HashMap::new();
+        let mut spawned = 0;
+        for piece in &layout.kit {
+            let tf = Transform::from_translation(piece.pos).with_rotation(Quat::from_rotation_y(piece.yaw));
+            for lod in 0..if indoor(piece.name) { 2 } else { 3 } {
+                let have = templates.get(&(piece.name, lod)).is_some_and(|t| t.is_some());
+                let from = if lod == 2 && !have { 1 } else { lod };
+                let made = shared.entry((piece.name, from)).or_insert_with(|| {
+                    let (template, own) = templates.get(&(piece.name, from))?.clone()?;
+                    let mut mesh = template;
+                    if own.is_none() {
+                        project_uvs(&mut mesh);
+                    }
+                    let material = own.unwrap_or_else(|| kit.material.clone());
+                    if materials.get(&material).is_some_and(|m| m.normal_map_texture.is_some()) && !mesh.contains_attribute(Mesh::ATTRIBUTE_TANGENT) {
+                        let _ = mesh.generate_tangents();
+                    }
+                    // On the GPU only, as the city's buildings are (crate::buildings).
+                    mesh.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
+                    Some((meshes.add(mesh), material))
+                });
+                let Some((mesh, material)) = made.clone() else { continue };
+                let (s, e) = [(0.0..0.0, SWITCH..SWITCH + 6.0), (SWITCH..SWITCH + 6.0, MID..MID + 8.0), (MID..MID + 8.0, FAR..FAR + 15.0)][lod].clone();
+                let range = LodRange(VisibilityRange { start_margin: s, end_margin: e, use_aabb: false }, lod);
+                let mut e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), tf, range.0.clone(), range, OfMap));
+                if indoor(piece.name) {
+                    e.insert(bevy::light::NotShadowCaster);
+                } else {
+                    e.insert(crate::quality::LodShadow);
+                }
+                spawned += 1;
+            }
+        }
+        info!("street kit: {} pieces instanced as {spawned} entities", layout.kit.len());
+        return;
+    }
     let mut chunks: HashMap<(i32, i32, usize, Option<AssetId<StandardMaterial>>), Mesh> = HashMap::new();
     let mut own_materials: HashMap<AssetId<StandardMaterial>, Handle<StandardMaterial>> = HashMap::new();
-    // Indoor pieces the shops are lined with: drawn near only (no far band) and casting no
-    // shadow (they stand under roofs), apart from the rest.
-    let indoor = |name: &str| name.starts_with("rack_");
+    // Indoor pieces the shops are lined with (`indoor`): drawn near only (no far band) and casting
+    // no shadow (they stand under roofs), apart from the rest.
     let mut indoor_mats: std::collections::HashSet<AssetId<StandardMaterial>> = std::collections::HashSet::new();
     for piece in &layout.kit {
         let key = ((piece.pos.x / CHUNK).floor() as i32, (piece.pos.z / CHUNK).floor() as i32);
@@ -185,6 +239,8 @@ fn build_kit(
         // The origin at the chunk's centre: LOD distances are measured from it.
         let centre = Vec3::new((cx as f32 + 0.5) * CHUNK, 0.0, (cz as f32 + 0.5) * CHUNK);
         let mut mesh = mesh.translated_by(-centre);
+        // On the GPU only, as the city's buildings are (crate::buildings).
+        mesh.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
         let material = mat.and_then(|id| own_materials.get(&id).cloned()).unwrap_or_else(|| kit.material.clone());
         let bumpy = materials.get(&material).is_some_and(|m| m.normal_map_texture.is_some());
         if bumpy && !mesh.contains_attribute(Mesh::ATTRIBUTE_TANGENT) {

@@ -87,7 +87,7 @@ fn main() {
             }).or(Some(Default::default()))),
             ..default()
         });
-    app.add_plugins((net::TransportPlugin, game::lobby::LobbyPlugin, game::menu::MenuPlugin, game::loading::LoadingPlugin, game::ui::UiPlugin));
+    app.add_plugins((net::TransportPlugin, game::lobby::LobbyPlugin, game::menu::MenuPlugin, game::loading::LoadingPlugin, game::ui::UiPlugin, game::diag::DiagPlugin));
     // GPU time per render pass, for the perf overlay (F3) and VIVAD_PERF_ALL=1's log. The browser
     // has no GPU timers. On macOS only when asked (VIVAD_PERF_ALL or VIVAD_GPU_TIMES=1): it makes
     // timer buffers for each frame still in flight, and Metal allows only a few, so the slow

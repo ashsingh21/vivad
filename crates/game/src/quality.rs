@@ -355,6 +355,10 @@ pub fn tri_report(
     let (mut total, mut casters) = (0, 0);
     for (m, vis, no_shadow, parent) in &q {
         let Some(mesh) = meshes.get(&m.0) else { continue };
+        // A mesh kept on the GPU only (the city's) has no data here to count.
+        if !mesh.asset_usage.contains(bevy::asset::RenderAssetUsages::MAIN_WORLD) {
+            continue;
+        }
         let tris = mesh.indices().map_or(mesh.count_vertices(), |i| i.len()) / 3;
         if !no_shadow {
             casters += tris;

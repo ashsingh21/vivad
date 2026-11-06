@@ -22,6 +22,11 @@ use crate::characters::LodRange;
 /// switch distances.
 const CHUNK: f32 = 32.0;
 
+/// Above this many trees and bushes (the NCR has some 9,600) each copy is its own entity sharing
+/// its model's meshes, drawn instanced, instead of merged: merging repeats every vertex of every
+/// copy at every LOD (76 M vertices, 4.6 GB on the NCR, out of GPU memory).
+const INSTANCE_ABOVE: usize = 2000;
+
 /// Props merged rather than spawned one by one.
 pub fn batched(model: &str) -> bool {
     model.contains("tree_") || model.contains("bush_")
@@ -123,6 +128,10 @@ fn build_batches(
     if t.built || !t.asked {
         return;
     }
+    if crate::diag::skip("trees") {
+        t.built = true;
+        return;
+    }
     let wanted: Vec<&'static str> = layout.props.iter().map(|p| p.model).filter(|m| batched(m)).collect();
     if wanted.iter().any(|m| !t.parts.contains_key(m)) {
         return;
@@ -137,6 +146,23 @@ fn build_batches(
         groups.entry((p.model, (p.pos.x / CHUNK).floor() as i32, (p.pos.z / CHUNK).floor() as i32)).or_default().push(tf);
     }
     let mut spawned = 0;
+    let count = layout.props.iter().filter(|p| batched(p.model)).count();
+    if count > INSTANCE_ABOVE {
+        for p in layout.props.iter().filter(|p| batched(p.model)) {
+            let parts = &t.parts[p.model];
+            let lods = parts.iter().map(|p| p.lod).max().unwrap_or(0) + 1;
+            let rs = ranges(p.model, lods);
+            let tf = Transform::from_translation(p.pos).with_rotation(Quat::from_rotation_y(p.yaw)).with_scale(Vec3::splat(p.scale));
+            for part in parts {
+                let base = LodRange(VisibilityRange { start_margin: rs[part.lod].0.clone(), end_margin: rs[part.lod].1.clone(), use_aabb: false }, part.lod);
+                commands.spawn((Mesh3d(part.mesh.clone()), MeshMaterial3d(part.mat.clone()), tf * part.local, base.scaled(scale.0), base, crate::quality::LodShadow, OfMap));
+                spawned += 1;
+            }
+        }
+        t.built = true;
+        info!("instanced {count} trees and bushes as {spawned} entities");
+        return;
+    }
     for ((model, _, _), copies) in groups {
         let parts = &t.parts[model];
         let lods = parts.iter().map(|p| p.lod).max().unwrap_or(0) + 1;
@@ -160,6 +186,8 @@ fn build_batches(
             // from there.
             let centre = copies.iter().map(|c| c.translation).sum::<Vec3>() / copies.len() as f32;
             mesh.translate_by(-centre);
+            // On the GPU only, as the city's buildings are (crate::buildings).
+            mesh.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
             let base = LodRange(VisibilityRange { start_margin: rs[part.lod].0.clone(), end_margin: rs[part.lod].1.clone(), use_aabb: false }, part.lod);
             commands.spawn((
                 Mesh3d(meshes.add(mesh)),

@@ -47,6 +47,24 @@ renderer for it comes too: its long-range terrain (visuals/clipmap, heightmap), 
   (389 against about 500); both tests are ignored until then.
 - The safe zone for 4 km (it starts at 360 m, a small map's); bots open few chests.
 
+### Memory (5 Nov, RTX 3060; VIVAD_MEMORY=1 logs it, VIVAD_SKIP=kit,trees,blocks,city leaves art out)
+
+Where the NCR's memory went with main's renderer, CPU-side mesh data: base 0.6 GB, the city and
+blocks 1.85 GB (27 M vertices), the street kit 2.7 GB (43 M), trees and bushes 4.6 GB (76 M): merged
+copies of each model at every LOD. Done so far:
+
+- Trees and bushes past 2,000, and street kit past 8,000 pieces, are entities sharing their
+  model's meshes (drawn instanced) instead of merged copies: the NCR draws, 4.3 GB of GPU memory
+  (was out of memory past 11.6 GB). The small maps stay merged (fewer entities: the browser's one
+  thread).
+- Built meshes (buildings, merged kit and trees) kept on the GPU only (their bounds are cached).
+  Resident: NCR 7.4 GB (was 17 GB, then out of memory); Connaught Place 6.3 GB (was 8.8 GB).
+- A base of about 3 GB with no map art at all (2.7 GB anonymous): images' CPU copies 0.6 GB,
+  decoded audio 0.3 GB, the rest unaccounted (driver, pipelines? needs a heap profiler).
+
+Next for memory: images' CPU copies dropped after their mips are made, and compressed textures
+(KTX2); the city drawn near only (its 2 GB of GPU memory); the base.
+
 ## 4. On the start screen
 
 A fifth card, desktop only until its memory comes down.
