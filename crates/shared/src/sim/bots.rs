@@ -32,6 +32,10 @@ pub struct BotBrain {
     pub strafe_timer: f32,
     /// Aim error in radians; reaction delay before firing at a new target.
     pub aim_error: f32,
+    /// Where the aim error currently sits (in units of `aim_error`, yaw and pitch), the point it
+    /// drifts towards and seconds until a new one is picked: a hand's slow wander, not a fresh
+    /// error every tick (that jerked the body, and a following camera, back and forth).
+    pub sway: (Vec2, Vec2, f32),
     pub react: f32,
     /// How far an archer (or a swordsman) picks a fight, metres.
     pub sight: (f32, f32),
@@ -69,6 +73,7 @@ impl BotBrain {
             strafe: 1.0,
             strafe_timer: 0.0,
             aim_error: if chill { rng.random_range(0.06..0.11) } else { rng.random_range(0.025..0.06) },
+            sway: (Vec2::ZERO, Vec2::ZERO, 0.0),
             react: if chill { rng.random_range(1.0..1.8) } else { rng.random_range(0.35..0.8) },
             sight: if chill { (35.0, 7.0) } else { (55.0, 9.0) },
             tempo: (if chill { 0.5 } else { 1.0 }, rng.random_range(0.0..1.0)),
@@ -114,6 +119,12 @@ fn mind_the_drop(
             intent.move_axis = Vec2::ZERO;
         }
     }
+}
+
+/// Turn as a person can, fast but not instantly: no snapping round in one tick.
+fn turn_toward(intent: &mut PlayerIntent, want: f32, dt: f32) {
+    let turn = ((want - intent.yaw + PI).rem_euclid(TAU)) - PI;
+    intent.yaw += turn.clamp(-TURN_RATE * dt, TURN_RATE * dt);
 }
 
 fn yaw_pitch_to(from: Vec3, to: Vec3) -> (f32, f32) {
@@ -307,11 +318,15 @@ pub(crate) fn drive_bots(
                 }
             }
             let wobble = brain.aim_error * (1.0 + dist / 40.0);
-            // Turn as a person can, fast but not instantly: no snapping round in one tick.
-            let want = yaw + rng.random_range(-wobble..wobble);
-            let turn = ((want - intent.yaw + PI).rem_euclid(TAU)) - PI;
-            intent.yaw += turn.clamp(-TURN_RATE * dt, TURN_RATE * dt);
-            intent.pitch = pitch + rng.random_range(-wobble..wobble) * 0.6;
+            brain.sway.2 -= dt;
+            if brain.sway.2 <= 0.0 {
+                brain.sway.1 = Vec2::new(rng.random_range(-1.0..1.0), rng.random_range(-1.0..1.0));
+                brain.sway.2 = rng.random_range(0.2..0.5);
+            }
+            let (at, to, _) = brain.sway;
+            brain.sway.0 = at + (to - at) * (1.0 - (-dt * 8.0).exp());
+            turn_toward(&mut intent, yaw + brain.sway.0.x * wobble, dt);
+            intent.pitch = pitch + brain.sway.0.y * wobble * 0.6;
             let on_beat = (m.elapsed * 0.4 + brain.tempo.1).fract() < brain.tempo.0;
             if brain.seen_for > brain.react && on_beat {
                 match held {
@@ -409,7 +424,7 @@ pub(crate) fn drive_bots(
                 }
             }
             let (yaw, _) = yaw_pitch_to(pos, toward);
-            intent.yaw = yaw;
+            turn_toward(&mut intent, yaw, dt);
             intent.pitch = 0.0;
             intent.move_axis = if d > 1.4 { Vec2::Y } else { Vec2::ZERO };
             if d <= 1.4 && brain.calm {
