@@ -29,6 +29,7 @@ impl Plugin for VisualsPlugin {
                 (
                     dress_blocks,
                     dress_terrain,
+                    stream_ground.after(dress_terrain),
                     resolve_gltf_materials,
                     dress_warriors,
                     (interpolate_warriors, pose_warriors).chain(),
@@ -487,6 +488,105 @@ fn contact_shade(layout: &shared::map::MapLayout) -> Vec<f32> {
     shade
 }
 
+/// One ground tile, the grid's cells from (`ti`, `tj`) for TERRAIN_TILE each way, sampled every
+/// `step`: its mesh (on the GPU only) and its centre, the mesh's origin.
+fn ground_tile(layout: &shared::map::MapLayout, contact: &[f32], ti: usize, tj: usize, step: usize) -> (Mesh, Vec3) {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::mesh::{Indices, PrimitiveTopology};
+    let t = &layout.terrain;
+    let n = t.n;
+    // Grid indices a tile samples from `a` to `b` (inclusive) every `step`, always ending on `b`.
+    let samples = |a: usize, b: usize, step: usize| -> Vec<usize> {
+        let mut v: Vec<usize> = (a..b).step_by(step).collect();
+        v.push(b);
+        v
+    };
+        let (is, js) = (samples(ti, (ti + TERRAIN_TILE).min(n - 1), step), samples(tj, (tj + TERRAIN_TILE).min(n - 1), step));
+        let (mut pos, mut nrm, mut col, mut uv, mut kind, mut idx) = (vec![], vec![], vec![], vec![], vec![], vec![]);
+        let mut vert = |i: usize, j: usize, drop: f32| -> u32 {
+            let (x, z) = (t.coord(i), t.coord(j));
+            let h = t.at(i, j);
+            let nn = t.normal(x, z);
+            kind.push(crate::ground::weights(t.ground.get(i * n + j).copied()));
+            let (c, _) = match t.ground.get(i * n + j) {
+                Some(&class) => crate::grass::paint_city(x, z, h, nn, class),
+                None => crate::grass::paint(x, z, h, nn, t.road_d[i * n + j]),
+            };
+            pos.push([x, h - drop, z]);
+            nrm.push(nn.to_array());
+            uv.push([x / 4.0, z / 4.0]);
+            let k = contact.get(i * n + j).copied().unwrap_or(1.0);
+            col.push([c.red * k, c.green * k, c.blue * k, 1.0]);
+            pos.len() as u32 - 1
+        };
+        let w = js.len() as u32;
+        for &i in &is {
+            for &j in &js {
+                vert(i, j, 0.0);
+            }
+        }
+        for a in 0..is.len() as u32 - 1 {
+            for b in 0..w - 1 {
+                let (p, q, r, s) = (a * w + b, (a + 1) * w + b, (a + 1) * w + b + 1, a * w + b + 1);
+                idx.extend_from_slice(&[p, s, r, p, r, q]);
+            }
+        }
+        // Skirts: each edge copied a little lower and joined to it, wound both ways.
+        let skirt = 0.6 * step as f32;
+        let edges: [Vec<(usize, usize)>; 4] = [
+            js.iter().map(|&j| (is[0], j)).collect(),
+            js.iter().map(|&j| (*is.last().unwrap(), j)).collect(),
+            is.iter().map(|&i| (i, js[0])).collect(),
+            is.iter().map(|&i| (i, *js.last().unwrap())).collect(),
+        ];
+        for edge in edges {
+            let top: Vec<u32> = edge.iter().map(|&(i, j)| vert(i, j, 0.0)).collect();
+            let low: Vec<u32> = edge.iter().map(|&(i, j)| vert(i, j, skirt)).collect();
+            for k in 0..top.len() - 1 {
+                let (a, b, c, d) = (top[k], top[k + 1], low[k + 1], low[k]);
+                idx.extend_from_slice(&[a, b, c, a, c, d, a, c, b, a, d, c]);
+            }
+        }
+        // The tile's origin at its centre: LOD distances (and the crossfade between
+        // them) are measured from there.
+        let (lo, hi) = pos.iter().fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| (lo.min(Vec3::from(*p)), hi.max(Vec3::from(*p))));
+        let centre = (lo + hi) / 2.0;
+        let pos: Vec<[f32; 3]> = pos.iter().map(|p| (Vec3::from(*p) - centre).to_array()).collect();
+        // On the GPU only (nothing reads a ground tile back: the ground's collider is the
+        // simulation's heightfield).
+        let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nrm)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_1, kind)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, col)
+            .with_inserted_indices(Indices::U32(idx));
+    (mesh, centre)
+}
+
+/// A big map's finer ground (the NCR's 4 km grid at every cell is 4 million vertices, 330 MB of
+/// the GPU's): only the coarsest LOD stays loaded; the finer tiles are made as the camera comes
+/// within their range (and LOD_SLACK) and freed past it, a few a frame.
+#[derive(Resource)]
+struct GroundStream {
+    terrain: Entity,
+    material: Handle<crate::ground::GroundMaterial>,
+    contact: Vec<f32>,
+    loaded: HashMap<(usize, usize, usize), Entity>,
+}
+
+/// Grids bigger than this (in cells a side) stream their finer ground.
+const STREAM_GROUND_ABOVE: usize = 700;
+const LOD_SLACK: f32 = 50.0;
+const TILES_A_FRAME: usize = 6;
+
+fn ground_range(lod: usize) -> crate::characters::LodRange {
+    use bevy::camera::visibility::VisibilityRange;
+    let start = if lod == 0 { 0.0 } else { TERRAIN_LODS[lod - 1].1 };
+    let end = TERRAIN_LODS[lod].1;
+    crate::characters::LodRange(VisibilityRange { start_margin: start..start + 10.0 * (lod > 0) as u8 as f32, end_margin: end..end + 10.0, use_aabb: false }, lod)
+}
+
 fn dress_terrain(
     mut commands: Commands,
     q: Query<Entity, Added<shared::sim::MapTerrain>>,
@@ -496,12 +596,8 @@ fn dress_terrain(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<crate::ground::GroundMaterial>>,
 ) {
-    use bevy::asset::RenderAssetUsages;
-    use bevy::camera::visibility::VisibilityRange;
-    use bevy::mesh::{Indices, PrimitiveTopology};
     for e in &q {
-        let t = &layout.terrain;
-        let n = t.n;
+        let n = layout.terrain.n;
         let detail = crate::ground::load_detail(&assets, crate::ground::DETAIL, false);
         let material = materials.add(bevy::pbr::ExtendedMaterial {
             base: StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.95, ..default() },
@@ -509,80 +605,15 @@ fn dress_terrain(
         });
         commands.entity(e).insert(Visibility::default());
         let contact = contact_shade(&layout);
-        // Grid indices a tile samples from `a` to `b` (inclusive) every `step`, always ending on `b`.
-        let samples = |a: usize, b: usize, step: usize| -> Vec<usize> {
-            let mut v: Vec<usize> = (a..b).step_by(step).collect();
-            v.push(b);
-            v
-        };
-        let mut start = 0.0;
-        for (lod, &(step, end)) in TERRAIN_LODS.iter().enumerate() {
+        let stream = n > STREAM_GROUND_ABOVE;
+        for (lod, &(step, _)) in TERRAIN_LODS.iter().enumerate() {
+            if stream && lod + 1 < TERRAIN_LODS.len() {
+                continue;
+            }
             for ti in (0..n - 1).step_by(TERRAIN_TILE) {
                 for tj in (0..n - 1).step_by(TERRAIN_TILE) {
-                    let (is, js) = (samples(ti, (ti + TERRAIN_TILE).min(n - 1), step), samples(tj, (tj + TERRAIN_TILE).min(n - 1), step));
-                    let (mut pos, mut nrm, mut col, mut uv, mut kind, mut idx) = (vec![], vec![], vec![], vec![], vec![], vec![]);
-                    let mut vert = |i: usize, j: usize, drop: f32| -> u32 {
-                        let (x, z) = (t.coord(i), t.coord(j));
-                        let h = t.at(i, j);
-                        let nn = t.normal(x, z);
-                        kind.push(crate::ground::weights(t.ground.get(i * n + j).copied()));
-                        let (c, _) = match t.ground.get(i * n + j) {
-                            Some(&class) => crate::grass::paint_city(x, z, h, nn, class),
-                            None => crate::grass::paint(x, z, h, nn, t.road_d[i * n + j]),
-                        };
-                        pos.push([x, h - drop, z]);
-                        nrm.push(nn.to_array());
-                        uv.push([x / 4.0, z / 4.0]);
-                        let k = contact.get(i * n + j).copied().unwrap_or(1.0);
-                        col.push([c.red * k, c.green * k, c.blue * k, 1.0]);
-                        pos.len() as u32 - 1
-                    };
-                    let w = js.len() as u32;
-                    for &i in &is {
-                        for &j in &js {
-                            vert(i, j, 0.0);
-                        }
-                    }
-                    for a in 0..is.len() as u32 - 1 {
-                        for b in 0..w - 1 {
-                            let (p, q, r, s) = (a * w + b, (a + 1) * w + b, (a + 1) * w + b + 1, a * w + b + 1);
-                            idx.extend_from_slice(&[p, s, r, p, r, q]);
-                        }
-                    }
-                    // Skirts: each edge copied a little lower and joined to it, wound both ways.
-                    let skirt = 0.6 * step as f32;
-                    let edges: [Vec<(usize, usize)>; 4] = [
-                        js.iter().map(|&j| (is[0], j)).collect(),
-                        js.iter().map(|&j| (*is.last().unwrap(), j)).collect(),
-                        is.iter().map(|&i| (i, js[0])).collect(),
-                        is.iter().map(|&i| (i, *js.last().unwrap())).collect(),
-                    ];
-                    for edge in edges {
-                        let top: Vec<u32> = edge.iter().map(|&(i, j)| vert(i, j, 0.0)).collect();
-                        let low: Vec<u32> = edge.iter().map(|&(i, j)| vert(i, j, skirt)).collect();
-                        for k in 0..top.len() - 1 {
-                            let (a, b, c, d) = (top[k], top[k + 1], low[k + 1], low[k]);
-                            idx.extend_from_slice(&[a, b, c, a, c, d, a, c, b, a, d, c]);
-                        }
-                    }
-                    // The tile's origin at its centre: LOD distances (and the crossfade between
-                    // them) are measured from there.
-                    let (lo, hi) = pos.iter().fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| (lo.min(Vec3::from(*p)), hi.max(Vec3::from(*p))));
-                    let centre = (lo + hi) / 2.0;
-                    let pos: Vec<[f32; 3]> = pos.iter().map(|p| (Vec3::from(*p) - centre).to_array()).collect();
-                    // On the GPU only (nothing reads a ground tile back: the ground's collider is the
-                    // simulation's heightfield).
-                    let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
-                        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
-                        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nrm)
-                        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
-                        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_1, kind)
-                        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, col)
-                        .with_inserted_indices(Indices::U32(idx));
-                    let base = crate::characters::LodRange(
-                        VisibilityRange { start_margin: start..start + 10.0 * (lod > 0) as u8 as f32, end_margin: end..end + 10.0, use_aabb: false },
-                        lod,
-                    );
+                    let (mesh, centre) = ground_tile(&layout, &contact, ti, tj, step);
+                    let base = ground_range(lod);
                     commands.spawn((
                         Mesh3d(meshes.add(mesh)),
                         MeshMaterial3d(material.clone()),
@@ -594,8 +625,76 @@ fn dress_terrain(
                     ));
                 }
             }
-            start = end;
         }
+        if stream {
+            commands.insert_resource(GroundStream { terrain: e, material, contact, loaded: HashMap::new() });
+        } else {
+            commands.remove_resource::<GroundStream>();
+        }
+    }
+}
+
+fn stream_ground(
+    mut commands: Commands,
+    stream: Option<ResMut<GroundStream>>,
+    layout: Res<shared::map::MapLayout>,
+    scale: Res<crate::quality::LodScale>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    camera: Query<&GlobalTransform, With<crate::camera::MainCamera>>,
+) {
+    let Some(mut st) = stream else { return };
+    let Ok(cam) = camera.single() else { return };
+    if commands.get_entity(st.terrain).is_err() {
+        return;
+    }
+    let at = cam.translation();
+    let t = &layout.terrain;
+    let n = t.n;
+    let tile_m = TERRAIN_TILE as f32 * t.step();
+    let centre = |ti: usize, tj: usize| Vec2::new(t.coord(ti) + tile_m * 0.5, t.coord(tj) + tile_m * 0.5);
+    // Free what has gone out of reach.
+    let gone: Vec<(usize, usize, usize)> = st
+        .loaded
+        .keys()
+        .copied()
+        .filter(|&(ti, tj, lod)| centre(ti, tj).distance(at.xz()) > TERRAIN_LODS[lod].1 * scale.0 + LOD_SLACK + 40.0)
+        .collect();
+    for k in gone {
+        if let Some(e) = st.loaded.remove(&k) {
+            commands.entity(e).try_despawn();
+        }
+    }
+    // Make the nearest missing ones.
+    let mut want = vec![];
+    for (lod, &(_, end)) in TERRAIN_LODS.iter().enumerate().take(TERRAIN_LODS.len() - 1) {
+        let reach = end * scale.0 + LOD_SLACK;
+        let r = (reach / tile_m).ceil() as i32 + 1;
+        let (ci, cj) = (((at.x + t.size * 0.5) / t.step()) as i32 / TERRAIN_TILE as i32, ((at.z + t.size * 0.5) / t.step()) as i32 / TERRAIN_TILE as i32);
+        for di in -r..=r {
+            for dj in -r..=r {
+                let (a, b) = (ci + di, cj + dj);
+                if a < 0 || b < 0 {
+                    continue;
+                }
+                let (ti, tj) = (a as usize * TERRAIN_TILE, b as usize * TERRAIN_TILE);
+                if ti >= n - 1 || tj >= n - 1 || st.loaded.contains_key(&(ti, tj, lod)) {
+                    continue;
+                }
+                let d = centre(ti, tj).distance(at.xz());
+                if d <= reach {
+                    want.push((d, ti, tj, lod));
+                }
+            }
+        }
+    }
+    want.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for &(_, ti, tj, lod) in want.iter().take(TILES_A_FRAME) {
+        let (mesh, c) = ground_tile(&layout, &st.contact, ti, tj, TERRAIN_LODS[lod].0);
+        let base = ground_range(lod);
+        let e = commands
+            .spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(st.material.clone()), Transform::from_translation(c), base.scaled(scale.0), base, crate::quality::LodShadow, ChildOf(st.terrain)))
+            .id();
+        st.loaded.insert((ti, tj, lod), e);
     }
 }
 
