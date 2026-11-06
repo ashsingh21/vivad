@@ -282,9 +282,8 @@ fn generate_from(json: &str, id: Option<super::MapId>, seed: u64, cut: Option<&C
     if id == Some(super::MapId::Cp) {
         super::cp::dress(&mut b, &mut rng, &ring, &outer);
     }
-    // Their own stream: the pieces above stay where they were. The NCR's districts only for now:
-    // the street kit's models have no gumti or tanki yet (the game-playable branch's do), and a
-    // piece with no model is a collider nobody can see.
+    // Their own stream: the pieces above stay where they were. The NCR's districts only: on the
+    // small maps a kiosk at every corner and a tank on every roof would change how they play.
     if let Some(cut) = cut {
         let mut cover = SmallRng::seed_from_u64(seed ^ 0x6B69_6F73_6B73);
         super::kit::kiosks(&mut b, &mut cover, &roads, &houses, HALF);

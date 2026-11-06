@@ -18,7 +18,7 @@
 //!                        player's jump for VIVAD_RECORD_SECS=n seconds (default 60) or until three
 //!                        seconds after they fall (not with VIVAD_RECORD_CAST); then exits.
 //!   VIVAD_RECORD_FROM=s  from this match time instead.
-//!   VIVAD_RECORD_LOG=1   print each frame's camera ([record] frame yaw pitch x y z mode).
+//!   VIVAD_RECORD_LOG=1   print each frame's camera ([record] frame yaw pitch x y z mode back <m from the head>).
 //!   VIVAD_RECORD_CAST=s  follow each body in turn instead (a warrior wearing it, on the ground),
 //!                        s seconds each, the HUD hidden: to show the cast.
 //! VIVAD_ARMOURY=<dir>   stand the player on open ground and screenshot every item in hand, carried
@@ -158,6 +158,9 @@ impl Plugin for AutoshotPlugin {
                     ("ncr_cp_outer", v(-646.7, 1.8, -590.7), v(-681.9, 4.0, -580.3)),
                     ("ncr_karolbagh_air", v(-1290.0, 40.0, -1000.0), v(-1340.0, 0.0, -1075.0)),
                     ("ncr_cyber_air", v(-1670.0, 35.0, 1090.0), v(-1670.0, 8.0, 960.0)),
+                    // A street kiosk (gumti) and a roof's water tank (tanki), seed 7.
+                    ("ncr_gumti", v(-1958.0, 1.8, 1452.5), v(-1962.5, 1.2, 1447.6)),
+                    ("ncr_tanki", v(-1335.0, 15.5, -1102.0), v(-1340.7, 10.0, -1108.3)),
                     ("ncr_city_far", v(-150.0, 140.0, -1150.0), v(-395.0, 0.0, -1440.0)),
                     // At eye height over the ground (ncr_g_: heights above the terrain): the open land
                     // between districts, and inside a few of the quieter ones.
@@ -1026,12 +1029,12 @@ fn record(
     mut commands: Commands,
     mut rec: ResMut<Recording>,
     m: Res<Match>,
-    me: Query<(&Kinematic, &Health), With<LocalPlayer>>,
+    me: Query<(&Kinematic, &Health, &Transform), With<LocalPlayer>>,
     cam: Query<&GlobalTransform, With<MainCamera>>,
     cast: Option<Res<Cast>>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    let Ok((kin, health)) = me.single() else { return };
+    let Ok((kin, health, body)) = me.single() else { return };
     let started = match rec.from {
         Some(t) => m.elapsed >= t,
         None => rec.frame > 0 || (m.elapsed > 0.0 && kin.mode != MoveMode::Vimana),
@@ -1043,7 +1046,10 @@ fn record(
         // Frame, camera yaw and pitch, and position: for measuring how steady the view is.
         let (_, r, t) = c.to_scale_rotation_translation();
         let (yaw, pitch, _) = r.to_euler(EulerRot::YXZ);
-        println!("[record] {} {yaw:.4} {pitch:.4} {:.3} {:.3} {:.3} {:?}", rec.frame, t.x, t.y, t.z, kin.mode);
+        // And how far the camera stands from the player's head (`back`): a view jammed against it
+        // by a wall reads under a metre.
+        let back = t.distance(body.translation + Vec3::Y * shared::sim::EYE_OFFSET);
+        println!("[record] {} {yaw:.4} {pitch:.4} {:.3} {:.3} {:.3} {:?} back {back:.2}", rec.frame, t.x, t.y, t.z, kin.mode);
     }
     commands.spawn(Screenshot::primary_window()).observe(save_to_disk(format!("{}/f{:05}.png", rec.dir, rec.frame)));
     rec.frame += 1;
@@ -1122,4 +1128,8 @@ fn cast(
         }
     }
     *ct = Transform::from_translation(pos).with_rotation(st.rot);
+    if std::env::var("VIVAD_RECORD_LOG").is_ok() {
+        // How far the view stands from the followed head: under a metre, jammed by a wall.
+        println!("[cast-back] {:.2}", pos.distance(pivot));
+    }
 }

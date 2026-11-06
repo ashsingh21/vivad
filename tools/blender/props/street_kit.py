@@ -49,6 +49,8 @@ C = {
     "terracotta": (0.74, 0.36, 0.22), "beige": (0.86, 0.80, 0.66), "panel": (0.10, 0.16, 0.34), "pink": (0.92, 0.25, 0.50),
     "saffron": (0.98, 0.60, 0.12), "cream": (0.95, 0.90, 0.80), "door_green": (0.16, 0.45, 0.30), "rope": (0.80, 0.78, 0.72),
     "kettle": (0.72, 0.70, 0.66), "chai": (0.75, 0.50, 0.30), "scooter": (0.86, 0.18, 0.16),
+    "tank": (0.05, 0.05, 0.06), "tank_rib": (0.09, 0.09, 0.10), "shutter": (0.50, 0.51, 0.50), "shutter_dk": (0.33, 0.33, 0.33),
+    "gumti": (0.16, 0.42, 0.46),
 }
 
 
@@ -572,6 +574,47 @@ def mumty():
     p.box((-0.55, 1.2, 2.1), (0.55, 1.26, 2.2), "white")
     p.box((0.7, -1.24, 1.4), (1.2, -1.2, 1.9), "glass")
     return p.finish(0.02)
+
+
+def tanki():
+    """The black plastic water tank on every Delhi roof: ribbed, domed, on a brick plinth, with its
+    feed pipe up the side. A thousand litres stands about as tall as a crouching man."""
+    p = Piece("tanki")
+    p.box((-0.62, -0.62, 0.0), (0.62, 0.62, 0.22), "concrete")
+    p.cyl((0, 0, 0.22), (0, 0, 1.32), 0.55, "tank", 24)
+    for z in (0.46, 0.76, 1.06):
+        p.cyl((0, 0, z), (0, 0, z + 0.05), 0.565, "tank_rib", 24)
+    p.cyl((0, 0, 1.32), (0, 0, 1.46), 0.55, "tank", 24, 0.34)
+    p.cyl((0, 0, 1.46), (0, 0, 1.54), 0.16, "tank_rib", 16)
+    p.cyl((0.6, 0, 0.0), (0.6, 0, 1.26), 0.02, "white", 6)
+    p.cyl((0.6, 0, 1.26), (0.5, 0, 1.26), 0.02, "white", 6)
+    return p.finish(0.0)
+
+
+def gumti():
+    """A tin kiosk with its rolling shutter pulled half down: under it on your knees and you are in.
+    Colliders in shared::map::kit, part for part."""
+    p = Piece("gumti")
+    p.box((-1.5, -1.3, 0.0), (-1.42, 1.3, 2.5), "gumti")
+    p.box((1.42, -1.3, 0.0), (1.5, 1.3, 2.5), "gumti")
+    p.box((-1.5, -1.3, 0.0), (1.5, -1.22, 2.5), "gumti")
+    p.box((-1.62, -1.42, 2.5), (1.62, 1.5, 2.58), "tin")
+    # The shutter, ribbed, its bottom bar at waist height, and the drum it rolls up into.
+    p.box((-1.42, 1.22, 1.15), (1.42, 1.27, 2.5), "shutter", round=False)
+    for k in range(10):
+        z = 1.25 + 0.115 * k
+        p.box((-1.42, 1.27, z), (1.42, 1.285, z + 0.02), "shutter_dk", round=False)
+    p.box((-1.42, 1.2, 1.15), (1.42, 1.31, 1.21), "steel", round=False)
+    p.cyl((-1.42, 1.32, 2.4), (1.42, 1.32, 2.4), 0.09, "tin", 10)
+    # A blank painted board, shelves and stock inside.
+    p.box((-1.5, 1.42, 2.58), (1.5, 1.46, 2.95), "saffron")
+    p.box((-1.5, 1.43, 2.70), (1.5, 1.47, 2.76), "red", round=False)
+    for z in (0.7, 1.3, 1.9):
+        p.box((-1.4, -1.22, z), (1.4, -0.92, z + 0.04), "wood_lt", round=False)
+        for k in range(9):
+            x = -1.25 + 0.3 * k
+            p.box((x, -1.18, z + 0.04), (x + 0.2, -0.96, z + 0.3), ("crate_r", "banana", "white", "crate_b")[(k + int(z * 10)) % 4], round=False)
+    return p.finish(0.0)
 
 
 # ------------------------------------------------------------------ open spaces (parks, plazas)
@@ -1131,7 +1174,7 @@ def main():
     bpy.context.scene.world.light_settings.distance = 0.6
     objs = []
     for build in (auto, scooter, thela, chai, pole, drum, crates, chairs, pot, cooler, dish, solar, clothesline, mumty,
-                  bench, lamp, planter, umbrella, bin):
+                  tanki, gumti, bench, lamp, planter, umbrella, bin):
         objs += build()
     for build in bikes.BIKES:
         objs += build(Piece)

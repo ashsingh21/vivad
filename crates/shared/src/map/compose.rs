@@ -884,28 +884,54 @@ fn infill(map: &mut MapLayout, place: &Place) {
     }
     // Loot that a new block stands on steps out past its nearest wall.
     let new = &map.footprints[first..];
-    let step_out = |p: Vec3| -> Vec3 {
-        let Some(f) = new.iter().find(|f| footprint::contains(&f.pts, p.xz())) else { return p };
-        let n = f.pts.len();
-        let (q, out) = (0..n)
-            .map(|k| {
-                let (a, b) = (f.pts[k], f.pts[(k + 1) % n]);
-                let t = ((p.xz() - a).dot(b - a) / (b - a).length_squared()).clamp(0.0, 1.0);
-                let q = a + (b - a) * t;
-                let mid = f.pts.iter().sum::<Vec2>() / n as f32;
-                (q, (q - mid).normalize_or_zero())
-            })
-            .min_by(|x, y| x.0.distance(p.xz()).total_cmp(&y.0.distance(p.xz())))
-            .unwrap();
-        let q = q + out * 1.2;
-        Vec3::new(q.x, p.y, q.y)
-    };
-    let moved: Vec<Vec3> = map.chests.iter().map(|c| step_out(c.pos)).collect();
+    let moved: Vec<Vec3> = map.chests.iter().map(|c| step_out(new, c.pos).unwrap_or(c.pos)).collect();
     for (c, p) in map.chests.iter_mut().zip(moved) {
         c.pos = p;
     }
-    let moved: Vec<Vec3> = map.floor_loot.iter().map(|p| step_out(*p)).collect();
+    let moved: Vec<Vec3> = map.floor_loot.iter().map(|p| step_out(new, *p).unwrap_or(*p)).collect();
     map.floor_loot = moved;
+}
+
+/// Where a point inside one of `fps` (between its foot and its roof: a building on a market hall
+/// has the hall's room under it) is put instead: 1.2 m past that building's nearest wall, or None
+/// if it is in none.
+fn step_out(fps: &[Footprint], p: Vec3) -> Option<Vec3> {
+    let f = fps.iter().find(|f| f.mat != Mat::Water && p.y > f.base - 0.5 && p.y < f.top - 0.5 && footprint::contains(&f.pts, p.xz()))?;
+    let n = f.pts.len();
+    let mid = f.pts.iter().sum::<Vec2>() / n as f32;
+    let (q, out) = (0..n)
+        .map(|k| {
+            let (a, b) = (f.pts[k], f.pts[(k + 1) % n]);
+            let t = ((p.xz() - a).dot(b - a) / (b - a).length_squared()).clamp(0.0, 1.0);
+            let q = a + (b - a) * t;
+            (q, (q - mid).normalize_or_zero())
+        })
+        .min_by(|x, y| x.0.distance(p.xz()).total_cmp(&y.0.distance(p.xz())))
+        .unwrap();
+    let q = q + out * 1.2;
+    Some(Vec3::new(q.x, p.y, q.y))
+}
+
+/// The last word on loot: none is left inside a building (the hollow ones' rooms aren't built in
+/// the game yet, so they are as solid as the rest). Each steps out past the nearest wall onto the
+/// ground there (again, if that lands it in the next building: a street's blocks stand 2 m apart),
+/// a chest on the ground, a find 0.3 m over it as everywhere.
+fn free_the_loot(map: &mut MapLayout) {
+    let out = |map: &MapLayout, mut p: Vec3, lift: f32| -> Vec3 {
+        let mut moved = false;
+        for _ in 0..4 {
+            match step_out(&map.footprints, p) {
+                Some(q) => (p, moved) = (q, true),
+                None => break,
+            }
+        }
+        if moved { Vec3::new(p.x, map.terrain.height(p.x, p.z) + lift, p.z) } else { p }
+    };
+    let chests: Vec<Vec3> = map.chests.iter().map(|c| out(map, c.pos, 0.0)).collect();
+    for (c, p) in map.chests.iter_mut().zip(chests) {
+        c.pos = p;
+    }
+    map.floor_loot = map.floor_loot.iter().map(|p| out(map, *p, 0.3)).collect();
 }
 
 /// What is left of an outline inside the square of half-size `half` round the origin.
@@ -1788,11 +1814,19 @@ pub fn generate(seed: u64) -> MapLayout {
     // Last, so that the rest of the map is laid out exactly as it would be without rooms.
     let spots = interiors::hollow(&mut map, ROOMS_PER_CELL);
     interiors::furnish_ring(&mut map);
-    interiors::move_loot(&mut map, &spots, &mut loot);
+    // Loot goes into the rooms once the game builds them (sim colliders and drawing, the
+    // game-playable branch's crate::buildings::interior); until then every building is solid.
+    if ROOMS_BUILT {
+        interiors::move_loot(&mut map, &spots, &mut loot);
+    }
+    free_the_loot(&mut map);
     parking::lay(&mut map, &network, &SPOTS.map(|s| (Vec2::new(s.1, s.2), s.3.reach())));
     super::stalls::lay(&mut map);
     map
 }
+
+/// Whether the hollow buildings' rooms are built in the game (not yet on main).
+const ROOMS_BUILT: bool = false;
 
 /// The last word on what was set down where it can't stand: a tree mid-road or in the water, and
 /// anything inside a building, go. A scattered grove doesn't know the road it spreads over, and a
