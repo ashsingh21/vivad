@@ -80,6 +80,12 @@ anims:
 animcheck variant="male" clips="":
     {{blender}} -b -t 1 -P tools/blender/characters/anim_check.py -- {{variant}} {{clips}} 2>&1 | grep -E '^\[check|^clip|^[a-z_]+ +[0-9]|Error|Traceback' || true
 
+# The animation sets side by side, a clip at a time (twist, turn, head, lean, arch, feet, pops, loop
+# seams), flagging a set that moves unlike the others: just animcompare, or just animcompare jump,fall
+animcompare clips="" sets="anime,male,female,anime_elf":
+    for v in $(echo "{{sets}}" | tr ',' ' '); do {{blender}} -b -t 1 build/anims_$v.blend -P tools/blender/characters/anim_lint.py -- $v $(echo "{{clips}}" | tr ',' ' ') 2>&1 | grep -E '^\[animcheck|Error|Traceback' || true; done
+    python3 tools/anim_report.py $(echo "{{clips}}" | tr ',' ' ') --sets {{sets}}
+
 # Each clip's hips and back by the numbers (bob, sway, twist, roll, lean, arch): just clipstats, or
 # just clipstats female run_f,sprint_f
 clipstats variant="male" clips="":

@@ -1109,6 +1109,45 @@ def stand_up(rig, name, lean, tuck, face):
           + (f", elbows in {tuck} deg" if tuck else "") + (", chest to the front" if face else ""))
 
 
+def square_up(rig, name):
+    """Square `name` to the front, frame by frame (`just animcompare` found the jump and fall turning):
+    the whole body round about the hips so the hips face ahead, the shoulders square over them
+    (spread over the spine), and the head to the front over the chest (over the neck). The legs'
+    and arms' own motion kept. For clips that go straight up or down (a jump, a fall), where any
+    turn reads as the body twisting in the air."""
+    sc = bpy.context.scene
+    act = bpy.data.actions[name]
+    rig.obj.animation_data.action = act
+    f0, f1 = map(int, act.frame_range)
+    poses = []
+    for f in range(f0, f1 + 1):
+        sc.frame_set(f)
+        poses.append({pb.name: pb.matrix_basis.copy() for pb in rig.pb})
+    new_action(rig, name)
+    yaw = lambda v: math.atan2(v.y, v.x)
+    worst = 0.0
+    for i, pose in enumerate(poses):
+        for pb in rig.pb:
+            pb.matrix_basis = pose[pb.name]
+        bpy.context.view_layer.update()
+        hips = yaw(rig.head("thigh_l") - rig.head("thigh_r"))
+        rig.rotate("pelvis", UP, -hips)
+        twist = yaw(rig.head("upperarm_l") - rig.head("upperarm_r")) - yaw(rig.head("thigh_l") - rig.head("thigh_r"))
+        twist = (twist + math.pi) % (2 * math.pi) - math.pi
+        for n in ("spine_01", "spine_02", "spine_03"):
+            rig.rotate(n, UP, -twist / 3)
+        # The head's side-to-side axis against the shoulders' line.
+        across = rig.world_rot("head") @ Vector((1, 0, 0))
+        turn = (yaw(across) - yaw(rig.head("upperarm_l") - rig.head("upperarm_r")) + math.pi) % (2 * math.pi) - math.pi
+        if abs(turn) > math.pi / 2:
+            turn -= math.copysign(math.pi, turn)
+        for n in ("neck_01", "head"):
+            rig.rotate(n, UP, -turn / 2)
+        worst = max(worst, abs(hips), abs(twist), abs(turn))
+        rig.key(i + 1)
+    print(f"[anims] {name}: squared to the front (it turned up to {math.degrees(worst):.0f} deg)")
+
+
 # Runs whose back bends backward at the waist (stand_up straightened the spine over hips still tipped
 # forward with the stride: chest out, seat back), lined up again.
 STRAIGHT = ("walk_f", "run_f", "run_l", "run_r", "sprint_f", "sprint_1h", *(f"rifle_run_{d}" for d in "fblr"), "rifle_sprint_f",
@@ -2027,6 +2066,10 @@ def main():
     for n in ("jump", "fall"):
         if n in bpy.data.actions:
             square_knees(rig, n)
+            # Straight up and down: square to the front, the bend out of the back (on the
+            # MakeHuman bodies the clip leaned 34 deg in, hunched 29: `just animcompare`).
+            square_up(rig, n)
+            straighten(rig, n)
     # In the air with a long gun: the jump's and fall's legs and body, the gun held up in both hands
     # as when aiming and pointed ahead (the plain ones throw the arms out and drop the gun).
     for n in ("jump", "fall"):
