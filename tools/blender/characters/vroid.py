@@ -413,6 +413,14 @@ def main():
     for o in [o for o in bpy.data.objects if o.type == "MESH" and any(d in o.name.lower() for d in drop)]:
         bpy.data.objects.remove(o)
     meshes = [o for o in bpy.data.objects if o.type == "MESH"]
+    # A VRM 0.x model's meshes come parented to the rig through a half turn (the parent inverse),
+    # their own coordinates facing the other way from the world's: baked in, so a mesh's vertices
+    # are where the rig's bones are (desi.py measures the body against them).
+    for o in meshes:
+        if o.parent is not None:
+            o.data.transform(o.matrix_parent_inverse @ o.matrix_basis)
+            o.matrix_parent_inverse.identity()
+            o.matrix_basis.identity()
     if drop:
         import bmesh
         for o in meshes:
@@ -458,6 +466,35 @@ def main():
         fit(arm, skeleton)
     arm.name = arm.data.name = "Human.rig"
     rebuild_materials(meshes)
+    # A desi look (desi.py): skin and hair retinted, the clothes dropped (--drop cloth) replaced.
+    if "--skin" in args or "--hair" in args or "--outfit" in args:
+        import desi
+        rgb = lambda flag: tuple(float(x) for x in args[args.index(flag) + 1].split(","))
+        tinted = set()
+        for o in meshes:
+            for slot in o.material_slots:
+                m = slot.material
+                img = next((n.image for n in m.node_tree.nodes if n.type == "TEX_IMAGE"), None) if m and m.node_tree else None
+                if img is None or img.name in tinted:
+                    continue
+                if "--skin" in args and "skin" in m.name.lower():
+                    desi.retint(img, rgb("--skin"))
+                elif "--hair" in args and "hair" in m.name.lower():
+                    desi.retint(img, rgb("--hair"), keep_light=0.35)
+                else:
+                    continue
+                tinted.add(img.name)
+        print(f"[vroid] retinted {len(tinted)} textures")
+        if "--outfit" in args:
+            outfit = args[args.index("--outfit") + 1]
+            body = next(o for o in meshes if any("skin" in (s.material.name.lower() if s.material else "") for s in o.material_slots) and "face" not in o.name.lower())
+            ctx = desi.body_context(body, arm)
+            made = desi.OUTFITS[outfit](ctx)
+            clav = (arm.matrix_world @ arm.data.bones["clavicle_l"].head_local).z
+            hidden = desi.hide_covered(body, desi.COVERS[outfit], below=clav + desi.NECKLINE[outfit])
+            hidden += desi.trim_hair([o for o in meshes if any("hair" in (s.material.name.lower() if s.material else "") for s in o.material_slots)], ctx)
+            meshes += made
+            print(f"[vroid] dressed in {outfit}: {len(made)} garments; {hidden} covered skin faces dropped")
     # One body.
     bpy.ops.object.select_all(action="DESELECT")
     for o in meshes:
