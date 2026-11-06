@@ -112,6 +112,17 @@ pub fn paint_city(x: f32, z: f32, h: f32, normal: Vec3, class: u8) -> (LinearRgb
             c = mix(c, mix(lin([0.50, 0.38, 0.26]), lin([0.44, 0.34, 0.25]), fbm(x / 3.0, z / 3.0, 2, 97)), worn);
             (c, 1.0 - worn * 0.9)
         }
+        // The NCR's open land between districts: Delhi's scrub, green in the low parts and
+        // sun-dried higher up, worn to bare dusty earth in patches and along the tracks.
+        ground::OPEN => {
+            let mut c = mix(lin([0.30, 0.45, 0.16]), lin([0.47, 0.50, 0.21]), fbm(x / 40.0, z / 40.0, 3, 101) * 1.6 - 0.55);
+            c = mix(c, lin([0.55, 0.53, 0.25]), ((h - 4.0) / 10.0).clamp(0.0, 1.0) * 0.6);
+            let bare = ((fbm(x / 16.0, z / 16.0, 3, 103) - 0.58) * 5.0 + (0.9 - normal.y) * 6.0).clamp(0.0, 1.0);
+            c = mix(c, mix(tok("ground.dirt"), tok("ground.path"), fbm(x / 4.0, z / 4.0, 2, 105) * 0.7), bare);
+            (c, (1.0 - bare) * (0.55 + 0.45 * fbm(x / 7.0, z / 7.0, 2, 107)))
+        }
+        // River banks: pale sand, rippled a little.
+        ground::SAND => (mix(lin([0.80, 0.71, 0.52]), tok("ground.path"), fbm(x / 7.0, z / 7.0, 2, 109) * 0.6), 0.0),
         // Under the water: silt (seen through the surface).
         ground::WATER => (mix(lin([0.22, 0.24, 0.18]), lin([0.30, 0.28, 0.20]), fbm(x / 5.0, z / 5.0, 2, 79)), 0.0),
         // Lanes and park paths: trodden earth and old brick.

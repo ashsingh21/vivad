@@ -425,6 +425,7 @@ pub mod stream {
     pub const VIMANA: u64 = 1;
     pub const NAMES: u64 = 2;
     pub const FLOOR_LOOT: u64 = 3;
+    pub const CHEST_SETS: u64 = 5;
     /// + the zone phase.
     pub const ZONE: u64 = 0x100;
     /// + the chest's index in `MapLayout::chests`.

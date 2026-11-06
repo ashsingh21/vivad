@@ -115,6 +115,23 @@ two-minute match. (On the browser the tasks still share its one thread, between 
 Left on the NCR's meshes: the coarse blocks (about 180 MB), ground tiles, grass, the street kit,
 trees and characters (about 0.9 GB together).
 
+### At ground level (6 Nov)
+
+Seen from the ground (a match recorded with VIVAD_RECORD_CAST, following each body in turn) the
+NCR was a desert of paving: the open land between districts (70% of the map, `ground::OPEN`) and
+the river sand were drawn with the pavement's slabs and colour. `map_picture` (new: the map from
+above, `cargo run --release -p shared --bin map_picture -- ncr out.ppm`) showed how empty it is.
+
+- Open land painted as Delhi scrub (greener low, sun-dried higher, bare earth in patches) with
+  grass on it; the river banks as sand.
+- 61 villages along the roads (compose::villages): two to four storeys of plaster and brick in rows
+  along 4 m lanes, a chowk with a peepal and a trunk (out one match in three). 2,600 houses: GPU
+  memory on the tour within its noise (1.9-2.2 GB with and without), frame rate the same.
+- Chests drawn by set again (sim::loot::chest_sets, missed in step 2): a match had all three sets
+  out, about 370 chests; now about 170.
+
+Left: districts' insides are still thin (wide asphalt where buildings were thinned out).
+
 ## 4. On the start screen
 
 A fifth card, desktop only until its memory comes down.

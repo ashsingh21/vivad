@@ -1387,6 +1387,137 @@ fn open_land(map: &mut MapLayout, rng: &mut SmallRng, network: &[(f32, Vec<Vec2>
     spare
 }
 
+/// Villages on the open land, a road's length apart along the roads: Delhi's old gaons that the
+/// city grew round, two to four storeys of plastered brick packed along lanes a few metres wide,
+/// a chowk with a peepal in the middle. Their ground is beaten earth (`ground::PATH`), so the
+/// open land's groves and sheds keep off it. Returns spots in the lanes for floor loot; a trunk
+/// under the peepal is out one match in three.
+fn villages(map: &mut MapLayout, network: &[(f32, Vec<Vec2>)], from: usize) -> Vec<Vec3> {
+    /// Metres along a road between tries, and how far apart two villages stand at least.
+    const EVERY: f32 = 230.0;
+    const APART: f32 = 160.0;
+    let mut rng = SmallRng::seed_from_u64(LAYOUT_SEED ^ 0x6A0);
+    let sites = holy();
+    let mut placed: Vec<Vec2> = vec![];
+    let mut spare = vec![];
+    for (width, line) in network {
+        let mut d = EVERY * 0.5;
+        for s in line.windows(2) {
+            let (len, dir) = (s[0].distance(s[1]), (s[1] - s[0]).normalize_or_zero());
+            while d < len {
+                let at = s[0] + dir * d;
+                d += EVERY;
+                let side = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
+                let (w, depth) = (rng.random_range(60.0..110.0), rng.random_range(40.0..70.0));
+                // u along the road, v away from it.
+                let (u, v) = (dir, dir.perp() * side);
+                let c = at + v * (*width * 0.5 + 8.0 + depth * 0.5);
+                let h0 = map.terrain.height(c.x, c.y);
+                let ok = |q: Vec2| {
+                    map.terrain.ground_at(q.x, q.y) == Some(ground::OPEN)
+                        && q.abs().max_element() < HALF - 30.0
+                        && PLACES.iter().all(|p| inside_by(p, q) < -20.0)
+                        && !in_marsh(q)
+                        && !no_loot(q)
+                        && sites.iter().all(|(h, r)| q.distance(*h) > r + 10.0)
+                        && (map.terrain.height(q.x, q.y) - h0).abs() < 1.2
+                };
+                let grid = |step: f32| {
+                    let (nu, nv) = ((w / step) as i32, (depth / step) as i32);
+                    (0..=nu).flat_map(move |i| (0..=nv).map(move |j| c + u * (i as f32 / nu as f32 - 0.5) * w + v * (j as f32 / nv as f32 - 0.5) * depth))
+                };
+                if placed.iter().any(|p| p.distance(c) < APART) || !grid(4.0).all(ok) {
+                    continue;
+                }
+                let near: Vec<usize> = (from..map.footprints.len()).filter(|k| map.footprints[*k].pts[0].distance(c) < w + depth + 60.0).collect();
+                if grid(6.0).any(|q| near.iter().any(|k| map.footprints[*k].mat != Mat::Water && footprint::contains(&map.footprints[*k].pts, q))) {
+                    continue;
+                }
+                placed.push(c);
+                spare.extend(village(map, &mut rng, c, u, v, w, depth));
+            }
+            d -= len;
+        }
+    }
+    spare
+}
+
+/// One village: rows of houses back to back between lanes running along the road, cut across
+/// every few plots by a gali, its middle left open for the chowk.
+fn village(map: &mut MapLayout, rng: &mut SmallRng, c: Vec2, u: Vec2, v: Vec2, w: f32, depth: f32) -> Vec<Vec3> {
+    const LANE: f32 = 4.0;
+    const GALI: f32 = 2.6;
+    const GAP: f32 = 0.5;
+    let origin = c - u * w * 0.5 - v * depth * 0.5;
+    let at = |a: f32, b: f32| origin + u * a + v * b;
+    // Beaten earth over the whole village, lanes and all.
+    {
+        let t = &mut map.terrain;
+        let (lo, hi) = [at(0.0, 0.0), at(w, 0.0), at(0.0, depth), at(w, depth)].iter().fold((Vec2::MAX, Vec2::MIN), |(a, b), p| (a.min(*p), b.max(*p)));
+        for i in row(t, lo.x)..=row(t, hi.x) {
+            for j in row(t, lo.y)..=row(t, hi.y) {
+                let q = Vec2::new(t.coord(i), t.coord(j)) - origin;
+                if (-2.0..w + 2.0).contains(&q.dot(u)) && (-2.0..depth + 2.0).contains(&q.dot(v)) {
+                    t.ground[i * t.n + j] = ground::PATH;
+                }
+            }
+        }
+    }
+    let chowk = (w * 0.5, depth * 0.5);
+    let wash = [Mat::Plaster, Mat::PlasterOchre, Mat::PlasterBlue, Mat::Brick, Mat::Paint(0), Mat::Paint(2), Mat::Paint(3), Mat::Paint(4), Mat::Paint(5), Mat::Paint(6)];
+    let mut spare = vec![];
+    // Rows away from the road: a lane, then two rows of houses back to back.
+    let mut b = LANE;
+    while b < depth - 8.0 {
+        let rows = if depth - b > 22.0 { 2 } else { 1 };
+        for _ in 0..rows {
+            let deep = rng.random_range(8.0f32..11.0).min(depth - b - 0.5);
+            let mut a = 0.0;
+            while a < w - 4.5 {
+                // A gali across every few houses.
+                if rng.random_bool(0.16) && a > 0.0 {
+                    a += GALI;
+                    continue;
+                }
+                let wide = rng.random_range(4.8f32..8.0).min(w - a);
+                let mid = (a + wide * 0.5, b + deep * 0.5);
+                let in_chowk = (mid.0 - chowk.0).abs() < 11.0 && (mid.1 - chowk.1).abs() < 9.0;
+                if !in_chowk && !rng.random_bool(0.07) {
+                    let pts0 = [at(a, b), at(a + wide - GAP, b), at(a + wide - GAP, b + deep - GAP), at(a, b + deep - GAP)];
+                    let mut pts = pts0.to_vec();
+                    if area(&pts) > 0.0 {
+                        pts.reverse();
+                    }
+                    let low = pts.iter().map(|q| map.terrain.height(q.x, q.y)).fold(f32::MAX, f32::min) - 0.3;
+                    let floors = [2, 2, 3, 3, 3, 4][rng.random_range(0..6)] as f32;
+                    map.footprints.push(Footprint { pts, base: low, top: low + 0.3 + floors * 3.1 + 0.9, mat: wash[rng.random_range(0..wash.len())] });
+                }
+                a += wide;
+            }
+            b += deep;
+        }
+        // The lane behind, with a spot for loot along it now and then.
+        let lane = b + LANE * 0.5;
+        if lane < depth {
+            for _ in 0..2 {
+                let q = at(rng.random_range(4.0..w - 4.0), lane);
+                spare.push(Vec3::new(q.x, map.terrain.height(q.x, q.y) + 0.1, q.y));
+            }
+        }
+        b += LANE;
+    }
+    // The chowk: a peepal, and a trunk under it; another down a lane.
+    let mid = at(chowk.0, chowk.1);
+    let y = map.terrain.height(mid.x, mid.y);
+    map.props.push(Prop { model: india::TREE_PEEPAL, pos: Vec3::new(mid.x, y, mid.y), yaw: rng.random_range(0.0..TAU), scale: rng.random_range(1.1..1.4), trunk: Some((0.4, 4.0)) });
+    // Out one match in three, with the nearest district's draw.
+    let chest = mid + u * 5.0;
+    let district = (0..PLACES.len()).max_by(|a, b| inside_by(&PLACES[*a], mid).total_cmp(&inside_by(&PLACES[*b], mid))).unwrap_or(0);
+    let set = Some((district as u8, rng.random_range(0..CHEST_SETS)));
+    map.chests.push(ChestSpawn { pos: Vec3::new(chest.x, map.terrain.height(chest.x, chest.y), chest.y), yaw: u.y.atan2(u.x), kind: ChestKind::Peti, set });
+    spare
+}
+
 /// Cover on the river sand. No loot here: a bank is for crossing.
 fn sand_cover(map: &mut MapLayout, rng: &mut SmallRng, p: Vec2) {
     let y = map.terrain.height(p.x, p.y);
@@ -1461,7 +1592,9 @@ pub fn generate(seed: u64) -> MapLayout {
         let c = s.at(s.len() * 0.5, 0.0);
         map.pois.push(Poi { name: (*name).into(), center: Vec3::new(c.x, 0.0, c.y), radius: s.len() * 0.5 });
     }
+    let in_villages = villages(&mut map, &network, open_buildings);
     let mut spare = open_land(&mut map, &mut rng, &network, open_buildings);
+    spare.extend(in_villages);
     let sites = holy();
     let allowed = |p: Vec3| !no_loot(p.xz()) && sites.iter().all(|(c, r)| p.xz().distance(*c) >= *r) && !bus_blocks.iter().any(|b| in_block(b, p, 1.5));
     let sealed = |map: &MapLayout, p: Vec3| in_building(map, p);
@@ -1923,7 +2056,8 @@ mod tests {
     fn loot_adds_up() {
         let m = map();
         let one_match = m.chests.iter().filter(|c| c.set.is_none_or(|s| s.1 == 0)).count();
-        assert!((136..=154).contains(&one_match), "{one_match} chests a match");
+        // The districts' 136-154, and a village's trunk one match in three (`villages`).
+        assert!((150..=180).contains(&one_match), "{one_match} chests a match");
         assert!((1500..=1700).contains(&m.floor_loot.len()), "{} floor spots", m.floor_loot.len());
         assert!(m.chests.iter().all(|c| c.pos.xz().abs().max_element() <= HALF));
         assert!(m.floor_loot.iter().all(|p| p.xz().abs().max_element() <= HALF));

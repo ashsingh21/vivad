@@ -16,7 +16,7 @@
 //! VIVAD_RECORD=<dir>   with VIVAD_AUTOPILOT=1: the match as played, time stepped a 30th of a second a
 //!                        frame and each frame saved (<dir>/f00000.png...) for a video, from the
 //!                        player's jump for VIVAD_RECORD_SECS=n seconds (default 60) or until three
-//!                        seconds after they fall; then exits.
+//!                        seconds after they fall (not with VIVAD_RECORD_CAST); then exits.
 //!   VIVAD_RECORD_FROM=s  from this match time instead.
 //!   VIVAD_RECORD_LOG=1   print each frame's camera ([record] frame yaw pitch x y z mode).
 //!   VIVAD_RECORD_CAST=s  follow each body in turn instead (a warrior wearing it, on the ground),
@@ -159,6 +159,16 @@ impl Plugin for AutoshotPlugin {
                     ("ncr_karolbagh_air", v(-1290.0, 40.0, -1000.0), v(-1340.0, 0.0, -1075.0)),
                     ("ncr_cyber_air", v(-1670.0, 35.0, 1090.0), v(-1670.0, 8.0, 960.0)),
                     ("ncr_city_far", v(-150.0, 140.0, -1150.0), v(-395.0, 0.0, -1440.0)),
+                    // At eye height over the ground (ncr_g_: heights above the terrain): the open land
+                    // between districts, and inside a few of the quieter ones.
+                    ("ncr_g_open", v(-1050.0, 1.8, -880.0), v(-1340.0, 6.0, -1075.0)),
+                    ("ncr_g_open_cp", v(-960.0, 1.8, -500.0), v(-740.0, 6.0, -700.0)),
+                    ("ncr_g_nehru", v(-200.0, 1.8, 520.0), v(-280.0, 4.0, 600.0)),
+                    ("ncr_g_laxmi", v(600.0, 1.8, -520.0), v(680.0, 4.0, -600.0)),
+                    ("ncr_g_noida18", v(1350.0, 1.8, 280.0), v(1430.0, 4.0, 360.0)),
+                    ("ncr_g_village_road", v(16.0, 1.8, 236.0), v(-31.0, 5.0, 219.0)),
+                    ("ncr_g_village_chowk", v(-520.0, 1.8, -330.0), v(-540.0, 4.0, -345.0)),
+                    ("ncr_g_village_air", v(-600.0, 30.0, -300.0), v(-527.0, 0.0, -337.0)),
                     ("02_bazaar_street", v(-45.0, 4.5, 2.0), v(20.0, 3.0, 0.0)),
                     // Hauz Khas (VIVAD_MAP=hauzkhas): the madrasa's wings along the tank, from above and the lawn.
                     ("hk_madrasa_air", v(-20.0, 45.0, 150.0), v(-35.0, 0.0, 75.0)),
@@ -438,6 +448,10 @@ fn run_tour(
         return;
     }
     let (name, mut pos, mut look) = tour.shots[tour.index];
+    if name.starts_with("ncr_g_") {
+        pos.y += layout.terrain.height(pos.x, pos.z);
+        look.y += layout.terrain.height(look.x, look.z);
+    }
     if name == "12_house_interior" {
         // Stand inside the first wooden door's house, looking in.
         if let Some((_, t)) = houses.iter().find(|(b, _)| b.0.mat == shared::map::Mat::Wood && b.0.pos.x.abs() < 60.0 && b.0.pos.z.abs() < 25.0) {
@@ -1003,6 +1017,7 @@ fn record(
     m: Res<Match>,
     me: Query<(&Kinematic, &Health), With<LocalPlayer>>,
     cam: Query<&GlobalTransform, With<MainCamera>>,
+    cast: Option<Res<Cast>>,
     mut exit: MessageWriter<AppExit>,
 ) {
     let Ok((kin, health)) = me.single() else { return };
@@ -1021,7 +1036,8 @@ fn record(
     }
     commands.spawn(Screenshot::primary_window()).observe(save_to_disk(format!("{}/f{:05}.png", rec.dir, rec.frame)));
     rec.frame += 1;
-    if health.hp <= 0.0 && rec.after_death.is_none() {
+    // Following the cast, the player's fall doesn't end it.
+    if health.hp <= 0.0 && rec.after_death.is_none() && cast.is_none() {
         rec.after_death = Some(90);
     }
     if let Some(n) = rec.after_death.as_mut() {

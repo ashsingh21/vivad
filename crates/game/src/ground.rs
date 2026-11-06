@@ -88,7 +88,7 @@ pub fn weights(class: Option<u8>) -> [f32; 2] {
     use shared::map::terrain::ground;
     match class {
         Some(ground::ROAD | ground::PARKING) => [1.0, 0.0],
-        Some(ground::PARK | ground::WATER | ground::PATH) | None => [0.0, 0.0],
+        Some(ground::PARK | ground::WATER | ground::PATH | ground::OPEN | ground::SAND) | None => [0.0, 0.0],
         // Pavement and plazas.
         Some(_) => [0.0, 1.0],
     }

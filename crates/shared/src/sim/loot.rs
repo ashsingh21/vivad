@@ -8,7 +8,8 @@ use super::flow::Match;
 use super::net::{NetId, NetMsg, Outbox, Remote};
 use super::{Eliminated, Inventory, PlayerIntent, SimSet, Warrior, btn, match_rng, solid_mask, stream};
 use crate::items::{ItemDb, ItemKind, ItemStack, Rarity};
-use crate::map::{ChestKind, MapLayout};
+use crate::map::compose::{CHEST_SETS, PLACES};
+use crate::map::{ChestKind, ChestSpawn, MapLayout};
 
 pub const INTERACT_RANGE: f32 = 2.4;
 
@@ -139,10 +140,26 @@ fn is_consumable(k: &ItemKind) -> bool {
     matches!(k, ItemKind::Consumable { .. })
 }
 
+/// Which of its sets of chests each district has out in this match: every peer draws the same, and
+/// a player who knows the map still has to look.
+pub fn chest_sets(seed: u64) -> [u8; PLACES.len()] {
+    let mut rng = match_rng(seed, stream::CHEST_SETS);
+    std::array::from_fn(|_| rng.random_range(0..CHEST_SETS))
+}
+
+/// Whether a chest is out in a match with these sets.
+pub fn chest_is_out(c: &ChestSpawn, sets: &[u8]) -> bool {
+    c.set.is_none_or(|(district, set)| sets[district as usize] == set)
+}
+
 /// Fresh chests and floor loot for a new match (the same on every peer for the same seed).
 pub fn spawn_loot(commands: &mut Commands, layout: &MapLayout, db: &ItemDb, seed: u64) {
     let mut rng = match_rng(seed, stream::FLOOR_LOOT);
+    let sets = chest_sets(seed);
     for (index, c) in layout.chests.iter().enumerate() {
+        if !chest_is_out(c, &sets) {
+            continue;
+        }
         commands.spawn((
             Chest { index, kind: c.kind, opened: false },
             Transform::from_translation(c.pos).with_rotation(Quat::from_rotation_y(c.yaw)),
