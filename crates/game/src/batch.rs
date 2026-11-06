@@ -6,12 +6,20 @@
 //! once, out of sight, as a template; its meshes (by LOD) and materials are taken from it; and
 //! every placed copy is merged, per 32 m chunk, LOD and material, into one mesh with that chunk's
 //! visibility range. Trunk colliders are the simulation's and don't change.
+//!
+//! The leaves (a model's alpha-masked materials) are drawn with the standard material extended by
+//! a vertex stage that blows them in the wind (assets/shaders/wind.wesl): crowns lean and sway in
+//! gusts rolling across the map, the leaves flutter. One material per leaf material, never
+//! changed (the time comes from the view's globals).
 
 use std::collections::HashMap;
 use std::ops::Range;
 
 use bevy::camera::visibility::VisibilityRange;
+use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
+use bevy::render::render_resource::AsBindGroup;
+use bevy::shader::ShaderRef;
 use bevy::world_serialization::WorldInstanceReady;
 use shared::map::MapLayout;
 use shared::sim::{OfMap, map_reloaded};
@@ -49,11 +57,36 @@ struct Templates {
     built: bool,
 }
 
+pub type FoliageMaterial = ExtendedMaterial<StandardMaterial, Wind>;
+
+/// x: how hard the wind blows the leaves (0 still .. 1).
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
+pub struct Wind {
+    #[uniform(100)]
+    pub wind: Vec4,
+}
+
+impl MaterialExtension for Wind {
+    fn vertex_shader() -> ShaderRef {
+        "shaders/foliage.wesl".into()
+    }
+
+    fn prepass_vertex_shader() -> ShaderRef {
+        "shaders/foliage_prepass.wesl".into()
+    }
+}
+
+/// The breeze: VIVAD_WIND sets it (0 for still leaves, to compare).
+fn strength() -> f32 {
+    std::env::var("VIVAD_WIND").ok().and_then(|s| s.parse().ok()).unwrap_or(1.0)
+}
+
 pub struct BatchPlugin;
 
 impl Plugin for BatchPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Templates>().add_systems(Update, (forget.run_if(map_reloaded), spawn_templates, build_batches).chain());
+        app.add_plugins(MaterialPlugin::<FoliageMaterial>::default())
+            .init_resource::<Templates>().add_systems(Update, (forget.run_if(map_reloaded), spawn_templates, build_batches).chain());
     }
 }
 
@@ -125,6 +158,8 @@ fn build_batches(
     layout: Res<MapLayout>,
     mut meshes: ResMut<Assets<Mesh>>,
     scale: Res<crate::quality::LodScale>,
+    standard: Res<Assets<StandardMaterial>>,
+    mut foliage: ResMut<Assets<FoliageMaterial>>,
 ) {
     if t.built || !t.asked {
         return;
@@ -140,6 +175,22 @@ fn build_batches(
     if t.parts.values().flatten().any(|p| meshes.get(&p.mesh).is_none()) {
         return;
     }
+    // The leaves' materials, blown (one each, shared by every copy).
+    let breeze = strength();
+    let mut leaves: HashMap<AssetId<StandardMaterial>, Handle<FoliageMaterial>> = HashMap::new();
+    for part in t.parts.values().flatten() {
+        if let Some(base) = standard.get(&part.mat).filter(|m| matches!(m.alpha_mode, AlphaMode::Mask(_)) && breeze > 0.0) {
+            leaves.entry(part.mat.id()).or_insert_with(|| foliage.add(ExtendedMaterial { base: base.clone(), extension: Wind { wind: Vec4::new(breeze, 0.0, 0.0, 0.0) } }));
+        }
+    }
+    let material = |commands: &mut EntityCommands, mat: &Handle<StandardMaterial>| match leaves.get(&mat.id()) {
+        Some(blown) => {
+            commands.insert(MeshMaterial3d(blown.clone()));
+        }
+        None => {
+            commands.insert(MeshMaterial3d(mat.clone()));
+        }
+    };
     // Group the placed copies by model and chunk.
     let mut groups: HashMap<(&'static str, i32, i32), Vec<Transform>> = HashMap::new();
     for p in layout.props.iter().filter(|p| batched(p.model)) {
@@ -156,7 +207,8 @@ fn build_batches(
             let tf = Transform::from_translation(p.pos).with_rotation(Quat::from_rotation_y(p.yaw)).with_scale(Vec3::splat(p.scale));
             for part in parts {
                 let base = LodRange(VisibilityRange { start_margin: rs[part.lod].0.clone(), end_margin: rs[part.lod].1.clone(), use_aabb: false }, part.lod);
-                commands.spawn((Mesh3d(part.mesh.clone()), MeshMaterial3d(part.mat.clone()), tf * part.local, base.scaled(scale.0), base, crate::quality::LodShadow, OfMap));
+                let mut e = commands.spawn((Mesh3d(part.mesh.clone()), tf * part.local, base.scaled(scale.0), base, crate::quality::LodShadow, OfMap));
+                material(&mut e, &part.mat);
                 spawned += 1;
             }
         }
@@ -190,15 +242,15 @@ fn build_batches(
             // On the GPU only, as the city's buildings are (crate::buildings).
             mesh.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
             let base = LodRange(VisibilityRange { start_margin: rs[part.lod].0.clone(), end_margin: rs[part.lod].1.clone(), use_aabb: false }, part.lod);
-            commands.spawn((
+            let mut e = commands.spawn((
                 Mesh3d(meshes.add(mesh)),
-                MeshMaterial3d(part.mat.clone()),
                 Transform::from_translation(centre),
                 base.scaled(scale.0),
                 base,
                 crate::quality::LodShadow,
                 OfMap,
             ));
+            material(&mut e, &part.mat);
             spawned += 1;
         }
     }

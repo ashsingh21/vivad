@@ -312,6 +312,11 @@ impl Plugin for AutoshotPlugin {
                 index: 0,
                 frames: 0,
             });
+            // A burst (VIVAD_TOUR_FRAMES) as a clip: 1/30 s of game time a frame, however long a
+            // frame takes to save (trees in the wind, water: `ffmpeg -framerate 30`).
+            if std::env::var("VIVAD_TOUR_CLIP").is_ok() {
+                app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_secs_f64(1.0 / 30.0)));
+            }
             if let Ok(only) = std::env::var("VIVAD_TOUR_ONLY") {
                 let keys: Vec<String> = only.split(',').map(str::to_owned).collect();
                 app.world_mut().resource_mut::<Tour>().shots.retain(|s| keys.iter().any(|k| s.0.contains(k.as_str())));
