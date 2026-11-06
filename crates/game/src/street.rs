@@ -98,7 +98,8 @@ fn rebuild(mut kit: ResMut<Kit>) {
 }
 
 #[allow(clippy::too_many_arguments)]
-/// Above this many pieces each is its own entity, drawn instanced, instead of merged per chunk.
+/// Above this many pieces each is its own entity, drawn instanced, instead of merged per chunk, in
+/// the browser too (crate::diag::instanced: the desktop always instances).
 const INSTANCE_ABOVE: usize = 8000;
 
 fn build_kit(
@@ -149,7 +150,7 @@ fn build_kit(
     // A big map's kit (the NCR's 9,000 pieces), each piece its own entity sharing its model's mesh,
     // drawn instanced: merged, every copy's vertices repeat at every LOD (2.7 GB on the NCR). The
     // wear's projected UVs are then the piece's own, not the world's.
-    if layout.kit.len() > INSTANCE_ABOVE {
+    if crate::diag::instanced(layout.kit.len(), INSTANCE_ABOVE) {
         // First every piece's meshes (`mesh_of` holds the asset stores while it's in use), then
         // each made once into a shared mesh.
         for piece in &layout.kit {

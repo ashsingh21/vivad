@@ -33,7 +33,7 @@ pub fn load_detail(assets: &AssetServer, path: &'static str, srgb: bool) -> Hand
                 ..bevy::image::ImageSamplerDescriptor::linear()
             });
         })
-        .load(path)
+        .load(crate::tex(path))
 }
 
 /// The detail textures that `load_detail` loads.
@@ -47,7 +47,7 @@ fn mip_detail(mut events: MessageReader<AssetEvent<Image>>, assets: Res<AssetSer
             AssetEvent::Added { id } => Some(*id),
             _ => None,
         })
-        .filter(|id| assets.get_path(*id).is_some_and(|p| DETAILS.iter().any(|d| p.path() == std::path::Path::new(d))))
+        .filter(|id| assets.get_path(*id).is_some_and(|p| DETAILS.iter().any(|d| p.path() == std::path::Path::new(&crate::tex(d)))))
         .collect();
     for id in ids {
         if let Some(mut img) = images.get_mut(id) {

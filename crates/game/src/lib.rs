@@ -33,4 +33,18 @@ pub mod visuals;
 pub const ASSET_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets");
 #[cfg(target_arch = "wasm32")]
 pub const ASSET_DIR: &str = "assets";
+
+/// A texture's path: on the desktop its KTX2 where one is packed beside the PNG (GPU-compressed,
+/// its mips made: tools/texpack, `just textures-pack`), else the PNG. A fifth to an eighth of the
+/// memory. (The browser keeps the PNGs: a phone's GPU wants ASTC, not BC.)
+pub fn tex(path: &str) -> String {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(stem) = path.strip_suffix(".png") {
+        let ktx = format!("{stem}.ktx2");
+        if std::path::Path::new(ASSET_DIR).join(&ktx).exists() {
+            return ktx;
+        }
+    }
+    path.to_string()
+}
 pub mod water;

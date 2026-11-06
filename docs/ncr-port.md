@@ -62,8 +62,27 @@ copies of each model at every LOD. Done so far:
 - A base of about 3 GB with no map art at all (2.7 GB anonymous): images' CPU copies 0.6 GB,
   decoded audio 0.3 GB, the rest unaccounted (driver, pipelines? needs a heap profiler).
 
-Next for memory: images' CPU copies dropped after their mips are made, and compressed textures
-(KTX2); the city drawn near only (its 2 GB of GPU memory); the base.
+Then (6 Nov):
+
+- Textures: GPU-only once their mips are made, and the characters' embedded ones (16 MB each) at
+  once; the city's sets packed GPU-compressed (KTX2 BC7/BC5, tools/texpack from the branch,
+  `just textures-pack`; crate::tex loads them on the desktop, the browser keeps PNGs).
+- Instanced trees and street kit on every map on the desktop (crate::diag::instanced): on Connaught
+  Place it halved GPU memory and was faster (118 to 134 fps on style_block, 102 to 108 on
+  style_trees). The browser merges below the thresholds until measured there.
+- Ground tiles and grass GPU-only.
+
+| | GPU | resident |
+|---|---|---|
+| NCR, before | out of memory (>11.6 GB) | 17 GB |
+| NCR, now | 4.2 GB | 5.9 GB |
+| Connaught Place, before | 4.2-4.8 GB | 8.8 GB |
+| Connaught Place, now | 1.9 GB | 3.1 GB |
+
+Resident tracks GPU memory (about 1.5 GB of it per GB of GPU memory: the driver's and wgpu's own
+host-side state), so cutting GPU memory cuts both. Left on the NCR: the city's blocks and buildings
+(about 2 GB of GPU memory, all of it resident whether near or not): streaming them in by distance
+is the next big step.
 
 ## 4. On the start screen
 

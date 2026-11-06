@@ -44,7 +44,7 @@ struct TexSet {
 
 /// A texture set under assets/textures/: `name` is its folder and prefix, e.g. "india/plaster".
 fn load_set(assets: &AssetServer, pending: &mut PendingMips, name: &str) -> TexSet {
-    let base = assets.load(format!("textures/{name}_basecolor.png"));
+    let base = assets.load(crate::tex(&format!("textures/{name}_basecolor.png")));
     let normal = load_linear(assets, pending, &format!("textures/{name}_normal.png"));
     pending.0.push(base.clone());
     TexSet { base, normal }
@@ -52,7 +52,7 @@ fn load_set(assets: &AssetServer, pending: &mut PendingMips, name: &str) -> TexS
 
 /// A texture of data rather than colour (normals, roughness and metal): read as linear.
 fn load_linear(assets: &AssetServer, pending: &mut PendingMips, path: &str) -> Handle<Image> {
-    let h = assets.load_builder().with_settings(|s: &mut ImageLoaderSettings| s.is_srgb = false).load(path.to_string());
+    let h = assets.load_builder().with_settings(|s: &mut ImageLoaderSettings| s.is_srgb = false).load(crate::tex(path));
     pending.0.push(h.clone());
     h
 }
@@ -671,7 +671,7 @@ fn build_footprints(
     let facade = (load_set(assets, pending, "panga/facade"), load_linear(assets, pending, "textures/panga/facade_mr.png"));
     let shopfront = (load_set(assets, pending, "panga/shop"), load_linear(assets, pending, "textures/panga/shop_mr.png"));
     let roof_tex = (load_set(assets, pending, "panga/roof"), load_linear(assets, pending, "textures/panga/roof_mr.png"));
-    let signs_tex: Handle<Image> = assets.load("textures/panga/signs.png");
+    let signs_tex: Handle<Image> = assets.load(crate::tex("textures/panga/signs.png"));
     pending.0.push(signs_tex.clone());
     // Where buildings stand, a metre a cell: whether a wall faces the street or a neighbour, and
     // how far across the lane the building opposite is.
@@ -1327,8 +1327,16 @@ fn build_chunks(
 
 /// Model textures (the shared `models/textures/` set the props' glTFs point at) arrive without
 /// mips; queue each one as it loads.
-fn queue_model_mips(mut events: MessageReader<AssetEvent<Image>>, assets: Res<AssetServer>, mut pending: ResMut<PendingMips>) {
+fn queue_model_mips(mut events: MessageReader<AssetEvent<Image>>, assets: Res<AssetServer>, mut pending: ResMut<PendingMips>, mut images: ResMut<Assets<Image>>) {
     for ev in events.read() {
+        // A texture inside a model file (the characters' 2048 px sets, 16 MB each) comes with its
+        // own mips or none and nothing reads it here: kept on the GPU only.
+        if let AssetEvent::Added { id } = ev
+            && assets.get_path(*id).is_some_and(|p| p.label().is_some() && !p.path().starts_with("models/textures"))
+            && let Some(mut img) = images.get_mut(*id)
+        {
+            img.asset_usage = RenderAssetUsages::RENDER_WORLD;
+        }
         if let AssetEvent::Added { id } = ev
             && assets.get_path(*id).is_some_and(|p| p.path().starts_with("models/textures"))
             && let Some(h) = assets.get_id_handle(*id)
@@ -1353,11 +1361,30 @@ fn mipmap_textures(mut pending: ResMut<PendingMips>, mut images: ResMut<Assets<I
 }
 
 /// `mipmap_textures` for one image at hand.
+/// The tiling textures' sampler: repeating, trilinear, anisotropic.
+fn repeating() -> ImageSampler {
+    ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        address_mode_w: ImageAddressMode::Repeat,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        mipmap_filter: ImageFilterMode::Linear,
+        anisotropy_clamp: 8,
+        ..default()
+    })
+}
+
 pub(crate) fn mip_chain(img: &mut Image) {
     let (w, hgt) = (img.width() as usize, img.height() as usize);
     let Some(data) = img.data.clone() else { return };
     if data.len() != w * hgt * 4 {
-        return; // only RGBA8 sources are handled
+        // A packed KTX2 (crate::tex) brings its own mips: its sampler as below, and on the GPU only.
+        if img.texture_descriptor.mip_level_count > 1 {
+            img.sampler = repeating();
+            img.asset_usage = RenderAssetUsages::RENDER_WORLD;
+        }
+        return; // only RGBA8 sources are mipped here
     }
     let coverage = |px: &[u8], scale: f32| px.chunks_exact(4).filter(|p| p[3] as f32 * scale >= 127.5).count() as f32 / (px.len() / 4) as f32;
     let full = coverage(&data, 1.0);
@@ -1405,14 +1432,8 @@ pub(crate) fn mip_chain(img: &mut Image) {
     }
     img.texture_descriptor.mip_level_count = levels.len() as u32;
     img.data = Some(levels.concat());
-    img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-        address_mode_u: ImageAddressMode::Repeat,
-        address_mode_v: ImageAddressMode::Repeat,
-        address_mode_w: ImageAddressMode::Repeat,
-        mag_filter: ImageFilterMode::Linear,
-        min_filter: ImageFilterMode::Linear,
-        mipmap_filter: ImageFilterMode::Linear,
-        anisotropy_clamp: 8,
-        ..default()
-    });
+    img.sampler = repeating();
+    // Its mips made, nothing reads it here again: kept on the GPU only (some 0.6 GB of textures
+    // held twice otherwise). A second pass finds no data and leaves it be.
+    img.asset_usage = RenderAssetUsages::RENDER_WORLD;
 }

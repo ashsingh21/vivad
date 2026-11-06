@@ -570,7 +570,9 @@ fn dress_terrain(
                     let (lo, hi) = pos.iter().fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| (lo.min(Vec3::from(*p)), hi.max(Vec3::from(*p))));
                     let centre = (lo + hi) / 2.0;
                     let pos: Vec<[f32; 3]> = pos.iter().map(|p| (Vec3::from(*p) - centre).to_array()).collect();
-                    let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+                    // On the GPU only (nothing reads a ground tile back: the ground's collider is the
+                    // simulation's heightfield).
+                    let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
                         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
                         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nrm)
                         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)

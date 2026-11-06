@@ -23,8 +23,9 @@ use crate::characters::LodRange;
 const CHUNK: f32 = 32.0;
 
 /// Above this many trees and bushes (the NCR has some 9,600) each copy is its own entity sharing
-/// its model's meshes, drawn instanced, instead of merged: merging repeats every vertex of every
-/// copy at every LOD (76 M vertices, 4.6 GB on the NCR, out of GPU memory).
+/// its model's meshes, drawn instanced, instead of merged, in the browser too (crate::diag::instanced:
+/// the desktop always instances): merging repeats every vertex of every copy at every LOD (76 M
+/// vertices, 4.6 GB on the NCR, out of GPU memory).
 const INSTANCE_ABOVE: usize = 2000;
 
 /// Props merged rather than spawned one by one.
@@ -147,7 +148,7 @@ fn build_batches(
     }
     let mut spawned = 0;
     let count = layout.props.iter().filter(|p| batched(p.model)).count();
-    if count > INSTANCE_ABOVE {
+    if crate::diag::instanced(count, INSTANCE_ABOVE) {
         for p in layout.props.iter().filter(|p| batched(p.model)) {
             let parts = &t.parts[p.model];
             let lods = parts.iter().map(|p| p.lod).max().unwrap_or(0) + 1;

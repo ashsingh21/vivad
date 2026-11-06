@@ -262,6 +262,12 @@ clip-video variant="male" clips="":
     {{blender}} -b -P tools/blender/characters/clip_video.py -- {{variant}} previews/clips_{{variant}}.mp4 {{clips}} 2>&1 | grep -E '^\[video\]|Error|Traceback' || true
 
 # The style board (docs/style-guide.md) by the numbers: brightness, clipping, saturation and shade
+# The city's textures GPU-compressed (BC7/BC5 KTX2 beside each PNG, crate::tex picks them on the desktop).
+textures-pack:
+    cd tools/texpack && CARGO_TARGET_DIR=../../build/texpack-target cargo build --release
+    python3 tools/textures/pack_list.py > build/pack.txt
+    build/texpack-target/release/texpack pack build/pack.txt
+
 # The start screen's map cards: each map's tour view, cropped (assets/ui/maps/<map>.png).
 menu-thumbs:
     cargo build --release -p game --bin game

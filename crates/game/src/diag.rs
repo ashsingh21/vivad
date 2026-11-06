@@ -2,6 +2,7 @@
 //!
 //! VIVAD_SKIP=kit,trees,blocks,city leaves those out of the map's art (the street kit, the batched
 //! trees and bushes, the hand-built blocks, the city's buildings), to see what each costs.
+//! VIVAD_INSTANCE=0|1 merges or instances the trees and street kit (`instanced`), to compare.
 //! VIVAD_MEMORY=1 logs every 10 s the meshes and images held on the CPU side and the resident set.
 
 use bevy::prelude::*;
@@ -17,6 +18,21 @@ impl Plugin for DiagPlugin {
     }
 }
 
+/// Whether a map's trees or street kit (`count` of them) are drawn instanced, each copy sharing its
+/// model's meshes, rather than merged into a mesh per chunk. On the desktop always: on Connaught
+/// Place it halved the GPU memory (4.7 GB to 2.4) and was faster too (118 to 134 fps over the
+/// block). In the browser (one thread, where entities cost) only past `above`, until it's measured
+/// there. VIVAD_INSTANCE=0 or 1 forces it, to compare.
+pub fn instanced(count: usize, above: usize) -> bool {
+    static FORCE: OnceLock<Option<bool>> = OnceLock::new();
+    let force = *FORCE.get_or_init(|| match std::env::var("VIVAD_INSTANCE").as_deref() {
+        Ok("0") => Some(false),
+        Ok("1") => Some(true),
+        _ => None,
+    });
+    force.unwrap_or(!cfg!(target_arch = "wasm32") || count > above)
+}
+
 /// Whether VIVAD_SKIP names `part`.
 pub fn skip(part: &str) -> bool {
     static SKIP: OnceLock<Vec<String>> = OnceLock::new();
@@ -25,7 +41,7 @@ pub fn skip(part: &str) -> bool {
         .any(|s| s == part)
 }
 
-fn report(time: Res<Time<Real>>, mut last: Local<f32>, meshes: Res<Assets<Mesh>>, images: Res<Assets<Image>>) {
+fn report(time: Res<Time<Real>>, mut last: Local<f32>, meshes: Res<Assets<Mesh>>, images: Res<Assets<Image>>, assets: Res<AssetServer>) {
     if time.elapsed_secs() - *last < 10.0 {
         return;
     }
@@ -48,5 +64,9 @@ fn report(time: Res<Time<Real>>, mut last: Local<f32>, meshes: Res<Assets<Mesh>>
     let rss = std::fs::read_to_string("/proc/self/status").ok().and_then(|s| s.lines().find(|l| l.starts_with("VmRSS")).and_then(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok())).unwrap_or(0) / 1024;
     #[cfg(not(target_os = "linux"))]
     let rss = 0;
+    let mut big: Vec<(u64, String)> = images.iter().map(|(id, i)| (i.data.as_ref().map_or(0, |d| d.len() as u64), assets.get_path(id).map_or_else(|| format!("{:?} {}x{}", i.texture_descriptor.format, i.width(), i.height()), |p| p.to_string()))).collect();
+    big.sort_by(|a, b| b.0.cmp(&a.0));
+    let top: Vec<String> = big.iter().take(6).map(|(b, n)| format!("{} MB {n}", b >> 20)).collect();
+    info!("[memory] largest images: {}", top.join("; "));
     info!("[memory] {n} meshes, {:.1} M vertices, {} MB (and {gpu_only} on the GPU only); {imgs} images, {} MB; resident {rss} MB", verts as f32 / 1e6, bytes >> 20, img_bytes >> 20);
 }
