@@ -544,13 +544,21 @@ fn spawn_map(mut commands: Commands, layout: Res<MapLayout>) {
         if fp.mat == crate::map::Mat::Water {
             continue;
         }
-        let (pos, tris) = crate::map::footprint::solid(fp);
+        // One collider either way: a hollow building's rooms (crate::map::interiors) as one
+        // compound (as entities of their own its boxes would be some 20,000).
+        let collider = match layout.rooms_of(index).filter(|_| crate::map::compose::ROOMS_BUILT) {
+            Some(rooms) => Collider::compound(rooms.solids().iter().map(|b| (b.pos, b.rot, collider_for(b))).collect::<Vec<_>>()),
+            None => {
+                let (pos, tris) = crate::map::footprint::solid(fp);
+                Collider::trimesh(pos, tris)
+            }
+        };
         commands.spawn((
             MapFootprint(index),
             OfMap,
             Transform::default(),
             RigidBody::Static,
-            Collider::trimesh(pos, tris),
+            collider,
             CollisionLayers::new(Layer::World, LayerMask::ALL),
         ));
     }

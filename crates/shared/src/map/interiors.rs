@@ -421,6 +421,91 @@ impl Interior {
         out
     }
 
+    /// The building as the map's own blocks, drawn only (it is collided with as `solids`, one
+    /// compound collider: crate::sim): walls in their rooms' limewash with their holes, the floors
+    /// tiled, a flight's steps. The shell's outer face is drawn 2 cm in from the outline: the
+    /// painted facade stands on the outline itself.
+    pub fn drawn(&self) -> Vec<Block> {
+        // The lighter paints only (crate::map::cp's rooms: terracotta and the old green read dark).
+        const WASH: [u8; 6] = [0, 1, 2, 3, 4, 6];
+        let wash = |k: u32| Mat::Paint(WASH[(self.footprint as u32 * 7 + k * 3) as usize % WASH.len()]);
+        let mut out = vec![];
+        let boxed = |min: Vec3, max: Vec3, mat: Mat| {
+            let c = (min + max) * 0.5;
+            Block { pos: self.at(c.x, c.y, c.z), rot: self.rot(), shape: Shape::Box(max - min), mat, collide: false, visible: true }
+        };
+        for w in &self.walls {
+            let mat = match w.kind {
+                WallKind::Shell | WallKind::Inner => wash(((w.y.0 - self.floor) / STOREY).max(0.0) as u32),
+                WallKind::Free => Mat::Stucco,
+                WallKind::Hidden => continue,
+            };
+            // The shell's outside face pulled 2 cm in off the outline (where the facade is drawn).
+            let (lo, hi) = (w.at - w.thick / 2.0, w.at + w.thick / 2.0);
+            let (lo, hi) = if w.kind != WallKind::Shell {
+                (lo, hi)
+            } else if w.at < (if w.along_x { self.d } else { self.w }) / 2.0 {
+                (lo + 0.02, hi)
+            } else {
+                (lo, hi - 0.02)
+            };
+            // No end face in another's plane: a wall between rooms or by the stairs runs 1 cm on
+            // into what it meets; at a corner the shell along x keeps the corner and the one
+            // along z stops halfway into it.
+            let span = match w.kind {
+                WallKind::Shell if !w.along_x => (w.s.0 + SHELL / 2.0, w.s.1 - SHELL / 2.0),
+                WallKind::Shell => w.s,
+                _ => (w.s.0 - 0.01, w.s.1 + 0.01),
+            };
+            for [s0, s1, y0, y1] in rects(span, w.y, &w.cuts) {
+                let (min, max) = if w.along_x { (Vec3::new(s0, y0, lo), Vec3::new(s1, y1, hi)) } else { (Vec3::new(lo, y0, s0), Vec3::new(hi, y1, s1)) };
+                out.push(boxed(min, max, mat));
+            }
+        }
+        for sl in &self.slabs {
+            // 1 cm in from its edges: an edge under a wall is then inside it, not in its face.
+            out.push(boxed(Vec3::new(sl.x.0 + 0.01, sl.y - sl.thick, sl.z.0 + 0.01), Vec3::new(sl.x.1 - 0.01, sl.y, sl.z.1 - 0.01), Mat::Stone));
+            // A plaster ceiling under it (not under the ground floor), 1 cm proud of its underside
+            // and in from its edges (no face shared).
+            if sl.y > self.floor + 1.0 {
+                out.push(boxed(Vec3::new(sl.x.0 + 0.02, sl.y - sl.thick - 0.02, sl.z.0 + 0.02), Vec3::new(sl.x.1 - 0.02, sl.y - sl.thick - 0.01, sl.z.1 - 0.02), Mat::Plaster));
+            }
+        }
+        if let Some(st) = &self.stair {
+            for k in 0..self.storeys {
+                let (foot, head) = st.flight(k);
+                let (y0, y1) = (self.level(k), self.level(k + 1));
+                let z = st.lane(k);
+                let steps = ((y1 - y0) / 0.2).round().max(1.0) as i32;
+                let (run, rise) = ((head - foot) / steps as f32, (y1 - y0) / steps as f32);
+                for i in 0..steps {
+                    let (xa, xb) = (foot + run * i as f32, foot + run * (i + 1) as f32);
+                    let top = y0 + rise * (i + 1) as f32;
+                    out.push(boxed(Vec3::new(xa.min(xb), y0.max(top - 0.45), z - LANE / 2.0 + 0.01), Vec3::new(xa.max(xb), top, z + LANE / 2.0 - 0.01), Mat::Stucco));
+                }
+            }
+        }
+        out
+    }
+
+    /// The furniture as the street kit draws it (crate::street in the game, near the camera only:
+    /// some 40,000 pieces on the NCR): (kit piece, place, yaw), where the kit has a piece for it.
+    pub fn kit_pieces(&self) -> impl Iterator<Item = (&'static str, Vec3, f32)> + '_ {
+        self.pieces.iter().filter_map(|p| {
+                let name = match p.name {
+                    "charpai" | "almirah" | "desk" | "sofa" | "fan" => p.name,
+                    "table" => "dining",
+                    "tv_unit" => "tv",
+                    "gas_stove" => "stove",
+                    "water_drum" => "drum",
+                    "sacks" | "counter" => "crates",
+                    "shelf" => "rack_dabba",
+                    _ => return None,
+                };
+                Some((name, p.pos, p.yaw))
+            })
+    }
+
     /// The holes on a wall's face at `at`, of those that overlap a stretch of it.
     pub fn cuts_on(&self, along_x: bool, at: f32, s: (f32, f32), y: (f32, f32)) -> Vec<Cut> {
         self.walls

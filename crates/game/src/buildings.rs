@@ -19,6 +19,7 @@ use bevy::image::{ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor, Ima
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::camera::visibility::VisibilityRange;
 use bevy::prelude::*;
+use shared::map::interiors::{Cut, rects};
 use shared::map::{Block, Footprint, MapLayout, Mat, Shape, ShopSign};
 use shared::sim::{OfMap, map_reloaded};
 
@@ -865,7 +866,12 @@ struct CityBufs {
 /// material: walls in the facade, roofs in clay tile, trim in plaster. What's seen from afar (the
 /// plain walls, roofs and water), or else the rest, drawn near only (`detail`). `solid` must hold
 /// every building within reach of these.
-fn city_bufs(footprints: &[Footprint], fps: &[usize], solid: &Solid, detail: bool) -> CityBufs {
+/// A hollow building's holes (shared::map::interiors::Interior::skin): on each edge of its outline,
+/// along the edge from its first corner; and whether its rooms draw its roof (it has no tower
+/// standing on them).
+type Skin = ([Vec<Cut>; 4], bool);
+
+fn city_bufs(footprints: &[Footprint], fps: &[usize], solid: &Solid, detail: bool, skins: &HashMap<usize, Skin>) -> CityBufs {
     let roof_at = |p: Vec2| solid.at(p);
     let occupied = |p: Vec2| roof_at(p) > 0.0;
     let lin = |c: [f32; 3]| {
@@ -876,7 +882,8 @@ fn city_bufs(footprints: &[Footprint], fps: &[usize], solid: &Solid, detail: boo
     let CityBufs { walls, overlays, roofs, trims, clutter, plinths, signs, water, .. } = &mut out_bufs;
     // (The base course along the street, Mat::Plinth's dressed stone, has its own buffers and
     // material.)
-    for fp in fps.iter().map(|&i| &footprints[i]) {
+    for (fi, fp) in fps.iter().map(|&i| (i, &footprints[i])) {
+        let skin = skins.get(&fi);
         let c = fp.pts.iter().sum::<Vec2>() / fp.pts.len() as f32;
         let (cx, cz) = ((c.x / CHUNK).floor() as i32, (c.y / CHUNK).floor() as i32);
         // Water is only its surface.
@@ -970,6 +977,9 @@ fn city_bufs(footprints: &[Footprint], fps: &[usize], solid: &Solid, detail: boo
             let dir = Vec3::new(e.x, 0.0, e.y) / len;
             let rot = Quat::from_rotation_arc(Vec3::X, dir);
             let at = |s: f32, y: f32| Vec3::new(a.x, y, a.y) + dir * s;
+            // What's left of a stretch of this wall round a hollow building's holes.
+            let cuts: &[Cut] = skin.and_then(|k| k.0.get(i)).map_or(&[], |c| c.as_slice());
+            let holed = |s: (f32, f32), y: (f32, f32)| if cuts.is_empty() { vec![[s.0, s.1, y.0, y.1]] } else { rects(s, y, cuts) };
             if detail {
                 let t = trims.entry((cx, cz)).or_default();
                 // The parapet round the roof, and its coping.
@@ -1001,8 +1011,20 @@ fn city_bufs(footprints: &[Footprint], fps: &[usize], solid: &Solid, detail: boo
                     let (s0, s1) = (-ext(corner[i]), len + ext(corner[(i + 1) % n]));
                     let p = plinths.entry((cx, cz)).or_default();
                     let stone = [v, v, v, 1.0];
-                    p.prism(at((s0 + s1) * 0.5, fp.base + PLINTH_H * 0.5), rot, Vec3::new(s1 - s0, PLINTH_H, 2.0 * PLINTH_DEEP), 0.03, stone);
-                    p.prism(at((s0 + s1) * 0.5, fp.base + PLINTH_H + 0.03), rot, Vec3::new(s1 - s0 + 0.04, 0.07, 2.0 * PLINTH_DEEP + 0.07), 0.025, stone);
+                    // Broken at a hollow building's doorways (5 cm clear of each side).
+                    let mut runs = vec![];
+                    let mut from = s0;
+                    let mut doors: Vec<&Cut> = cuts.iter().filter(|c| c.y0 < fp.base + PLINTH_H + 0.1).collect();
+                    doors.sort_by(|x, y| x.s0.total_cmp(&y.s0));
+                    for c in doors {
+                        runs.push((from, c.s0 - 0.05));
+                        from = from.max(c.s1 + 0.05);
+                    }
+                    runs.push((from, s1));
+                    for (r0, r1) in runs.into_iter().filter(|(r0, r1)| r1 - r0 > 0.1) {
+                        p.prism(at((r0 + r1) * 0.5, fp.base + PLINTH_H * 0.5), rot, Vec3::new(r1 - r0, PLINTH_H, 2.0 * PLINTH_DEEP), 0.03, stone);
+                        p.prism(at((r0 + r1) * 0.5, fp.base + PLINTH_H + 0.03), rot, Vec3::new(r1 - r0 + 0.04, 0.07, 2.0 * PLINTH_DEEP + 0.07), 0.025, stone);
+                    }
                 }
                 // A pilaster up each outside corner.
                 if corner[i] > 0 {
@@ -1067,16 +1089,24 @@ fn city_bufs(footprints: &[Footprint], fps: &[usize], solid: &Solid, detail: boo
                 let flip = (b0 - a0).cross(b1 - a0).dot(out) < 0.0;
                 for pair in stops.windows(2).filter(|_| !detail) {
                     let ((d0, k0), (d1, k1)) = (pair[0], pair[1]);
-                    let (p0, p1) = (a0 + (b0 - a0) * (d0 / len), a0 + (b0 - a0) * (d1 / len));
-                    let (q0, q1) = (p0.with_y(hi), p1.with_y(hi));
-                    let (e0, e1) = (u0 + (u1 - u0) * d0 / len, u0 + (u1 - u0) * d1 / len);
-                    let uv = [Vec2::new(e0, v0), Vec2::new(e1, v0), Vec2::new(e1, v1), Vec2::new(e0, v1)];
                     let dim = |c: [f32; 4], k: f32| [c[0] * k, c[1] * k, c[2] * k, c[3]];
-                    let col = [dim(tint_at(s0), k0), dim(tint_at(s0), k1), dim(tint_at(s1), k1), dim(tint_at(s1), k0)];
-                    if !flip {
-                        w.quad_col([p0, p1, q1, q0], out, uv, col);
-                    } else {
-                        w.quad_col([p1, p0, q0, q1], out, [uv[1], uv[0], uv[3], uv[2]], [col[1], col[0], col[3], col[2]]);
+                    // Each piece of the stretch left round any holes, its texture and shading
+                    // where the whole stretch's would be.
+                    for [sa, sb, ya, yb] in holed((d0, d1), (lo, hi)) {
+                        let (p0, p1) = (a0 + (b0 - a0) * (sa / len), a0 + (b0 - a0) * (sb / len));
+                        let (p0, p1) = (p0.with_y(ya), p1.with_y(ya));
+                        let (q0, q1) = (p0.with_y(yb), p1.with_y(yb));
+                        let (e0, e1) = (u0 + (u1 - u0) * sa / len, u0 + (u1 - u0) * sb / len);
+                        let (va, vb) = (v0 + (v1 - v0) * (ya - lo) / (hi - lo), v0 + (v1 - v0) * (yb - lo) / (hi - lo));
+                        let uv = [Vec2::new(e0, va), Vec2::new(e1, va), Vec2::new(e1, vb), Vec2::new(e0, vb)];
+                        let k = |s: f32| k0 + (k1 - k0) * ((s - d0) / (d1 - d0).max(1e-4));
+                        let tint = |y: f32| tint_at(s0 + (s1 - s0) * (y - lo) / (hi - lo));
+                        let col = [dim(tint(ya), k(sa)), dim(tint(ya), k(sb)), dim(tint(yb), k(sb)), dim(tint(yb), k(sa))];
+                        if !flip {
+                            w.quad_col([p0, p1, q1, q0], out, uv, col);
+                        } else {
+                            w.quad_col([p1, p0, q0, q1], out, [uv[1], uv[0], uv[3], uv[2]], [col[1], col[0], col[3], col[2]]);
+                        }
                     }
                 }
                 // The wall's colour is for its plaster: over each window, AC unit, balcony and
@@ -1107,6 +1137,7 @@ fn city_bufs(footprints: &[Footprint], fps: &[usize], solid: &Solid, detail: boo
                             let (sa, sb) = ((bay as f32 + ru0) * BAY - along, (bay as f32 + ru1) * BAY - along);
                             // The cell's v runs from its top (0) to the floor (1).
                             let (ya, yb) = (floor + (1.0 - rv1) * STOREY, floor + (1.0 - rv0) * STOREY);
+                            for [sa, sb, ya, yb] in holed((sa, sb), (ya, yb)) {
                             let at = |s: f32, y: f32| Vec3::new(a.x, y, a.y) + dir * s + out * PROUD;
                             let uv = |s: f32, y: f32| Vec2::new((along + s) / (2.0 * BAY), -(y - fp.base) / rows);
                             let shade = |y: f32| grey(tint_at(s0 + (s1 - s0) * ((y - lo) / (hi - lo)).clamp(0.0, 1.0)));
@@ -1117,6 +1148,7 @@ fn city_bufs(footprints: &[Footprint], fps: &[usize], solid: &Solid, detail: boo
                                 w.quad_col([p0, p1, q1, q0], out, [t0, t1, t2, t3], [c0, c0, c1, c1]);
                             } else {
                                 w.quad_col([p1, p0, q0, q1], out, [t1, t0, t3, t2], [c0, c0, c1, c1]);
+                            }
                             }
                         }
                     }
@@ -1204,6 +1236,10 @@ fn city_bufs(footprints: &[Footprint], fps: &[usize], solid: &Solid, detail: boo
             }
         }
         if detail {
+            continue;
+        }
+        // A hollow building's roof is its rooms' (the slab with the stair's way up through it).
+        if skin.is_some_and(|k| k.1) {
             continue;
         }
         let roof = roofs.entry((cx, cz)).or_default();
@@ -1407,9 +1443,11 @@ fn spawn_pieces(commands: &mut Commands, meshes: &mut Assets<Mesh>, city: &City,
 struct Near {
     span: f32,
     /// The full blocks in each chunk.
-    blocks: HashMap<(i32, i32), Vec<Block>>,
+    blocks: HashMap<(i32, i32), Vec<(Block, bool)>>,
     all_footprints: Vec<Footprint>,
     all_signs: Vec<ShopSign>,
+    /// The hollow buildings' holes, by `all_footprints` index.
+    skins: HashMap<usize, Skin>,
     /// The buildings (by `all_footprints` index) whose middle is in each chunk...
     footprints: HashMap<(i32, i32), Vec<usize>>,
     /// ...and those reaching into it at all.
@@ -1492,9 +1530,11 @@ fn stream(
 fn make_near(src: &Near, chunk: (i32, i32)) -> Vec<Piece> {
     let mut out = vec![];
     if let Some(blocks) = src.blocks.get(&chunk) {
-        let mut groups: HashMap<Mat, MeshBuf> = HashMap::new();
-        for b in blocks {
-            let buf = groups.entry(b.mat).or_default();
+        // A hollow building's rooms (`.1`) apart: they cast no sun shadow (the painted shell round
+        // them casts the building's).
+        let mut groups: HashMap<(Mat, bool), MeshBuf> = HashMap::new();
+        for (b, room) in blocks {
+            let buf = groups.entry((b.mat, *room)).or_default();
             match b.shape {
                 Shape::Box(s) => buf.add_box(b, s),
                 Shape::Cylinder { radius, height } => buf.add_cylinder(b, radius, height),
@@ -1502,14 +1542,14 @@ fn make_near(src: &Near, chunk: (i32, i32)) -> Vec<Piece> {
             }
         }
         let range = VisibilityRange { start_margin: 0.0..0.0, end_margin: FAR_CHUNK..FAR_CHUNK + 10.0, use_aabb: false };
-        for (mat, buf) in groups {
+        for ((mat, room), buf) in groups {
             let (mesh, centre) = buf.into_mesh();
-            let shadow = !matches!(mat, Mat::Foliage | Mat::Cloth);
+            let shadow = !room && !matches!(mat, Mat::Foliage | Mat::Cloth);
             out.push(Piece { mesh, centre, look: Look::Block(mat), range: Some(range.clone()), shadow: Some(shadow) });
         }
     }
     let own = src.footprints.get(&chunk).map_or(&[][..], |v| v.as_slice());
-    let mut bufs = if own.is_empty() { CityBufs::default() } else { city_bufs(&src.all_footprints, own, &Solid::around(src, chunk), true) };
+    let mut bufs = if own.is_empty() { CityBufs::default() } else { city_bufs(&src.all_footprints, own, &Solid::around(src, chunk), true, &src.skins) };
     if let Some(idx) = src.signs.get(&chunk) {
         sign_bufs(&src.all_signs, idx, &mut bufs);
     }
@@ -1538,21 +1578,25 @@ fn build_chunks(
     }
     sets.insert("panga_wood", load_set(&assets, &mut pending, "panga/wood"));
     // The coarse blocks now, for good; the full ones as the camera nears (`stream`).
-    let mut groups: HashMap<(i32, i32, Mat), MeshBuf> = HashMap::new();
+    let mut groups: HashMap<(i32, i32, Mat, bool), MeshBuf> = HashMap::new();
     let mut mat_cache: HashMap<Mat, Handle<StandardMaterial>> = HashMap::new();
-    for b in layout.blocks.iter().filter(|b| is_static_visual(b) && !crate::diag::skip("blocks")) {
+    for (i, b) in layout.blocks.iter().enumerate().filter(|(_, b)| is_static_visual(b) && !crate::diag::skip("blocks")) {
         mat_cache.entry(b.mat).or_insert_with(|| material_for(b.mat, &sets, &mut materials));
         let (cx, cz) = key(b.pos.xz());
-        src.blocks.entry((cx, cz)).or_default().push(b.clone());
+        let room = layout.rooms_drawn.contains(&i);
+        src.blocks.entry((cx, cz)).or_default().push((b.clone(), room));
         let small = match b.shape {
             Shape::Box(s) => s.max_element() <= TRIM,
             Shape::Cylinder { radius, height } => (radius * 2.0).max(height) <= TRIM,
             Shape::Sphere(r) => r * 2.0 <= TRIM,
         };
-        if small {
+        // A hollow building's rooms are drawn near only (past FAR_CHUNK a window is a few pixels:
+        // their walls far off cost 10% of the frame over Karol Bagh, and 40 MB).
+        let inside = room;
+        if small || inside {
             continue;
         }
-        let buf = groups.entry((cx, cz, b.mat)).or_insert_with(|| MeshBuf { coarse: true, ..default() });
+        let buf = groups.entry((cx, cz, b.mat, room)).or_insert_with(|| MeshBuf { coarse: true, ..default() });
         match b.shape {
             Shape::Box(s) => buf.add_box(b, s),
             Shape::Cylinder { radius, height } => buf.add_cylinder(b, radius, height),
@@ -1562,7 +1606,7 @@ fn build_chunks(
     let n = groups.len();
     // Distances from the chunk's centre, where its mesh's origin is.
     let far = VisibilityRange { start_margin: FAR_CHUNK..FAR_CHUNK + 10.0, end_margin: 1.0e5..1.0e5, use_aabb: false };
-    for ((_, _, mat), buf) in groups {
+    for ((_, _, mat, room), buf) in groups {
         let handle = mat_cache[&mat].clone();
         let range = crate::characters::LodRange(far.clone(), 1);
         let (mesh, centre) = buf.into_mesh();
@@ -1574,7 +1618,7 @@ fn build_chunks(
             range,
             OfMap,
         ));
-        if matches!(mat, Mat::Foliage | Mat::Cloth) {
+        if room || matches!(mat, Mat::Foliage | Mat::Cloth) {
             e.insert(bevy::light::NotShadowCaster);
         } else {
             e.insert(crate::quality::LodShadow);
@@ -1599,12 +1643,15 @@ fn build_chunks(
         for (i, sg) in layout.signs.iter().enumerate() {
             src.signs.entry(key(sg.pos.xz())).or_default().push(i);
         }
+        if shared::map::compose::ROOMS_BUILT {
+            src.skins = layout.rooms.iter().map(|r| (r.footprint, (r.skin.clone(), r.solid_to.is_none()))).collect();
+        }
         // What's seen from afar, for good: the plain walls, the roofs and the water.
         let all: Vec<usize> = (0..layout.footprints.len()).collect();
         let span = Solid::span(&layout);
         let solid = Solid::new(span, Vec2::splat(-span * 0.5), Vec2::splat(span * 0.5), layout.footprints.iter());
         let mut pieces = vec![];
-        city_pieces(city_bufs(&layout.footprints, &all, &solid, false), &mut pieces);
+        city_pieces(city_bufs(&layout.footprints, &all, &solid, false, &src.skins), &mut pieces);
         city.mats = Some(mats);
         spawn_pieces(&mut commands, &mut meshes, &city, pieces, scale.0);
         src.all_footprints = layout.footprints.clone();

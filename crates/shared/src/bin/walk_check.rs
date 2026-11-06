@@ -64,8 +64,8 @@ fn main() {
     }
 
     let layout = app.world().resource::<MapLayout>().clone();
-    // A city map (VIVAD_MAP=cp|chandni|...): walk in through every hall's doorway instead.
-    if !layout.entrances.is_empty() {
+    // A city map (VIVAD_MAP=cp|chandni|...|ncr): walk in through every hall's doorway instead.
+    if !layout.entrances.is_empty() || !layout.rooms.is_empty() {
         let doors: Vec<Entity> = app.world_mut().query_filtered::<Entity, With<shared::sim::Door>>().iter(app.world()).collect();
         for d in doors {
             app.world_mut().despawn(d);
@@ -144,10 +144,69 @@ fn main() {
             app.world_mut().despawn(id);
         }
         println!("stairs: {up} of {} climbed", ramps.len());
+        // The hollow buildings (crate::map::interiors): in through the front door from 2 m out,
+        // and up the first flight from its foot to the floor above, for the first 60.
+        let spawn = |app: &mut App, at: Vec3, dir: Vec3| {
+            app.world_mut()
+                .spawn((
+                    Walker,
+                    Kinematic { mode: MoveMode::Ground, ..default() },
+                    PlayerIntent { move_axis: Vec2::Y, yaw: yaw_for(dir), ..default() },
+                    Transform::from_translation(at + Vec3::Y * (HALF_HEIGHT + 0.1)),
+                    RigidBody::Kinematic,
+                    shared::sim::warrior_collider(false),
+                    Health::default(),
+                    Inventory::new("khadga"),
+                    shared::sim::Warrior { name: "visitor".into(), is_bot: false, look: 0, kills: 0 },
+                    CollisionLayers::new(Layer::Character, [Layer::World, Layer::Door]),
+                ))
+                .id()
+        };
+        let (mut doors_in, mut flights_up, mut tried, mut flights) = (0, 0, 0, 0);
+        let mut failed = vec![];
+        for r in layout.rooms.iter().filter(|r| !r.doors.is_empty()).take(60) {
+            tried += 1;
+            let d = r.doors[0];
+            let out3 = Vec3::new(d.out.x, 0.0, d.out.y);
+            let id = spawn(&mut app, d.pos + out3 * 2.0, -out3);
+            // A second: about 3.5 m in (6 s took some on through the room and out of a back door).
+            for _ in 0..60 {
+                app.update();
+            }
+            let p = app.world().get::<Transform>(id).unwrap().translation;
+            if r.contains(p.xz()) {
+                doors_in += 1;
+            } else {
+                failed.push(format!("building {} door at ({:.1}, {:.1}): ended at ({:.1}, {:.1}, {:.1})", r.footprint, d.pos.x, d.pos.z, p.x, p.y, p.z));
+            }
+            app.world_mut().despawn(id);
+            if let Some(st) = &r.stair {
+                flights += 1;
+                let (foot, head) = r.flight_ends(st, 0);
+                let dir = (head - foot).with_y(0.0).normalize();
+                let id = spawn(&mut app, foot - dir * 0.3, dir);
+                for _ in 0..360 {
+                    app.update();
+                }
+                let p = app.world().get::<Transform>(id).unwrap().translation;
+                if p.y - HALF_HEIGHT > head.y - 0.6 {
+                    flights_up += 1;
+                } else {
+                    failed.push(format!("building {} flight from ({:.1}, {:.1}, {:.1}): only to ({:.1}, {:.1}, {:.1})", r.footprint, foot.x, foot.y, foot.z, p.x, p.y, p.z));
+                }
+                app.world_mut().despawn(id);
+            }
+        }
+        if tried > 0 {
+            println!("rooms: {doors_in} of {tried} front doors walked in, {flights_up} of {flights} first flights climbed");
+            for f in failed.iter().take(12) {
+                println!("  {f}");
+            }
+        }
         for (f, p) in stuck.iter().take(12) {
             println!("  from the foot at ({:.1}, {:.1}, {:.1}) only to ({:.1}, {:.1}, {:.1})", f.x, f.y, f.z, p.x, p.y, p.z);
         }
-        std::process::exit((blocked.len() + stuck.len()) as i32);
+        std::process::exit((blocked.len() + stuck.len() + failed.len()) as i32);
     }
     let ground = |x: f32, z: f32| Vec3::new(x, layout.terrain.height(x, z) + HALF_HEIGHT + 0.3, z);
     let everywhere = || Box::new(|_: Vec3| true) as Box<dyn Fn(Vec3) -> bool>;

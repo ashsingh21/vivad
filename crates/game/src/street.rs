@@ -23,7 +23,9 @@ pub struct StreetPlugin;
 
 impl Plugin for StreetPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, load_kit).add_systems(Update, (rebuild.run_if(map_reloaded), build_kit.run_if(crate::loading::settled)).chain());
+        app.init_resource::<Furniture>()
+            .add_systems(Startup, load_kit)
+            .add_systems(Update, (rebuild.run_if(map_reloaded), build_kit.run_if(crate::loading::settled), stream_furniture.run_if(crate::loading::settled)).chain());
     }
 }
 
@@ -93,8 +95,121 @@ fn load_kit(mut commands: Commands, assets: Res<AssetServer>, mut materials: Res
     });
 }
 
-fn rebuild(mut kit: ResMut<Kit>) {
+fn rebuild(mut kit: ResMut<Kit>, mut furniture: ResMut<Furniture>) {
     kit.built = false;
+    *furniture = Furniture::default();
+}
+
+/// The hollow buildings' furniture (shared::map::interiors::Interior::kit_pieces: some 40,000 on
+/// the NCR), drawn near the camera only: by cell, spawned as the camera comes within `NEAR` and
+/// freed past `KEEP`, each piece an entity sharing the kit's mesh for it (drawn instanced). Their
+/// colliders are the buildings' own (crate::sim).
+#[derive(Resource, Default)]
+struct Furniture {
+    ready: bool,
+    cells: HashMap<(i32, i32), Vec<(&'static str, Vec3, f32)>>,
+    /// Each piece's mesh and material, by name and LOD (0 near, 1 past `SWITCH_IN`).
+    meshes: HashMap<(&'static str, usize), (Handle<Mesh>, Handle<StandardMaterial>)>,
+    loaded: HashMap<(i32, i32), Vec<Entity>>,
+}
+
+const ROOM_CELL: f32 = 16.0;
+const NEAR: f32 = 50.0;
+const KEEP: f32 = 70.0;
+const SWITCH_IN: f32 = 22.0;
+
+#[allow(clippy::too_many_arguments)]
+fn stream_furniture(
+    mut commands: Commands,
+    mut f: ResMut<Furniture>,
+    kit: Res<Kit>,
+    layout: Res<MapLayout>,
+    gltfs: Res<Assets<Gltf>>,
+    gltf_meshes: Res<Assets<GltfMesh>>,
+    gltf_mats: Res<Assets<bevy::gltf::GltfMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    camera: Query<&GlobalTransform, With<crate::camera::MainCamera>>,
+    mut frame: Local<u32>,
+) {
+    if layout.rooms.is_empty() || !shared::map::compose::ROOMS_BUILT || crate::diag::skip("kit") {
+        return;
+    }
+    if !f.ready {
+        let Some(file) = gltfs.get(&kit.file) else { return };
+        let Some(textured) = kit.textured.iter().map(|h| gltfs.get(h)).collect::<Option<Vec<&Gltf>>>() else { return };
+        f.ready = true;
+        let mut cells: HashMap<(i32, i32), Vec<(&'static str, Vec3, f32)>> = HashMap::new();
+        for p in layout.rooms.iter().flat_map(|r| r.kit_pieces()) {
+            cells.entry(((p.1.x / ROOM_CELL).floor() as i32, (p.1.z / ROOM_CELL).floor() as i32)).or_default().push(p);
+        }
+        let names: std::collections::HashSet<&'static str> = cells.values().flatten().map(|p| p.0).collect();
+        let mut own_mats: HashMap<AssetId<bevy::gltf::GltfMaterial>, Handle<StandardMaterial>> = HashMap::new();
+        for name in names {
+            for lod in 0..2 {
+                let label = format!("{name}_LOD{lod}");
+                let (gm, own) = match textured.iter().find_map(|t| t.named_meshes.get(label.as_str())) {
+                    Some(h) => (gltf_meshes.get(h), true),
+                    None => (file.named_meshes.get(label.as_str()).and_then(|h| gltf_meshes.get(h)), false),
+                };
+                let Some(prim) = gm.and_then(|g| g.primitives.first()) else { continue };
+                let Some(mut mesh) = meshes.get(&prim.mesh).cloned() else { continue };
+                let material = match prim.material.as_ref().filter(|_| own).and_then(|m| Some((m.id(), gltf_mats.get(m)?))) {
+                    Some((id, gm)) => own_mats.entry(id).or_insert_with(|| materials.add(bevy::pbr::gltf::standard_material_from_gltf_material(gm))).clone(),
+                    None => {
+                        project_uvs(&mut mesh);
+                        kit.material.clone()
+                    }
+                };
+                if materials.get(&material).is_some_and(|m| m.normal_map_texture.is_some()) && !mesh.contains_attribute(Mesh::ATTRIBUTE_TANGENT) {
+                    let _ = mesh.generate_tangents();
+                }
+                mesh.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
+                f.meshes.insert((name, lod), (meshes.add(mesh), material));
+            }
+        }
+        f.cells = cells;
+        info!("room furniture: {} pieces in {} cells, drawn near", f.cells.values().map(Vec::len).sum::<usize>(), f.cells.len());
+    }
+    // Every few frames is enough at a run's pace.
+    *frame += 1;
+    if *frame % 6 != 0 {
+        return;
+    }
+    let Ok(cam) = camera.single() else { return };
+    let at = cam.translation().xz();
+    let dist = |c: (i32, i32)| {
+        let lo = Vec2::new(c.0 as f32, c.1 as f32) * ROOM_CELL;
+        (at.clamp(lo, lo + Vec2::splat(ROOM_CELL)) - at).length()
+    };
+    let gone: Vec<(i32, i32)> = f.loaded.keys().copied().filter(|c| dist(*c) > KEEP).collect();
+    for c in gone {
+        for e in f.loaded.remove(&c).unwrap_or_default() {
+            commands.entity(e).despawn();
+        }
+    }
+    let r = (NEAR / ROOM_CELL).ceil() as i32 + 1;
+    let (cx, cz) = ((at.x / ROOM_CELL).floor() as i32, (at.y / ROOM_CELL).floor() as i32);
+    for x in cx - r..=cx + r {
+        for z in cz - r..=cz + r {
+            let c = (x, z);
+            if f.loaded.contains_key(&c) || dist(c) > NEAR {
+                continue;
+            }
+            let Some(pieces) = f.cells.get(&c) else { continue };
+            let mut spawned = vec![];
+            for &(name, pos, yaw) in pieces {
+                let tf = Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw));
+                for lod in 0..2 {
+                    let Some((mesh, material)) = f.meshes.get(&(name, lod)).cloned() else { continue };
+                    let (s, e) = [(0.0..0.0, SWITCH_IN..SWITCH_IN + 4.0), (SWITCH_IN..SWITCH_IN + 4.0, KEEP..KEEP + 5.0)][lod].clone();
+                    let range = LodRange(VisibilityRange { start_margin: s, end_margin: e, use_aabb: false }, lod);
+                    spawned.push(commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), tf, range.0.clone(), range, bevy::light::NotShadowCaster, OfMap)).id());
+                }
+            }
+            f.loaded.insert(c, spawned);
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

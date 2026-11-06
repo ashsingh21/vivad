@@ -320,6 +320,9 @@ pub struct MapLayout {
     /// hollow or not.
     pub rooms: Vec<interiors::Interior>,
     pub room_of: Vec<u32>,
+    /// Where in `blocks` the rooms are drawn (Interior::drawn): the game draws them near only,
+    /// casting no shadow.
+    pub rooms_drawn: std::ops::Range<usize>,
     /// Where a place of worship or a ruin stands: buildings never opened up.
     pub closed: Vec<Vec2>,
     /// Connaught Place's ring of shops, which the NCR furnishes (crate::map::interiors).

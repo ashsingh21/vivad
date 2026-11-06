@@ -158,6 +158,14 @@ impl Plugin for AutoshotPlugin {
                     ("ncr_cp_outer", v(-646.7, 1.8, -590.7), v(-681.9, 4.0, -580.3)),
                     ("ncr_karolbagh_air", v(-1290.0, 40.0, -1000.0), v(-1340.0, 0.0, -1075.0)),
                     ("ncr_cyber_air", v(-1670.0, 35.0, 1090.0), v(-1670.0, 8.0, 960.0)),
+                    // A hollow building (seed 7, a flat: crate::map::interiors): its door from the
+                    // street, in from the door, the room from inside, and out of the door again.
+                    ("ncr_room_out", v(699.3, 1.7, -818.4), v(705.5, 1.5, -821.5)),
+                    ("ncr_room_door", v(703.7, 1.6, -820.6), v(712.4, 1.4, -824.9)),
+                    ("ncr_room_in", v(712.4, 1.6, -824.9), v(705.5, 1.4, -821.5)),
+                    ("ncr_room_air", v(690.0, 30.0, -805.0), v(712.4, 6.0, -824.9)),
+                    ("ncr_room_stair", v(714.7, 1.6, -832.0), v(717.5, 3.0, -826.6)),
+                    ("ncr_room_upstairs", v(712.4, 5.0, -824.9), v(705.5, 4.8, -821.5)),
                     // A street kiosk (gumti) and a roof's water tank (tanki), seed 7.
                     ("ncr_gumti", v(-1958.0, 1.8, 1452.5), v(-1962.5, 1.2, 1447.6)),
                     ("ncr_tanki", v(-1335.0, 15.5, -1102.0), v(-1340.7, 10.0, -1108.3)),
@@ -456,7 +464,10 @@ fn run_tour(
     let Ok(mut ct) = cam.single_mut() else { return };
     if tour.index >= tour.shots.len() {
         tour.frames += 1;
-        if tour.frames > 30 {
+        // Two seconds or so for the pipelines still compiling to finish: the NVIDIA driver crashes
+        // making one while the device goes (a third of the NCR's tours, with its rooms' new
+        // material and shadow mixes coming into view at the last shot).
+        if tour.frames > 120 {
             exit.write(AppExit::Success);
         }
         return;

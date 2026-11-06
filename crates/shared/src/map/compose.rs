@@ -912,15 +912,17 @@ fn step_out(fps: &[Footprint], p: Vec3) -> Option<Vec3> {
     Some(Vec3::new(q.x, p.y, q.y))
 }
 
-/// The last word on loot: none is left inside a building (the hollow ones' rooms aren't built in
-/// the game yet, so they are as solid as the rest). Each steps out past the nearest wall onto the
+/// The last word on loot: none is left inside a solid building (a hollow one's rooms are walked
+/// into, when they're built: ROOMS_BUILT). Each steps out past the nearest wall onto the
 /// ground there (again, if that lands it in the next building: a street's blocks stand 2 m apart),
 /// a chest on the ground, a find 0.3 m over it as everywhere.
 fn free_the_loot(map: &mut MapLayout) {
+    // The solid buildings (a hollow one's rooms are walked into, where they're built).
+    let solid: Vec<Footprint> = map.footprints.iter().enumerate().filter(|(i, _)| !(ROOMS_BUILT && map.rooms_of(*i).is_some())).map(|(_, f)| f.clone()).collect();
     let out = |map: &MapLayout, mut p: Vec3, lift: f32| -> Vec3 {
         let mut moved = false;
         for _ in 0..4 {
-            match step_out(&map.footprints, p) {
+            match step_out(&solid, p) {
                 Some(q) => (p, moved) = (q, true),
                 None => break,
             }
@@ -1818,6 +1820,11 @@ pub fn generate(seed: u64) -> MapLayout {
     // game-playable branch's crate::buildings::interior); until then every building is solid.
     if ROOMS_BUILT {
         interiors::move_loot(&mut map, &spots, &mut loot);
+        // The rooms drawn as the map's own blocks (Interior::drawn); crate::sim collides with
+        // each building as its rooms' solids, and the game cuts its painted shell's holes.
+        let blocks: Vec<_> = map.rooms.iter().flat_map(|r| r.drawn()).collect();
+        map.rooms_drawn = map.blocks.len()..map.blocks.len() + blocks.len();
+        map.blocks.extend(blocks);
     }
     free_the_loot(&mut map);
     parking::lay(&mut map, &network, &SPOTS.map(|s| (Vec2::new(s.1, s.2), s.3.reach())));
@@ -1825,8 +1832,9 @@ pub fn generate(seed: u64) -> MapLayout {
     map
 }
 
-/// Whether the hollow buildings' rooms are built in the game (not yet on main).
-const ROOMS_BUILT: bool = false;
+/// Whether the hollow buildings' rooms are built (as blocks: Interior::drawn). Off, every
+/// building is solid and no loot is left inside one.
+pub const ROOMS_BUILT: bool = true;
 
 /// The last word on what was set down where it can't stand: a tree mid-road or in the water, and
 /// anything inside a building, go. A scattered grove doesn't know the road it spreads over, and a
