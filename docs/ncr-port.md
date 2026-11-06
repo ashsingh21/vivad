@@ -7,8 +7,10 @@ each checked before the next.
 
 ## 1. Baseline
 
-The branch as it is: play its NCR, measure memory and frame rate. (Its own note: about 3.7 GB on a
-Mac; never tried in a browser.) Worktree at `build/gp`.
+The branch as it is (5 Nov, RTX 3060, `VIVAD_MAP=ncr VIVAD_AUTOPILOT=1`, worktree `build/gp`):
+runs, 64 warriors, 3.8-3.9 GB resident and steady over two minutes (its own note: about 3.7 GB on
+a Mac; never tried in a browser). It logs no frame rate. Its look is the branch's (realistic
+textures), not main's stylised one: step 3 has to restyle what it draws, not just port it.
 
 ## 2. The map generated on main (done)
 
