@@ -19,7 +19,7 @@ use bevy::image::{ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor, Ima
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::camera::visibility::VisibilityRange;
 use bevy::prelude::*;
-use shared::map::{Block, MapLayout, Mat, Shape};
+use shared::map::{Block, Footprint, MapLayout, Mat, Shape, ShopSign};
 use shared::sim::{OfMap, map_reloaded};
 
 const CHUNK: f32 = 64.0;
@@ -676,9 +676,8 @@ impl Solid {
         layout.terrain.size.max(2.0 * layout.half_extent)
     }
 
-    /// Cells from `lo` to `hi`, with the buildings among `fps` that stand there.
-    fn new<'a>(layout: &MapLayout, lo: Vec2, hi: Vec2, fps: impl Iterator<Item = &'a shared::map::Footprint>) -> Self {
-        let span = Self::span(layout);
+    /// Cells from `lo` to `hi` of a map `span` across, with the buildings among `fps` that stand there.
+    fn new<'a>(span: f32, lo: Vec2, hi: Vec2, fps: impl Iterator<Item = &'a Footprint>) -> Self {
         let cells = span.ceil() as i32;
         let cell = |p: Vec2| ((p.x + span * 0.5).floor() as i32, (p.y + span * 0.5).floor() as i32);
         let ((i0, j0), (i1, j1)) = (cell(lo), cell(hi));
@@ -702,16 +701,16 @@ impl Solid {
     }
 
     /// Round one chunk's buildings, as far out as a wall looks for the building across the lane.
-    fn around(layout: &MapLayout, city: &City, chunk: (i32, i32)) -> Self {
+    fn around(src: &Near, chunk: (i32, i32)) -> Self {
         const REACH: f32 = 20.0;
-        let Some(own) = city.footprints.get(&chunk) else { return Self::new(layout, Vec2::ZERO, Vec2::ZERO, std::iter::empty()) };
-        let (lo, hi) = own.iter().flat_map(|&i| &layout.footprints[i].pts).fold((Vec2::MAX, Vec2::MIN), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+        let Some(own) = src.footprints.get(&chunk) else { return Self::new(src.span, Vec2::ZERO, Vec2::ZERO, std::iter::empty()) };
+        let (lo, hi) = own.iter().flat_map(|&i| &src.all_footprints[i].pts).fold((Vec2::MAX, Vec2::MIN), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
         let (lo, hi) = (lo - Vec2::splat(REACH), hi + Vec2::splat(REACH));
         let (c0, c1) = ((lo / CHUNK).floor().as_ivec2(), (hi / CHUNK).floor().as_ivec2());
-        let mut near: Vec<usize> = (c0.x..=c1.x).flat_map(|x| (c0.y..=c1.y).map(move |z| (x, z))).filter_map(|c| city.touching.get(&c)).flatten().copied().collect();
+        let mut near: Vec<usize> = (c0.x..=c1.x).flat_map(|x| (c0.y..=c1.y).map(move |z| (x, z))).filter_map(|c| src.touching.get(&c)).flatten().copied().collect();
         near.sort_unstable();
         near.dedup();
-        Self::new(layout, lo, hi, near.into_iter().map(|i| &layout.footprints[i]))
+        Self::new(src.span, lo, hi, near.into_iter().map(|i| &src.all_footprints[i]))
     }
 
     fn index(&self, p: Vec2) -> Option<usize> {
@@ -866,7 +865,7 @@ struct CityBufs {
 /// material: walls in the facade, roofs in clay tile, trim in plaster. What's seen from afar (the
 /// plain walls, roofs and water), or else the rest, drawn near only (`detail`). `solid` must hold
 /// every building within reach of these.
-fn city_bufs(layout: &MapLayout, fps: &[usize], solid: &Solid, detail: bool) -> CityBufs {
+fn city_bufs(footprints: &[Footprint], fps: &[usize], solid: &Solid, detail: bool) -> CityBufs {
     let roof_at = |p: Vec2| solid.at(p);
     let occupied = |p: Vec2| roof_at(p) > 0.0;
     let lin = |c: [f32; 3]| {
@@ -877,7 +876,7 @@ fn city_bufs(layout: &MapLayout, fps: &[usize], solid: &Solid, detail: bool) -> 
     let CityBufs { walls, overlays, roofs, trims, clutter, plinths, signs, water, .. } = &mut out_bufs;
     // (The base course along the street, Mat::Plinth's dressed stone, has its own buffers and
     // material.)
-    for fp in fps.iter().map(|&i| &layout.footprints[i]) {
+    for fp in fps.iter().map(|&i| &footprints[i]) {
         let c = fp.pts.iter().sum::<Vec2>() / fp.pts.len() as f32;
         let (cx, cz) = ((c.x / CHUNK).floor() as i32, (c.y / CHUNK).floor() as i32);
         // Water is only its surface.
@@ -1228,7 +1227,7 @@ fn city_bufs(layout: &MapLayout, fps: &[usize], solid: &Solid, detail: bool) -> 
 }
 
 /// The signboards, lights and shop windows numbered `idx` among MapLayout::signs.
-fn sign_bufs(layout: &MapLayout, idx: &[usize], bufs: &mut CityBufs) {
+fn sign_bufs(all: &[ShopSign], idx: &[usize], bufs: &mut CityBufs) {
     let lin = |c: [f32; 3]| {
         let l = Color::srgb(c[0], c[1], c[2]).to_linear();
         [l.red, l.green, l.blue, 1.0]
@@ -1239,7 +1238,7 @@ fn sign_bufs(layout: &MapLayout, idx: &[usize], bufs: &mut CityBufs) {
     // The tube lights' glow where it falls: a soft warm pool on the ceiling round each tube and on
     // the floor under it (SignKind::Pool) (the verandahs and shops are lit by the sky alone, cool blue-grey).
     let CityBufs { lights, glass, pools, clutter, signs, .. } = bufs;
-    for (n, sg) in idx.iter().map(|&n| (n, &layout.signs[n])) {
+    for (n, sg) in idx.iter().map(|&n| (n, &all[n])) {
         let key = ((sg.pos.x / CHUNK).floor() as i32, (sg.pos.z / CHUNK).floor() as i32);
         let out = Vec3::new(sg.facing.x, 0.0, sg.facing.y).normalize_or(Vec3::X);
         let right = (-out).cross(Vec3::Y) * (sg.width * 0.5);
@@ -1290,67 +1289,132 @@ fn sign_bufs(layout: &MapLayout, idx: &[usize], bufs: &mut CityBufs) {
     }
 }
 
-/// Makes a city's buffers into meshes and spawns them; returns what it spawned.
-fn spawn_city(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &CityMats, bufs: CityBufs, k: f32) -> Vec<Entity> {
-    let mut spawned = vec![];
-    let mut put = |commands: &mut Commands, buf: MeshBuf, mat: &Handle<StandardMaterial>, range: Option<VisibilityRange>, shadow: Option<bool>| {
+/// Which of the city's materials a mesh is drawn in.
+#[derive(Clone, Copy)]
+enum Look {
+    Facade(Mat, bool),
+    Block(Mat),
+    Roof,
+    Trim,
+    Plinth,
+    Plain,
+    Lettered,
+    Pane,
+    Glow,
+    Warm,
+    Water,
+}
+
+/// A mesh made, not yet spawned (made off the main thread for the streamed chunks): its middle,
+/// material, how far it's drawn (from its middle; none: always), and its shadow (`spawn_pieces`).
+struct Piece {
+    mesh: Mesh,
+    centre: Vec3,
+    look: Look,
+    range: Option<VisibilityRange>,
+    shadow: Option<bool>,
+}
+
+/// Makes a city's buffers into meshes.
+fn city_pieces(bufs: CityBufs, out: &mut Vec<Piece>) {
+    let mut put = |buf: MeshBuf, look: Look, range: Option<f32>, shadow: Option<bool>| {
         if buf.idx.is_empty() {
             return;
         }
         let (mesh, centre) = buf.into_mesh();
-        let mut e = commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat.clone()), Transform::from_translation(centre), OfMap));
-        if let Some(r) = range {
-            let base = crate::characters::LodRange(r, 0);
-            e.insert((base.scaled(k), base));
-        }
-        match shadow {
-            Some(false) => {
-                e.insert(bevy::light::NotShadowCaster);
-            }
-            Some(true) => {
-                e.insert(crate::quality::LodShadow);
-            }
-            None => {}
-        }
-        spawned.push(e.id());
+        let range = range.map(|end| VisibilityRange { start_margin: 0.0..0.0, end_margin: end..end + 10.0, use_aabb: false });
+        out.push(Piece { mesh, centre, look, range, shadow });
     };
-    let near = |end: f32| VisibilityRange { start_margin: 0.0..0.0, end_margin: end..end + 10.0, use_aabb: false };
     for ((_, _, mat, shop), buf) in bufs.walls {
-        put(commands, buf, &mats.facade[&(mat, shop)], None, None);
+        put(buf, Look::Facade(mat, shop), None, None);
     }
     // The windows' faces: drawn as far as the trim.
     for ((_, _, mat, shop), buf) in bufs.overlays {
-        put(commands, buf, &mats.facade[&(mat, shop)], Some(near(TRIM_FAR)), None);
+        put(buf, Look::Facade(mat, shop), Some(TRIM_FAR), None);
     }
     // Signs, cables and tanks are small: drawn near only.
     for (_, buf) in bufs.clutter {
-        put(commands, buf, &mats.plain, Some(near(CLUTTER_FAR)), None);
+        put(buf, Look::Plain, Some(CLUTTER_FAR), None);
     }
     for (_, buf) in bufs.signs {
-        put(commands, buf, &mats.lettered, Some(near(CLUTTER_FAR)), None);
+        put(buf, Look::Lettered, Some(CLUTTER_FAR), None);
     }
     for (_, buf) in bufs.glass {
-        put(commands, buf, &mats.pane, Some(near(CLUTTER_FAR)), Some(false));
+        put(buf, Look::Pane, Some(CLUTTER_FAR), Some(false));
     }
     for (_, buf) in bufs.lights {
-        put(commands, buf, &mats.glow, Some(near(CLUTTER_FAR)), Some(false));
+        put(buf, Look::Glow, Some(CLUTTER_FAR), Some(false));
     }
     for (_, buf) in bufs.pools {
-        put(commands, buf, &mats.warm, Some(near(CLUTTER_FAR)), Some(false));
+        put(buf, Look::Warm, Some(CLUTTER_FAR), Some(false));
     }
     // Trim is chunky and many-sided: drawn to TRIM_FAR (scaled by quality), past which the plain
     // walls and roofs read just as well.
     for (_, buf) in bufs.trims {
-        put(commands, buf, &mats.trim, Some(near(TRIM_FAR)), None);
+        put(buf, Look::Trim, Some(TRIM_FAR), None);
     }
     for (_, buf) in bufs.plinths {
-        put(commands, buf, &mats.plinth, Some(near(TRIM_FAR)), Some(true));
+        put(buf, Look::Plinth, Some(TRIM_FAR), Some(true));
     }
     for (_, buf) in bufs.roofs {
-        put(commands, buf, &mats.roof, None, None);
+        put(buf, Look::Roof, None, None);
     }
-    put(commands, bufs.water, &mats.water, None, Some(false));
-    spawned
+    put(bufs.water, Look::Water, None, Some(false));
+}
+
+/// Spawns made meshes: `shadow` Some(false) never casts one, Some(true) as the quality level says
+/// (crate::quality::LodShadow), none always. Returns what it spawned.
+fn spawn_pieces(commands: &mut Commands, meshes: &mut Assets<Mesh>, city: &City, pieces: Vec<Piece>, k: f32) -> Vec<Entity> {
+    pieces
+        .into_iter()
+        .filter_map(|p| {
+            let mat = match p.look {
+                Look::Block(m) => city.blocks.get(&m),
+                look => city.mats.as_ref().map(|c| match look {
+                    Look::Facade(m, shop) => &c.facade[&(m, shop)],
+                    Look::Roof => &c.roof,
+                    Look::Trim => &c.trim,
+                    Look::Plinth => &c.plinth,
+                    Look::Plain => &c.plain,
+                    Look::Lettered => &c.lettered,
+                    Look::Pane => &c.pane,
+                    Look::Glow => &c.glow,
+                    Look::Warm => &c.warm,
+                    Look::Water | Look::Block(_) => &c.water,
+                }),
+            }?;
+            let mut e = commands.spawn((Mesh3d(meshes.add(p.mesh)), MeshMaterial3d(mat.clone()), Transform::from_translation(p.centre), OfMap));
+            if let Some(r) = p.range {
+                let base = crate::characters::LodRange(r, 0);
+                e.insert((base.scaled(k), base));
+            }
+            match p.shadow {
+                Some(false) => {
+                    e.insert(bevy::light::NotShadowCaster);
+                }
+                Some(true) => {
+                    e.insert(crate::quality::LodShadow);
+                }
+                None => {}
+            }
+            Some(e.id())
+        })
+        .collect()
+}
+
+/// What the near-only meshes are made from, shared with the tasks that make them.
+#[derive(Default)]
+struct Near {
+    span: f32,
+    /// The full blocks in each chunk.
+    blocks: HashMap<(i32, i32), Vec<Block>>,
+    all_footprints: Vec<Footprint>,
+    all_signs: Vec<ShopSign>,
+    /// The buildings (by `all_footprints` index) whose middle is in each chunk...
+    footprints: HashMap<(i32, i32), Vec<usize>>,
+    /// ...and those reaching into it at all.
+    touching: HashMap<(i32, i32), Vec<usize>>,
+    signs: HashMap<(i32, i32), Vec<usize>>,
 }
 
 /// What's drawn near only, per chunk, built as the camera comes within reach (`stream`).
@@ -1358,46 +1422,32 @@ fn spawn_city(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &CityMat
 struct City {
     mats: Option<CityMats>,
     blocks: HashMap<Mat, Handle<StandardMaterial>>,
-    /// The full blocks in each chunk (by MapLayout::blocks index).
-    near_blocks: HashMap<(i32, i32), Vec<usize>>,
-    /// The buildings (MapLayout::footprints) whose middle is in each chunk...
-    footprints: HashMap<(i32, i32), Vec<usize>>,
-    /// ...and those reaching into it at all.
-    touching: HashMap<(i32, i32), Vec<usize>>,
-    signs: HashMap<(i32, i32), Vec<usize>>,
-    /// Chunks built, and what they spawned.
+    src: std::sync::Arc<Near>,
+    /// Every chunk with anything near-only in it.
+    chunks: Vec<(i32, i32)>,
+    /// Chunks built, and what they spawned...
     loaded: HashMap<(i32, i32), Vec<Entity>>,
-    /// Where the camera was when last looked at.
-    seen_from: Option<Vec2>,
-}
-
-impl City {
-    fn chunks(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
-        let mut all: Vec<(i32, i32)> = self.near_blocks.keys().chain(self.footprints.keys()).chain(self.signs.keys()).copied().collect();
-        all.sort_unstable();
-        all.dedup();
-        all.into_iter()
-    }
+    /// ...and those being made.
+    making: HashMap<(i32, i32), bevy::tasks::Task<Vec<Piece>>>,
 }
 
 /// How far out a chunk's near-only meshes are built (from the chunk's square; they're drawn to
 /// TRIM_FAR from their middle, scaled by quality), and how far beyond that they're freed again.
 const STREAM_SLACK: f32 = 40.0;
 const STREAM_KEEP: f32 = 60.0;
-/// Milliseconds a frame spent building chunks ahead of need; one in sight is built regardless.
-const STREAM_BUDGET_MS: f32 = 3.0;
+/// Chunks made at once (off the main thread), nearest first.
+const STREAM_TASKS: usize = 6;
 
 fn chunk_dist(c: (i32, i32), p: Vec2) -> f32 {
     let lo = Vec2::new(c.0 as f32, c.1 as f32) * CHUNK;
     (p - p.clamp(lo, lo + Vec2::splat(CHUNK))).length()
 }
 
-/// Builds the near-only meshes of the chunks the camera comes within reach of, and frees those it
-/// has left.
+/// Makes the near-only meshes of the chunks the camera comes within reach of (off the main thread),
+/// spawns them as they're done, and frees those it has left.
 fn stream(
     mut commands: Commands,
     city: Option<ResMut<City>>,
-    layout: Res<MapLayout>,
     cam: Query<&GlobalTransform, With<crate::camera::MainCamera>>,
     mut meshes: ResMut<Assets<Mesh>>,
     scale: Res<crate::quality::LodScale>,
@@ -1405,41 +1455,45 @@ fn stream(
     let Some(mut city) = city else { return };
     let Ok(cam) = cam.single() else { return };
     let at = cam.translation().xz();
-    if city.seen_from.is_some_and(|p| p.distance(at) < 4.0) {
-        return;
-    }
     let reach = TRIM_FAR.max(FAR_CHUNK).max(CLUTTER_FAR) * scale.0 + STREAM_SLACK;
+    let city = &mut *city;
+    // Done ones spawned, unless the camera has left them meanwhile.
+    let done: Vec<(i32, i32)> = city.making.iter_mut().filter(|(_, t)| t.is_finished()).map(|(c, _)| *c).collect();
+    for c in done {
+        let task = city.making.remove(&c).unwrap();
+        let pieces = bevy::tasks::block_on(task);
+        if chunk_dist(c, at) <= reach + STREAM_KEEP {
+            let spawned = spawn_pieces(&mut commands, &mut meshes, city, pieces, scale.0);
+            city.loaded.insert(c, spawned);
+        }
+    }
     let gone: Vec<(i32, i32)> = city.loaded.keys().filter(|c| chunk_dist(**c, at) > reach + STREAM_KEEP).copied().collect();
     for c in gone {
         for e in city.loaded.remove(&c).unwrap_or_default() {
             commands.entity(e).despawn();
         }
     }
-    let mut wanted: Vec<((i32, i32), f32)> = city.chunks().filter(|c| !city.loaded.contains_key(c)).map(|c| (c, chunk_dist(c, at))).filter(|(_, d)| *d < reach).collect();
-    wanted.sort_by(|a, b| a.1.total_cmp(&b.1));
-    let start = bevy::platform::time::Instant::now();
-    let mut done = true;
-    for (c, d) in wanted {
-        // Ahead of need: within the budget. In sight (a chunk's meshes are drawn from its middle,
-        // up to a chunk's diagonal off its square): now.
-        if d > reach - STREAM_SLACK - CHUNK * 1.42 && start.elapsed().as_secs_f32() * 1000.0 > STREAM_BUDGET_MS {
-            done = false;
-            break;
-        }
-        let spawned = build_near(&mut commands, &layout, &city, &mut meshes, c, scale.0);
-        city.loaded.insert(c, spawned);
+    // Dropping a task cancels it.
+    city.making.retain(|c, _| chunk_dist(*c, at) <= reach + STREAM_KEEP);
+    if city.making.len() >= STREAM_TASKS {
+        return;
     }
-    // Moved on only once caught up, so what's left is built next frame.
-    city.seen_from = done.then_some(at);
+    let mut wanted: Vec<((i32, i32), f32)> = city.chunks.iter().filter(|c| !city.loaded.contains_key(c) && !city.making.contains_key(c)).map(|c| (*c, chunk_dist(*c, at))).filter(|(_, d)| *d < reach).collect();
+    wanted.sort_by(|a, b| a.1.total_cmp(&b.1));
+    let pool = bevy::tasks::AsyncComputeTaskPool::get();
+    for (c, _) in wanted.into_iter().take(STREAM_TASKS - city.making.len()) {
+        let src = city.src.clone();
+        city.making.insert(c, pool.spawn(async move { make_near(&src, c) }));
+    }
 }
 
 /// One chunk's near-only meshes: its full blocks, and its buildings' trim, window dressing, clutter
 /// and signs.
-fn build_near(commands: &mut Commands, layout: &MapLayout, city: &City, meshes: &mut Assets<Mesh>, chunk: (i32, i32), k: f32) -> Vec<Entity> {
-    let mut spawned = vec![];
-    if let Some(idx) = city.near_blocks.get(&chunk) {
+fn make_near(src: &Near, chunk: (i32, i32)) -> Vec<Piece> {
+    let mut out = vec![];
+    if let Some(blocks) = src.blocks.get(&chunk) {
         let mut groups: HashMap<Mat, MeshBuf> = HashMap::new();
-        for b in idx.iter().map(|&i| &layout.blocks[i]) {
+        for b in blocks {
             let buf = groups.entry(b.mat).or_default();
             match b.shape {
                 Shape::Box(s) => buf.add_box(b, s),
@@ -1447,27 +1501,20 @@ fn build_near(commands: &mut Commands, layout: &MapLayout, city: &City, meshes: 
                 Shape::Sphere(r) => buf.add_sphere(b, r),
             }
         }
-        let near = VisibilityRange { start_margin: 0.0..0.0, end_margin: FAR_CHUNK..FAR_CHUNK + 10.0, use_aabb: false };
+        let range = VisibilityRange { start_margin: 0.0..0.0, end_margin: FAR_CHUNK..FAR_CHUNK + 10.0, use_aabb: false };
         for (mat, buf) in groups {
-            let base = crate::characters::LodRange(near.clone(), 0);
             let (mesh, centre) = buf.into_mesh();
-            let mut e = commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(city.blocks[&mat].clone()), Transform::from_translation(centre), base.scaled(k), base, OfMap));
-            if matches!(mat, Mat::Foliage | Mat::Cloth) {
-                e.insert(bevy::light::NotShadowCaster);
-            } else {
-                e.insert(crate::quality::LodShadow);
-            }
-            spawned.push(e.id());
+            let shadow = !matches!(mat, Mat::Foliage | Mat::Cloth);
+            out.push(Piece { mesh, centre, look: Look::Block(mat), range: Some(range.clone()), shadow: Some(shadow) });
         }
     }
-    let Some(mats) = city.mats.as_ref() else { return spawned };
-    let own = city.footprints.get(&chunk).map_or(&[][..], |v| v.as_slice());
-    let mut bufs = if own.is_empty() { CityBufs::default() } else { city_bufs(layout, own, &Solid::around(layout, city, chunk), true) };
-    if let Some(idx) = city.signs.get(&chunk) {
-        sign_bufs(layout, idx, &mut bufs);
+    let own = src.footprints.get(&chunk).map_or(&[][..], |v| v.as_slice());
+    let mut bufs = if own.is_empty() { CityBufs::default() } else { city_bufs(&src.all_footprints, own, &Solid::around(src, chunk), true) };
+    if let Some(idx) = src.signs.get(&chunk) {
+        sign_bufs(&src.all_signs, idx, &mut bufs);
     }
-    spawned.extend(spawn_city(commands, meshes, mats, bufs, k));
-    spawned
+    city_pieces(bufs, &mut out);
+    out
 }
 
 fn build_chunks(
@@ -1479,6 +1526,7 @@ fn build_chunks(
     scale: Res<crate::quality::LodScale>,
 ) {
     let mut city = City::default();
+    let mut src = Near { span: Solid::span(&layout), ..default() };
     let key = |p: Vec2| ((p.x / CHUNK).floor() as i32, (p.y / CHUNK).floor() as i32);
     let mut pending = PendingMips::default();
     let mut sets = HashMap::new();
@@ -1492,10 +1540,10 @@ fn build_chunks(
     // The coarse blocks now, for good; the full ones as the camera nears (`stream`).
     let mut groups: HashMap<(i32, i32, Mat), MeshBuf> = HashMap::new();
     let mut mat_cache: HashMap<Mat, Handle<StandardMaterial>> = HashMap::new();
-    for (i, b) in layout.blocks.iter().enumerate().filter(|(_, b)| is_static_visual(b) && !crate::diag::skip("blocks")) {
+    for b in layout.blocks.iter().filter(|b| is_static_visual(b) && !crate::diag::skip("blocks")) {
         mat_cache.entry(b.mat).or_insert_with(|| material_for(b.mat, &sets, &mut materials));
         let (cx, cz) = key(b.pos.xz());
-        city.near_blocks.entry((cx, cz)).or_default().push(i);
+        src.blocks.entry((cx, cz)).or_default().push(b.clone());
         let small = match b.shape {
             Shape::Box(s) => s.max_element() <= TRIM,
             Shape::Cylinder { radius, height } => (radius * 2.0).max(height) <= TRIM,
@@ -1539,28 +1587,36 @@ fn build_chunks(
         let mats = city_mats(&layout, &mut materials, &assets, &mut pending, roof, plinth);
         for (i, fp) in layout.footprints.iter().enumerate().filter(|(_, f)| f.mat != Mat::Water) {
             let c = fp.pts.iter().sum::<Vec2>() / fp.pts.len() as f32;
-            city.footprints.entry(key(c)).or_default().push(i);
+            src.footprints.entry(key(c)).or_default().push(i);
             let (lo, hi) = fp.pts.iter().fold((Vec2::MAX, Vec2::MIN), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
             let (c0, c1) = (key(lo), key(hi));
             for x in c0.0..=c1.0 {
                 for z in c0.1..=c1.1 {
-                    city.touching.entry((x, z)).or_default().push(i);
+                    src.touching.entry((x, z)).or_default().push(i);
                 }
             }
         }
         for (i, sg) in layout.signs.iter().enumerate() {
-            city.signs.entry(key(sg.pos.xz())).or_default().push(i);
+            src.signs.entry(key(sg.pos.xz())).or_default().push(i);
         }
         // What's seen from afar, for good: the plain walls, the roofs and the water.
         let all: Vec<usize> = (0..layout.footprints.len()).collect();
         let span = Solid::span(&layout);
-        let solid = Solid::new(&layout, Vec2::splat(-span * 0.5), Vec2::splat(span * 0.5), layout.footprints.iter());
-        let bufs = city_bufs(&layout, &all, &solid, false);
-        spawn_city(&mut commands, &mut meshes, &mats, bufs, scale.0);
+        let solid = Solid::new(span, Vec2::splat(-span * 0.5), Vec2::splat(span * 0.5), layout.footprints.iter());
+        let mut pieces = vec![];
+        city_pieces(city_bufs(&layout.footprints, &all, &solid, false), &mut pieces);
         city.mats = Some(mats);
+        spawn_pieces(&mut commands, &mut meshes, &city, pieces, scale.0);
+        src.all_footprints = layout.footprints.clone();
+        src.all_signs = layout.signs.clone();
         info!("city: {} buildings from footprints", layout.footprints.len());
     }
     city.blocks = mat_cache;
+    let mut chunks: Vec<(i32, i32)> = src.blocks.keys().chain(src.footprints.keys()).chain(src.signs.keys()).copied().collect();
+    chunks.sort_unstable();
+    chunks.dedup();
+    city.chunks = chunks;
+    city.src = std::sync::Arc::new(src);
     info!("architecture: {} static blocks, {} coarse chunk meshes; full ones streamed", layout.blocks.iter().filter(|b| is_static_visual(b)).count(), n);
     commands.insert_resource(city);
     commands.insert_resource(pending);

@@ -101,9 +101,11 @@ Then the blocks' and buildings' near-only meshes streamed (crate::buildings::str
 vertices, 24 M are drawn near only (wall clutter 12.3 M, full blocks 9.2 M, trim 1.8 M, the windows'
 faces 0.9 M, plinths 0.4 M). Only the coarse blocks (2.8 M) and the plain walls, roofs and water
 stay loaded; the rest is built per 64 m chunk as the camera comes within reach (TRIM_FAR, scaled by
-quality, plus 40 m) and freed 60 m past that. The tour's shots are unchanged on both maps. On the
-desktop a frame that builds chunks spends a median 1.9 ms on it (p90 4.8 ms; 17 ms when the camera
-lands somewhere new): building them off the main thread is the step after, for phones.
+quality, plus 40 m) and freed 60 m past that. The tour's shots are unchanged on both maps. Built on the
+main thread at first, a frame that built chunks spent a median 1.9 ms on it (p90 4.8 ms, 17 ms when
+the camera landed somewhere new); now they're made in tasks (AsyncComputeTaskPool, six at a time,
+nearest first) and only spawned on the main thread: the stream system never took over 0.3 ms in a
+two-minute match. (On the browser the tasks still share its one thread, between frames.)
 
 | 6 Nov, streamed | GPU allocated | resident |
 |---|---|---|
