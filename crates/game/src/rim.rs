@@ -42,6 +42,14 @@ pub struct Rim {
     /// rgb: the shaded side's tint, for cel shading.
     #[uniform(102)]
     pub shade: Vec4,
+    /// A skin's colourway (crate::characters::Palette) on this part's colour: x hue turned (radians),
+    /// y saturation and z value scaled, w on (> 0.5). Clothes and hair only: never skin, eyes or face.
+    #[uniform(103)]
+    pub recolour: Vec4,
+    /// rgb: a dye for the pale and grey parts of it (white cloth takes it, coloured cloth keeps its
+    /// own); a: how strongly.
+    #[uniform(104)]
+    pub dye: Vec4,
 }
 
 impl MaterialExtension for Rim {
@@ -59,9 +67,10 @@ impl MaterialExtension for Rim {
 }
 
 /// Put on a character's parts: its material is rimmed, and its cloth moves with this entity (the
-/// warrior's visual, whose motion it follows).
+/// warrior's visual, whose motion it follows); the clothes and hair recoloured by its skin's
+/// colourway (`.1`, crate::characters::Palette).
 #[derive(Component)]
-pub struct RimTarget(pub Entity);
+pub struct RimTarget(pub Entity, pub crate::characters::Palette);
 
 /// A converted part: its cloth follows this warrior's motion, through its `MeshTag`.
 #[derive(Component)]
@@ -70,7 +79,7 @@ struct Sways(Entity);
 /// The rimmed copy of each material, made once and shared by every warrior wearing it (the
 /// motion goes per mesh, in its tag, so the materials never change and batch together).
 #[derive(Resource, Default)]
-struct Converted(HashMap<AssetId<StandardMaterial>, Handle<RimMaterial>>, Option<Handle<StandardMaterial>>);
+struct Converted(HashMap<(AssetId<StandardMaterial>, crate::characters::Palette), Handle<RimMaterial>>, Option<Handle<StandardMaterial>>);
 
 /// The anime characters' ink outline (their `toon_outline` hull, tools/blender/characters/finish.py):
 /// flat, unlit, the ink of their lash lines.
@@ -118,12 +127,17 @@ fn convert(
         }
         let Some(base) = standard.get(&m.0).cloned() else { continue };
         let cel = toon(name);
+        // Only clothes and hair take the colourway: a material that's neither keeps its own (the
+        // plain palette, shared by every skin).
+        let part = name.map_or("", |n| n.0.as_str());
+        let palette = if crate::characters::recoloured(part) { target.1 } else { crate::characters::Palette::default() };
         let handle = done
             .0
-            .entry(m.0.id())
+            .entry((m.0.id(), palette))
             .or_insert_with(|| {
                 let (toon, shade) = if cel { (TOON, SHADE) } else { (Vec4::ZERO, Vec4::ONE) };
-                rimmed.add(ExtendedMaterial { base, extension: Rim { rim: RIM, toon, shade } })
+                let (recolour, dye) = palette.uniform(part);
+                rimmed.add(ExtendedMaterial { base, extension: Rim { rim: RIM, toon, shade, recolour, dye } })
             })
             .clone();
         commands

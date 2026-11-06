@@ -37,6 +37,89 @@ pub(crate) fn bodies() -> Vec<(String, &'static str)> {
     std::iter::once((first, "anime")).chain(rest.map(|(m, c)| (m.to_string(), c))).collect()
 }
 
+/// A skin's colourway (crate::rim recolours by it in the shader): the clothes' and the hair's hue
+/// turned (degrees), saturation and value scaled (per cent). The skin, eyes and face are never
+/// touched: a skin is a body in other clothes, not another person.
+/// White and pale cloth takes `dye` (sRGB, and how strongly, per cent), by its brightness. The
+/// default is a body's own colours.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Palette {
+    pub cloth: (i16, u8, u8),
+    pub dye: [u8; 4],
+    pub hair: (i16, u8, u8),
+}
+
+impl Default for Palette {
+    fn default() -> Self {
+        PALETTES[0]
+    }
+}
+
+impl Palette {
+    const fn new(cloth: (i16, u8, u8), dye: [u8; 4], hair: (i16, u8, u8)) -> Self {
+        Self { cloth, dye, hair }
+    }
+
+    /// The shader's uniforms (crate::rim::Rim's recolour and dye) for a part named `part`.
+    pub fn uniform(&self, part: &str) -> (Vec4, Vec4) {
+        if !recoloured(part) {
+            return (Vec4::ZERO, Vec4::ZERO);
+        }
+        let hair = is_hair(part);
+        let (h, sat, val) = if hair { self.hair } else { self.cloth };
+        let dye = if hair { [0; 4] } else { self.dye };
+        let on = (h, sat, val) != (0, 100, 100) || dye[3] > 0;
+        if !on {
+            return (Vec4::ZERO, Vec4::ZERO);
+        }
+        let c = |v: u8| v as f32 / 255.0;
+        (Vec4::new((h as f32).to_radians(), sat as f32 / 100.0, val as f32 / 100.0, 1.0), Vec4::new(c(dye[0]), c(dye[1]), c(dye[2]), dye[3] as f32 / 100.0))
+    }
+}
+
+fn is_hair(part: &str) -> bool {
+    part.contains("HAIR") || part.ends_with("_hair")
+}
+
+/// Whether a material is clothes or hair, which a colourway recolours (VRoid's part names, and the
+/// MakeHuman bodies' hair: their clothes are in their skin's texture).
+pub fn recoloured(part: &str) -> bool {
+    part.contains("_CLOTH") || part == "toon_huku_bake" || is_hair(part)
+}
+
+/// The colourways every body comes in, the first its own. Cloth: hue turned, saturation, value;
+/// hair the same. Bold and clean, as a stylised game's skins are; no near-skin tones on clothes.
+const PALETTES: [Palette; 4] = [
+    Palette::new((0, 100, 100), [0, 0, 0, 0], (0, 100, 100)),
+    // Teal: the clothes' hues turned to sea green, white dyed it.
+    Palette::new((150, 115, 95), [70, 190, 175, 80], (0, 60, 70)),
+    // Saffron and maroon.
+    Palette::new((-110, 120, 100), [245, 160, 60, 85], (25, 110, 110)),
+    // Charcoal: muted, dark, white gone slate.
+    Palette::new((60, 60, 65), [95, 100, 115, 85], (0, 30, 45)),
+];
+
+/// The skins: every body (`bodies`) in every colourway, body first, so a match's sixteen warriors
+/// are seven bodies before any repeats in another colour. The MakeHuman bodies (their clothes in
+/// their skin's texture) come in their own colours only. A warrior's `look` picks one.
+pub fn skins() -> Vec<(usize, Palette)> {
+    let bodies = bodies();
+    let mut out = vec![];
+    for (k, palette) in PALETTES.iter().enumerate() {
+        for (b, (model, _)) in bodies.iter().enumerate() {
+            if k == 0 || model.starts_with("anime") {
+                out.push((b, *palette));
+            }
+        }
+    }
+    out
+}
+
+pub fn skin(look: u32) -> (usize, Palette) {
+    let all = skins();
+    all[look as usize % all.len()]
+}
+
 /// Each clip set once, in the order bodies first name them (crate::animation's AnimSets).
 pub(crate) fn clip_sets() -> Vec<&'static str> {
     let mut sets = vec![];
@@ -203,8 +286,9 @@ fn dress_warriors(mut commands: Commands, q: Query<(Entity, &WarriorVisual), Add
     for (vis, wv) in &q {
         let look = warriors.get(wv.sim).map(|w| w.look).unwrap_or(0);
         // The bodies in turn, each on its skeleton's clips (`variant`: its set in crate::animation's
-        // AnimSets).
-        let (scene, variant) = models.bodies[look as usize % models.bodies.len()].clone();
+        // AnimSets), in its skin's colourway.
+        let (body, palette) = skin(look);
+        let (scene, variant) = models.bodies[body % models.bodies.len()].clone();
         commands
             .spawn((
                 CharacterModel,
@@ -229,7 +313,7 @@ fn dress_warriors(mut commands: Commands, q: Query<(Entity, &WarriorVisual), Add
                 let mut bones = HashMap::new();
                 let mut named = HashMap::new();
                 for e in children.iter_descendants(ready.entity) {
-                    commands.entity(e).insert(crate::rim::RimTarget(vis));
+                    commands.entity(e).insert(crate::rim::RimTarget(vis, palette));
                     if let Ok(n) = names.get(e) {
                         named.entry(n.as_str().to_owned()).or_insert(e);
                         if let Some(b) = BONES.iter().find(|b| **b == n.as_str()) {

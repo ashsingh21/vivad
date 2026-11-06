@@ -23,7 +23,8 @@
 //!                        s seconds each, the HUD hidden: to show the cast.
 //! VIVAD_ARMOURY=<dir>   stand the player on open ground and screenshot every item in hand, carried
 //!   and in use (aiming, drawing, swinging, drinking), from the front and the side, then exit.
-//!   VIVAD_ARMOURY_ONLY=a,b only the poses whose names contain one of these. The range poses
+//!   VIVAD_ARMOURY_ONLY=a,b only the poses whose names contain one of these (skin: just the body,
+//!   front and back, for a skin with VIVAD_LOOK=<n>). The range poses
 //!   freeze the one bot (VIVAD_BOTS=1) in front as a target and shoot or cut at it.
 
 use bevy::prelude::*;
@@ -413,7 +414,11 @@ impl Plugin for AutoshotPlugin {
                 range("brahmastra", View::Range, 25.0, 1.4),
                 range("brahmastra", View::Range, 25.0, 1.8),
             ];
-            if let Ok(only) = std::env::var("VIVAD_ARMOURY_ONLY").map(|s| s.trim().to_owned()).and_then(|s| if s.is_empty() { Err(std::env::VarError::NotPresent) } else { Ok(s) }) {
+            // VIVAD_ARMOURY_ONLY=skin: the body only, front and back (a skin's colourway, with
+            // VIVAD_LOOK=<skin>).
+            if std::env::var("VIVAD_ARMOURY_ONLY").as_deref() == Ok("skin") {
+                poses = vec![p("bat", Use::Carry, View::Front, 0.0), p("bat", Use::Carry, View::Back, 0.0)];
+            } else if let Ok(only) = std::env::var("VIVAD_ARMOURY_ONLY").map(|s| s.trim().to_owned()).and_then(|s| if s.is_empty() { Err(std::env::VarError::NotPresent) } else { Ok(s) }) {
                 let keys: Vec<String> = only.split(',').map(str::to_owned).collect();
                 poses.retain(|q| keys.iter().any(|k| q.item.contains(k.as_str())));
             }

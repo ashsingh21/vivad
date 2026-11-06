@@ -30,6 +30,39 @@ import bevy_pbr::render::pbr_functions::visibility_range_dither;
 @group(constants::MATERIAL_BIND_GROUP) @binding(101) var<uniform> toon: vec4<f32>;
 // rgb: the shaded side's tint (an anime shadow is a cooler, deeper colour, not grey).
 @group(constants::MATERIAL_BIND_GROUP) @binding(102) var<uniform> shade: vec4<f32>;
+// A skin's colourway on clothes and hair (crate::characters::Palette): x hue turned (radians), y
+// saturation and z value scaled, w on.
+@group(constants::MATERIAL_BIND_GROUP) @binding(103) var<uniform> recolour: vec4<f32>;
+// rgb: a dye the pale and grey parts take (white cloth dyed; coloured cloth keeps its own), a: how
+// strongly.
+@group(constants::MATERIAL_BIND_GROUP) @binding(104) var<uniform> dye: vec4<f32>;
+
+// Hue, saturation and value of a colour (gamma space, where they read as a painter means them).
+fn rgb_to_hsv(c: vec3<f32>) -> vec3<f32> {
+    let k = vec4<f32>(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+    let p = select(vec4<f32>(c.gb, k.xy), vec4<f32>(c.bg, k.wz), c.g < c.b);
+    let q = select(vec4<f32>(p.xyw, c.r), vec4<f32>(c.r, p.yzx), p.x < c.r);
+    let d = q.x - min(q.w, q.y);
+    let e = 1.0e-10;
+    return vec3<f32>(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
+
+fn hsv_to_rgb(c: vec3<f32>) -> vec3<f32> {
+    let p = abs(fract(c.xxx + vec3<f32>(1.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
+    return c.z * mix(vec3<f32>(1.0), clamp(p - 1.0, vec3<f32>(0.0), vec3<f32>(1.0)), c.y);
+}
+
+fn recoloured(linear: vec3<f32>) -> vec3<f32> {
+    let g = pow(max(linear, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2));
+    let own = rgb_to_hsv(g);
+    var hsv = own;
+    hsv.x = fract(hsv.x + recolour.x / 6.2831853);
+    hsv.y = clamp(hsv.y * recolour.y, 0.0, 1.0);
+    hsv.z = clamp(hsv.z * recolour.z, 0.0, 1.0);
+    // Then dyed by its brightness where it had little colour of its own: dark trim stays dark.
+    let dyed = mix(hsv_to_rgb(hsv), own.z * dye.rgb, dye.a * (1.0 - smoothstep(0.1, 0.35, own.y)));
+    return pow(dyed, vec3<f32>(2.2));
+}
 
 const PI: f32 = 3.141592653589793;
 
@@ -112,6 +145,9 @@ fn fragment(vertex_output: VertexOutput, @builtin(front_facing) is_front: bool) 
 
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     pbr_input.material.base_color = alpha_discard(pbr_input.material.flags, pbr_input.material.alpha_cutoff, pbr_input.material.base_color);
+    if (recolour.w > 0.5) {
+        pbr_input.material.base_color = vec4<f32>(recoloured(pbr_input.material.base_color.rgb), pbr_input.material.base_color.a);
+    }
 
     let facing = clamp(dot(pbr_input.N, pbr_input.V), 0.0, 1.0);
     let edge = pow(1.0 - facing, 3.0);
