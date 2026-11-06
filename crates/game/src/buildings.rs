@@ -1329,8 +1329,9 @@ fn build_chunks(
 /// mips; queue each one as it loads.
 fn queue_model_mips(mut events: MessageReader<AssetEvent<Image>>, assets: Res<AssetServer>, mut pending: ResMut<PendingMips>, mut images: ResMut<Assets<Image>>) {
     for ev in events.read() {
-        // A texture inside a model file (the characters' 2048 px sets, 16 MB each) comes with its
-        // own mips or none and nothing reads it here: kept on the GPU only.
+        // A texture inside a model file (capped in size where the model is made:
+        // tools/glb_textures.py) comes with its own mips or none and nothing reads it here: kept
+        // on the GPU only.
         if let AssetEvent::Added { id } = ev
             && assets.get_path(*id).is_some_and(|p| p.label().is_some() && !p.path().starts_with("models/textures"))
             && let Some(mut img) = images.get_mut(*id)

@@ -14,6 +14,7 @@ assets:
     just architecture
     just sfx
     python3 tools/prune_textures.py
+    python3 tools/glb_textures.py
 
 # Buildings and landmarks: temple, arches/jharokha/chhatri, Hampi, huts and stalls, stupa and
 # Ajanta caves, stepwell, the Pushpaka Vimana (each script bakes, decimates a LOD1 and exports GLBs to assets/models/props)
