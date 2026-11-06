@@ -154,6 +154,27 @@ middle, a small map's rule: nobody could leap until the flight ended), the leap 
 Left: the camera close behind a warrior by walls; bots take mostly floor loot (1,600 finds),
 opening few of the 170 chests.
 
+### Rooms and memory (7 Nov)
+
+- No loot sealed in buildings (221 chests were); the gumti and tanki modelled (159 and 268 were
+  colliders with nothing drawn).
+- The 573 hollow buildings enterable, on main's renderer: Interior::drawn makes their rooms the
+  map's blocks (drawn near only, no sun shadow), the sim collides with each as one compound of
+  Interior::solids, the facade is cut round the holes, furniture is the street kit's streamed
+  within 50 m. walk_check: 60 of 60 doors in, 43 of 43 first flights up.
+- The finer ground streamed near the camera (the NCR's whole 2,031 grid at every LOD was 430 MB).
+
+| NCR, 7 Nov | GPU allocated | resident |
+|---|---|---|
+| High, before | 2067 MB | 4095 MB |
+| High | 1578 MB | 3494 MB |
+| Medium | 1328 MB | 3348 MB |
+| Low | 1220 MB | 3330 MB |
+
+What's left of it (High): textures 454 MB (model textures uncompressed: characters 98, props 72,
+weapons 59, models/textures 115), render targets about 200 MB, blocks about 430 MB (the Delhi maps'
+blocks in their far LOD over the whole 4 km, and the near ones streamed), the city 85 MB.
+
 ## 4. On the start screen (done, merged to main 7 Nov)
 
 A fifth card, Dilli NCR, desktop only until its memory comes down (about 2 GB of GPU memory; the
