@@ -1,6 +1,12 @@
 """A character made in VRoid Studio (a VRM), brought onto the game's skeleton: the anime heroine.
 
-blender -b -P tools/blender/characters/vroid.py -- <model.vrm> [variant] [--out <glb>] [--drop a,b]
+blender -b -P tools/blender/characters/vroid.py -- <model.vrm> [variant] [--out <glb>] [--drop a,b] [--fit woman|man]
+
+`--fit`: the model fitted to one of the skeletons everyone shares (skeletons/<name>.json: Seed-san's
+for the women, the male's for the men): its joints moved to that skeleton's, the mesh deformed to
+follow (limbs lengthened or shortened, the spine straightened; head, hands and feet kept their size),
+and every shared bone's frame made that skeleton's. It then plays that skeleton's clips (anime_anims
+or male_anims) as they are: no clips of its own to build or check.
 
 `--height`: her height in metres (default 1.60, the female's): the guns are full size, and a
 smaller model's left hand falls short of the fore-end. `--drop`: meshes, and faces in materials, whose names contain one of these are left out (a
@@ -173,9 +179,15 @@ def joint_tails(arm):
     print(f"[vroid] {done} bones' tails set on their joints")
 
 
-def to_our_rest(arm):
-    """The arms posed from the T-pose to our rest angles and that made the rest pose (the meshes
-    deformed to it first)."""
+# Shoulder to wrist at 1.60 m (Seed-san's, whose left hand reaches the full-size guns' fore-ends):
+# VRoid's own arms are 7-10 cm shorter, too short for the hand to reach (the IK in crate::arms
+# stops at the arm's length).
+ARM_REACH = 0.536
+
+
+def to_our_rest(arm, height, stretch=True):
+    """The arms posed from the T-pose to our rest angles, lengthened to ARM_REACH where they're
+    shorter, and that made the rest pose (the meshes deformed to it first)."""
     meshes = [o for o in bpy.data.objects if o.type == "MESH" and any(m.type == "ARMATURE" for m in o.modifiers)]
     bpy.context.view_layer.objects.active = arm
     bpy.ops.object.mode_set(mode="POSE")
@@ -214,6 +226,24 @@ def to_our_rest(arm):
         R = Matrix.Rotation(ang, 4, axis)
         pb.matrix = W.inverted() @ (Matrix.Translation(head) @ R @ Matrix.Translation(-head) @ (W @ pb.matrix))
         print(f"[vroid] hand_{side} turned {ang * 57.3:+.0f} deg to our palm's facing")
+    # Arms too short stretched along their length (not thicker): the upper arm and forearm by the
+    # same factor, their children not taking the scale (they only move out with the joint).
+    bpy.context.view_layer.update()
+    for side in ("l", "r"):
+        names = [f"upperarm_{side}", f"lowerarm_{side}", f"hand_{side}"]
+        if not all(n in arm.pose.bones for n in names):
+            continue
+        P = lambda n: W @ arm.pose.bones[n].head
+        have = (P(names[1]) - P(names[0])).length + (P(names[2]) - P(names[1])).length
+        k = ARM_REACH * height / 1.60 / have
+        if k <= 1.0 or not stretch:
+            continue
+        for n in names[:2]:
+            for c in arm.data.bones[n].children:
+                held.append((c, c.inherit_scale))
+                c.inherit_scale = "NONE"
+            arm.pose.bones[n].scale.y *= k
+        print(f"[vroid] arm_{side} lengthened x{k:.2f} ({have * 100:.1f} cm to {have * k * 100:.1f})")
     bpy.context.view_layer.update()
     bpy.ops.object.mode_set(mode="OBJECT")
     for o in meshes:
@@ -275,6 +305,100 @@ def rebuild_materials(meshes):
             slot.material = done[m.name]
 
 
+# The limbs fitted, parents first: each chain's bones turned and stretched so the next joint lands
+# where the skeleton has it (the mesh deformed with them); a leg's first joint (the hip) moved onto
+# the skeleton's too. The last of each (hand, ball) is only carried there; the feet are turned, not
+# stretched (a shoe a third longer shows). The joints inside the torso (pelvis, spine, neck, head)
+# are only moved in the rig, not the mesh: where a rig puts them is its maker's habit (VRoid's
+# pelvis sits 10 cm above Seed-san's), not the body's shape, and stretching the hips to it shows.
+FIT_CHAINS = [([f"{b}_{s}" for b in chain], place) for s in ("l", "r")
+              for chain, place in ((("clavicle", "upperarm", "lowerarm", "hand"), False), (("thigh", "calf", "foot", "ball"), True))]
+KEEP_LENGTH = ("foot_l", "foot_r")
+
+
+def apply_pose_as_rest(arm):
+    """The meshes deformed to the armature's pose, and that pose made its rest."""
+    meshes = [o for o in bpy.data.objects if o.type == "MESH" and any(m.type == "ARMATURE" for m in o.modifiers)]
+    bpy.ops.object.mode_set(mode="OBJECT")
+    for o in meshes:
+        name = next(m for m in o.modifiers if m.type == "ARMATURE").name
+        bpy.context.view_layer.objects.active = o
+        bpy.ops.object.modifier_copy(modifier=name)
+        bpy.ops.object.modifier_apply(modifier=name)
+        o.modifiers[-1].name = name
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.mode_set(mode="POSE")
+    bpy.ops.pose.armature_apply(selected=False)
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+
+def fit(arm, skeleton):
+    """The model onto a shared skeleton (`--fit`; see the top)."""
+    ref = json.load(open(os.path.join(HERE, "skeletons", f"{skeleton}.json")))
+    W = arm.matrix_world
+    bpy.context.view_layer.objects.active = arm
+    # A connected bone can't be moved off its parent's tail (the pelvis wasn't).
+    bpy.ops.object.mode_set(mode="EDIT")
+    for eb in arm.data.edit_bones:
+        eb.use_connect = False
+    bpy.ops.object.mode_set(mode="POSE")
+    held = [(b, b.inherit_scale) for b in arm.data.bones]
+    for b in arm.data.bones:
+        b.inherit_scale = "NONE"
+    head = lambda n: W @ arm.pose.bones[n].head
+    want = lambda n: W @ Vector(ref[n]["head"])
+    moved = []
+    for chain, place in FIT_CHAINS:
+        chain = [n for n in chain if n in arm.pose.bones and n in ref]
+        if place:
+            pb = arm.pose.bones[chain[0]]
+            bpy.context.view_layer.update()
+            moved.append(f"{chain[0]} moved {(want(chain[0]) - head(chain[0])).length * 100:.1f} cm")
+            pb.matrix = W.inverted() @ Matrix.Translation(want(chain[0]) - head(chain[0])) @ W @ pb.matrix
+        for n, nxt in zip(chain, chain[1:]):
+            bpy.context.view_layer.update()
+            pb = arm.pose.bones[n]
+            h, have, goal = head(n), head(nxt) - head(n), want(nxt) - head(n)
+            R = have.normalized().rotation_difference(goal.normalized()).to_matrix().to_4x4()
+            pb.matrix = W.inverted() @ (Matrix.Translation(h) @ R @ Matrix.Translation(-h) @ (W @ pb.matrix))
+            k = 1.0 if n in KEEP_LENGTH else goal.length / max(have.length, 1e-6)
+            pb.scale.y *= k
+            moved.append(f"{n} x{k:.2f}")
+    bpy.context.view_layer.update()
+    errs = {n: (head(n) - want(n)).length for chain, place in FIT_CHAINS for n in chain[0 if place else 1:] if n in arm.pose.bones and n in ref and not n.startswith("ball")}
+    off = max(errs.values())
+    for n, e in errs.items():
+        if e > 0.01:
+            print(f"[vroid] fit: {n} {e * 100:.1f} cm off")
+    apply_pose_as_rest(arm)
+    for b, mode in held:
+        b.inherit_scale = mode
+    # Every shared bone's place and frame the skeleton's (moving or turning a bone at rest moves no
+    # vertex): the limbs' joints are there already; the torso's move to it.
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.mode_set(mode="EDIT")
+    framed = 0
+    eds = arm.data.edit_bones
+    for name, r in ref.items():
+        if name not in FRAMES:
+            continue
+        # The bone over the pelvis (the male's Root) made if the model hasn't one.
+        eb = eds.get(name) or (eds.new(name) if name == ref.get("pelvis", {}).get("parent") else None)
+        if eb is None:
+            continue
+        eb.head = Vector(r["head"])
+        eb.tail = Vector(r["head"]) + Vector(r["y"]) * r["length"]
+        eb.align_roll(Vector(r["z"]))
+        framed += 1
+    # And the skeleton's hierarchy: a bone's turn in a clip is in its parent's frame, so a parent the
+    # skeleton hasn't (VRM's Position or its own Root over the pelvis) turns the body with it.
+    for name, r in ref.items():
+        if name in eds and name in FRAMES:
+            eds[name].parent = eds.get(r["parent"]) if r.get("parent") else None
+    bpy.ops.object.mode_set(mode="OBJECT")
+    print(f"[vroid] fitted to the {skeleton}'s skeleton: joints within {off * 100:.2f} cm, {framed} bones framed; " + ", ".join(moved))
+
+
 def main():
     args = sys.argv[sys.argv.index("--") + 1:]
     path = args[0]
@@ -328,7 +452,10 @@ def main():
     rename(arm, mapping)
     add_upper_chest(arm)
     joint_tails(arm)
-    to_our_rest(arm)
+    skeleton = args[args.index("--fit") + 1] if "--fit" in args else None
+    to_our_rest(arm, want, stretch=skeleton is None)
+    if skeleton:
+        fit(arm, skeleton)
     arm.name = arm.data.name = "Human.rig"
     rebuild_materials(meshes)
     # One body.

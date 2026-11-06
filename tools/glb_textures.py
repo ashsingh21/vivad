@@ -20,8 +20,15 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 CAPS = {"weapons": 512, "characters": 1024, "props": 1024}
 
 
+# VRoid imports (tools/blender/characters/vroid.py: anime_<name>.glb) bring 16-17 textures each,
+# 50 MB of GPU memory at 1024 px: at 512 a face filling the screen looks the same. (Seed-san,
+# anime.glb, has four in an atlas and keeps 1024.)
+FILE_CAPS = {"characters/anime_": 512}
+
+
 def cap_for(path):
-    return next((c for k, c in CAPS.items() if f"/models/{k}/" in path.replace(os.sep, "/")), None)
+    path = path.replace(os.sep, "/")
+    return next((c for k, c in FILE_CAPS.items() if f"/models/{k}" in path), None) or next((c for k, c in CAPS.items() if f"/models/{k}/" in path), None)
 
 
 def shrink(path, cap):

@@ -283,8 +283,11 @@ stylecheck *args:
 stylised-trees:
     {{blender}} -b --factory-startup -P tools/blender/nature/stylised_trees.py 2>&1 | grep -E '^\[|Error|Traceback' -A3 || true
 
-# A character made in VRoid Studio (a .vrm) onto our skeleton as the anime body, then her own clips:
-# just vroid build/vroid/heroine.vrm (needs the VRM add-on: blender -c extension install vrm)
-vroid vrm variant="anime" drop="":
-    {{blender}} -b -P tools/blender/characters/vroid.py -- {{vrm}} {{variant}} $([ -n "{{drop}}" ] && echo --drop {{drop}}) 2>&1 | grep -E '^\[|Error|Traceback' || true
-    {{blender}} -b -t 1 -P tools/blender/characters/anims.py -- {{variant}} 2>&1 | grep -E '^\[anims\] (exported|unarched)|Error|Traceback' || true
+# A VRoid character (a .vrm) onto our skeleton, then its own clips: just vroid build/vroid/heroine.vrm
+# (needs the VRM add-on: blender -c extension install vrm). With fit=woman or fit=man it's fitted to
+# that shared skeleton instead and plays its clips (no clips of its own; add it to
+# crate::characters::bodies): just vroid build/vroid/cc0/AvatarSample_E.vrm anime_apron fit=woman
+vroid vrm variant="anime" drop="" fit="" height="":
+    {{blender}} -b -t 1 -P tools/blender/characters/vroid.py -- "{{vrm}}" {{variant}} $([ -n "{{drop}}" ] && echo --drop {{drop}}) $([ -n "{{fit}}" ] && echo --fit {{fit}}) $([ -n "{{height}}" ] && echo --height {{height}}) 2>&1 | grep -E '^\[|Error|Traceback' || true
+    [ -n "{{fit}}" ] || {{blender}} -b -t 1 -P tools/blender/characters/anims.py -- {{variant}} 2>&1 | grep -E '^\[anims\] (exported|unarched)|Error|Traceback' || true
+    python3 tools/glb_textures.py assets/models/characters/{{variant}}.glb

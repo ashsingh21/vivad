@@ -26,26 +26,42 @@ impl Plugin for CharacterArtPlugin {
     }
 }
 
-/// The anime body's model and clips (models/characters/<this>.glb and <this>_anims.glb): the VRoid
-/// heroine (tools/blender/characters/vroid.py); VIVAD_ANIME=<name> tries another build of her.
-pub(crate) fn anime_model() -> String {
-    std::env::var("VIVAD_ANIME").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "anime".into())
+/// The bodies, in the order warriors take them by `look` (the player's is the first): each a model
+/// (models/characters/<model>.glb) and the clips it plays (<clips>_anims.glb). The anime ones are
+/// VRMs (tools/blender/characters/vroid.py, `just vroid`): Seed-san, whose skeleton the women share,
+/// and VRoid's CC0 samples (docs/references.md) fitted to hers or to the male's (`--fit`), so they
+/// play those clips as they are. VIVAD_ANIME=<name> puts another build in the first's place.
+pub(crate) fn bodies() -> Vec<(String, &'static str)> {
+    let first = std::env::var("VIVAD_ANIME").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "anime".into());
+    let rest = [("male", "male"), ("anime_apron", "anime"), ("female", "female"), ("anime_elf", "anime"), ("anime_tall", "male"), ("anime_frills", "anime")];
+    std::iter::once((first, "anime")).chain(rest.map(|(m, c)| (m.to_string(), c))).collect()
+}
+
+/// Each clip set once, in the order bodies first name them (crate::animation's AnimSets).
+pub(crate) fn clip_sets() -> Vec<&'static str> {
+    let mut sets = vec![];
+    for (_, c) in bodies() {
+        if !sets.contains(&c) {
+            sets.push(c);
+        }
+    }
+    sets
 }
 
 #[derive(Resource)]
 struct Models {
-    male: Handle<WorldAsset>,
-    female: Handle<WorldAsset>,
-    /// The anime-styled heroine (cel shaded: crate::rim), on the female's animations.
-    anime: Handle<WorldAsset>,
+    /// One per body (`bodies`), and the clip set it plays (`clip_sets`); the anime ones cel shaded
+    /// (crate::rim).
+    bodies: Vec<(Handle<WorldAsset>, usize)>,
     props: HashMap<&'static str, Handle<WorldAsset>>,
 }
 
 fn load_models(mut commands: Commands, assets: Res<AssetServer>, layout: Res<MapLayout>) {
     commands.insert_resource(Models {
-        male: assets.load(GltfAssetLabel::Scene(0).from_asset("models/characters/male.glb")),
-        female: assets.load(GltfAssetLabel::Scene(0).from_asset("models/characters/female.glb")),
-        anime: assets.load(GltfAssetLabel::Scene(0).from_asset(format!("models/characters/{}.glb", anime_model()))),
+        bodies: bodies()
+            .iter()
+            .map(|(m, c)| (assets.load(GltfAssetLabel::Scene(0).from_asset(format!("models/characters/{m}.glb"))), clip_sets().iter().position(|s| s == c).unwrap_or(0)))
+            .collect(),
         props: prop_models(&assets, &layout),
     });
 }
@@ -186,10 +202,9 @@ struct CharacterModel;
 fn dress_warriors(mut commands: Commands, q: Query<(Entity, &WarriorVisual), Added<WarriorVisual>>, warriors: Query<&Warrior>, models: Res<Models>) {
     for (vis, wv) in &q {
         let look = warriors.get(wv.sim).map(|w| w.look).unwrap_or(0);
-        // Three bodies in turn, each on its own clips (its set in crate::animation's AnimSets: male
-        // 0, female 1, anime 2): the anime heroine first, so she's the player's by default.
-        let variant = [2usize, 0, 1][(look % 3) as usize];
-        let scene = [&models.male, &models.female, &models.anime][variant].clone();
+        // The bodies in turn, each on its skeleton's clips (`variant`: its set in crate::animation's
+        // AnimSets).
+        let (scene, variant) = models.bodies[look as usize % models.bodies.len()].clone();
         commands
             .spawn((
                 CharacterModel,
