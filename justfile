@@ -272,7 +272,7 @@ textures-pack:
 # The start screen's map cards: each map's tour view, cropped (assets/ui/maps/<map>.png).
 menu-thumbs:
     cargo build --release -p game --bin game
-    for v in cp:cp_aerial chandni:ch_air hauzkhas:hk_madrasa_air indiagate:ig_gate_side; do m=${v%%:*}; mkdir -p build/menu_thumbs/$m; VIVAD_TOUR=build/menu_thumbs/$m VIVAD_TOUR_ONLY=${v##*:} VIVAD_MAP=$m VIVAD_MAP_SEED=7 ./target/release/game > /dev/null 2>&1; done
+    for v in cp:cp_aerial chandni:ch_air hauzkhas:hk_madrasa_air indiagate:ig_gate_side ncr:ncr_karolbagh_air; do m=${v%%:*}; mkdir -p build/menu_thumbs/$m; VIVAD_TOUR=build/menu_thumbs/$m VIVAD_TOUR_ONLY=${v##*:} VIVAD_MAP=$m VIVAD_MAP_SEED=7 ./target/release/game > /dev/null 2>&1; done
     python3 tools/menu_thumbs.py
 
 # colour per style_* view, against the guide and the kept baseline; `just stylecheck keep` to keep.

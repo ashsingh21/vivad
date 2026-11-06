@@ -183,7 +183,12 @@ fn move_warriors(
                 let vy = (kin.velocity.y - GRAVITY * dt).max(-FREEFALL_MAX);
                 kin.velocity = h.with_y(vy);
                 let height = ground_probe(&spatial, tf.translation, entity, 2000.0).map(|h| h.0).unwrap_or(1000.0);
-                if height < AUTO_GLIDE_HEIGHT || (intent.pressed(btn::JUMP) && height > OPEN_GLIDE_HEIGHT) {
+                // The press that left the ride starts a dive (flow zeroes the time in the air);
+                // only a later one opens the glider. (From the NCR's 500 m a glide straight off
+                // the ride is a minute and more of floating.)
+                kin.air_time += dt;
+                let fresh = !ncr || kin.air_time > 0.3;
+                if height < AUTO_GLIDE_HEIGHT || (fresh && intent.pressed(btn::JUMP) && height > OPEN_GLIDE_HEIGHT) {
                     kin.mode = MoveMode::Gliding;
                 }
             }

@@ -107,14 +107,21 @@ fn skipped() -> bool {
 
 use crate::ui::{EDGE, FIELD, GLASS, GLASS_HOVER, GOLD, INK, MUTED, SAFFRON, SAFFRON_HOVER};
 
-/// The Delhi maps the picker offers: name, a line about it (Hinglish, as the game talks), and its
-/// card's picture (`just menu-thumbs`).
-const MAPS: [(MapId, &str, &str); 4] = [
+/// The maps the picker offers: name, a line about it (Hinglish, as the game talks), and its
+/// card's picture (`just menu-thumbs`). The NCR (4 km, about 2 GB of GPU memory) on the desktop
+/// only, until its memory comes down for phones and browser tabs.
+const ALL_MAPS: [(MapId, &str, &str); 5] = [
     (MapId::Cp, "Connaught Place", "Gol chakkar, safed colonnade, har kone pe chai"),
     (MapId::Chandni, "Chandni Chowk", "Tang galiyaan, rangeen makaan, bheed hi bheed"),
     (MapId::HauzKhas, "Hauz Khas", "Jheel, purane khandhar aur rooftop cafe"),
     (MapId::IndiaGate, "India Gate", "Khula maidan, lambi lawns, kahin chhupne ki jagah nahi"),
+    (MapId::Ncr, "Dilli NCR", "Poora NCR, 4 km: Karol Bagh se Cyber City tak, Yamuna paar"),
 ];
+
+#[cfg(not(target_arch = "wasm32"))]
+const MAPS: &[(MapId, &str, &str)] = &ALL_MAPS;
+#[cfg(target_arch = "wasm32")]
+const MAPS: &[(MapId, &str, &str)] = ALL_MAPS.split_at(4).0;
 
 fn thumb(map: MapId) -> String {
     format!("ui/maps/{}.png", map.name())
@@ -260,10 +267,10 @@ fn open(
                     });
                 });
                 p.spawn(Node { width: percent(100.0), column_gap: percent(2.0), margin: UiRect::top(z(16.0)), ..default() }).with_children(|row| {
-                    for (id, title, _) in MAPS {
+                    for &(id, title, _) in MAPS {
                         row.spawn((
                             Card(id),
-                            Node { width: percent(23.5), flex_direction: FlexDirection::Column, padding: UiRect::all(z(5.0)), border: UiRect::all(z(2.0)), border_radius: BorderRadius::all(z(12.0)), ..default() },
+                            Node { width: percent((100.0 - 2.0 * (MAPS.len() - 1) as f32) / MAPS.len() as f32), flex_direction: FlexDirection::Column, padding: UiRect::all(z(5.0)), border: UiRect::all(z(2.0)), border_radius: BorderRadius::all(z(12.0)), ..default() },
                             BackgroundColor(GLASS),
                             BorderColor::all(EDGE),
                         ))
@@ -512,6 +519,11 @@ fn choose(In(choice): In<Choice>, world: &mut World) {
             Some((map, map_seed, Lobby::join(name, true, code)))
         }
         Choice::Host => {
+            // A room's code names one of the Delhi maps, and a browser tab can't hold the NCR yet.
+            if !MapId::DELHI.contains(&chosen) {
+                world.resource_mut::<Typing>().error = Some("NCR abhi sirf akele (the NCR is solo only for now)".into());
+                return;
+            }
             let room = net::new_room_for(chosen);
             let (map, seed) = (net::room_map(&room), net::room_map_seed(&room));
             Some((map, seed, Lobby::host(name, true, Some(room), None, 0, map, seed)))

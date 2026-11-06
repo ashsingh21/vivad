@@ -18,6 +18,22 @@ use crate::map::{MapId, MapLayout};
 
 pub const VIMANA_HEIGHT: f32 = 120.0;
 pub const VIMANA_SPEED: f32 = 22.0;
+/// The drop on the 4 km NCR (from the game-playable branch): high enough to see where you are
+/// going, fast enough to cross the start disc in under a minute.
+pub const NCR_VIMANA_HEIGHT: f32 = 500.0;
+pub const NCR_VIMANA_SPEED: f32 = 60.0;
+
+/// The flight's height and speed on a map.
+pub fn flight(style: crate::map::MapStyle) -> (f32, f32) {
+    if style == crate::map::MapStyle::Ncr { (NCR_VIMANA_HEIGHT, NCR_VIMANA_SPEED) } else { (VIMANA_HEIGHT, VIMANA_SPEED) }
+}
+
+/// Whether a rider over `pos` may leap: over the arena on a small map (the flight starts out past
+/// its edge), anywhere well inside the NCR.
+pub fn over_land(layout: &MapLayout, pos: Vec3) -> bool {
+    let reach = if layout.style == crate::map::MapStyle::Ncr { layout.half_extent - 60.0 } else { 240.0 };
+    pos.x.abs() < reach && pos.z.abs() < reach
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum MatchState {
@@ -165,7 +181,7 @@ fn ncr_flight(seed: u64, zone: &Zone, half: f32, players: u32) -> (Vec2, Vec2) {
     use crate::map::compose::{PLACES, Tier};
     let mut path = match_rng(seed, stream::VIMANA);
     let offset = FLIGHT_OFFSET.iter().find(|o| players <= o.0).map_or(0.0, |o| o.1);
-    let reach = super::movement::dive_reach(VIMANA_HEIGHT);
+    let reach = super::movement::dive_reach(NCR_VIMANA_HEIGHT);
     let mut best: Option<(usize, Vec2, Vec2)> = None;
     for _ in 0..FLIGHT_TRIES {
         let dir = Vec2::from_angle(path.random_range(0.0..std::f32::consts::TAU));
@@ -200,7 +216,7 @@ pub fn start_match(world: &mut World) {
     let zone = if ncr { Zone::for_ncr(seed, humans + bots, world.resource::<MapLayout>()) } else { Zone::new(seed) };
     let (from, to) = if ncr {
         let (a, b) = ncr_flight(seed, &zone, half, humans + bots);
-        (a.extend(VIMANA_HEIGHT), b.extend(VIMANA_HEIGHT))
+        (a.extend(NCR_VIMANA_HEIGHT), b.extend(NCR_VIMANA_HEIGHT))
     } else {
         // Flight path crosses the map through a random chord.
         let mut path = match_rng(seed, stream::VIMANA);
@@ -340,14 +356,16 @@ fn fly_vimana(
     mut riders: Query<(&mut Transform, &mut Kinematic, &PlayerIntent), (With<Warrior>, Without<Vimana>, Without<Remote>)>,
     mut vimana: Query<&mut Transform, With<Vimana>>,
     time: Res<Time>,
+    layout: Res<MapLayout>,
 ) {
     let dt = time.delta_secs();
     m.elapsed += dt;
     if m.state != MatchState::Flight {
         return;
     }
+    let speed = flight(layout.style).1;
     let len = m.vimana_from.distance(m.vimana_to);
-    m.vimana_t += VIMANA_SPEED * dt / len;
+    m.vimana_t += speed * dt / len;
     let pos = m.vimana_pos();
     let dir = m.vimana_dir();
     for mut t in &mut vimana {
@@ -356,7 +374,7 @@ fn fly_vimana(
     }
     let done = m.vimana_t >= 1.0;
     // Players may only leap once the vimana is over the arena.
-    let over_land = pos.x.abs() < 240.0 && pos.z.abs() < 240.0;
+    let over_land = over_land(&layout, pos);
     for (mut tf, mut kin, intent) in &mut riders {
         if kin.mode != MoveMode::Vimana {
             continue;
@@ -364,7 +382,8 @@ fn fly_vimana(
         tf.translation = pos - Vec3::Y * 3.0;
         if done || (over_land && intent.pressed(btn::JUMP)) {
             kin.mode = MoveMode::Freefall;
-            kin.velocity = dir * VIMANA_SPEED * 0.5;
+            kin.velocity = dir * speed * 0.5;
+            kin.air_time = 0.0;
         }
     }
     if done {

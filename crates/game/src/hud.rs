@@ -274,6 +274,7 @@ fn prompts(
     db: Res<ItemDb>,
     m: Res<Match>,
     ride: Res<crate::visuals::DropRide>,
+    layout: Res<shared::map::MapLayout>,
     mut prompt: Query<&mut Text, With<Prompt>>,
     mut bar: Query<&mut Visibility, With<ProgressBar>>,
     mut fill: Query<&mut Node, With<ProgressFill>>,
@@ -295,7 +296,7 @@ fn prompts(
     let mut progress: Option<f32> = None;
     if dead {
     } else if kin.mode == MoveMode::Vimana {
-        let over = me.x.abs() < 240.0 && me.z.abs() < 240.0;
+        let over = shared::sim::flow::over_land(&layout, me);
         let jugaad = *ride == crate::visuals::DropRide::Jugaad;
         s = match (over && m.state == MatchState::Flight, jugaad) {
             (true, true) => "[Space] Auto se kood jao!".into(),

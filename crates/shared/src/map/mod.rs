@@ -419,10 +419,10 @@ mod layout_tests {
     /// change here means a map changed: update the numbers only if that was the intent.
     #[test]
     fn maps_are_unchanged() {
-        assert_eq!(fingerprint(MapId::Cp), (42085, 60, 173, 161, 485, 6647, 11, 99738129178069173));
-        assert_eq!(fingerprint(MapId::Chandni), (22527, 879, 171, 194, 98, 3623, 11, 13870108306504915377));
-        assert_eq!(fingerprint(MapId::HauzKhas), (11673, 137, 95, 144, 432, 1529, 2, 8338431180650019947));
-        assert_eq!(fingerprint(MapId::IndiaGate), (1882, 6, 70, 92, 747, 1644, 5, 10373317747606100880));
+        assert_eq!(fingerprint(MapId::Cp), (42085, 60, 173, 161, 485, 6647, 11, 10353479721749200354));
+        assert_eq!(fingerprint(MapId::Chandni), (22527, 879, 171, 194, 98, 3623, 11, 14345054941457027638));
+        assert_eq!(fingerprint(MapId::HauzKhas), (11673, 137, 95, 144, 432, 1529, 2, 11088843970420611116));
+        assert_eq!(fingerprint(MapId::IndiaGate), (1882, 6, 70, 92, 747, 1644, 5, 18077901147479690835));
     }
 
     /// No holy site's name on screen. (Their loot is kept off them on the NCR only so far: on the

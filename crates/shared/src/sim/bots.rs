@@ -265,9 +265,11 @@ pub(crate) fn drive_bots(
                 None
             };
             let skip = brain.give_up.clone();
+            // On the NCR chests stand a few hundred metres apart: look further for one.
+            let chest_sight = if layout.style == MapStyle::Ncr { 250.0 } else { 120.0 };
             let chest_goal = chests
                 .iter()
-                .filter(|(t, c)| !c.opened && t.translation.distance(pos) < 120.0)
+                .filter(|(t, c)| !c.opened && t.translation.distance(pos) < chest_sight)
                 .filter(|(t, _)| !skip.iter().any(|g| g.distance(t.translation) < 0.5))
                 .min_by(|a, b| a.0.translation.distance(pos).total_cmp(&b.0.translation.distance(pos)))
                 .map(|(t, _)| t.translation);

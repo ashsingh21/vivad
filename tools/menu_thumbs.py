@@ -1,4 +1,4 @@
-"""The start screen's map cards (crate::menu): each Delhi map from a tour view, the HUD cropped
+"""The start screen's map cards (crate::menu): each map from a tour view, the HUD cropped
 off, 512 x 288.
 
 just menu-thumbs   (renders the views into build/menu_thumbs/<map>/, then writes assets/ui/maps/<map>.png)
@@ -11,7 +11,7 @@ from PIL import Image
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 # Map -> the tour view it's drawn from (crate::autoshot).
-VIEWS = {"cp": "cp_aerial", "chandni": "ch_air", "hauzkhas": "hk_madrasa_air", "indiagate": "ig_gate_side"}
+VIEWS = {"cp": "cp_aerial", "chandni": "ch_air", "hauzkhas": "hk_madrasa_air", "indiagate": "ig_gate_side", "ncr": "ncr_karolbagh_air"}
 
 
 def main():

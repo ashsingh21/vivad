@@ -124,7 +124,9 @@ fn main() {
                     m.elapsed, m.state, m.alive, ground, opened, total, zone.radius, zone.phase
                 );
             }
-            if std::env::var("TRACE").is_ok() && (m.elapsed * 60.0).round() as u32 % 180 == 0 && m.elapsed < 150.0 {
+            // TRACE=<s>: the first four bots every 3 s up to that many seconds in (150 by default).
+            let until: f32 = std::env::var("TRACE").ok().and_then(|s| s.parse().ok()).unwrap_or(150.0);
+            if std::env::var("TRACE").is_ok() && (m.elapsed * 60.0).round() as u32 % 180 == 0 && m.elapsed < until {
                 for (i, (tf, b, k, inv)) in world
                     .query_filtered::<(&Transform, &BotBrain, &Kinematic, &Inventory), Without<Eliminated>>()
                     .iter(world)
