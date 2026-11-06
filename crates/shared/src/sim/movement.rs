@@ -3,7 +3,9 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-use super::{CAPSULE_LENGTH, CAPSULE_RADIUS, DamageCause, DamageMsg, Eliminated, Kinematic, MoveMode, PlayerIntent, SimSet, btn, solid_mask};
+use super::{CAPSULE_LENGTH, CAPSULE_RADIUS, DamageCause, DamageMsg, Eliminated, HALF_HEIGHT, Kinematic, MoveMode, PlayerIntent, SimSet, btn, solid_mask};
+use crate::map::terrain::ground;
+use crate::map::{MapLayout, MapStyle};
 
 pub const GRAVITY: f32 = 22.0;
 pub const JUMP_SPEED: f32 = 7.6;
@@ -89,6 +91,10 @@ pub const SLIDE_STEER: f32 = 1.4;
 pub const SLIDE_COOLDOWN: f32 = 0.5;
 pub const GROUND_ACCEL: f32 = 70.0;
 pub const AIR_ACCEL: f32 = 12.0;
+/// The least height over the ground a glider opens at by hand.
+pub const OPEN_GLIDE_HEIGHT: f32 = 12.0;
+/// Through the NCR's Yamuna, m/s: slow enough that a bridge beats it, and nobody is ever trapped.
+pub const NCR_WADE_SPEED: f32 = 2.4;
 pub const FREEFALL_MAX: f32 = 42.0;
 pub const FREEFALL_HORIZ: f32 = 20.0;
 pub const GLIDE_FALL: f32 = 6.5;
@@ -102,6 +108,11 @@ pub const SAFE_LANDING: f32 = 17.0;
 pub const FALL_DAMAGE: f32 = 6.0;
 /// Steepest walkable slope (cosine of ~48 degrees).
 const MIN_GROUND_NORMAL_Y: f32 = 0.66;
+
+/// Whether a warrior at `center` has its feet on a river's bed, not on a bridge over it.
+pub(super) fn wading(layout: &MapLayout, center: Vec3) -> bool {
+    layout.terrain.ground_at(center.x, center.z) == Some(ground::WATER) && center.y - HALF_HEIGHT < layout.terrain.height(center.x, center.z) + 0.5
+}
 
 pub struct MovementPlugin;
 
@@ -154,8 +165,12 @@ fn move_warriors(
     spatial: SpatialQuery,
     time: Res<Time>,
     mut damage: MessageWriter<DamageMsg>,
+    layout: Res<MapLayout>,
 ) {
     let dt = time.delta_secs();
+    // The NCR's towers and river (4 km of it): the glider comes back off a tall roof, and water
+    // slows a warrior. The small maps keep what they always had.
+    let ncr = layout.style == MapStyle::Ncr;
     let config = MoveAndSlideConfig::default();
     for (entity, mut tf, mut kin, intent, collider, inv) in &mut q {
         tf.rotation = intent.body_rotation();
@@ -168,7 +183,7 @@ fn move_warriors(
                 let vy = (kin.velocity.y - GRAVITY * dt).max(-FREEFALL_MAX);
                 kin.velocity = h.with_y(vy);
                 let height = ground_probe(&spatial, tf.translation, entity, 2000.0).map(|h| h.0).unwrap_or(1000.0);
-                if height < AUTO_GLIDE_HEIGHT || (intent.pressed(btn::JUMP) && height > 12.0) {
+                if height < AUTO_GLIDE_HEIGHT || (intent.pressed(btn::JUMP) && height > OPEN_GLIDE_HEIGHT) {
                     kin.mode = MoveMode::Gliding;
                 }
             }
@@ -179,6 +194,14 @@ fn move_warriors(
                 kin.velocity = h.with_y(vy);
             }
             MoveMode::Ground => {
+                // Off a tall roof the glider comes back: by itself when the fall is long, by hand
+                // otherwise. Without it a 60 m tower is a death trap (or, for a bot, a prison).
+                if ncr && !kin.grounded && kin.velocity.y < 0.0 {
+                    let height = ground_probe(&spatial, tf.translation, entity, 2000.0).map_or(1000.0, |h| h.0);
+                    if height > AUTO_GLIDE_HEIGHT || (intent.pressed(btn::JUMP) && height > OPEN_GLIDE_HEIGHT) {
+                        kin.mode = MoveMode::Gliding;
+                    }
+                }
                 let crouch = intent.held(btn::CROUCH);
                 let rifle = inv.and_then(|i| i.current()).is_some_and(|s| long_gun(&s.id));
                 let mut speed = if rifle {
@@ -198,6 +221,9 @@ fn move_warriors(
                 };
                 if kin.crouched && !rifle {
                     speed = speed.min(CROUCH_SPEED);
+                }
+                if ncr && wading(&layout, tf.translation) {
+                    speed = speed.min(NCR_WADE_SPEED);
                 }
                 let run_speed = if rifle { RIFLE_RUN.0[0] } else { WALK_SPEED };
                 kin.jump_buffer = if intent.pressed(btn::JUMP) { JUMP_BUFFER } else { (kin.jump_buffer - dt).max(0.0) };

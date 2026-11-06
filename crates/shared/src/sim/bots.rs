@@ -14,7 +14,7 @@ use super::{BotSkill,
 };
 use super::nav::{NavGrid, NoPath};
 use crate::items::{AstraEffect, ItemDb, ItemKind};
-use crate::map::MapLayout;
+use crate::map::{MapLayout, MapStyle};
 
 /// How fast a bot can turn to aim (radians a second): quick, but a person's, not a snap.
 const TURN_RATE: f32 = 10.5;
@@ -101,13 +101,20 @@ impl Plugin for BotPlugin {
 
 /// Bots on foot don't walk off a drop that would hurt badly (cliff tops, the stepwell's rim): with
 /// no ground within 6 m below the next step (on foot or mid-jump), they stop. A healthy bot will
-/// take a storey's roof (up to 13 m, about 35 damage) rather than be stranded up there.
+/// take a storey's roof (up to 13 m, about 35 damage) rather than be stranded up there. On the NCR
+/// the glider comes back past OPEN_GLIDE_HEIGHT, so only the drops between hurt: a tower's roof is
+/// a way down, and a bot falling off one opens its glider.
 #[allow(clippy::type_complexity)]
 fn mind_the_drop(
     mut bots: Query<(Entity, &Transform, &mut PlayerIntent, &Kinematic, &Health), (With<BotBrain>, Without<Eliminated>)>,
     spatial: SpatialQuery,
+    layout: Res<MapLayout>,
 ) {
+    let rescue = layout.style == MapStyle::Ncr;
     for (me, tf, mut intent, kin, health) in &mut bots {
+        if rescue && kin.mode == MoveMode::Ground && !kin.grounded && kin.velocity.y < -8.0 {
+            intent.pressed |= btn::JUMP;
+        }
         let wish = super::movement::wish_dir(&intent);
         if kin.mode != MoveMode::Ground || wish == Vec3::ZERO {
             continue;
@@ -115,7 +122,15 @@ fn mind_the_drop(
         let ahead = tf.translation + wish * 1.2;
         let filter = SpatialQueryFilter::from_mask(solid_mask()).with_excluded_entities([me]);
         let drop = if health.hp > 70.0 { 13.0 } else { 6.0 };
-        if spatial.cast_ray(ahead, Dir3::NEG_Y, HALF_HEIGHT + drop, true, &filter).is_none() {
+        let safe = if rescue {
+            // Far enough down that the glider still opens once the fall is under way (it is
+            // pressed at -8 m/s, a metre and a half on).
+            let below = spatial.cast_ray(ahead, Dir3::NEG_Y, HALF_HEIGHT + super::movement::OPEN_GLIDE_HEIGHT + 4.0, true, &filter);
+            below.is_none_or(|hit| hit.distance <= HALF_HEIGHT + drop)
+        } else {
+            spatial.cast_ray(ahead, Dir3::NEG_Y, HALF_HEIGHT + drop, true, &filter).is_some()
+        };
+        if !safe {
             intent.move_axis = Vec2::ZERO;
         }
     }

@@ -63,6 +63,8 @@ fn main() {
         let mut next_report = 0.0;
         let mut kills_by_weapon = 0;
         let mut kills_by_zone = 0;
+        let mut roofed = false;
+        let mut last_seen: std::collections::HashMap<Entity, Vec3> = Default::default();
         loop {
             app.update();
             let world = app.world_mut();
@@ -73,6 +75,26 @@ fn main() {
                 println!("  [feed] {f}");
             }
             let m = world.resource::<Match>().clone();
+            // ROOF=1: once nine in ten have landed, every bot on foot is put on a tall building's roof (15-60 m up),
+            // to see that each finds its way down (the stranded count below).
+            let landed = world.query_filtered::<&Kinematic, Without<Eliminated>>().iter(world).filter(|k| k.mode == MoveMode::Ground).count();
+            if std::env::var("ROOF").is_ok() && !roofed && m.state == MatchState::InProgress && landed * 10 >= m.alive as usize * 9 {
+                roofed = true;
+                let layout = world.resource::<shared::map::MapLayout>().clone();
+                let tall: Vec<Vec3> = layout.footprints.iter()
+                    .filter(|f| f.mat != shared::map::Mat::Water && (15.0..60.0).contains(&(f.top - f.base)) && f.pts.len() >= 3)
+                    .map(|f| { let c = f.pts.iter().copied().sum::<Vec2>() / f.pts.len() as f32; Vec3::new(c.x, f.top, c.y) })
+                    .collect();
+                let mut bots = world.query_filtered::<(&mut Transform, &mut Kinematic), (With<BotBrain>, Without<Eliminated>)>();
+                for (i, (mut tf, mut k)) in bots.iter_mut(world).enumerate() {
+                    if k.mode == MoveMode::Ground && !tall.is_empty() {
+                        let r = tall[(i * 977) % tall.len()];
+                        tf.translation = r + Vec3::Y * (shared::sim::HALF_HEIGHT + 0.2);
+                        k.velocity = Vec3::ZERO;
+                        println!("    put on a roof at {:.0},{:.1},{:.0}", r.x, r.y, r.z);
+                    }
+                }
+            }
             if m.elapsed >= next_report {
                 next_report += 30.0;
                 let zone = world.resource::<Zone>().clone();
@@ -80,8 +102,25 @@ fn main() {
                 let total = world.query::<&Chest>().iter(world).count();
                 let modes: Vec<MoveMode> = world.query_filtered::<&Kinematic, Without<Eliminated>>().iter(world).map(|k| k.mode).collect();
                 let ground = modes.iter().filter(|m| **m == MoveMode::Ground).count();
+                // Up off the land and no more than 2 m from where they were 30 s ago: stranded on a roof.
+                let layout = world.resource::<shared::map::MapLayout>().clone();
+                let now: Vec<(Entity, Vec3, bool)> = world
+                    .query_filtered::<(Entity, &Transform, &Kinematic), (With<BotBrain>, Without<Eliminated>)>()
+                    .iter(world)
+                    .map(|(e, tf, k)| (e, tf.translation, k.mode == MoveMode::Ground))
+                    .collect();
+                let mut stranded = 0;
+                let up_now = now.iter().filter(|(_, p, _)| p.y - layout.terrain.height(p.x, p.z) > 6.0).count();
+                for &(e, p, on_foot) in &now {
+                    let up = p.y - layout.terrain.height(p.x, p.z) > 6.0;
+                    if on_foot && up && last_seen.get(&e).is_some_and(|q| q.distance(p) < 2.0) {
+                        stranded += 1;
+                        println!("    stranded at {:.0},{:.1},{:.0} ({:.0} m up)", p.x, p.y, p.z, p.y - layout.terrain.height(p.x, p.z));
+                    }
+                }
+                last_seen = now.iter().map(|&(e, p, _)| (e, p)).collect();
                 println!(
-                    "t={:>5.0}s {:?} alive={} on_ground={} chests {}/{} zone r={:.0} phase={}",
+                    "t={:>5.0}s {:?} alive={} on_ground={} chests {}/{} zone r={:.0} phase={} up={up_now} stranded={stranded}",
                     m.elapsed, m.state, m.alive, ground, opened, total, zone.radius, zone.phase
                 );
             }
