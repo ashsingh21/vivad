@@ -33,7 +33,7 @@ impl Plugin for CharacterArtPlugin {
 /// play those clips as they are. VIVAD_ANIME=<name> puts another build in the first's place.
 pub(crate) fn bodies() -> Vec<(String, &'static str)> {
     let first = std::env::var("VIVAD_ANIME").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "anime".into());
-    let rest = [("male", "male"), ("anime_apron", "anime"), ("female", "female"), ("anime_elf", "anime"), ("anime_tall", "male"), ("anime_frills", "anime"), ("anime_salwar", "anime")];
+    let rest = [("male", "male"), ("anime_apron", "anime"), ("female", "female"), ("anime_elf", "anime"), ("anime_tall", "male"), ("anime_frills", "anime")];
     std::iter::once((first, "anime")).chain(rest.map(|(m, c)| (m.to_string(), c))).collect()
 }
 

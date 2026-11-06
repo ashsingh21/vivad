@@ -171,7 +171,10 @@ pub fn start_match(world: &mut World) {
         let is_bot = i >= humans;
         let owner = if is_bot { peers.bot_owner(i - humans) } else { peers.all[i as usize] };
         let local = owner == peers.local;
-        let name = if is_bot {
+        let name = if is_bot && names.is_empty() {
+            // More bots than names (VIVAD_BOTS): numbered.
+            format!("Bot {}", i + 1)
+        } else if is_bot {
             names.remove(name_rng.random_range(0..names.len())).to_string()
         } else if local {
             "You".into()

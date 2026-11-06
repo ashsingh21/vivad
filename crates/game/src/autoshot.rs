@@ -19,6 +19,8 @@
 //!                        seconds after they fall; then exits.
 //!   VIVAD_RECORD_FROM=s  from this match time instead.
 //!   VIVAD_RECORD_LOG=1   print each frame's camera ([record] frame yaw pitch x y z mode).
+//!   VIVAD_RECORD_CAST=s  follow each body in turn instead (a warrior wearing it, on the ground),
+//!                        s seconds each, the HUD hidden: to show the cast.
 //! VIVAD_ARMOURY=<dir>   stand the player on open ground and screenshot every item in hand, carried
 //!   and in use (aiming, drawing, swinging, drinking), from the front and the side, then exit.
 //!   VIVAD_ARMOURY_ONLY=a,b only the poses whose names contain one of these. The range poses
@@ -407,6 +409,10 @@ impl Plugin for AutoshotPlugin {
                     log: std::env::var("VIVAD_RECORD_LOG").is_ok(),
                 })
                 .add_systems(Last, record);
+            if let Some(every) = std::env::var("VIVAD_RECORD_CAST").ok().and_then(|s| s.parse().ok()) {
+                app.insert_resource(Cast { every, ..default() })
+                    .add_systems(PostUpdate, cast.after(crate::camera::CameraSystems).before(crate::sky::follow_camera).before(TransformSystems::Propagate));
+            }
         }
     }
 }
@@ -1024,4 +1030,66 @@ fn record(
     if rec.frame as f32 >= rec.secs * 30.0 || rec.after_death == Some(0) {
         exit.write(AppExit::Success);
     }
+}
+
+#[derive(Resource, Default)]
+struct Cast {
+    every: f32,
+    /// Who the camera follows, for how long so far, and the body to look for next.
+    who: Option<Entity>,
+    held: f32,
+    next: usize,
+    /// The view's turn, eased (bots turn sharply at corners).
+    rot: Quat,
+}
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn cast(
+    mut st: ResMut<Cast>,
+    warriors: Query<(Entity, &Warrior, &Kinematic, &Health, &PlayerIntent)>,
+    visuals: Query<(&crate::visuals::WarriorVisual, &Transform), Without<MainCamera>>,
+    mut cam: Query<&mut Transform, With<MainCamera>>,
+    mut ui: Query<&mut Visibility, (With<Node>, Without<ChildOf>, Without<crate::quality::ViewImage>)>,
+    spatial: avian3d::prelude::SpatialQuery,
+    time: Res<Time>,
+) {
+    let Ok(mut ct) = cam.single_mut() else { return };
+    for mut v in &mut ui {
+        *v = Visibility::Hidden;
+    }
+    let bodies = crate::characters::bodies().len();
+    let standing = |e: Entity| warriors.get(e).is_ok_and(|(_, _, k, h, _)| k.mode == MoveMode::Ground && h.hp > 0.0);
+    st.held += time.delta_secs();
+    let mut switched = false;
+    if st.who.is_none_or(|e| !standing(e)) || st.held > st.every {
+        // The next body that someone standing wears; on the NCR, whoever is deepest in a district
+        // (out between them is open ground).
+        let inside = |e: Entity| {
+            let p = visuals.iter().find(|(v, _)| v.sim == e).map_or(Vec2::ZERO, |(_, t)| t.translation.xz());
+            shared::map::compose::PLACES.iter().map(|d| d.clip - (p - d.at).abs().max_element()).fold(f32::MIN, f32::max)
+        };
+        for k in 0..bodies {
+            let look = (st.next + k) % bodies;
+            let wearing = warriors.iter().filter(|(e, w, ..)| w.look as usize % bodies == look && standing(*e));
+            if let Some((e, ..)) = wearing.max_by(|a, b| inside(a.0).total_cmp(&inside(b.0))) {
+                (st.who, st.held, st.next, switched) = (Some(e), 0.0, look + 1, true);
+                break;
+            }
+        }
+    }
+    let Some(who) = st.who.filter(|e| standing(*e)) else { return };
+    let Some(body) = visuals.iter().find(|(v, _)| v.sim == who).map(|(_, t)| t.translation) else { return };
+    let (.., intent) = warriors.get(who).unwrap();
+    let want = Quat::from_euler(EulerRot::YXZ, intent.yaw, -0.12, 0.0);
+    st.rot = if switched { want } else { st.rot.slerp(want, 1.0 - (-time.delta_secs() * 4.0).exp()) };
+    let pivot = body + Vec3::Y * shared::sim::EYE_OFFSET;
+    let offset = st.rot * Vec3::new(shared::sim::CAMERA_SHOULDER * 0.5, 0.0, shared::sim::CAMERA_DISTANCE + 0.8);
+    let mut pos = pivot + offset;
+    if let Ok((dir, len)) = Dir3::new_and_length(offset) {
+        let filter = avian3d::prelude::SpatialQueryFilter::from_mask(shared::sim::solid_mask()).with_excluded_entities([who]);
+        if let Some(hit) = spatial.cast_ray(pivot, dir, len, true, &filter) {
+            pos = pivot + dir * (hit.distance - 0.25).max(0.4);
+        }
+    }
+    *ct = Transform::from_translation(pos).with_rotation(st.rot);
 }
