@@ -105,6 +105,18 @@ fn material_for(mat: Mat, sets: &HashMap<&'static str, TexSet>, materials: &mut 
         Mat::Stone => textured("stone", tok("architecture.floor_tile"), 0.6, materials),
         Mat::Rustic => matte(textured("rustic", tok("architecture.stucco"), 0.9, materials), materials),
         Mat::Plinth => textured("plinth", Color::WHITE, 0.85, materials),
+        // The NCR's (crate::map::compose), plain for now: textured when the NCR is drawn properly.
+        Mat::Concrete => materials.add(StandardMaterial { base_color: Color::srgb(0.64, 0.66, 0.64), perceptual_roughness: 0.92, ..default() }),
+        Mat::Asphalt => materials.add(StandardMaterial { base_color: Color::srgb(0.12, 0.15, 0.17), perceptual_roughness: 0.95, ..default() }),
+        Mat::Glass => materials.add(StandardMaterial { base_color: Color::srgb(0.12, 0.32, 0.40), metallic: 0.65, perceptual_roughness: 0.22, ..default() }),
+        Mat::Steel => materials.add(StandardMaterial { base_color: Color::srgb(0.35, 0.41, 0.44), metallic: 0.7, perceptual_roughness: 0.4, ..default() }),
+        Mat::Pavers => textured("stone", Color::srgb(0.72, 0.70, 0.66), 0.85, materials),
+        Mat::ContainerRed => materials.add(StandardMaterial { base_color: Color::srgb(0.44, 0.22, 0.17), metallic: 0.35, perceptual_roughness: 0.65, ..default() }),
+        Mat::Rubber => materials.add(StandardMaterial { base_color: Color::srgb(0.035, 0.04, 0.045), perceptual_roughness: 0.94, ..default() }),
+        Mat::PaintWhite => materials.add(StandardMaterial { base_color: Color::srgb(0.74, 0.76, 0.74), metallic: 0.25, perceptual_roughness: 0.32, ..default() }),
+        Mat::ShopSign | Mat::MetroSign => materials.add(StandardMaterial { base_color: Color::srgb(0.07, 0.2, 0.25), perceptual_roughness: 0.7, ..default() }),
+        Mat::TransitBlue => materials.add(StandardMaterial { base_color: Color::srgb(0.14, 0.38, 0.52), ..default() }),
+        Mat::TransitYellow => materials.add(StandardMaterial { base_color: Color::srgb(0.76, 0.60, 0.20), ..default() }),
         Mat::Paint(k) => {
             // Over the limewash's near-white mottle (tools/textures/city.py).
             let c = shared::map::paint(k);

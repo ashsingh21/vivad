@@ -3,7 +3,7 @@
 use std::f32::consts::{FRAC_PI_2, PI};
 
 use bevy::prelude::*;
-use rand::rngs::SmallRng;
+use crate::SmallRng;
 use rand::{RngExt, SeedableRng};
 
 use super::build::{Builder, Frame, Opening, FLOOR_H, JHAROKHA, WALL_T};

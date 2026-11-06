@@ -7,7 +7,7 @@ use std::f32::consts::FRAC_PI_2;
 
 use bevy::prelude::*;
 use rand::RngExt;
-use rand::rngs::SmallRng;
+use crate::SmallRng;
 
 use super::build::{Builder, Frame, Opening};
 use super::{ChestKind, Mat, SignKind};
@@ -169,6 +169,16 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                     b.push(base + Vec3::Y * (r.g - SLAB) / 2.0, Quat::IDENTITY, super::Shape::Cylinder { radius: 0.4, height: r.g - SLAB }, Mat::Stucco, true, true);
                     b.deco_cyl(w, base + Vec3::Y * (r.g - SLAB - 0.55), 0.46, 0.12, Mat::Stucco);
                     b.push(base + Vec3::Y * (r.g - SLAB - 0.17), Quat::from_rotation_y(-col), super::Shape::Box(Vec3::new(1.0, 0.34, 1.0)), Mat::Stucco, false, true);
+                }
+            }
+            // Every second segment starts a shop, which the NCR may furnish.
+            if i % 2 == 0 && i + 1 < n && !stairs(i) && !stairs(i + 1) {
+                let middle = s1;
+                let wide = 2.0 * mid.max(core0 + 1.0) * (s1 - s0).sin();
+                let back = if split { mid } else { core1 };
+                b.map.ring_shops.push(super::interiors::RingShop { back: r.at(back - 0.15, middle, 0.0), into: -r.at(1.0, middle, 0.0).xz() + r.at(0.0, middle, 0.0).xz(), wide });
+                if split {
+                    b.map.ring_shops.push(super::interiors::RingShop { back: r.at(back + 0.15, middle, 0.0), into: r.at(1.0, middle, 0.0).xz() - r.at(0.0, middle, 0.0).xz(), wide });
                 }
             }
             // Shop fronts on both faces: a doorway, or a shop window over a stall board. Each set in
@@ -381,10 +391,11 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 // The lighter paints only (not terracotta or the old green: rooms read dark in them).
                 let room = [0u8, 1, 2, 3, 4, 6][(blk * 5 + i) % 6];
                 b.wall(w, p, q, r.g + lift, r.u - SLAB, 0.2, Mat::Paint(room), &[Opening::door(p.distance(q) * 0.35), Opening::door(p.distance(q) * 0.65)]);
-                // A storeroom's racks on both faces, between the doorways.
+                // A storeroom's racks on both faces, between the doorways (not over a stair well:
+                // each face stands in the bay on its side).
                 let tangent = Vec2::new(-s0.sin(), s0.cos());
                 let at = p.lerp(q, 0.5);
-                for side in [-1.0f32, 1.0] {
+                for side in [-1.0f32, 1.0].into_iter().filter(|_| !stairs(i) && !stairs(i - 1)) {
                     let f = at + tangent * side * 0.1;
                     super::kit::shelving(b, Vec3::new(f.x, r.g + lift, f.y), tangent * side, p.distance(q) * 0.22, (blk * 97 + i * 13 + 3) as u32 + side as u32);
                 }
@@ -406,7 +417,7 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
             // Each room's clutter (docs/style-guide.md section 6), on and by the partition it
             // starts at: a calendar, a clock and a god's picture on the wall over the racks, a
             // matka, a bucket, slippers and a plant on the floor (clear of the doorways).
-            if i % 2 == 0 && i > 0 && !stairs(i) {
+            if i % 2 == 0 && i > 0 && !stairs(i) && !stairs(i - 1) {
                 let (p, q) = (xz(r.ri + 0.36, s0), xz(r.ro - 0.36, s0));
                 let tangent = Vec2::new(-s0.sin(), s0.cos());
                 let on = |t: f32, side: f32, y: f32, out: f32| {
@@ -446,19 +457,25 @@ pub fn build(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
                 b.stairs(radial, Vec3::new(core0 + 0.5, 0.0, 0.0), well_to - core0 - 0.5, r.g, 1.6, Mat::Stucco);
             }
             // Loot: a chest in every third shop (the back row too, in deep blocks), an urn
-            // upstairs now and then, loose finds on the verandahs.
+            // upstairs now and then, loose finds on the verandahs. A chest spills what it holds
+            // 1 m along its +Z, and in `radial` +X points away from the park, so yaw -FRAC_PI_2
+            // faces the park and FRAC_PI_2 faces outward: each chest faces its own shop front,
+            // and its contents land between it and the arch. The stairs climb through the inner
+            // shop (the only one, in a shallow block): no chest there, under them.
             if i % 3 == 1 {
-                let at = if split { (core0 + mid) / 2.0 } else { (core0 + core1) / 2.0 };
-                b.chest(radial, Vec3::new(at, 0.0, 0.0), FRAC_PI_2, ChestKind::Peti);
+                if !stairs(i) {
+                    let at = if split { (core0 + mid) / 2.0 } else { (core0 + core1) / 2.0 };
+                    b.chest(radial, Vec3::new(at, 0.0, 0.0), if split { -FRAC_PI_2 } else { FRAC_PI_2 }, ChestKind::Peti);
+                }
                 if split {
-                    b.chest(radial, Vec3::new((mid + core1) / 2.0, 0.0, 0.0), -FRAC_PI_2, ChestKind::Peti);
+                    b.chest(radial, Vec3::new((mid + core1) / 2.0, 0.0, 0.0), FRAC_PI_2, ChestKind::Peti);
                 }
             }
             if i % 9 == 2 || i + 3 == n {
                 let rad = if blk % 2 == 0 { r.ro - 2.0 } else { r.ri + 2.0 };
                 b.chest(radial, Vec3::new(rad, r.g, 0.0), -FRAC_PI_2, ChestKind::Tijori);
             }
-            if rng.random_bool(0.3) {
+            if rng.random_bool(0.2) {
                 let rad = if rng.random_bool(0.5) { r.ro - r.ver / 2.0 } else { r.ri + r.ver / 2.0 };
                 b.loot(radial, Vec3::new(rad, 0.3, 0.0));
             }
@@ -786,4 +803,82 @@ fn park(b: &mut Builder, rng: &mut SmallRng, r: &Ring) {
         }
     }
     let _ = w;
+}
+
+#[cfg(test)]
+mod tests {
+    use rand::SeedableRng;
+
+    use super::*;
+    use crate::map::{Block, MapLayout, Shape};
+
+    /// The ring at Connaught Place's real size (crate::map::delhi::ring), round the origin.
+    fn ring() -> Ring {
+        Ring {
+            center: Vec3::ZERO,
+            park: 112.0,
+            ri: 136.0,
+            ro: 168.0,
+            ver: 4.2,
+            g: 5.5,
+            u: 4.6,
+            seg_len: 4.6,
+            street: 13.0,
+            streets: [34.0f32, 93.6, 150.6, 212.2, 274.6, 304.1, 332.2].iter().map(|d| d.to_radians()).collect(),
+            flag: 45.0,
+        }
+    }
+
+    fn built(r: &Ring) -> MapLayout {
+        // Flat ground under it (main's ring reads the ground: its park's hills, its kerbs).
+        let (size, n) = (400.0, 401);
+        let terrain = crate::map::terrain::Terrain { n, size, h: vec![0.0; n * n], road_d: vec![1e3; n * n], ground: vec![0; n * n] };
+        let mut map = MapLayout { terrain, ..Default::default() };
+        build(&mut Builder::new(&mut map), &mut SmallRng::seed_from_u64(7), r);
+        map
+    }
+
+    /// A chest spills what it holds 1 m along its +Z (sim::loot::open_chest). Every ground chest
+    /// in the ring must spill toward the arch of its own shop: the inner row toward the park, the
+    /// outer row away from it, never into the party wall between them.
+    #[test]
+    fn ring_chests_face_their_shop_front() {
+        let r = ring();
+        let map = built(&r);
+        let mid = (r.ri + r.ro) / 2.0;
+        let ground: Vec<_> = map.chests.iter().filter(|c| c.kind == ChestKind::Peti && c.pos.y < 0.5).collect();
+        assert!(ground.len() > 100, "{} ground chests", ground.len());
+        let mut shown = [false; 2];
+        for c in ground {
+            let spill = c.pos + Quat::from_rotation_y(c.yaw) * Vec3::Z;
+            let inner = c.pos.xz().length() < mid;
+            // The arch is on the chest's bearing, in the shop front its row opens through.
+            let arch = c.pos.xz().normalize() * if inner { r.ri + r.ver } else { r.ro - r.ver };
+            let (dc, ds) = (c.pos.xz().distance(arch), spill.xz().distance(arch));
+            if !std::mem::replace(&mut shown[inner as usize], true) {
+                let row = if inner { "inner" } else { "outer" };
+                println!("{row} row: chest {:.2?} yaw {:.3} spills at {:.2?}; arch {arch:.2?}: {dc:.2} m from the chest, {ds:.2} m from the spill", c.pos, c.yaw, spill);
+            }
+            assert!(ds < dc - 0.99, "chest at {:.1?} yaw {:.2} spills at {:.1?}, {ds:.2} m from its arch at {arch:.1?} ({dc:.2} m)", c.pos, c.yaw, spill);
+        }
+    }
+
+    /// No chest stands inside the ring's masonry: the stairs climb through the inner shops.
+    #[test]
+    fn ring_chests_stand_clear_of_the_masonry() {
+        let map = built(&ring());
+        let inside = |b: &Block, p: Vec3| {
+            let l = b.rot.inverse() * (p - b.pos);
+            match b.shape {
+                Shape::Box(s) => l.abs().cmplt(s / 2.0).all(),
+                Shape::Cylinder { radius, height } => l.xz().length() < radius && l.y.abs() < height / 2.0,
+                Shape::Sphere(r) => l.length() < r,
+            }
+        };
+        for c in &map.chests {
+            let p = c.pos + Vec3::Y * 0.4;
+            let hit = map.blocks.iter().find(|b| (b.visible || b.collide) && inside(b, p));
+            assert!(hit.is_none(), "chest at {:.1?} stands in {:?}", c.pos, hit.map(|b| (b.shape, b.pos)));
+        }
+    }
 }

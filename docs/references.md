@@ -201,6 +201,10 @@ Database License (ODbL 1.0): https://www.openstreetmap.org/copyright. The game m
 wherever the map is shown (credits screen). The inner circle's blocks are generated at the radii
 and radial-road bearings measured from that data (`crates/shared/src/map/delhi.rs`).
 
+The NCR map's districts (assets/data/maps/ncr_*.json: Karol Bagh, Cyber City, Noida, Ghaziabad and
+the rest) come from OpenStreetMap too, under the same licence, by way of the game-playable branch
+(Ayush Chhoker's), which converted them and composed the 4 km NCR (crate::map::compose).
+
 ## Shop sign lettering
 
 `assets/textures/panga/signs.png` (made by `tools/textures/signs.py`) is lettered in Noto Sans

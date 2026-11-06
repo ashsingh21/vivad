@@ -6,6 +6,7 @@
 //! solid and it isn't inside a building's outline), a few rows a tick so no single tick stalls,
 //! and A* on it gives each bot a path, trimmed to its corners.
 
+pub use super::street_floor::StreetFloor;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 

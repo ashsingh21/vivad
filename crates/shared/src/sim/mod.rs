@@ -7,13 +7,14 @@ pub mod flow;
 pub mod loot;
 pub mod movement;
 pub mod nav;
+pub mod street_floor;
 pub mod net;
 pub mod zone;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use rand::SeedableRng;
-use rand::rngs::SmallRng;
+use crate::SmallRng;
 
 use crate::items::{ItemDb, ItemStack};
 use crate::map::{Block, MapLayout};

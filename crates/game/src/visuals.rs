@@ -126,6 +126,18 @@ fn mat_color(m: Mat) -> (Color, f32, f32) {
         Mat::Stone => (Color::srgb(0.80, 0.76, 0.68), 0.7, 0.0),
         Mat::Rustic => (Color::srgb(0.95, 0.94, 0.90), 0.9, 0.0),
         Mat::Plinth => (Color::srgb(0.66, 0.62, 0.55), 0.85, 0.0),
+        // The NCR's (crate::map::compose, from the game-playable branch).
+        Mat::Pavers => (Color::srgb(0.59, 0.58, 0.55), 0.85, 0.0),
+        Mat::Rubber => (Color::srgb(0.035, 0.04, 0.045), 0.94, 0.0),
+        Mat::PaintWhite => (Color::srgb(0.78, 0.81, 0.79), 0.32, 0.25),
+        Mat::ShopSign | Mat::MetroSign => (Color::srgb(0.07, 0.2, 0.25), 0.7, 0.0),
+        Mat::ContainerRed => (Color::srgb(0.55, 0.16, 0.10), 0.65, 0.35),
+        Mat::Concrete => (Color::srgb(0.64, 0.66, 0.64), 0.92, 0.0),
+        Mat::Asphalt => (Color::srgb(0.12, 0.15, 0.17), 0.95, 0.0),
+        Mat::Glass => (Color::srgb(0.12, 0.32, 0.40), 0.22, 0.65),
+        Mat::Steel => (Color::srgb(0.35, 0.41, 0.44), 0.4, 0.7),
+        Mat::TransitBlue => (Color::srgb(0.08, 0.55, 0.8), 0.5, 0.0),
+        Mat::TransitYellow => (Color::srgb(0.95, 0.7, 0.15), 0.5, 0.0),
         Mat::Paint(k) => {
             let c = shared::map::paint(k);
             (Color::srgb(c[0], c[1], c[2]), 0.85, 0.0)
@@ -147,6 +159,7 @@ fn setup_assets(
         Mat::Grass, Mat::Dirt, Mat::Sandstone, Mat::RedSandstone, Mat::Granite, Mat::Plaster, Mat::PlasterOchre,
         Mat::PlasterBlue, Mat::Brick, Mat::Wood, Mat::Cloth, Mat::Foliage, Mat::Bark, Mat::Water, Mat::Gold,
         Mat::Marble, Mat::Thatch, Mat::Stucco, Mat::Stone, Mat::Rustic, Mat::Buff, Mat::Plinth,
+        Mat::Concrete, Mat::Asphalt, Mat::Glass, Mat::Steel, Mat::TransitBlue, Mat::TransitYellow, Mat::ContainerRed, Mat::Pavers, Mat::Rubber, Mat::PaintWhite, Mat::ShopSign, Mat::MetroSign,
         Mat::Paint(0), Mat::Paint(1), Mat::Paint(2), Mat::Paint(3), Mat::Paint(4), Mat::Paint(5), Mat::Paint(6), Mat::Paint(7),
     ];
     for m in all {
