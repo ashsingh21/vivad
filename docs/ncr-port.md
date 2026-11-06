@@ -79,6 +79,21 @@ Then (6 Nov):
 | Connaught Place, before | 4.2-4.8 GB | 8.8 GB |
 | Connaught Place, now | 1.9 GB | 3.1 GB |
 
+Then textures capped where models are made (tools/glb_textures.py: characters and props 1024 px,
+weapons 512; a texture changed after it loads leaves its first upload alive on the GPU, so it has
+to be done to the files). wgpu's own allocator report (VIVAD_MEMORY=1) now names what it holds.
+
+| 6 Nov, later | GPU allocated | resident |
+|---|---|---|
+| Connaught Place | 1.02 GB (textures 343 MB, mesh 423 MB) | 2.4 GB |
+| NCR | 3.3 GB (mesh 2.65 GB, textures 437 MB) | 5.3 GB |
+
+The NCR's mesh memory: the city's buildings about 1.07 GB, the blocks (CP's ring, bridges, halls)
+about 0.88 GB, the rest (ground tiles, grass, characters, model templates) about 0.7 GB. All of it
+resident however far away: streaming the city and blocks in by distance (a cheap silhouette
+beyond) is what's left that's big. For iOS (CPU and GPU share one pool; aim under ~1.5 GB a map)
+the small maps are close (1.0 GB GPU on Connaught Place); the NCR needs the streaming.
+
 Resident tracks GPU memory (about 1.5 GB of it per GB of GPU memory: the driver's and wgpu's own
 host-side state), so cutting GPU memory cuts both. Left on the NCR: the city's blocks and buildings
 (about 2 GB of GPU memory, all of it resident whether near or not): streaming them in by distance
