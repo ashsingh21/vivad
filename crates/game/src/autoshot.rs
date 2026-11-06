@@ -13,6 +13,9 @@
 //!   VIVAD_SHOTS_AT=a,b   at these match times (seconds) instead.
 //!   VIVAD_SHOTS_MATCHES=n then start the next match (the next map in turn) and shoot it too, n
 //!                        matches in all.
+//! VIVAD_RECORD=<dir>   with VIVAD_AUTOPILOT=1: the match as played, time stepped a 30th of a second a
+//!                        frame and each frame saved (<dir>/f00000.png...) for a video, from match time
+//!   VIVAD_RECORD_FROM=s  (default 10) for VIVAD_RECORD_SECS=n seconds (default 40); then exits.
 //! VIVAD_ARMOURY=<dir>   stand the player on open ground and screenshot every item in hand, carried
 //!   and in use (aiming, drawing, swinging, drinking), from the front and the side, then exit.
 //!   VIVAD_ARMOURY_ONLY=a,b only the poses whose names contain one of these. The range poses
@@ -388,6 +391,12 @@ impl Plugin for AutoshotPlugin {
             let matches = std::env::var("VIVAD_SHOTS_MATCHES").ok().and_then(|n| n.parse().ok()).unwrap_or(1);
             app.insert_resource(MatchShots { dir, times, next: 0, taken_at: -1.0, matches, generation: 1 })
                 .add_systems(Update, match_shots);
+        }
+        if let Ok(dir) = std::env::var("VIVAD_RECORD") {
+            let num = |k: &str, d: f32| std::env::var(k).ok().and_then(|s| s.parse().ok()).unwrap_or(d);
+            app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_secs_f64(1.0 / 30.0)))
+                .insert_resource(Recording { dir, from: num("VIVAD_RECORD_FROM", 10.0), secs: num("VIVAD_RECORD_SECS", 40.0), frame: 0 })
+                .add_systems(Last, record);
         }
     }
 }
@@ -956,6 +965,25 @@ fn fly(
         fly.frame += 1;
     }
     if t > FLYOVER[FLYOVER.len() - 1].0 + 1.0 {
+        exit.write(AppExit::Success);
+    }
+}
+
+#[derive(Resource)]
+struct Recording {
+    dir: String,
+    from: f32,
+    secs: f32,
+    frame: u32,
+}
+
+fn record(mut commands: Commands, mut rec: ResMut<Recording>, m: Res<Match>, mut exit: MessageWriter<AppExit>) {
+    if m.elapsed < rec.from {
+        return;
+    }
+    commands.spawn(Screenshot::primary_window()).observe(save_to_disk(format!("{}/f{:05}.png", rec.dir, rec.frame)));
+    rec.frame += 1;
+    if rec.frame as f32 >= rec.secs * 30.0 {
         exit.write(AppExit::Success);
     }
 }
