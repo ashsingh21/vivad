@@ -95,9 +95,23 @@ beyond) is what's left that's big. For iOS (CPU and GPU share one pool; aim unde
 the small maps are close (1.0 GB GPU on Connaught Place); the NCR needs the streaming.
 
 Resident tracks GPU memory (about 1.5 GB of it per GB of GPU memory: the driver's and wgpu's own
-host-side state), so cutting GPU memory cuts both. Left on the NCR: the city's blocks and buildings
-(about 2 GB of GPU memory, all of it resident whether near or not): streaming them in by distance
-is the next big step.
+host-side state), so cutting GPU memory cuts both.
+
+Then the blocks' and buildings' near-only meshes streamed (crate::buildings::stream): of the 27 M
+vertices, 24 M are drawn near only (wall clutter 12.3 M, full blocks 9.2 M, trim 1.8 M, the windows'
+faces 0.9 M, plinths 0.4 M). Only the coarse blocks (2.8 M) and the plain walls, roofs and water
+stay loaded; the rest is built per 64 m chunk as the camera comes within reach (TRIM_FAR, scaled by
+quality, plus 40 m) and freed 60 m past that. The tour's shots are unchanged on both maps. On the
+desktop a frame that builds chunks spends a median 1.9 ms on it (p90 4.8 ms; 17 ms when the camera
+lands somewhere new): building them off the main thread is the step after, for phones.
+
+| 6 Nov, streamed | GPU allocated | resident |
+|---|---|---|
+| Connaught Place | 1.03 GB (all of it in reach) | 2.4 GB |
+| NCR | 1.81 GB (mesh 1.11 GB, textures 437 MB) | 3.6 GB |
+
+Left on the NCR's meshes: the coarse blocks (about 180 MB), ground tiles, grass, the street kit,
+trees and characters (about 0.9 GB together).
 
 ## 4. On the start screen
 

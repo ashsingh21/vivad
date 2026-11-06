@@ -140,6 +140,14 @@ impl Plugin for AutoshotPlugin {
                 dir,
                 shots: vec![
                     ("01_overview", v(-60.0, 260.0, 300.0), v(0.0, 0.0, 0.0)),
+                    // The NCR (VIVAD_MAP=ncr, crate::map::compose::PLACES): down Chandni Chowk's lane
+                    // and Connaught Place's outer circle as on their own maps, over Karol Bagh and
+                    // Cyber City, and the city far off from high up (streamed buildings: crate::buildings).
+                    ("ncr_chandni_lane", v(-342.9, 1.8, -1435.5), v(-345.3, 4.0, -1405.5)),
+                    ("ncr_cp_outer", v(-646.7, 1.8, -590.7), v(-681.9, 4.0, -580.3)),
+                    ("ncr_karolbagh_air", v(-1290.0, 40.0, -1000.0), v(-1340.0, 0.0, -1075.0)),
+                    ("ncr_cyber_air", v(-1670.0, 35.0, 1090.0), v(-1670.0, 8.0, 960.0)),
+                    ("ncr_city_far", v(-150.0, 140.0, -1150.0), v(-395.0, 0.0, -1440.0)),
                     ("02_bazaar_street", v(-45.0, 4.5, 2.0), v(20.0, 3.0, 0.0)),
                     // Hauz Khas (VIVAD_MAP=hauzkhas): the madrasa's wings along the tank, from above and the lawn.
                     ("hk_madrasa_air", v(-20.0, 45.0, 150.0), v(-35.0, 0.0, 75.0)),
