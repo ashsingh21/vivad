@@ -426,6 +426,7 @@ pub mod stream {
     pub const NAMES: u64 = 2;
     pub const FLOOR_LOOT: u64 = 3;
     pub const CHEST_SETS: u64 = 5;
+    pub const DISC: u64 = 4;
     /// + the zone phase.
     pub const ZONE: u64 = 0x100;
     /// + the chest's index in `MapLayout::chests`.

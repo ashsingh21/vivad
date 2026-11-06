@@ -130,7 +130,22 @@ above, `cargo run --release -p shared --bin map_picture -- ncr out.ppm`) showed 
 - Chests drawn by set again (sim::loot::chest_sets, missed in step 2): a match had all three sets
   out, about 370 chests; now about 170.
 
-Left: districts' insides are still thin (wide asphalt where buildings were thinned out).
+Then the districts and the match:
+
+- OpenStreetMap has few of an Indian city's buildings (Sector 18 has 77, Cyber City 32), so the
+  districts from it were bare paving between their streets: their empty plots are filled
+  (compose::infill: three to seven storey blocks squared to the nearest street, big ones first,
+  nearest the street first; up to 320 a district) and the four with more in the data keep more of
+  them (caps raised). 6,800 buildings in all (2,191 before); GPU memory on the tour 2.0-2.2 GB.
+- The ring for 4 km (sim::zone::for_ncr, from the branch): a match of 16 opens on a 2 km disc
+  of the map and every ring is planned on land at the start; 32 on 3 km, 64 the whole map. The
+  branch's disc at the middle (the Yamuna) is left out. The flight is a chord of that disc
+  passing two big districts (flow::ncr_flight).
+- Bots only leapt within 230 m of the middle (a small map's rule): on the NCR every bot landed in
+  the river. Now each picks a chest a dive from the flight's line, inside the ring, and leaps as
+  the flight passes it.
+
+Left: bots on a roof with no way down (seen once); the camera close behind a warrior by walls.
 
 ## 4. On the start screen
 

@@ -177,15 +177,28 @@ pub(crate) fn drive_bots(
 
         match kin.mode {
             MoveMode::Vimana => {
-                if m.vimana_t >= brain.drop_at && pos.x.abs() < 230.0 && pos.z.abs() < 230.0 {
+                // Land near a chest under open sky: one under a roof (a temple's sanctum) would set
+                // us down on the spire, stranded.
+                let open = || chests.iter().map(|(t, _)| t.translation).filter(|p| spatial.cast_ray(*p + Vec3::Y * 0.6, Dir3::Y, 40.0, true, &los_filter).is_none());
+                if layout.style == crate::map::MapStyle::Ncr {
+                    // The NCR is 4 km across and its chests hundreds of metres apart: choose one a
+                    // dive from the flight's line, inside the ring, as the flight sets off, and leap
+                    // as it passes.
+                    let (a, b) = (m.vimana_from.xz(), m.vimana_to.xz());
+                    let along = |p: Vec2| ((p - a).dot(b - a) / (b - a).length_squared().max(1.0)).clamp(0.0, 1.0);
+                    if brain.goal.is_none() {
+                        let reach = 0.8 * super::movement::dive_reach(m.vimana_from.y - 1.0);
+                        let near: Vec<Vec3> = open().filter(|c| c.xz().distance(a.lerp(b, along(c.xz()))) < reach && !zone.outside(*c)).collect();
+                        brain.goal = (!near.is_empty()).then(|| near[rng.random_range(0..near.len())]);
+                    }
+                    // Nothing in reach: over the ring's middle, as on a small map.
+                    let leap_at = brain.goal.map_or(along(zone.center), |g| along(g.xz()));
+                    if m.vimana_t >= leap_at {
+                        intent.pressed |= btn::JUMP;
+                    }
+                } else if m.vimana_t >= brain.drop_at && pos.x.abs() < 230.0 && pos.z.abs() < 230.0 {
                     intent.pressed |= btn::JUMP;
-                    // Land near a random chest under open sky: one under a roof (a temple's
-                    // sanctum) would set us down on the spire, stranded.
-                    let open: Vec<Vec3> = chests
-                        .iter()
-                        .map(|(t, _)| t.translation)
-                        .filter(|p| spatial.cast_ray(*p + Vec3::Y * 0.6, Dir3::Y, 40.0, true, &los_filter).is_none())
-                        .collect();
+                    let open: Vec<Vec3> = open().collect();
                     brain.goal = (!open.is_empty()).then(|| open[rng.random_range(0..open.len())]);
                 }
                 continue;

@@ -122,15 +122,15 @@ pub const PLACES: [Place; 19] = [
     place("Chandni Chowk", Source::Map(MapId::Chandni), -395.0, -1440.0, 250.0, Tier::Hot, 380),
     place("Kartavya Path", Source::Map(MapId::IndiaGate), -443.0, 0.0, 250.0, Tier::Warm, 6),
     place("Hauz Khas", Source::Map(MapId::HauzKhas), -980.0, 620.0, 250.0, Tier::Warm, 120),
-    place("Karol Bagh", ncr_data!("karolbagh"), -1340.0, -1075.0, 250.0, Tier::Warm, 220),
+    place("Karol Bagh", ncr_data!("karolbagh"), -1340.0, -1075.0, 250.0, Tier::Warm, 360),
     place("Nehru Place", ncr_data!("nehruplace"), -280.0, 600.0, 250.0, Tier::Warm, 70),
     place("Cyber City", ncr_data!("cybercity"), -1670.0, 960.0, 250.0, Tier::Hot, 49),
-    place("MG Road", ncr_data!("mgroad"), -1720.0, 1570.0, 250.0, Tier::Warm, 110),
-    place("Golf Course Road", ncr_data!("golfcourse"), -1160.0, 1640.0, 250.0, Tier::Quiet, 60),
-    place("Laxmi Nagar", ncr_data!("laxminagar"), 680.0, -600.0, 250.0, Tier::Quiet, 140),
+    place("MG Road", ncr_data!("mgroad"), -1720.0, 1570.0, 250.0, Tier::Warm, 220),
+    place("Golf Course Road", ncr_data!("golfcourse"), -1160.0, 1640.0, 250.0, Tier::Quiet, 120),
+    place("Laxmi Nagar", ncr_data!("laxminagar"), 680.0, -600.0, 250.0, Tier::Quiet, 240),
     place("Anand Vihar", ncr_data!("anandvihar"), 920.0, -1220.0, 250.0, Tier::Hot, 80),
     place("Indirapuram", ncr_data!("indirapuram"), 1220.0, -600.0, 250.0, Tier::Quiet, 50),
-    place("Ghaziabad", ncr_data!("ghaziabad"), 1670.0, -1340.0, 250.0, Tier::Warm, 80),
+    place("Ghaziabad", ncr_data!("ghaziabad"), 1670.0, -1340.0, 250.0, Tier::Warm, 160),
     place("Sector 18", ncr_data!("noida18"), 1430.0, 360.0, 250.0, Tier::Hot, 70),
     place("Film City", ncr_data!("filmcity"), 880.0, 400.0, 200.0, Tier::Warm, 27),
     place("Expressway", ncr_data!("expressway"), 1360.0, 1240.0, 200.0, Tier::Small, 14),
@@ -739,6 +739,173 @@ fn add(map: &mut MapLayout, place: &Place, index: usize, seed: u64) {
     }
     stamp(&mut map.terrain, &t.terrain, place);
     map.pois.push(Poi { name: place.name.into(), center: at, radius: place.clip });
+}
+
+/// How many buildings a district's empty plots are filled with, at most: OpenStreetMap has few of
+/// an Indian city's buildings (Noida's Sector 18 has 77, Cyber City 32), so most of a district was
+/// bare paving between its streets.
+fn infill_count(tier: Tier) -> usize {
+    match tier {
+        Tier::Hot => 320,
+        Tier::Warm => 260,
+        Tier::Quiet => 200,
+        Tier::Small => 80,
+    }
+}
+
+/// The empty plots of a district from OpenStreetMap built up: blocks of three to seven storeys set
+/// back from the street and squared to it (along the distance-to-road field's contours), a lane
+/// between neighbours, off the parks, plazas and car parks and clear of everything already there
+/// (buildings, street kit, trees, holy sites). Not of the loot, which the match's seed moves (the
+/// layout doesn't): a find that ends up inside one is moved out past its nearest wall.
+fn infill(map: &mut MapLayout, place: &Place) {
+    /// Metres a cell of the plot grid; setback from a road's middle line field; lane between.
+    const CELL: f32 = 2.0;
+    const SETBACK: f32 = 5.0;
+    const LANE: f32 = 2.0;
+    let mut rng = SmallRng::seed_from_u64(LAYOUT_SEED ^ 0x1F11 ^ (place.at.x as i64 as u64).wrapping_mul(31) ^ (place.at.y as i64 as u64));
+    let half = place.clip;
+    let n = (2.0 * half / CELL) as i32;
+    let cell = |p: Vec2| {
+        let q = ((p - place.at + Vec2::splat(half)) / CELL).floor();
+        (q.x as i32, q.y as i32)
+    };
+    let centre = |i: i32, j: i32| place.at - Vec2::splat(half) + (Vec2::new(i as f32, j as f32) + 0.5) * CELL;
+    let mut blocked = vec![false; (n * n) as usize];
+    let mark = |blocked: &mut Vec<bool>, p: Vec2, r: f32| {
+        let (ci, cj) = cell(p);
+        let k = (r / CELL).ceil() as i32;
+        for i in (ci - k).max(0)..=(ci + k).min(n - 1) {
+            for j in (cj - k).max(0)..=(cj + k).min(n - 1) {
+                if centre(i, j).distance(p) <= r + CELL * 0.71 {
+                    blocked[(i * n + j) as usize] = true;
+                }
+            }
+        }
+    };
+    let sites = holy();
+    for i in 0..n {
+        for j in 0..n {
+            let p = centre(i, j);
+            let t = &map.terrain;
+            let k = (row(t, p.x) * t.n + row(t, p.y)) as usize;
+            let free = matches!(t.ground[k], ground::PAVEMENT | ground::OPEN) && t.road_d[k] > SETBACK && inside_by(place, p) > 14.0 && sites.iter().all(|(c, r)| p.distance(*c) > r + 6.0);
+            if !free {
+                blocked[(i * n + j) as usize] = true;
+            }
+        }
+    }
+    let near = |p: Vec2| (p - place.at).abs().max_element() < half + 10.0;
+    for f in map.footprints.iter().filter(|f| f.mat != Mat::Water && near(f.pts[0])) {
+        let (lo, hi) = f.pts.iter().fold((Vec2::MAX, Vec2::MIN), |(a, b), p| (a.min(*p), b.max(*p)));
+        let mut y = lo.y - 4.0;
+        while y <= hi.y + 4.0 {
+            let mut x = lo.x - 4.0;
+            while x <= hi.x + 4.0 {
+                mark(&mut blocked, Vec2::new(x, y), 0.0);
+                x += CELL;
+            }
+            y += CELL;
+        }
+    }
+    let things: Vec<(Vec2, f32)> = map.kit.iter().map(|k| (k.pos.xz(), 2.0))
+        .chain(map.props.iter().map(|p| (p.pos.xz(), if p.trunk.is_some() { 4.0 } else { 1.5 })))
+        .chain(map.lamps.iter().map(|l| (l.pos.xz(), 1.5)))
+        .chain(map.blocks.iter().filter(|b| b.collide).map(|b| (b.pos.xz(), 2.0)))
+        .filter(|(p, _)| near(*p))
+        .collect();
+    for (p, r) in things {
+        mark(&mut blocked, p, r);
+    }
+    // Nearest the street first, so they line it; then further in.
+    let mut order: Vec<(f32, (i32, i32))> = (0..n)
+        .flat_map(|i| (0..n).map(move |j| (i, j)))
+        .filter(|(i, j)| !blocked[(i * n + j) as usize])
+        .map(|(i, j)| {
+            let p = centre(i, j);
+            (map.terrain.road_d[row(&map.terrain, p.x) * map.terrain.n + row(&map.terrain, p.y)] + rng.random_range(0.0..8.0), (i, j))
+        })
+        .collect();
+    order.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let order: Vec<(i32, i32)> = order.into_iter().map(|o| o.1).collect();
+    let wash = [Mat::Concrete, Mat::Plaster, Mat::PlasterOchre, Mat::PlasterBlue, Mat::Brick, Mat::Paint(0), Mat::Paint(1), Mat::Paint(3), Mat::Paint(4), Mat::Paint(5)];
+    let first = map.footprints.len();
+    let mut built = 0;
+    // Big blocks first everywhere, then middling ones, then small ones in what is left.
+    let sizes: [(std::ops::Range<f32>, std::ops::Range<f32>); 3] = [(22.0..32.0, 14.0..20.0), (14.0..22.0, 11.0..15.0), (9.0..13.0, 8.0..11.0)];
+    for (i, j) in sizes.iter().flat_map(|s| order.iter().map(move |o| (s, *o))).map(|(s, (i, j))| ((s, i), j)) {
+        let ((size, i), j) = (i, j);
+        if built >= infill_count(place.tier) {
+            break;
+        }
+        if blocked[(i * n + j) as usize] {
+            continue;
+        }
+        let c = centre(i, j);
+        // Squared to the nearest road: along the contours of the distance to it.
+        let t = &map.terrain;
+        let rd = |q: Vec2| t.road_d[row(t, q.x) * t.n + row(t, q.y)];
+        let grad = Vec2::new(rd(c + Vec2::X * 3.0) - rd(c - Vec2::X * 3.0), rd(c + Vec2::Y * 3.0) - rd(c - Vec2::Y * 3.0));
+        let u = grad.perp().try_normalize().unwrap_or(Vec2::X);
+        let v = u.perp();
+        let fits = |w: f32, d: f32, blocked: &Vec<bool>| {
+            let (nu, nv) = ((w / CELL).ceil() as i32, (d / CELL).ceil() as i32);
+            (0..=nu).all(|a| (0..=nv).all(|b| {
+                let q = c + u * (a as f32 / nu as f32 - 0.5) * w + v * (b as f32 / nv as f32 - 0.5) * d;
+                let (qi, qj) = cell(q);
+                (0..n).contains(&qi) && (0..n).contains(&qj) && !blocked[(qi * n + qj) as usize]
+            }))
+        };
+        let (w, d) = (rng.random_range(size.0.clone()), rng.random_range(size.1.clone()));
+        if !fits(w, d, &blocked) {
+            continue;
+        }
+        let (hu, hv) = (u * w * 0.5, v * d * 0.5);
+        let mut pts = vec![c - hu - hv, c + hu - hv, c + hu + hv, c - hu + hv];
+        if area(&pts) > 0.0 {
+            pts.reverse();
+        }
+        let low = pts.iter().map(|q| map.terrain.height(q.x, q.y)).fold(f32::MAX, f32::min) - 0.3;
+        let floors = [3, 3, 4, 4, 4, 5, 5, 6, 7][rng.random_range(0..9)] as f32;
+        map.footprints.push(Footprint { pts, base: low, top: low + 0.3 + floors * 3.2 + 0.9, mat: wash[rng.random_range(0..wash.len())] });
+        built += 1;
+        // Its plot and a lane round it are taken.
+        let r = (w.max(d) * 0.5 + LANE) * 1.0;
+        let (ci, cj) = cell(c);
+        let k = (r / CELL).ceil() as i32 + 1;
+        for a in (ci - k).max(0)..=(ci + k).min(n - 1) {
+            for b in (cj - k).max(0)..=(cj + k).min(n - 1) {
+                let q = centre(a, b) - c;
+                if q.dot(u).abs() <= w * 0.5 + LANE + CELL * 0.5 && q.dot(v).abs() <= d * 0.5 + LANE + CELL * 0.5 {
+                    blocked[(a * n + b) as usize] = true;
+                }
+            }
+        }
+    }
+    // Loot that a new block stands on steps out past its nearest wall.
+    let new = &map.footprints[first..];
+    let step_out = |p: Vec3| -> Vec3 {
+        let Some(f) = new.iter().find(|f| footprint::contains(&f.pts, p.xz())) else { return p };
+        let n = f.pts.len();
+        let (q, out) = (0..n)
+            .map(|k| {
+                let (a, b) = (f.pts[k], f.pts[(k + 1) % n]);
+                let t = ((p.xz() - a).dot(b - a) / (b - a).length_squared()).clamp(0.0, 1.0);
+                let q = a + (b - a) * t;
+                let mid = f.pts.iter().sum::<Vec2>() / n as f32;
+                (q, (q - mid).normalize_or_zero())
+            })
+            .min_by(|x, y| x.0.distance(p.xz()).total_cmp(&y.0.distance(p.xz())))
+            .unwrap();
+        let q = q + out * 1.2;
+        Vec3::new(q.x, p.y, q.y)
+    };
+    let moved: Vec<Vec3> = map.chests.iter().map(|c| step_out(c.pos)).collect();
+    for (c, p) in map.chests.iter_mut().zip(moved) {
+        c.pos = p;
+    }
+    let moved: Vec<Vec3> = map.floor_loot.iter().map(|p| step_out(*p)).collect();
+    map.floor_loot = moved;
 }
 
 /// What is left of an outline inside the square of half-size `half` round the origin.
@@ -1585,6 +1752,11 @@ pub fn generate(seed: u64) -> MapLayout {
     }
     let buses = PLACES.iter().find(|d| d.name == "Anand Vihar").map_or(map.blocks.len(), |d| bus_terminal(&mut map, d));
     let bus_blocks: Vec<super::Block> = map.blocks[buses..].to_vec();
+    for place in &PLACES {
+        if matches!(place.source, Source::Data(_)) {
+            infill(&mut map, place);
+        }
+    }
     bridges(&mut Builder::new(&mut map), &mut rng);
     let open_buildings = map.footprints.len();
     spots(&mut map, &mut rng, &mut loot, open_buildings);
@@ -1791,12 +1963,13 @@ mod tests {
         assert!(a.floor_loot.iter().zip(&c.floor_loot).all(|(p, q)| p == q));
     }
 
-    /// The open land stays open: buildings cover under 6 % of the map.
+    /// The open land stays open: buildings cover under 8 % of the map (the districts' infill and
+    /// the villages are most of it).
     #[test]
     fn map_stays_open() {
         let m = map();
         let roof: f32 = m.footprints.iter().filter(|f| f.mat != Mat::Water).map(|f| area(&f.pts).abs()).sum();
-        assert!(roof / (4.0 * HALF * HALF) < 0.06, "{roof}");
+        assert!(roof / (4.0 * HALF * HALF) < 0.08, "{roof}");
     }
 
     /// The land between the districts is rough land and river sand, not parkland.

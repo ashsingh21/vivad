@@ -1089,6 +1089,9 @@ fn cast(
             let wearing = warriors.iter().filter(|(e, w, ..)| w.look as usize % bodies == look && standing(*e));
             if let Some((e, ..)) = wearing.max_by(|a, b| inside(a.0).total_cmp(&inside(b.0))) {
                 (st.who, st.held, st.next, switched) = (Some(e), 0.0, look + 1, true);
+                if std::env::var("VIVAD_RECORD_LOG").is_ok() && let Some((_, t)) = visuals.iter().find(|(v, _)| v.sim == e) {
+                    println!("[cast] look {look} at {:.1} {:.1} {:.1}", t.translation.x, t.translation.y, t.translation.z);
+                }
                 break;
             }
         }

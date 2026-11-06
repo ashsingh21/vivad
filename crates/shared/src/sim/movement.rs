@@ -329,3 +329,13 @@ fn remote_crouch(mut q: Query<(&PlayerIntent, &mut Kinematic, &mut Collider), Wi
         }
     }
 }
+
+/// How far a warrior carries in a dive from `height`, the glider opening by itself at the last.
+pub fn dive_reach(height: f32) -> f32 {
+    let fall = (height - AUTO_GLIDE_HEIGHT).max(0.0);
+    let to_top_speed = FREEFALL_MAX / GRAVITY;
+    let run_up = 0.5 * GRAVITY * to_top_speed * to_top_speed;
+    let seconds = if fall > run_up { to_top_speed + (fall - run_up) / FREEFALL_MAX } else { (2.0 * fall / GRAVITY).sqrt() };
+    seconds * FREEFALL_HORIZ + height.min(AUTO_GLIDE_HEIGHT) / GLIDE_FALL * GLIDE_HORIZ
+}
+

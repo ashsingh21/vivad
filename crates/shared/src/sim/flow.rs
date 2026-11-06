@@ -128,6 +128,62 @@ fn start_match_on_startup(world: &mut World) {
     }
 }
 
+/// How far either side of the start disc's middle an NCR flight may pass, by the size of the
+/// match; how far before the disc it starts; rerolls of a line that passes too few big districts.
+const FLIGHT_OFFSET: [(u32, f32); 3] = [(16, 250.0), (32, 375.0), (u32::MAX, 800.0)];
+const FLIGHT_LEAD_IN: f32 = 250.0;
+const FLIGHT_TRIES: usize = 12;
+
+/// The share of the line from `a` to `b` that lies inside the square of half-size `half`, if any.
+fn clip_to_square(a: Vec2, b: Vec2, half: f32) -> Option<(Vec2, Vec2)> {
+    let (mut t0, mut t1) = (0.0f32, 1.0f32);
+    let d = b - a;
+    for (p, v) in [(a.x, d.x), (a.y, d.y)] {
+        if v.abs() < 1e-6 {
+            if p.abs() > half {
+                return None;
+            }
+            continue;
+        }
+        let (u, w) = ((-half - p) / v, (half - p) / v);
+        t0 = t0.max(u.min(w));
+        t1 = t1.min(u.max(w));
+    }
+    (t0 < t1).then(|| (a + d * t0, a + d * t1))
+}
+
+/// Distance from a point to a straight line between two others.
+fn to_line(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+    let u = b - a;
+    p.distance(a + u * ((p - a).dot(u) / u.length_squared().max(1e-6)).clamp(0.0, 1.0))
+}
+
+/// The NCR's flight (from the game-playable branch): a chord of the start disc, cut to the map,
+/// chosen by the seed, passing a couple of the big districts within a dive, so no line is a dull
+/// one (and none is just the river).
+fn ncr_flight(seed: u64, zone: &Zone, half: f32, players: u32) -> (Vec2, Vec2) {
+    use crate::map::compose::{PLACES, Tier};
+    let mut path = match_rng(seed, stream::VIMANA);
+    let offset = FLIGHT_OFFSET.iter().find(|o| players <= o.0).map_or(0.0, |o| o.1);
+    let reach = super::movement::dive_reach(VIMANA_HEIGHT);
+    let mut best: Option<(usize, Vec2, Vec2)> = None;
+    for _ in 0..FLIGHT_TRIES {
+        let dir = Vec2::from_angle(path.random_range(0.0..std::f32::consts::TAU));
+        let off = path.random_range(-offset..offset);
+        let mid = zone.center + dir.perp() * off;
+        let h = (zone.radius * zone.radius - off * off).max(0.0).sqrt();
+        let Some((from, to)) = clip_to_square(mid - dir * h, mid + dir * h, half - 30.0) else { continue };
+        let big = PLACES.iter().filter(|p| matches!(p.tier, Tier::Hot | Tier::Warm) && to_line(p.at, from, to) < reach).count();
+        if best.is_none_or(|b| big > b.0) {
+            best = Some((big, from - dir * FLIGHT_LEAD_IN, to));
+        }
+        if big >= 2 {
+            break;
+        }
+    }
+    best.map_or((zone.center - Vec2::X * half, zone.center), |b| (b.1, b.2))
+}
+
 /// Spawns warriors, loot and resets the zone. Everything from a previous match must already be gone.
 pub fn start_match(world: &mut World) {
     // Bot personalities stay local: a bot is only ever run by one peer.
@@ -140,14 +196,20 @@ pub fn start_match(world: &mut World) {
     let generation = world.resource::<Match>().generation + 1;
     // A rematch with a fixed seed still differs from the last, the same way on every peer.
     let seed = config.match_seed.map(|s| s.wrapping_add(generation as u64)).unwrap_or_else(|| rng.random());
-    // Flight path crosses the map through a random chord.
-    let mut path = match_rng(seed, stream::VIMANA);
-    let a = path.random_range(0.0..std::f32::consts::TAU);
-    let off = path.random_range(-60.0..60.0);
-    let dir = Vec2::new(a.cos(), a.sin());
-    let perp = Vec2::new(-dir.y, dir.x) * off;
-    let from = (-dir * (half + 40.0) + perp).extend(VIMANA_HEIGHT);
-    let to = (dir * (half + 40.0) + perp).extend(VIMANA_HEIGHT);
+    let ncr = world.resource::<MapLayout>().style == crate::map::MapStyle::Ncr;
+    let zone = if ncr { Zone::for_ncr(seed, humans + bots, world.resource::<MapLayout>()) } else { Zone::new(seed) };
+    let (from, to) = if ncr {
+        let (a, b) = ncr_flight(seed, &zone, half, humans + bots);
+        (a.extend(VIMANA_HEIGHT), b.extend(VIMANA_HEIGHT))
+    } else {
+        // Flight path crosses the map through a random chord.
+        let mut path = match_rng(seed, stream::VIMANA);
+        let a = path.random_range(0.0..std::f32::consts::TAU);
+        let off = path.random_range(-60.0..60.0);
+        let dir = Vec2::new(a.cos(), a.sin());
+        let perp = Vec2::new(-dir.y, dir.x) * off;
+        ((-dir * (half + 40.0) + perp).extend(VIMANA_HEIGHT), (dir * (half + 40.0) + perp).extend(VIMANA_HEIGHT))
+    };
     *world.resource_mut::<Match>() = Match {
         state: MatchState::Flight,
         vimana_from: Vec3::new(from.x, from.z, from.y),
@@ -158,7 +220,7 @@ pub fn start_match(world: &mut World) {
         seed,
         ..default()
     };
-    world.insert_resource(Zone::new(seed));
+    world.insert_resource(zone);
     world.spawn((Vimana, Transform::default()));
 
     let melee = world.resource::<ItemDb>().default_melee.clone();
