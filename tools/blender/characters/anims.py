@@ -19,6 +19,7 @@ space, which reads the same on both rigs although their bone rolls differ.
 Speeds must match crates/shared/src/sim/movement.rs.
 """
 
+import json
 import math
 import os
 import sys
@@ -30,7 +31,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 sys.path.insert(0, HERE)
 
-from skeleton import MIXAMO_BONES, MOTUS_BONES  # noqa: E402
+from skeleton import MIXAMO_BONES, MOTUS_BONES, MOTUS_TWIST  # noqa: E402
 
 FPS = 30
 # How high the hip joints sit off the ground in the slide (sat on the folded leg's hip).
@@ -390,11 +391,11 @@ MIXAMO = os.path.join(HERE, "mixamo")
 MOTUS = os.path.join(HERE, "mocaponline", "FBX_Rifle_Basic_27A2", "Animation", "In-Place")
 # Moving with a long gun, each gait's speed by direction (forward, back, left, right; m/s): the
 # pack's own as recorded for walking and crouching; running and the aimed jog near the unarmed pace
-# all round (Fortnite's responsiveness; the clips retimed to them) (measured on the male; the female's clips are set to the same, as both
-# move alike). Must match RIFLE_GAIT in crates/shared/src/sim/movement.rs.
+# all round (Fortnite's responsiveness; the clips retimed to them) (measured on the male, on the pack's own
+# skeleton since motus.py; the female's clips are set to the same, as both move alike). Must match RIFLE_GAIT in crates/shared/src/sim/movement.rs.
 RIFLE_GAIT = {
-    "walk": (1.35, 1.12, 1.23, 1.27), "run": (5.6, 5.0, 5.4, 5.4), "crouch": (0.93, 0.92, 1.12, 1.02),
-    "aimwalk": (1.29, 1.19, 1.14, 1.10), "aimrun": (3.8, 3.4, 3.8, 3.8), "aimcrouch": (0.88, 0.84, 1.09, 0.98),
+    "walk": (1.21, 1.00, 1.10, 1.14), "run": (5.6, 5.0, 5.4, 5.4), "crouch": (0.84, 0.83, 1.00, 0.92),
+    "aimwalk": (1.15, 1.06, 1.02, 0.99), "aimrun": (3.8, 3.4, 3.8, 3.8), "aimcrouch": (0.79, 0.75, 0.98, 0.88),
 }
 # As fast as the plain sprint (Fortnite's sprint doesn't care what's in your hands).
 RIFLE_SPRINT = 8.6
@@ -747,7 +748,7 @@ def crouch_idle(rig):
 
 
 def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_TPose", relax=False, keep=None, window=None,
-             pingpong=False, air=False, joints=False, calm=1.0):
+             pingpong=False, air=False, joints=False, calm=1.0, exact=False):
     """Retarget a clip bone by bone: every joint's rotation copied from the source, as a turn from
     its rest in world space, onto ours (each source bone first aligned to our rest's direction, so
     the rigs' different rest poses don't matter: a T-pose's arms onto our A). Twists, shoulders,
@@ -764,8 +765,10 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
     it; the legs tuck up under the hips rather than the whole body rising). `calm`: the hips' rise
     and fall scaled about their middle (the library's jog bounces 24 cm a stride, a real one 8-10),
     the legs reaching down by IK to where the captured ankles were, so the feet still land and
-    push off where they did."""
+    push off where they did. `exact`: onto a rig whose joints are the source's own (motus.py): every
+    bone's turn from rest and the hips' move as keyed, nothing eased (the loop's seam as captured)."""
     bmap = bones or {}
+    seams = {}
     sb = lambda n: src.pose.bones.get(bmap.get(n, n)) or next((b for b in src.pose.bones if b.name.lower() == n), None)
     ours = [b.name for b in rig.obj.data.bones if b.name in rig.pb and b.name != "Root" and sb(b.name)]
     find = lambda c: acts[0] if c is None else next(a for a in acts if a.name.split("|")[-1] == c)
@@ -811,6 +814,9 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
     # Per bone: rest turn out of the source frame, aligned onto ours.
     corr = {n: s_rot[n].inverted() @ s_dir[n].rotation_difference(t_dir[n]).inverted() @ t_rot[n] for n in ours}
     r = rig.leg / s_leg
+    if exact:
+        assert abs(r - 1.0) < 1e-4, f"{name}: legs {rig.leg:.4f} m against the source's {s_leg:.4f}: not its skeleton"
+        r = 1.0
     act = find(clip)
     src.animation_data.action = act
     f0, f1 = window or map(int, act.frame_range)
@@ -864,7 +870,7 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
     elif window:
         # A one-way stretch ends on its own last frame, not wrapping back to its first.
         S.append(sample(frames))
-    else:
+    elif not exact:
         # A loop's last frame should repeat its first, but a source's feet don't always (the rifle
         # walks' toes are 32 degrees apart across the seam: a snap mid-step once the cycle is turned
         # to start on a landing): each foot's and toe's mismatch spread evenly over the cycle.
@@ -879,6 +885,22 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
                 e = S[0][0][n] @ end[n].inverted()
                 for i, x in enumerate(S):
                     x[0][n] = Quaternion().slerp(e, i / out) @ x[0][n]
+    else:
+        # Exactly as captured, but a loop the file itself doesn't close (the rifle pack's toes: 32
+        # degrees between its last frame and its first, in the walks, crouches and runs alike: a
+        # snap every cycle) eased shut over its last few frames, only that bone, only there.
+        end = sample(frames)[0]
+        k = max(3, out // 6)
+        for n in ours:
+            e = S[0][0][n] @ end[n].inverted()
+            if e.w < 0:
+                e.negate()
+            gap = math.degrees(e.angle)
+            if gap < SEAM_OPEN:
+                continue
+            for i in range(out - k, out):
+                S[i][0][n] = Quaternion().slerp(e, smooth((i - (out - k) + 1) / (k + 1))) @ S[i][0][n]
+            seams[n] = round(gap, 1)
     src.animation_data.action = None
     if speed:
         zmin = min(x[2]["l"].z for x in S)
@@ -926,12 +948,23 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
                 arm_swing(rig, s, 0.12 + 0.2 * c, 0.9 + 0.15 * c, out=0.16)
                 relax_fingers(rig, s, 0.5)
         rig.key(i + 1)
+    if seams:
+        # What was eased, and over which of the source's frames (pack_check.py leaves it out).
+        rig.obj.animation_data.action["seam"] = json.dumps({"bones": seams, "frames": [out - k, out]})
+        print(f"[anims] {name}: the file's loop eased shut on {seams} (degrees) over its last {k} frames")
     return out
 
 
 # The actions the game lays over the legs, torso only (crates/game/src/animation.rs UPPER_BODY,
 # OPTIONAL_UPPER): posed over hips at rest, the game holding the torso to that posture whatever
 # the legs' hips do (crates/game/src/arms.rs pose_torso).
+# Past this (degrees) between a file's last frame and its first, a bone's loop is open (`transfer`,
+# exact): the rifle pack's toes, 32.
+SEAM_OPEN = 2.0
+# The pack's clips played exactly as bought (on its own skeleton, motus.py): left out of every
+# correction after they're carried over (rifle_aim's hips still go to rest under it: the game lays its
+# torso over the legs).
+EXACT = set()
 UPPER = ("melee_guard", "melee_swing", "melee_swing_b", "bow_draw", "rifle_aim", "consume", "pistol_aim")
 
 
@@ -2045,6 +2078,9 @@ def main():
                 cycles[f"rifle_{m}_{d}"] = carry(rig, f"rifle_{m}_{d}", f"{m}_{d}", "rifle_carry", turn=RIFLE_TURN, upright=RIFLE_LEAN, calm=RIFLE_CALM)
         cycles["rifle_sprint_f"] = carry(rig, "rifle_sprint_f", "sprint_f", "rifle_carry", turn=RIFLE_TURN, upright=RIFLE_LEAN, calm=RIFLE_CALM)
         bpy.data.actions.remove(bpy.data.actions["rifle_carry"])
+    # On the pack's own skeleton (motus.py: the male), its clips exactly as bought: none of the
+    # corrections below touch them (EXACT).
+    on_motus = arm.get("skeleton") == "motus"
     for name, file, speed, opts in MOTUS_CLIPS:
         got = load_mixamo(file, MOTUS)
         if not got:
@@ -2052,8 +2088,12 @@ def main():
         msrc, mobjs, macts, mfps = got
         bpy.context.view_layer.objects.active = arm
         bpy.ops.object.mode_set(mode="POSE")
-        n = transfer(rig, msrc, macts, name, None, speed, bones=MOTUS_BONES, src_fps=mfps, ref=None, joints=True,
-                     window=opts.get("window"), pingpong=opts.get("pingpong", False))
+        n = transfer(rig, msrc, macts, name, None, speed, bones={**MOTUS_BONES, **MOTUS_TWIST} if on_motus else MOTUS_BONES, src_fps=mfps,
+                     ref=None, joints=True, window=opts.get("window"), pingpong=opts.get("pingpong", False), exact=on_motus)
+        if on_motus:
+            EXACT.add(name)
+            # Marked in the saved file for pack_check.py.
+            bpy.data.actions[name]["exact"] = True
         if speed:
             cycles[name] = n
         print(f"[anims] {name} from MoCap Online's {file} ({mfps:.0f} fps)")
@@ -2061,7 +2101,7 @@ def main():
     # Running with a long gun, it's held up and pointed ahead (the aim-jog's arms over the run's
     # legs and torso), not the pack's run's low carry across the hips, barrel down.
     for run, arms in HIGH_READY:
-        if run in bpy.data.actions and arms in bpy.data.actions:
+        if run in bpy.data.actions and arms in bpy.data.actions and run not in EXACT:
             arms_from(rig, run, arms)
     for n in ("jump", "fall"):
         if n in bpy.data.actions:
@@ -2081,13 +2121,13 @@ def main():
     # The slide is our own pose (no library clip sits up in it: they lie back, curl, put a hand down).
     hold_pose(rig, "slide", SLIDE_IN + SLIDE_HOLD + SLIDE_OUT, slide_pose)
     for name, lean, tuck, face in POSTURE:
-        if name in bpy.data.actions:
+        if name in bpy.data.actions and name not in EXACT:
             if face:
                 # Turned square first, then straightened.
                 stand_up(rig, name, 90, 0, True)
             stand_up(rig, name, lean, tuck, False)
     for name in STRAIGHT:
-        if name in bpy.data.actions:
+        if name in bpy.data.actions and name not in EXACT:
             straighten(rig, name)
     # Sliding with a long gun: sat up in the slide, the gun up in both hands as when aiming
     # (the game plays it whole, no aim laid over).
@@ -2095,13 +2135,16 @@ def main():
         arms_from(rig, "slide", "rifleaim_idle", "rifle_slide")
         level_gun(rig, "rifle_slide", "rifleaim_idle")
     if "sprint_1h" in bpy.data.actions and "rifleaim_idle" in bpy.data.actions:
+        # Not the pack's (it has no sprint): the sprint, the gun across the chest.
         port_arms(rig, "rifle_sprint_f", "sprint_1h", "rifleaim_idle")
+        EXACT.discard("rifle_sprint_f")
+        bpy.data.actions["rifle_sprint_f"]["exact"] = False
     for name, deg in GUN_SWAY.items():
-        if name in bpy.data.actions:
+        if name in bpy.data.actions and name not in EXACT:
             gun_sway(rig, name, deg)
     # Last, over everything moving: the head looking ahead.
     for act in list(bpy.data.actions):
-        if not act.name.startswith(LOOK_FREE):
+        if not act.name.startswith(LOOK_FREE) and act.name not in EXACT:
             look_ahead(rig, act.name)
     hold_pose(rig, "freefall", 40, freefall_pose)
     hold_pose(rig, "glide", 40, glide_pose)
@@ -2116,6 +2159,7 @@ def main():
     for name in UPPER:
         if name in bpy.data.actions:
             over_rest_hips(rig, name)
+            bpy.data.actions[name]["exact"] = False
     print(f"[anims] {variant}: leg {rig.leg:.3f} m, cycles {cycles}, IK reach clamped on {rig.clamped} leg poses")
     print(f"[anims] stance duty: {rig.duty}")
     print("[anims] worst ankle shortfall (m): " + ", ".join(f"{k} {v:.3f}" for k, v in sorted(rig.worst.items())))

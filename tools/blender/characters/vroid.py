@@ -332,9 +332,14 @@ def apply_pose_as_rest(arm):
     bpy.ops.object.mode_set(mode="OBJECT")
 
 
-def fit(arm, skeleton):
-    """The model onto a shared skeleton (`--fit`; see the top)."""
-    ref = json.load(open(os.path.join(HERE, "skeletons", f"{skeleton}.json")))
+def fit(arm, skeleton, chains=FIT_CHAINS, every_bone=False, own_frames=False):
+    """The model onto a shared skeleton (`--fit`; see the top): `skeleton` a name in skeletons/ or
+    one as a dict. `every_bone`: each of its bones placed (made where the model hasn't it, in its
+    parent's frame), not only ours. `own_frames`: the bones only moved to the skeleton's joints, each
+    keeping its own axis and roll (motus.py: the pack's clips are carried over as each bone's turn
+    from rest, which joints in the same places make exact whatever the axes; the game's arm code
+    turns our bones about our axes)."""
+    ref = skeleton if isinstance(skeleton, dict) else json.load(open(os.path.join(HERE, "skeletons", f"{skeleton}.json")))
     W = arm.matrix_world
     bpy.context.view_layer.objects.active = arm
     # A connected bone can't be moved off its parent's tail (the pelvis wasn't).
@@ -348,7 +353,7 @@ def fit(arm, skeleton):
     head = lambda n: W @ arm.pose.bones[n].head
     want = lambda n: W @ Vector(ref[n]["head"])
     moved = []
-    for chain, place in FIT_CHAINS:
+    for chain, place in chains:
         chain = [n for n in chain if n in arm.pose.bones and n in ref]
         if place:
             pb = arm.pose.bones[chain[0]]
@@ -365,7 +370,7 @@ def fit(arm, skeleton):
             pb.scale.y *= k
             moved.append(f"{n} x{k:.2f}")
     bpy.context.view_layer.update()
-    errs = {n: (head(n) - want(n)).length for chain, place in FIT_CHAINS for n in chain[0 if place else 1:] if n in arm.pose.bones and n in ref and not n.startswith("ball")}
+    errs = {n: (head(n) - want(n)).length for chain, place in chains for n in chain[0 if place else 1:] if n in arm.pose.bones and n in ref and not n.startswith("ball")}
     off = max(errs.values())
     for n, e in errs.items():
         if e > 0.01:
@@ -380,23 +385,29 @@ def fit(arm, skeleton):
     framed = 0
     eds = arm.data.edit_bones
     for name, r in ref.items():
-        if name not in FRAMES:
+        if name not in FRAMES and not every_bone:
             continue
         # The bone over the pelvis (the male's Root) made if the model hasn't one.
-        eb = eds.get(name) or (eds.new(name) if name == ref.get("pelvis", {}).get("parent") else None)
+        had = eds.get(name)
+        eb = had or (eds.new(name) if every_bone or name == ref.get("pelvis", {}).get("parent") else None)
         if eb is None:
             continue
+        like = had or eds.get(r.get("parent") or "")
+        if own_frames and like is not None:
+            y, z, length = like.y_axis.copy(), like.z_axis.copy(), like.length
+        else:
+            y, z, length = Vector(r["y"]), Vector(r["z"]), r["length"]
         eb.head = Vector(r["head"])
-        eb.tail = Vector(r["head"]) + Vector(r["y"]) * r["length"]
-        eb.align_roll(Vector(r["z"]))
+        eb.tail = Vector(r["head"]) + y * length
+        eb.align_roll(z)
         framed += 1
     # And the skeleton's hierarchy: a bone's turn in a clip is in its parent's frame, so a parent the
     # skeleton hasn't (VRM's Position or its own Root over the pelvis) turns the body with it.
     for name, r in ref.items():
-        if name in eds and name in FRAMES:
+        if name in eds and (name in FRAMES or every_bone):
             eds[name].parent = eds.get(r["parent"]) if r.get("parent") else None
     bpy.ops.object.mode_set(mode="OBJECT")
-    print(f"[vroid] fitted to the {skeleton}'s skeleton: joints within {off * 100:.2f} cm, {framed} bones framed; " + ", ".join(moved))
+    print(f"[vroid] fitted to the {skeleton if isinstance(skeleton, str) else 'given'}'s skeleton: joints within {off * 100:.2f} cm, {framed} bones framed; " + ", ".join(moved))
 
 
 def main():
@@ -550,4 +561,5 @@ def main():
     print(f"[vroid] {variant}: {len(mapping)} humanoid bones mapped, {height:.2f} m tall; exported {out}: {counts}")
 
 
-main()
+if __name__ == "__main__":
+    main()

@@ -24,7 +24,7 @@ import skeleton  # noqa: E402
 
 FPS = 30
 SECONDS = 4
-CLIPS = ["rifle_idle", "rifle_aim", "rifle_walk_f", "rifle_run_f", "rifle_run_l", "rifle_run_b", "rifle_crouch_f", "rifleaim_walk_f", "rifleaim_run_f"]
+CLIPS = ["rifle_idle", "rifleaim_idle", "rifle_walk_f", "rifle_run_f", "rifle_run_l", "rifle_run_b", "rifle_crouch_f", "rifleaim_walk_f", "rifleaim_run_f"]
 # The pack's mannequin this far to our body's left.
 APART = 1.4
 LABEL = r"""

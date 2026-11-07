@@ -58,6 +58,38 @@ def load_pack_rest():
     return arm, new
 
 
+# The mannequin's twist bones (the pack keys them: a forearm turns a few degrees along itself),
+# under our names.
+MOTUS_TWIST = {f"{a}_twist_01_{s}": f"Leaf{S}{b}Roll1" for s, S in (("l", "Left"), ("r", "Right"))
+               for a, b in (("upperarm", "Arm"), ("lowerarm", "ForeArm"), ("thigh", "UpLeg"), ("calf", "Leg"))}
+# Ours for each of the mannequin's bones the male plays (motus.py): the body, the twists, the root.
+MOTUS_OURS = {v: k for k, v in {**MOTUS_BONES, **MOTUS_TWIST, "Root": "Root"}.items()}
+
+
+def motus_skeleton():
+    """The pack's mannequin at rest under our names, as skeletons/<name>.json has a skeleton (each
+    bone's head, axis, roll axis and length in metres, world space; its parent), or None without the
+    pack. Made from the pack each time (its rig isn't ours to put in the repository)."""
+    if not os.path.isdir(PACK):
+        return None
+    src, new = load_pack_rest()
+    W = src.matrix_world
+    out = {}
+    for b in src.data.bones:
+        name = MOTUS_OURS.get(b.name)
+        if name is None:
+            continue
+        m = (W @ b.matrix_local).to_3x3().normalized()
+        parent = b.parent
+        while parent is not None and parent.name not in MOTUS_OURS:
+            parent = parent.parent
+        out[name] = {"head": list(W @ b.head_local), "y": list(m.col[1]), "z": list(m.col[2]),
+                     "length": (W.to_3x3() @ (b.tail_local - b.head_local)).length, "parent": MOTUS_OURS[parent.name] if parent else None}
+    for o in new:
+        bpy.data.objects.remove(o)
+    return out
+
+
 def add_weapon_bone(rig):
     """`weapon_r` under our right hand, where the pack's rifle sits relative to it: the pack's hand
     turned onto ours the way the clips are carried over (anims.transfer: the wrist-to-middle-knuckle

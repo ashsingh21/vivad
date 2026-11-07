@@ -741,6 +741,10 @@ def finish_character(variant, rig, proxy, parts, items, root):
     os.makedirs(os.path.dirname(out), exist_ok=True)
     # The weapon bone a long gun rides (skeleton.py), in the saved rig the clips are made on too.
     import skeleton
+    if variant == "male":
+        # On the rifle pack's mannequin's skeleton, its clips played as bought (motus.py).
+        import motus
+        motus.fit_body(rig)
     skeleton.add_weapon_bone(rig)
     bpy.ops.wm.save_as_mainfile(filepath=os.path.join(root, "build", f"char_{variant}_final.blend"))
     bpy.ops.object.select_all(action="DESELECT")

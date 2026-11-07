@@ -133,6 +133,12 @@ view name:
     cargo run -p game --bin asset_check -- models/weapons/{{name}}.glb previews/{{name}}/bevy_{{name}}.png
 
 
+# The male plays the rifle pack's clips exactly as bought (he's on its mannequin's skeleton,
+# tools/blender/characters/motus.py): every bone against the mannequin's own, every frame. Under
+# 0.01 mm and 0.1 deg, or a `!`: just packcheck, or just packcheck rifle_walk_f,rifle_run_f
+packcheck clips="":
+    {{blender}} -b -t 1 build/anims_male.blend -P tools/blender/characters/pack_check.py -- {{clips}} 2>&1 | grep -E '^\[pack\]|Error|Traceback' || true
+
 # Play (release build; first build takes a few minutes). Arguments in order, seed then map. Maps:
 # cp (Connaught Place), chandni (Chandni Chowk), hauzkhas, indiagate, bharat (ancient India):
 # `just play 7 chandni`. `just play random` for a fresh seed (printed), `just play 1234` to replay one.

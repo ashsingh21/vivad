@@ -160,9 +160,10 @@ def bone_weight_map(obj):
     return out
 
 
-def delete_hidden_body(proxy, covers, gap=0.09):
-    """Delete body faces whose every vertex is covered by a garment within `gap` along its normal.
-    Saves triangles and prevents skin poking through cloth when animated."""
+def delete_hidden_body(proxy, covers, gap=0.09, inside=0.02):
+    """Delete body faces whose every vertex is covered by a garment within `gap` along its normal
+    (looking from `inside` beneath it: a tight garment can sit a hair beneath it). Saves triangles
+    and prevents skin poking through cloth when animated."""
     trees = []
     for c in covers:
         bm = bmesh.new()
@@ -173,8 +174,7 @@ def delete_hidden_body(proxy, covers, gap=0.09):
     covered = np.zeros(len(me.vertices), dtype=bool)
     for v in me.vertices:
         for t in trees:
-            # From just inside the skin: a tight garment can sit a hair beneath it.
-            hit = t.ray_cast(v.co - v.normal * 0.02, v.normal, gap + 0.02)
+            hit = t.ray_cast(v.co - v.normal * inside, v.normal, gap + inside)
             if hit[0] is not None:
                 covered[v.index] = True
                 break
@@ -208,6 +208,13 @@ def main():
     covers = [o for o, role in items if role == "cover"]
     removed = delete_hidden_body(proxy, covers)
     print(f"[{variant}] removed {removed} hidden body faces")
+    # The modelled clothes under the kit (the plate carrier, the belt) dropped where it covers them
+    # too: the shirt's looser back bunched out through the vest, at rest and more as he moved.
+    # Looking from 6 cm under the shirt, so a fold already out through the vest counts as covered.
+    kit = [o for o, role in items if role == "cover" and o.get("kind") != "mh"]
+    for k, o in parts.items():
+        if k.startswith("clothes:") and kit:
+            print(f"[{variant}] {o.name}: removed {delete_hidden_body(o, kit, gap=0.12, inside=0.06)} faces under the kit")
     # The MakeHuman basemesh is only needed for fitting.
     bpy.data.objects.remove(body)
     out_blend = os.path.join(ROOT, "build", f"char_{variant}_{stage}.blend")
