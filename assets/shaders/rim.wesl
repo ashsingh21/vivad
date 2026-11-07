@@ -159,6 +159,12 @@ fn fragment(vertex_output: VertexOutput, @builtin(front_facing) is_front: bool) 
     if (toon.x > 0.5) {
         out.color = cel(pbr_input);
     } else {
+        // Little sheen: on dark cloth and brown skin the sky's and sun's reflection, a few percent
+        // at every fold and more where the surface turns edge-on, outshone their own colour in hard
+        // grey patches that read as crumples (the shirt) and blotches (the cheeks). Skin (rough
+        // about 0.55) keeps a little more than cloth.
+        let cloth = smoothstep(0.62, 0.8, pbr_input.material.perceptual_roughness);
+        pbr_input.material.reflectance = pbr_input.material.reflectance * mix(0.35, 0.15, cloth);
         out.color = apply_pbr_lighting(pbr_input);
     }
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);

@@ -461,8 +461,11 @@ def apply_non_armature_modifiers(obj):
             bpy.ops.object.modifier_apply(modifier=mod.name)
 
 
-def prepare_uvs(obj):
-    """Rename the object's UV to 'src' (shader lookup) and add 'UVMap' (bake atlas)."""
+def prepare_uvs(obj, fresh=False):
+    """Rename the object's UV to 'src' (shader lookup) and add 'UVMap' (bake atlas): a copy of it,
+    or, `fresh`, its own unwrap (a solidified shell: its inner face lies on its outer one's UVs, one
+    island folded over itself, and baked, the two overwrote each other's texels; the vest came out
+    in dark blotches with noisy edges, and fully occluded)."""
     me = obj.data
     if not me.uv_layers:
         bpy.context.view_layer.objects.active = obj
@@ -479,6 +482,14 @@ def prepare_uvs(obj):
         b.uv = a.uv
     # Keep 'src' first so the join keeps both layers consistently by name.
     me.uv_layers.active = atlas
+    if fresh:
+        bpy.context.view_layer.objects.active = obj
+        bpy.ops.object.select_all(action="DESELECT")
+        obj.select_set(True)
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.uv.smart_project(angle_limit=1.15, island_margin=0.01)
+        bpy.ops.object.mode_set(mode="OBJECT")
 
 
 def pack_atlas(obj, margin=0.004):
@@ -653,7 +664,8 @@ def finish_character(variant, rig, proxy, parts, items, root):
         # ends up over 5 cm from the shape it was grown as goes back to its nearest original point.
         # (Measured to its surface, not its vertices: a subdivision's new points lie mid-face.)
         tree = None
-        if anime and o is not proxy and any(m.type == "SOLIDIFY" for m in o.modifiers):
+        solid = any(m.type == "SOLIDIFY" for m in o.modifiers)
+        if anime and o is not proxy and solid:
             from mathutils.bvhtree import BVHTree
             import bmesh as _bm
             b = _bm.new()
@@ -670,7 +682,7 @@ def finish_character(variant, rig, proxy, parts, items, root):
                     pulled += 1
             if pulled:
                 print(f"[{variant}] {o.name}: {pulled} stray vertices pulled back")
-        prepare_uvs(o)
+        prepare_uvs(o, fresh=solid)
         flex_layer(o)
 
     # Each part's layer, kept through the join (motus.ride_layers: what's worn over the clothes
@@ -691,6 +703,17 @@ def finish_character(variant, rig, proxy, parts, items, root):
     bpy.ops.object.join()
     body = bpy.context.view_layer.objects.active
     body.name = body.data.name = f"{variant}_LOD0"
+    # LOD0 held to ~30k tris, before the atlas and the bake: decimated after, its collapsed edges
+    # carried UVs off their islands, and the vest and shirt sampled their neighbours' texels in
+    # blotches and jagged wedges (decimate keeps vertex groups, so skinning survives).
+    export.triangulate(body)
+    tris = sum(len(p.vertices) - 2 for p in body.data.polygons)
+    if tris > 30000:
+        d = body.modifiers.new("Budget", "DECIMATE")
+        d.ratio = 30000 / tris
+        bpy.context.view_layer.objects.active = body
+        bpy.ops.object.modifier_move_to_index(modifier="Budget", index=0)
+        bpy.ops.object.modifier_apply(modifier="Budget")
     pack_atlas(body)
 
     # --- bake (Cycles needs the rest pose; the armature is in rest anyway)
@@ -730,15 +753,7 @@ def finish_character(variant, rig, proxy, parts, items, root):
         apply_non_armature_modifiers(o)
         cards.append(o)
 
-    # --- LODs (decimate keeps vertex groups, so skinning survives). LOD0 is held to ~30k tris.
-    export.triangulate(body)
-    tris = sum(len(p.vertices) - 2 for p in body.data.polygons)
-    if tris > 30000:
-        d = body.modifiers.new("Budget", "DECIMATE")
-        d.ratio = 30000 / tris
-        bpy.context.view_layer.objects.active = body
-        bpy.ops.object.modifier_move_to_index(modifier="Budget", index=0)
-        bpy.ops.object.modifier_apply(modifier="Budget")
+    # --- LODs (decimate keeps vertex groups, so skinning survives).
     lods = export.make_lods(body, (0.45, 0.18))
     for lod in lods[1:]:
         lod.parent = rig
