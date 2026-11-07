@@ -26,6 +26,9 @@
 //!   VIVAD_ARMOURY_ONLY=a,b only the poses whose names contain one of these (skin: just the body,
 //!   front and back, for a skin with VIVAD_LOOK=<n>). The range poses
 //!   freeze the one bot (VIVAD_BOTS=1) in front as a target and shoot or cut at it.
+//!   VIVAD_ARMOURY_VIDEO=s instead: the bandook carried, aimed, run and crouched with, s seconds
+//!                        each, the camera circling close round the hands; every frame saved
+//!                        (<dir>/f00000.png..., a 30th of a second apart) for a video.
 
 use bevy::prelude::*;
 use bevy::render::view::window::screenshot::{Screenshot, save_to_disk};
@@ -110,6 +113,9 @@ pub struct Armoury {
     /// Fire has been pressed for this pose (drinking and swinging start on a press).
     pressed: bool,
     spot: Option<Vec3>,
+    /// VIVAD_ARMOURY_VIDEO: seconds per pose, and the frames saved so far.
+    video: Option<f32>,
+    frame: u32,
 }
 
 impl Armoury {
@@ -422,7 +428,12 @@ impl Plugin for AutoshotPlugin {
                 let keys: Vec<String> = only.split(',').map(str::to_owned).collect();
                 poses.retain(|q| keys.iter().any(|k| q.item.contains(k.as_str())));
             }
-            app.insert_resource(Armoury { dir, poses, index: 0, t: -3.0, shot: false, pressed: false, spot: None })
+            let video = std::env::var("VIVAD_ARMOURY_VIDEO").ok().and_then(|s| s.parse().ok());
+            if video.is_some() {
+                poses = [Use::Carry, Use::Aim, Use::Run, Use::Crouch].map(|u| p("bandook", u, View::Hand, 0.0)).to_vec();
+                app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_secs_f64(1.0 / 30.0)));
+            }
+            app.insert_resource(Armoury { dir, poses, index: 0, t: -3.0, shot: false, pressed: false, spot: None, video, frame: 0 })
                 .add_systems(PreUpdate, armoury_actor.after(crate::input::LocalInput))
                 .add_systems(PostUpdate, armoury_camera.after(crate::camera::CameraSystems).before(TransformSystems::Propagate));
         }
@@ -760,6 +771,24 @@ fn armoury_camera(
     };
     if let Some((eye, look)) = view {
         *ct = Transform::from_translation(eye).looking_at(look, Vec3::Y);
+    }
+    if let Some(secs) = arm.video {
+        // Once round the hands per pose, from his left, by the front, to his right and behind,
+        // the camera level with the gun.
+        if arm.t < 0.0 {
+            return;
+        }
+        let look = check.1.map(|at| at.lerp(chest + Vec3::new(0.12, -0.05, 0.0), 0.5)).unwrap_or(chest);
+        let a = arm.t / secs * std::f32::consts::TAU;
+        *ct = Transform::from_translation(look + Vec3::new(-a.cos() * 0.9, 0.1, -a.sin() * 0.9)).looking_at(look, Vec3::Y);
+        let path = format!("{}/f{:05}.png", arm.dir, arm.frame);
+        commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
+        arm.frame += 1;
+        if arm.t >= secs {
+            arm.index += 1;
+            arm.t = 0.0;
+        }
+        return;
     }
     let at = if pose.state == Use::Strike { STRIKE_AT + pose.after } else { POSE_TIME };
     if arm.t >= at && !arm.shot {

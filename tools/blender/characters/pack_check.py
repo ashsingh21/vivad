@@ -50,13 +50,17 @@ for name, file, speed, opts in anims.MOTUS_CLIPS:
     o0, o1 = map(int, ours.frame_range)
     out = o1 - o0
 
-    # Each bone's turn from its rest, in world space (whatever the two rigs' bone axes).
+    # Each bone's turn from its rest, in world space (whatever the two rigs' bone axes). The
+    # mannequin's rest the male's (skeleton.rest_pose: its arms down as his are).
     turn = lambda R, b, rest: (R @ b.matrix).to_quaternion() @ (R @ rest).to_quaternion().inverted()
+    src.animation_data.action = None
+    skeleton.set_pose(src, skeleton.rest_pose(arm))
+    s_rest = {n: src.pose.bones[names[n]].matrix.copy() for n in bones}
 
     def pose_src(t):
         src.animation_data.action = act
         sc.frame_set(f0 + int(t), subframe=t - int(t))
-        return {n: (W @ src.pose.bones[names[n]].head, turn(W, src.pose.bones[names[n]], src.data.bones[names[n]].matrix_local)) for n in bones}
+        return {n: (W @ src.pose.bones[names[n]].head, turn(W, src.pose.bones[names[n]], s_rest[n])) for n in bones}
 
     def pose_ours(f):
         sc.frame_set(f)

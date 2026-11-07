@@ -31,6 +31,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 sys.path.insert(0, HERE)
 
+import skeleton  # noqa: E402
 from skeleton import MIXAMO_BONES, MOTUS_BONES, MOTUS_TWIST  # noqa: E402
 
 FPS = 30
@@ -748,7 +749,7 @@ def crouch_idle(rig):
 
 
 def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_TPose", relax=False, keep=None, window=None,
-             pingpong=False, air=False, joints=False, calm=1.0, exact=False):
+             pingpong=False, air=False, joints=False, calm=1.0, exact=False, rest=None):
     """Retarget a clip bone by bone: every joint's rotation copied from the source, as a turn from
     its rest in world space, onto ours (each source bone first aligned to our rest's direction, so
     the rigs' different rest poses don't matter: a T-pose's arms onto our A). Twists, shoulders,
@@ -766,7 +767,9 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
     and fall scaled about their middle (the library's jog bounces 24 cm a stride, a real one 8-10),
     the legs reaching down by IK to where the captured ankles were, so the feet still land and
     push off where they did. `exact`: onto a rig whose joints are the source's own (motus.py): every
-    bone's turn from rest and the hips' move as keyed, nothing eased (the loop's seam as captured)."""
+    bone's turn from rest and the hips' move as keyed, nothing eased (the loop's seam as captured).
+    `rest`: the source's rest posed so (skeleton.rest_pose: the mannequin's arms down as the male's
+    rest holds his)."""
     bmap = bones or {}
     seams = {}
     sb = lambda n: src.pose.bones.get(bmap.get(n, n)) or next((b for b in src.pose.bones if b.name.lower() == n), None)
@@ -782,8 +785,7 @@ def transfer(rig, src, acts, name, clip, speed, bones=None, src_fps=FPS, ref="A_
         sc.frame_set(int(src.animation_data.action.frame_range[0]))
     else:
         src.animation_data.action = None
-        for pb in src.pose.bones:
-            pb.matrix_basis = Matrix.Identity(4)
+        skeleton.set_pose(src, rest or {})
     bpy.context.view_layer.update()
     s_rot = {n: (W @ sb(n).matrix).to_quaternion() for n in ours}
     # Each bone's line, joint to joint: to the head of our child that carries on from its tip (the
@@ -1428,12 +1430,15 @@ PORT_BARREL = (0.55, 0.5, 0.6)
 PORT_GRIP = (0.08, 0.3, 0.3)
 
 
-def port_arms(rig, name, src, ref):
+def port_arms(rig, name, src, ref, like="rifle_run_f"):
     """`src` (a sprint) as `name`, a long gun held in both hands across the chest at port arms: the
     right wrist placed (IK) so the grip sits at PORT_GRIP and the gun bone turned so the barrel runs
     along PORT_BARREL, every frame in the frame of the shoulders (so it rides the chest's twist);
     the left hand under the fore-end (the game fits it to the wood). The gun's axes, the hand's
-    hold on it and the right fingers come from `ref` (an aim, the barrel straight ahead)."""
+    hold on it and the right fingers come from `ref` (an aim, the barrel straight ahead). Each
+    arm's upper arm and forearm turned about their own lines to lie as `like`'s do (the run it
+    blends from: IK places the joints but leaves that turn wherever the source had it, and the
+    game's blend from the run swung the arms through it, the left hand off the gun)."""
     sc = bpy.context.scene
     rig.obj.animation_data.action = bpy.data.actions[ref]
     sc.frame_set(int(bpy.data.actions[ref].frame_range[0]))
@@ -1451,10 +1456,43 @@ def port_arms(rig, name, src, ref):
     for f in range(f0, f1 + 1):
         sc.frame_set(f)
         poses.append({pb.name: pb.matrix_basis.copy() for pb in rig.pb})
+    # `like`'s arms, frame for frame through its cycle.
+    twist_bones = [f"{b}_{s}" for s in ("l", "r") for b in ("upperarm", "lowerarm")]
+    rig.obj.animation_data.action = bpy.data.actions[like]
+    l0, l1 = map(int, bpy.data.actions[like].frame_range)
+    likes = []
+    for f in range(l0, l1 + 1):
+        sc.frame_set(f)
+        likes.append({n: rig.world_rot(n) for n in twist_bones})
+    rig.obj.animation_data.action = act
     if name in bpy.data.actions:
         bpy.data.actions.remove(bpy.data.actions[name])
     new_action(rig, name)
     off = 0.0
+    turned = 0.0
+
+    def untwist(s, i):
+        """Side `s`'s upper arm and forearm turned about their own lines toward `like`'s (the hand
+        put back as it was)."""
+        nonlocal turned
+        target = likes[round(i * (len(likes) - 1) / max(len(poses) - 1, 1))]
+        hand, wrist = rig.world_rot(f"hand_{s}"), rig.head(f"hand_{s}")
+        for b, nxt in ((f"upperarm_{s}", f"lowerarm_{s}"), (f"lowerarm_{s}", f"hand_{s}")):
+            axis = (rig.head(nxt) - rig.head(b)).normalized()
+            d = target[b] @ rig.world_rot(b).inverted()
+            if d.w < 0:
+                d.negate()
+            # The turn about the line: the twist part of the difference.
+            angle = 2 * math.atan2(Vector((d.x, d.y, d.z)).dot(axis), d.w)
+            rig.rotate(b, axis, angle)
+            turned = max(turned, abs(math.degrees(angle)))
+            if b.startswith("upperarm"):
+                # The elbow stays; the forearm (swung with it) back onto the wrist.
+                e = rig.head(nxt)
+                q = (rig.head(f"hand_{s}") - e).rotation_difference(wrist - e)
+                rig._apply(nxt, q.to_matrix().to_4x4(), e)
+        rig.set_world_rot(f"hand_{s}", hand)
+
     for i, pose in enumerate(poses):
         for pb in rig.pb:
             pb.matrix_basis = fist.get(pb.name, pose[pb.name])
@@ -1477,14 +1515,16 @@ def port_arms(rig, name, src, ref):
             arm_ik(rig, "r", wrist, -side - ahead * 0.4 - up * 0.5)
             rig.set_world_rot("hand_r", hand)
             wrist += grip - rig.head("weapon_r")
+        untwist("r", i)
         off = max(off, (grip - rig.head("weapon_r")).length)
         # The left hand under the fore-end, the elbow down and out.
         arm_ik(rig, "l", rig.head("weapon_r") + d * RIFLE_FOREND - u * 0.06, side * 0.6 - up - ahead * 0.2)
         rig.aim("hand_l", d - side * 0.4)
+        untwist("l", i)
         relax_fingers(rig, "l", 0.85)
         rig.key(i + 1)
     bpy.data.actions.remove(act)
-    print(f"[anims] {name}: {src}, the gun across the chest in both hands (grip off {100 * off:.1f} cm at most)")
+    print(f"[anims] {name}: {src}, the gun across the chest in both hands (grip off {100 * off:.1f} cm at most; arms turned up to {turned:.0f} deg about themselves, as {like}'s)")
 
 
 def idle(rig):
@@ -2089,7 +2129,8 @@ def main():
         bpy.context.view_layer.objects.active = arm
         bpy.ops.object.mode_set(mode="POSE")
         n = transfer(rig, msrc, macts, name, None, speed, bones={**MOTUS_BONES, **MOTUS_TWIST} if on_motus else MOTUS_BONES, src_fps=mfps,
-                     ref=None, joints=True, window=opts.get("window"), pingpong=opts.get("pingpong", False), exact=on_motus)
+                     ref=None, joints=True, window=opts.get("window"), pingpong=opts.get("pingpong", False), exact=on_motus,
+                     rest=skeleton.rest_pose(arm) if on_motus else None)
         if on_motus:
             EXACT.add(name)
             # Marked in the saved file for pack_check.py.

@@ -43,8 +43,10 @@ TO_GLTF = Matrix.Rotation(-math.pi / 2, 4, "X")
 WEAPON = "weapon_r"
 
 
-def load_pack_rest():
-    """The pack's mannequin rig at rest (imported; the caller removes it, its action already gone)."""
+def load_pack_rest(rig=None):
+    """The pack's mannequin rig at rest (imported; the caller removes it, its action already gone).
+    With `rig` on the mannequin's skeleton (motus.py), in that body's own rest instead: the arms down
+    as his are (`rig["motus_rest"]`, set_pose)."""
     objs, acts = set(bpy.data.objects), set(bpy.data.actions)
     bpy.ops.import_scene.fbx(filepath=os.path.join(PACK, "MotusMan", "MotusMan_v55.fbx"))
     new = [o for o in bpy.data.objects if o not in objs]
@@ -52,10 +54,24 @@ def load_pack_rest():
     arm.animation_data_clear()
     for a in [a for a in bpy.data.actions if a not in acts]:
         bpy.data.actions.remove(a)
+    set_pose(arm, rest_pose(rig))
+    return arm, new
+
+
+def rest_pose(rig):
+    """The mannequin's pose a body on its skeleton rests in ({its bone: quaternion}; none: its T)."""
+    import json
+    return json.loads(rig.get("motus_rest", "{}")) if rig is not None else {}
+
+
+def set_pose(arm, pose):
+    """The mannequin `arm` in `pose` (rest_pose), every other bone at rest."""
     for pb in arm.pose.bones:
         pb.matrix_basis = Matrix.Identity(4)
+        if pb.name in pose:
+            pb.rotation_mode = "QUATERNION"
+            pb.rotation_quaternion = pose[pb.name]
     bpy.context.view_layer.update()
-    return arm, new
 
 
 # The mannequin's twist bones (the pack keys them: a forearm turns a few degrees along itself),
@@ -66,25 +82,28 @@ MOTUS_TWIST = {f"{a}_twist_01_{s}": f"Leaf{S}{b}Roll1" for s, S in (("l", "Left"
 MOTUS_OURS = {v: k for k, v in {**MOTUS_BONES, **MOTUS_TWIST, "Root": "Root"}.items()}
 
 
-def motus_skeleton():
+def motus_skeleton(pose=None):
     """The pack's mannequin at rest under our names, as skeletons/<name>.json has a skeleton (each
     bone's head, axis, roll axis and length in metres, world space; its parent), or None without the
-    pack. Made from the pack each time (its rig isn't ours to put in the repository)."""
+    pack. In `pose` (rest_pose) where given. Made from the pack each time (its rig isn't ours to put
+    in the repository)."""
     if not os.path.isdir(PACK):
         return None
     src, new = load_pack_rest()
+    set_pose(src, pose or {})
     W = src.matrix_world
     out = {}
     for b in src.data.bones:
         name = MOTUS_OURS.get(b.name)
         if name is None:
             continue
-        m = (W @ b.matrix_local).to_3x3().normalized()
+        pb = src.pose.bones[b.name]
+        m = (W @ pb.matrix).to_3x3().normalized()
         parent = b.parent
         while parent is not None and parent.name not in MOTUS_OURS:
             parent = parent.parent
-        out[name] = {"head": list(W @ b.head_local), "y": list(m.col[1]), "z": list(m.col[2]),
-                     "length": (W.to_3x3() @ (b.tail_local - b.head_local)).length, "parent": MOTUS_OURS[parent.name] if parent else None}
+        out[name] = {"head": list(W @ pb.head), "y": list(m.col[1]), "z": list(m.col[2]),
+                     "length": (W.to_3x3() @ (pb.tail - pb.head)).length, "parent": MOTUS_OURS[parent.name] if parent else None}
     for o in new:
         bpy.data.objects.remove(o)
     return out
@@ -101,7 +120,7 @@ def add_weapon_bone(rig):
     mode = bpy.context.object.mode if bpy.context.object else "OBJECT"
     if mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
-    src, new = load_pack_rest()
+    src, new = load_pack_rest(rig)
     W = src.matrix_world
     pb = src.pose.bones
     s_hand = (W @ pb[MOTUS_BONES["hand_r"]].matrix)
