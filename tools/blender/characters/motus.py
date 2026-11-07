@@ -18,7 +18,8 @@ itself when it builds him). Steps:
   mannequin's joints his shoulders came up round his ears), the bones still on its joints;
 - his skin weights the mannequin's: from its own mesh in that pose, nearest surface, so he bends
   about its joints as it does (his own weights were made for MakeHuman's joints: its chest joint
-  18 cm lower);
+  18 cm lower); out over the shoulders Blender's own (bone heat: shoulder_heat), the mannequin's
+  being its hard suit's there; the kit riding the clothes under it (ride_layers);
 - the weapon bone again (skeleton.add_weapon_bone: on the same hand, the pack's rifle where the pack
   holds it); saved over the build and exported as assets/models/characters/male.glb.
 """
@@ -195,15 +196,81 @@ def take_weights(meshes, rig):
         bpy.ops.object.modifier_move_to_index(modifier=m.name, index=0)
         bpy.ops.object.modifier_apply(modifier=m.name)
         smooth_weights(o)
+        shoulder_heat(o, rig)
+        # Smoothed again by place: heat over the shirt, with its holes under the carrier, varies
+        # from point to point there, and the carrier riding it shredded.
+        smooth_weights(o)
         ride_layers(o)
-        # Every vertex's weights summing to one; groups left empty dropped.
+        # Every vertex's weights summing to one, four at most (as the game skins); groups left
+        # empty dropped.
         bpy.ops.object.mode_set(mode="WEIGHT_PAINT")
+        bpy.ops.object.vertex_group_limit_total(group_select_mode="ALL", limit=4)
         bpy.ops.object.vertex_group_normalize_all(lock_active=False)
         bpy.ops.object.vertex_group_clean(group_select_mode="ALL", limit=0.001)
         bpy.ops.object.mode_set(mode="OBJECT")
     for o in [o for o in bpy.data.objects if o not in objs]:
         bpy.data.objects.remove(o)
     print(f"[motus] fingertip and weapon-bone weights moved up: {dropped:.1f} in all")
+
+
+# The shoulders' bones (and the back and neck they pull on): the mannequin's weights there are its
+# hard suit's (its collarbone carries the whole shoulder cap, its upper arm only the arm below), so
+# raising his arms to aim, the cap stayed where it was and the sleeve swelled out of it, up to 11 cm
+# off the arm. His skin and clothes take Blender's own weights for these bones instead (heat from
+# each bone over his own surface: the cap goes with the arm), each vertex's share of them kept.
+HEAT_FROM, HEAT_TO = 0.13, 0.17
+HEAT = [f"{b}_{s}" for b in ("clavicle", "upperarm", "upperarm_twist_01") for s in ("l", "r")] + ["spine_02", "spine_03", "neck_01"]
+
+
+def shoulder_heat(o, rig):
+    """`o`'s skin and clothes (`layer` 0 and 1) weighted to HEAT by bone heat (above)."""
+    import numpy as np
+    me = o.data
+    layer = np.zeros(len(me.vertices), dtype=np.int32)
+    if "layer" in me.attributes:
+        me.attributes["layer"].data.foreach_get("value", layer)
+    cp = o.copy()
+    cp.data = me.copy()
+    bpy.context.scene.collection.objects.link(cp)
+    for m in list(cp.modifiers):
+        cp.modifiers.remove(m)
+    cp.vertex_groups.clear()
+    cp.parent = None
+    bpy.ops.object.select_all(action="DESELECT")
+    cp.select_set(True)
+    rig.select_set(True)
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.parent_set(type="ARMATURE_AUTO")
+    heat = {g.index: g.name for g in cp.vertex_groups if g.name in HEAT}
+    groups = {n: o.vertex_groups.get(n) or o.vertex_groups.new(name=n) for n in HEAT}
+    ease = lambda t: (lambda u: u * u * (3 - 2 * u))(min(1.0, max(0.0, t)))
+    done = 0
+    for v, c in zip(me.vertices, cp.data.vertices):
+        if layer[v.index] > 1:
+            continue
+        have = {o.vertex_groups[e.group].name: e.weight for e in v.groups}
+        share = sum(have.get(n, 0.0) for n in HEAT)
+        got = {heat[e.group]: e.weight for e in c.groups if e.group in heat}
+        total = sum(got.values())
+        if share < 0.01 or total < 1e-3:
+            continue
+        # Only out over the shoulder, past the carrier's straps (HEAT_FROM off the middle, eased to
+        # all of it by HEAT_TO): inside, the slope of the shoulders and the straps on it keep the
+        # mannequin's (by heat they went with the arm: drawing a bow the shirt there rose behind his
+        # head like a sail, and the straps riding it bent into flaps).
+        k = ease((abs(v.co.x) - HEAT_FROM) / (HEAT_TO - HEAT_FROM))
+        new = {n: got.get(n, 0.0) / total * share * k + have.get(n, 0.0) * (1 - k) for n in HEAT}
+        for n, g in groups.items():
+            if new[n] > 1e-4:
+                g.add([v.index], new[n], "REPLACE")
+            elif n in have:
+                g.remove([v.index])
+        done += 1
+    me_copy = cp.data
+    bpy.data.objects.remove(cp)
+    bpy.data.meshes.remove(me_copy)
+    bpy.context.view_layer.objects.active = o
+    print(f"[motus] {o.name}: shoulders weighted by heat on {done} vertices")
 
 
 # What's worn over the clothes (finish.py's `layer`: 2 the kit, 3 what's on it) within RIDE_NEAR of

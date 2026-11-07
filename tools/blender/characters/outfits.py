@@ -161,9 +161,14 @@ def female_street(ctx):
     return items
 
 
-def tactical_kit(ctx, items):
+# How far out the carrier reaches above the chest, of the way to the shoulder joint.
+ARMHOLE = 0.72
+
+
+def tactical_kit(ctx, items, armholes=False):
     """A plate carrier over the modelled top (front and back plates on shoulder straps, wrapping
-    the ribs), three magazine pouches across its front, a rigger's belt, knee pads."""
+    the ribs), three magazine pouches across its front, a rigger's belt, knee pads. `armholes`: cut
+    in above the chest (the male, whose shirt moves with his arms there: motus.shoulder_heat)."""
     L = Landmarks(ctx)
     top = L.clav - 0.075
 
@@ -177,6 +182,11 @@ def tactical_kit(ctx, items):
             # The plates stop below the collarbone (the straps, below, go over the shoulders: grown
             # from the body there they make slivers Solidify spikes out of).
             if z > top:
+                return False
+            # Cut in at the armholes (a carrier's plates sit on the chest and back): out toward the
+            # shoulder the shirt moves with the arm, and a carrier riding it there bent and peeled
+            # as he raised his arms.
+            if armholes and abs(x) > ARMHOLE * abs(L.shoulder_l.x) and z > L.chest:
                 return False
         return True
 
@@ -216,7 +226,7 @@ def tactical_kit(ctx, items):
 def male_tactical(ctx):
     """Over the modelled shirt and trousers (retinted charcoal and olive: tools/textures/
     mh_clothes.py) and boots: the tactical kit, a steel kada."""
-    items = tactical_kit(ctx, [])
+    items = tactical_kit(ctx, [], armholes=True)
     jewellery(ctx, items, armbands=False, kadas=1, neck=False, metal=STEEL, metal_kind="silver")
     return items
 
