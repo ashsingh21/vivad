@@ -673,6 +673,16 @@ def finish_character(variant, rig, proxy, parts, items, root):
         prepare_uvs(o)
         flex_layer(o)
 
+    # Each part's layer, kept through the join (motus.ride_layers: what's worn over the clothes
+    # bends as the cloth under it does): 0 the skin and eyes, 1 the modelled clothes, 2 the kit
+    # over them, 3 what's on that (straps, pouches, pads).
+    roles = {obj.name: role for obj, role in items}
+    for o in opaque:
+        role = roles.get(o.name)
+        layer = 0 if role is None else 1 if o.get("kind") == "mh" else 2 if role == "cover" else 3
+        a = o.data.attributes.new("layer", "INT", "POINT")
+        a.data.foreach_set("value", [layer] * len(o.data.vertices))
+
     # --- join opaque parts into one skinned mesh
     bpy.ops.object.select_all(action="DESELECT")
     for o in opaque:

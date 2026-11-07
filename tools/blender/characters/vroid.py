@@ -332,13 +332,14 @@ def apply_pose_as_rest(arm):
     bpy.ops.object.mode_set(mode="OBJECT")
 
 
-def fit(arm, skeleton, chains=FIT_CHAINS, every_bone=False, own_frames=False):
+def fit(arm, skeleton, chains=FIT_CHAINS, every_bone=False, own_frames=False, aims=None):
     """The model onto a shared skeleton (`--fit`; see the top): `skeleton` a name in skeletons/ or
     one as a dict. `every_bone`: each of its bones placed (made where the model hasn't it, in its
     parent's frame), not only ours. `own_frames`: the bones only moved to the skeleton's joints, each
     keeping its own axis and roll (motus.py: the pack's clips are carried over as each bone's turn
     from rest, which joints in the same places make exact whatever the axes; the game's arm code
-    turns our bones about our axes)."""
+    turns our bones about our axes). `aims`: {bone: point} the chains bring the body's joint to
+    instead of the skeleton's, the bone itself still placed on the skeleton's (motus.py: his neck)."""
     ref = skeleton if isinstance(skeleton, dict) else json.load(open(os.path.join(HERE, "skeletons", f"{skeleton}.json")))
     W = arm.matrix_world
     bpy.context.view_layer.objects.active = arm
@@ -351,7 +352,8 @@ def fit(arm, skeleton, chains=FIT_CHAINS, every_bone=False, own_frames=False):
     for b in arm.data.bones:
         b.inherit_scale = "NONE"
     head = lambda n: W @ arm.pose.bones[n].head
-    want = lambda n: W @ Vector(ref[n]["head"])
+    aims = aims or {}
+    want = lambda n: W @ Vector(aims.get(n, ref[n]["head"]))
     moved = []
     for chain, place in chains:
         chain = [n for n in chain if n in arm.pose.bones and n in ref]

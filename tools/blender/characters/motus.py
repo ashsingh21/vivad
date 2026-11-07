@@ -14,7 +14,8 @@ itself when it builds him). Steps:
   (vroid.fit: the mesh deformed with them), then every bone moved onto the mannequin's joint,
   keeping our axis and roll (the game's arm code turns bones about ours; anims.transfer carries a
   turn from that rest over whatever the axes, exactly where the joints coincide), its twist bones
-  added;
+  added; his neck and head skin kept his own height over his shoulders (neck_aims: on the
+  mannequin's joints his shoulders came up round his ears), the bones still on its joints;
 - his skin weights the mannequin's: from its own mesh in that pose, nearest surface, so he bends
   about its joints as it does (his own weights were made for MakeHuman's joints: its chest joint
   18 cm lower);
@@ -76,14 +77,33 @@ def fit_body(rig):
         bpy.data.objects.remove(o)
     rig["motus_rest"] = json.dumps(pose)
     ref = skeleton.motus_skeleton(pose)
+    aims = neck_aims(rig, ref)
+    rig["motus_neck"] = json.dumps({n: list(Vector(p) - Vector(ref[n]["head"])) for n, p in aims.items()})
     bpy.context.view_layer.objects.active = rig
-    vroid.fit(rig, ref, CHAINS, every_bone=True, own_frames=True)
+    vroid.fit(rig, ref, CHAINS, every_bone=True, own_frames=True, aims=aims)
     meshes = [o for o in bpy.data.objects if o.type == "MESH" and any(m.type == "ARMATURE" and m.object == rig for m in o.modifiers)]
     take_weights(meshes, rig)
     rig["skeleton"] = "motus"
     off = max((rig.matrix_world @ rig.data.bones[n].head_local - Vector(r["head"])).length for n, r in ref.items())
     print(f"[motus] {len(ref)} bones on the mannequin's (worst {off * 1000:.2f} mm); weights from its mesh on {len(meshes)} meshes")
     return True
+
+
+def neck_aims(rig, ref):
+    """Where his neck and head go ({bone: point}, vroid.fit's aims): his own neck. The mannequin's
+    shoulders sit 2 cm higher on its chest than his and its neck is short (its helmet over it): fitted
+    onto its joints, his shoulders came up round his ears. His neck's base as high over his shoulder
+    joints as his own, the mannequin's neck leaning as it does, his own length; the bones still on the
+    mannequin's joints (his head turns about its own, a few centimetres down his neck)."""
+    B = rig.data.bones
+    mid = lambda f: (f("upperarm_l") + f("upperarm_r")) / 2
+    his = lambda n: B[n].head_local
+    theirs = lambda n: Vector(ref[n]["head"])
+    lift = (his("neck_01").z - mid(his).z) - (theirs("neck_01").z - mid(theirs).z)
+    neck = theirs("neck_01") + Vector((0, 0, max(lift, 0.0)))
+    head = neck + (theirs("head") - theirs("neck_01")).normalized() * (his("head") - his("neck_01")).length
+    print(f"[motus] his neck: its base {(neck - theirs('neck_01')).length * 100:.1f} cm over the mannequin's, his head {(head - theirs('head')).length * 100:.1f} cm")
+    return {"neck_01": neck, "head": head}
 
 
 def arms_down(rig, src):
@@ -126,6 +146,14 @@ def take_weights(meshes, rig):
     objs = set(bpy.data.objects)
     src, new = skeleton.load_pack_rest(rig)
     body = next(o for o in new if o.type == "MESH")
+    # Its neck and head lifted as his are (neck_aims), so his neck takes its neck's weights.
+    W = src.matrix_world
+    below = Vector()
+    for n, off in json.loads(rig.get("motus_neck", "{}")).items():
+        pb = src.pose.bones[skeleton.MOTUS_BONES[n]]
+        pb.matrix = W.inverted() @ Matrix.Translation(Vector(off) - below) @ W @ pb.matrix
+        bpy.context.view_layer.update()
+        below = Vector(off)
     # Its mesh as posed (the arms down), its weights kept.
     bpy.context.view_layer.objects.active = body
     for m in [m for m in body.modifiers if m.type == "ARMATURE"]:
@@ -167,6 +195,7 @@ def take_weights(meshes, rig):
         bpy.ops.object.modifier_move_to_index(modifier=m.name, index=0)
         bpy.ops.object.modifier_apply(modifier=m.name)
         smooth_weights(o)
+        ride_layers(o)
         # Every vertex's weights summing to one; groups left empty dropped.
         bpy.ops.object.mode_set(mode="WEIGHT_PAINT")
         bpy.ops.object.vertex_group_normalize_all(lock_active=False)
@@ -175,6 +204,73 @@ def take_weights(meshes, rig):
     for o in [o for o in bpy.data.objects if o not in objs]:
         bpy.data.objects.remove(o)
     print(f"[motus] fingertip and weapon-bone weights moved up: {dropped:.1f} in all")
+
+
+# What's worn over the clothes (finish.py's `layer`: 2 the kit, 3 what's on it) within RIDE_NEAR of
+# the layer under it takes that layer's weights there (fading to its own by RIDE_FAR), and stands
+# RIDE_CLEAR off it at rest: the mannequin's weights change fast over the shoulders (made for its
+# hard suit), so the vest's thin straps, a centimetre over the shirt with a few points to the shirt's
+# many, bent apart from it and the shirt came through them as he raised his arms.
+RIDE_NEAR, RIDE_FAR, RIDE_CLEAR = 0.02, 0.04, 0.005
+
+
+def ride_layers(o):
+    """`o`'s kit and its accessories (the `layer` attribute) riding the layer under them (above)."""
+    import numpy as np
+    from mathutils.bvhtree import BVHTree
+    me = o.data
+    if "layer" not in me.attributes:
+        print(f"[motus] {o.name}: no layers marked, left as weighted")
+        return
+    n = len(me.vertices)
+    layer = np.zeros(n, dtype=np.int32)
+    me.attributes["layer"].data.foreach_get("value", layer)
+    co = np.zeros(n * 3, dtype=np.float32)
+    me.vertices.foreach_get("co", co)
+    co = co.reshape(n, 3).astype(np.float64)
+    groups = list(o.vertex_groups)
+    w = np.zeros((n, len(groups)), dtype=np.float32)
+    for v in me.vertices:
+        for e in v.groups:
+            w[v.index, e.group] = e.weight
+    me.calc_loop_triangles()
+    tris = [t.vertices[:] for t in me.loop_triangles]
+    rode = pushed = 0
+    for top in (2, 3):
+        # The surface under: every triangle of the layers below (a triangle across two layers
+        # can't be; parts aren't joined).
+        under = [t for t in tris if layer[t[0]] < top]
+        if not under:
+            continue
+        tree = BVHTree.FromPolygons([Vector(c) for c in co], under, all_triangles=True)
+        for i in np.where(layer == top)[0]:
+            p, nrm, fi, d = tree.find_nearest(Vector(co[i]), RIDE_FAR)
+            if p is None:
+                continue
+            a, b, c = (co[k] for k in under[fi])
+            e0, e1, e2 = b - a, c - a, np.array(p) - a
+            d00, d01, d11, d20, d21 = e0 @ e0, e0 @ e1, e1 @ e1, e2 @ e0, e2 @ e1
+            den = d00 * d11 - d01 * d01 or 1e-12
+            v1, v2 = (d11 * d20 - d01 * d21) / den, (d00 * d21 - d01 * d20) / den
+            bary = np.clip([1 - v1 - v2, v1, v2], 0, 1)
+            k = 1.0 if d <= RIDE_NEAR else (RIDE_FAR - d) / (RIDE_FAR - RIDE_NEAR)
+            w[i] = (1 - k) * w[i] + k * (w[list(under[fi])] * (bary / bary.sum())[:, None]).sum(0)
+            rode += 1
+            off = (Vector(co[i]) - p).dot(nrm)
+            # (Over 1.5 cm behind it is another fold's face, not this one through it.)
+            if d <= RIDE_NEAR and -0.015 < off < RIDE_CLEAR:
+                co[i] += np.array(nrm) * (RIDE_CLEAR - off)
+                pushed += 1
+    me.vertices.foreach_set("co", co.astype(np.float32).ravel())
+    for g in groups:
+        col = w[:, g.index]
+        for i in np.where(col > 1e-4)[0]:
+            g.add([int(i)], float(col[i]), "REPLACE")
+        gone = np.where(col <= 1e-4)[0]
+        if len(gone):
+            g.remove([int(i) for i in gone])
+    me.update()
+    print(f"[motus] {o.name}: {rode} vertices of the kit ride the layer under them, {pushed} stood off it")
 
 
 def smooth_weights(o):
