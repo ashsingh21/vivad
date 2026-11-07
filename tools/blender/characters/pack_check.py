@@ -76,6 +76,8 @@ for name, file, speed, opts in anims.MOTUS_CLIPS:
     O = [pose_ours(o0 + i) for i in range(out + 1)]
     seam = json.loads(ours.get("seam", "{}"))
     eased, (s0, s1) = seam.get("bones", {}), seam.get("frames", (0, 0))
+    # The right fingers closed on our gun's grip (anims.close_right_hand), not the pack's M4's.
+    fitted = set(json.loads(ours.get("fitted", "[]")))
     # And what hangs from them (the gun from the eased hand).
     below = {n for n in bones if any(p.name in eased for p in arm.data.bones[n].parent_recursive)} | set(eased)
 
@@ -88,7 +90,7 @@ for name, file, speed, opts in anims.MOTUS_CLIPS:
             shift = Vector((d.x, d.y, 0.0))
             at_seam = s0 <= (i + start) % out < s1
             for n in bones:
-                if at_seam and n in below:
+                if (at_seam and n in below) or n in fitted:
                     continue
                 e = (O[i][n][0] - S[n][0] - shift).length
                 if e > worst:
@@ -105,6 +107,7 @@ for name, file, speed, opts in anims.MOTUS_CLIPS:
     worst_all, worst_deg = max(worst_all, worst), max(worst_deg, deg)
     flag = "" if worst < 0.001 and deg < 0.1 else "  !"
     print(f"[pack] {name:22} {file:30} {len(bones)} bones x {out + 1} frames: worst {worst * 1000:6.2f} mm ({bone}, frame {frame}), "
-          f"{deg:5.2f} deg ({dbone}, frame {dframe}){flag}" + (f"; the file's open loop eased shut on {eased} over {s1 - s0} frames" if eased else ""))
+          f"{deg:5.2f} deg ({dbone}, frame {dframe}){flag}" + (f"; the file's open loop eased shut on {eased} over {s1 - s0} frames" if eased else "")
+          + (f"; {len(fitted)} right finger joints closed on our grip" if fitted else ""))
     anims.drop_mocap(objs, acts, arm)
 print(f"[pack] worst over every clip: {worst_all * 1000:.2f} mm, {worst_deg:.2f} deg")

@@ -1430,6 +1430,104 @@ PORT_BARREL = (0.55, 0.5, 0.6)
 PORT_GRIP = (0.08, 0.3, 0.3)
 
 
+# The long guns' pistol grip (all three ride weapon_r, so one hold: tools/blender/weapons/desi.py
+# GRIPS), and the right fingers' thickness (bone to skin, the male's).
+LONG_GRIP = "bandook"
+FINGER_R = 0.0135
+
+
+def long_grip():
+    """The long guns' grip (desi.GRIPS), or None without the weapon scripts."""
+    sys.path.insert(0, os.path.join(HERE, "..", "weapons"))
+    try:
+        import desi
+    except ImportError:
+        return None
+    return desi.GRIPS[LONG_GRIP]
+
+
+def grip_gap(p, grip):
+    """Signed distance (m, about) from `p` (in the gun's frame: barrel +Y, up +Z, origin the weapon
+    bone) to the pistol grip's surface: < 0 inside; None above or below it."""
+    top, bottom, rake, a, b, cx, cy = grip
+    if p.z > top or p.z < bottom:
+        return None
+    dx, dy = p.x - cx, p.y - (cy - (top - p.z) * rake)
+    r = math.hypot(dx, dy)
+    if r < 1e-6:
+        return -min(a, b)
+    return r - a * b / math.hypot(b * dx / r, a * dy / r)
+
+
+def close_right_hand(rig, name, grip):
+    """`name`'s right middle, ring and little fingers closed onto the long gun's grip, every frame:
+    the rifle pack's fingers curl round its M4's thinner grip, ours stood a finger's width off.
+    Each joint bends about the knuckles' line, from the knuckle out, as little as rests its own
+    segment on the grip (none through it): the wrist and the rest of the hold as captured."""
+    sc = bpy.context.scene
+    act = bpy.data.actions[name]
+    rig.obj.animation_data.action = act
+    f0, f1 = map(int, act.frame_range)
+    W = rig.obj.matrix_world
+    step = math.radians(1)
+    most = 0.0
+    # At full size: a scale an earlier pass left on a fingertip (not keyed; the export resets it)
+    # shortened it here.
+    for pb in rig.pb:
+        if pb.name.endswith("_r") and pb.name.split("_")[0] in ("thumb", "index", "middle", "ring", "pinky"):
+            pb.scale = (1.0, 1.0, 1.0)
+    for f in range(f0, f1 + 1):
+        sc.frame_set(f)
+        G = W @ rig.pb[skeleton.WEAPON].matrix @ skeleton.TO_GLTF
+        Gi = G.inverted()
+        across = (Gi @ rig.head("pinky_01_r") - Gi @ rig.head("index_01_r")).normalized()
+        wrist = Gi @ rig.head("hand_r")
+        keyed = []
+        for finger in ("middle", "ring", "pinky"):
+            bones = [f"{finger}_0{k}_r" for k in (1, 2, 3)]
+            pts = [Gi @ rig.head(b) for b in bones] + [Gi @ (W @ rig.pb[bones[-1]].tail)]
+
+            def turned(pts, k, a):
+                R = Matrix.Rotation(a, 3, across)
+                return pts[:k + 1] + [pts[k] + R @ (q - pts[k]) for q in pts[k + 1:]]
+
+            def seg_gap(pts, j):
+                # The last on past its bone's tail, to the fingertip's skin.
+                ds = [grip_gap(pts[j].lerp(pts[j + 1], t), grip) for t in ((0.0, 0.33, 0.66, 1.0, 1.25) if j == 2 else (0.0, 0.33, 0.66, 1.0))]
+                ds = [d for d in ds if d is not None]
+                return min(ds) - FINGER_R if ds else None
+
+            # Curling: the tip toward the wrist.
+            sign = 1.0 if (turned(pts, 0, step)[-1] - wrist).length < (pts[-1] - wrist).length else -1.0
+            # Joint by joint from the knuckle: the least turn (closing, or opening a joint the
+            # capture curled further) that rests its own segment on the grip, not into it.
+            angles = [0.0, 0.0, 0.0]
+            for k in range(3):
+                best = None
+                for i in range(-40, 76):
+                    a = i * step
+                    g = seg_gap(turned(pts, k, sign * a), k)
+                    if g is None:
+                        continue
+                    ok = -0.0015 <= g <= 0.001
+                    key = (not ok, abs(a)) if ok else (True, abs(g) + (1.0 if g < -0.0015 else 0.0))
+                    if best is None or key < best[0]:
+                        best = (key, a)
+                if best:
+                    angles[k] = best[1]
+                    pts = turned(pts, k, sign * angles[k])
+            axis = (G.to_3x3() @ across).normalized()
+            for k, b in enumerate(bones):
+                if angles[k]:
+                    rig.rotate(b, axis, sign * angles[k])
+            most = max(most, math.degrees(max(abs(a) for a in angles)))
+            keyed += bones
+        for b in keyed:
+            rig.pb[b].keyframe_insert("rotation_quaternion", frame=f)
+    act["fitted"] = json.dumps(sorted(set(keyed)))
+    print(f"[anims] {name}: right fingers closed on the grip (up to {most:.0f} deg a joint)")
+
+
 def port_arms(rig, name, src, ref, like="rifle_run_f"):
     """`src` (a sprint) as `name`, a long gun held in both hands across the chest at port arms: the
     right wrist placed (IK) so the grip sits at PORT_GRIP and the gun bone turned so the barrel runs
@@ -2201,6 +2299,11 @@ def main():
         if name in bpy.data.actions:
             over_rest_hips(rig, name)
             bpy.data.actions[name]["exact"] = False
+    # The right hand closed on the long gun's grip, in every clip that holds one.
+    grip = long_grip()
+    for act in list(bpy.data.actions):
+        if grip and act.name.startswith(("rifle_", "rifleaim_")) and rig.pb.get(skeleton.WEAPON) is not None:
+            close_right_hand(rig, act.name, grip)
     print(f"[anims] {variant}: leg {rig.leg:.3f} m, cycles {cycles}, IK reach clamped on {rig.clamped} leg poses")
     print(f"[anims] stance duty: {rig.duty}")
     print("[anims] worst ankle shortfall (m): " + ", ".join(f"{k} {v:.3f}" for k, v in sorted(rig.worst.items())))

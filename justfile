@@ -139,6 +139,11 @@ view name:
 packcheck clips="":
     {{blender}} -b -t 1 build/anims_male.blend -P tools/blender/characters/pack_check.py -- {{clips}} 2>&1 | grep -E '^\[pack\]|Error|Traceback' || true
 
+# How the long guns' pistol grip sits in the male's right hand, by the skin, over the held clips
+# (`!`: skin through it, or closed fingers off it). `just gripfit --fit` searches a grip shape.
+gripfit *args:
+    {{blender}} -b -t 1 build/anims_male.blend -P tools/blender/characters/grip_fit.py -- {{args}} 2>&1 | grep -E '^\[grip_fit\]|Error|Traceback' || true
+
 # Play (release build; first build takes a few minutes). Arguments in order, seed then map. Maps:
 # cp (Connaught Place), chandni (Chandni Chowk), hauzkhas, indiagate, bharat (ancient India):
 # `just play 7 chandni`. `just play random` for a fresh seed (printed), `just play 1234` to replay one.

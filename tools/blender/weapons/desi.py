@@ -57,17 +57,29 @@ def bent(name, pts, r, mat, seg=8):
     return A.tube(name, pts, lambda t: r, mat, seg=seg, caps=("fan", "fan"), up=X)
 
 
-def grip_slab(name, top, bottom, half_w, depth, mat, rake=0.28):
-    """A pistol grip: a rounded slab from `top` down to `bottom` (z), raked back by `rake`."""
+def grip_slab(name, top, bottom, half_w, depth, mat, rake=0.28, cx=0.0, cy=0.0):
+    """A pistol grip: a rounded slab from `top` down to `bottom` (z), raked back by `rake`, its top's
+    centre (`cx`, `cy`) off the origin."""
     S = 6
     frames, rings = [], []
     for s in range(S):
         u = s / (S - 1)
         z = top + (bottom - top) * u
-        c = Vector((0, -(top - z) * rake, z))
+        c = Vector((cx, cy - (top - z) * rake, z))
         frames.append((c, X.copy(), Y.copy()))
         rings.append(geo.ellipse(half_w, depth / 2 * (1 - 0.1 * u), 12))
     return geo.loft(name, frames, rings, cap_start="fan", cap_end="fan", material=mat, merge=True)
+
+
+# The long guns' pistol grips, where the right hand closes (the rifle pack's hold on its weapon
+# bone, the origin): top, bottom, rake, half width, half depth, the top's centre across and along.
+# Fitted to the male's hand skin over the held clips (characters/grip_fit.py --fit).
+GRIPS = {name: (0.004, -0.07, 0.2, 0.016, 0.018, -0.004, 0.008) for name in ("dunali", "bandook", "patakha")}
+
+
+def pistol_grip(model, mat):
+    top, bottom, rake, a, b, cx, cy = GRIPS[model]
+    return grip_slab("grip", top, bottom, a, 2 * b, mat, rake=rake, cx=cx, cy=cy)
 
 
 # ------------------------------------------------------------------ the bat
@@ -126,7 +138,7 @@ def katta():
     parts.append(bent("hammer", [(0, -0.055, axis + 0.004), (0, -0.07, axis + 0.02), (0, -0.064, axis + 0.034)], 0.004, steel))
     parts.append(bent("guard", [(0, 0.03, 0.002), (0, 0.032, -0.022), (0, 0.0, -0.03), (0, -0.02, -0.02), (0, -0.02, 0.0)], 0.0028, steel))
     parts.append(bent("trigger", [(0, 0.0, 0.004), (0, 0.006, -0.012), (0, 0.0, -0.02)], 0.0035, steel))
-    parts.append(grip_slab("grip", 0.004, -0.085, 0.015, 0.032, wood))
+    parts.append(pistol_grip("dunali", wood))
     for k, z in enumerate((-0.02, -0.06)):
         y = -(0.004 - z) * 0.28
         parts.append(rod(f"rivet{k}", (-0.016, y, z), (0.016, y, z), 0.003, steel, seg=8))
@@ -260,7 +272,7 @@ def bandook():
     parts.append(box("magbase", (-0.0145, 0.084, -0.122), (0.0145, 0.14, -0.111), steel))
     parts.append(bent("tguard", [(0, 0.06, 0.004), (0, 0.062, -0.02), (0, 0.03, -0.03), (0, 0.0, -0.022), (0, -0.004, 0.004)], 0.0032, steel))
     parts.append(bent("trigger", [(0, 0.03, 0.004), (0, 0.036, -0.01), (0, 0.03, -0.019)], 0.0035, steel))
-    parts.append(grip_slab("grip", 0.004, -0.095, 0.016, 0.034, rubber))
+    parts.append(pistol_grip("bandook", rubber))
     # The stock: from the receiver back in line with the bore, deepening to the butt.
     S = 8
     frames, rings = [], []
@@ -399,7 +411,7 @@ def patakha():
     parts.append(A.lathe("pad", [(0.0, y0 - 0.03), (P_R + 0.004, y0 - 0.03), (P_R + 0.006, y0 - 0.015), (P_R + 0.006, y0 + 0.06),
                                  (P_R + 0.002, y0 + 0.065)], foam, seg=24, axis=Y, origin=o))
     parts.append(box("mount", (-0.012, -0.05, 0.004), (0.012, 0.08, P_AXIS - P_R + 0.006), wood))
-    parts.append(grip_slab("grip", 0.004, -0.1, 0.016, 0.034, wood))
+    parts.append(pistol_grip("patakha", wood))
     parts.append(grip_slab("foregrip", P_AXIS - P_R + 0.002, P_AXIS - P_R - 0.09, 0.015, 0.032, wood, rake=-0.05))
     parts.append(bent("tguard", [(0, 0.05, 0.004), (0, 0.052, -0.02), (0, 0.025, -0.03), (0, 0.0, -0.022), (0, -0.004, 0.004)], 0.003, wire))
     parts.append(bent("trigger", [(0, 0.028, 0.004), (0, 0.034, -0.01), (0, 0.028, -0.019)], 0.0035, wire))
