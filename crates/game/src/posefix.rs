@@ -727,7 +727,7 @@ mod tests {
     /// A stick figure with propagated globals: pelvis, spine to head, two arms, two legs, the
     /// arms bent forward as if on a gun, the knees bent a little.
     fn figure(world: &mut World) -> (FixRig, Entity) {
-        let mut bone = |world: &mut World, parent: Option<Entity>, at: Vec3| {
+        let bone = |world: &mut World, parent: Option<Entity>, at: Vec3| {
             let t = Transform::from_translation(at);
             let e = world.spawn((t, GlobalTransform::from(t))).id();
             if let Some(p) = parent {
@@ -741,7 +741,7 @@ mod tests {
         let chest = bone(world, Some(waist), Vec3::new(0.0, 1.3, 0.0));
         let neck = bone(world, Some(chest), Vec3::new(0.0, 1.5, 0.0));
         let head = bone(world, Some(neck), Vec3::new(0.0, 1.6, 0.0));
-        let mut limb = |world: &mut World, parent: Entity, a: Vec3, b: Vec3, c: Vec3| {
+        let limb = |world: &mut World, parent: Entity, a: Vec3, b: Vec3, c: Vec3| {
             let a = bone(world, Some(parent), a);
             let b = bone(world, Some(a), b);
             [a, b, bone(world, Some(b), c)]
