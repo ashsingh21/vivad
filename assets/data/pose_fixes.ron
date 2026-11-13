@@ -1,0 +1,4 @@
+// Pose fixes: body parts moved by eye for a clip, an arms action, or the pair ("*" is any), in
+// metres in the character's model space (+X its left, +Y up, +Z forward). Written by the game's
+// fix mode (crates/game/src/posefix.rs, `just posefix`); edit by hand if you like.
+[]

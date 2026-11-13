@@ -106,7 +106,10 @@ impl Plugin for InputPlugin {
         app.init_resource::<Bindings>()
             .init_resource::<ActionState>()
             .init_resource::<ShowPerf>()
-            .add_systems(PreUpdate, (give_item, scripted_keys, resolve_actions, write_intent, grab_cursor, meta_actions, vote).chain()
+            // While a pose is being fixed (crate::posefix) the pointer drags body parts: it neither
+            // aims nor is captured, and no key press waits for the stopped sim.
+            .add_systems(PreUpdate, (give_item, scripted_keys, resolve_actions, write_intent.run_if(crate::posefix::playing),
+                grab_cursor.run_if(crate::posefix::playing), meta_actions, vote).chain()
                 .in_set(LocalInput).after(bevy::input::InputSystems));
     }
 }

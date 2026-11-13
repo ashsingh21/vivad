@@ -179,6 +179,12 @@ feel-mark file="":
 play seed="7" map="cp":
     VIVAD_MAP={{map}} VIVAD_MAP_SEED={{seed}} cargo run --release -p game --bin game
 
+# Play with the pose-fixing tool: F8 stops time and puts a dot on each body part to drag; what you
+# move is saved to assets/data/pose_fixes.ron for the clip showing and laid over it from then on
+# (docs/pose-fix.md). F7 slow motion. One bot, to have someone to look at.
+posefix seed="7" map="cp":
+    VIVAD_POSEFIX=1 VIVAD_BOTS=1 VIVAD_MAP={{map}} VIVAD_MAP_SEED={{seed}} cargo run --release -p game --bin game
+
 # Headless matches to sanity-check the loop and bots: just sim 5
 sim matches="3" bots="15":
     cargo run --release -p shared --bin sim_check -- {{matches}} {{bots}}

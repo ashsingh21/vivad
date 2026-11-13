@@ -31,6 +31,11 @@ const CANT: f32 = 0.14;
 
 pub struct ArmsPlugin;
 
+/// The weapons are in the hands and the hands on the weapons (PostUpdate, after transform
+/// propagation): what runs after this sees the pose as drawn, bar crate::posefix's fixes.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct HandsPosed;
+
 impl Plugin for ArmsPlugin {
     fn build(&self, app: &mut App) {
         let specs: HashMap<String, BowSpec> =
@@ -43,7 +48,7 @@ impl Plugin for ArmsPlugin {
                 PostUpdate,
                 (
                     pose_torso.after(bevy::app::AnimationSystems).before(TransformSystems::Propagate),
-                    (orient_bows, draw_bows).chain().after(TransformSystems::Propagate),
+                    (orient_bows, draw_bows).chain().after(TransformSystems::Propagate).in_set(HandsPosed),
                 ),
             );
     }
@@ -490,7 +495,7 @@ const GRIP_CURL: f32 = 0.55;
 /// the wrist lands on `wrist`, the elbow toward `pole` (a direction), then turn the hand to the
 /// global rotation `hand_rot`. Everything under each bone (forearm, hand, fingers) turns with it.
 #[allow(clippy::too_many_arguments)]
-fn reach(upper: Entity, lower: Entity, hand: Entity, wrist: Vec3, pole: Vec3, hand_rot: Quat, kids: &Query<&Children>,
+pub(crate) fn reach(upper: Entity, lower: Entity, hand: Entity, wrist: Vec3, pole: Vec3, hand_rot: Quat, kids: &Query<&Children>,
          tf: &mut Query<(&Transform, &mut GlobalTransform)>) {
     let pos = |tf: &Query<(&Transform, &mut GlobalTransform)>, e: Entity| tf.get(e).map(|(_, g)| g.translation()).ok();
     let (Some(s), Some(e0), Some(w0)) = (pos(tf, upper), pos(tf, lower), pos(tf, hand)) else { return };
@@ -511,7 +516,7 @@ fn reach(upper: Entity, lower: Entity, hand: Entity, wrist: Vec3, pole: Vec3, ha
 
 /// Turn `e` and everything under it by `q` about `pivot`, in their (already propagated) global
 /// transforms.
-fn turn_subtree(e: Entity, pivot: Vec3, q: Quat, kids: &Query<&Children>, tf: &mut Query<(&Transform, &mut GlobalTransform)>) {
+pub(crate) fn turn_subtree(e: Entity, pivot: Vec3, q: Quat, kids: &Query<&Children>, tf: &mut Query<(&Transform, &mut GlobalTransform)>) {
     if let Ok((_, mut g)) = tf.get_mut(e) {
         let (scale, rot, t) = g.to_scale_rotation_translation();
         *g = GlobalTransform::from(Transform { translation: pivot + q * (t - pivot), rotation: q * rot, scale });
