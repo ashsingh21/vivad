@@ -4,9 +4,11 @@
 //!   +Y up), for a clip, an arms action, or the pair. `assets/data/pose_fixes.ron` holds them.
 //!   Every warrior gets them in every build, eased in and out with what it's playing
 //!   (`WarriorAnim::showing`), so a fix made once is there every time that movement plays.
-//! - Making one (desktop, `just posefix` or VIVAD_POSEFIX=1): F8 stops time and frees the
-//!   pointer. Drag a dot to move that part; the file is written when the drag ends. F8 again
-//!   carries on. F7 is slow motion and `.` steps a frame, to land on the moment that looks wrong.
+//! - Making one (desktop, `just posefix` or VIVAD_POSEFIX=1): the backquote key stops time and
+//!   frees the pointer. Pick a part (click its dot, or its number) and move it (drag the dot, or
+//!   W/S A/D Q/Z); the file is written as you let go. Backquote again carries on. To land on a
+//!   moment that passes too fast to catch: `[` arms a stop at the next change of clip (press it,
+//!   then jump), and holding `.` lets time run on slowly from there. `]` is slow motion.
 //! - Where it runs: last in the pose chain, after the clips, the torso's aim
 //!   (`arms::pose_torso`) and the weapon and left-hand placement (`arms::orient_bows`), on the
 //!   propagated global transforms as those do. A fix is the final word on the pose.
@@ -33,8 +35,8 @@ use crate::visuals::WarriorVisual;
 /// cross-fade.
 const BLEND: f32 = 10.0;
 /// A dot is picked within this many pixels of the pointer.
-const PICK: f32 = 28.0;
-/// Slow motion's speed (F7).
+const PICK: f32 = 40.0;
+/// Slow motion's speed (`]`), and time's while `.` is held in the fixing view.
 const SLOW: f32 = 0.2;
 
 pub struct PoseFixPlugin;
@@ -72,6 +74,9 @@ pub enum Part {
 }
 
 impl Part {
+    /// As numbered on the keys 1 to 8.
+    const ORDER: [Part; 8] = [Part::Hips, Part::Chest, Part::Head, Part::Hands, Part::HandL, Part::HandR, Part::FootL, Part::FootR];
+
     fn label(self) -> &'static str {
         match self {
             Part::Hips => "hips",
@@ -211,16 +216,24 @@ pub struct FixMode {
     /// What the local player is showing (clip, action), for the panel and the keys.
     showing: (String, String),
     hover: Option<Part>,
-    held: Option<Part>,
+    /// The part picked: what a drag or the move keys move.
+    picked: Option<Part>,
+    /// The picked part's dot is held by the pointer.
+    dragging: bool,
     /// Where the pointer's ray last met the drag plane.
     grab_at: Vec3,
     /// The view round the player while fixing: yaw, pitch, distance.
     view: Option<(f32, f32, f32)>,
     slow: bool,
-    /// Frames left of a single step.
-    step: u8,
+    /// Time is let run (`.` held) in the fixing view.
+    running: bool,
+    /// Stop at the next change of clip (`[`), and that change having come.
+    armed: bool,
+    stop: bool,
     dirty: bool,
     note: String,
+    /// Where the pointer is and the nearest dot, for telling why a click missed.
+    probe: String,
 }
 
 impl FixMode {
@@ -231,13 +244,17 @@ impl FixMode {
             scope: Scope::Pair,
             showing: default(),
             hover: None,
-            held: None,
+            picked: None,
+            dragging: false,
             grab_at: Vec3::ZERO,
             view: None,
             slow: false,
-            step: 0,
+            running: false,
+            armed: false,
+            stop: false,
             dirty: false,
             note: String::new(),
+            probe: String::new(),
         }
     }
 }
@@ -427,13 +444,16 @@ fn apply(
 #[derive(Default, Reflect, GizmoConfigGroup)]
 struct FixDots;
 
-/// The dots on the local player, picking one with the pointer, and dragging it: the pointer's
-/// move across the screen is the part's move in the plane facing the camera.
+/// The dots on the local player; picking one (a click, or its number) and moving it: a drag across
+/// the screen is a move in the plane facing the camera, the move keys a move along the body's axes.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn edit(
     mut mode: ResMut<FixMode>,
     mut fixes: ResMut<PoseFixes>,
     mouse: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    real: Res<Time<Real>>,
+    view_scale: Option<Res<crate::quality::ViewScale>>,
     window: Query<&Window, With<PrimaryWindow>>,
     cam: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     local: Query<Entity, With<LocalPlayer>>,
@@ -445,6 +465,11 @@ fn edit(
     let Some((_, anim, body, rig)) = vis.iter().find(|(wv, ..)| wv.sim == me) else { return };
     if mode.showing.0 != anim.showing.0 || mode.showing.1 != anim.showing.1 {
         mode.showing = (anim.showing.0.into(), anim.showing.1.into());
+        // The move that was waited for has begun.
+        if mode.armed && !mode.active {
+            mode.armed = false;
+            mode.stop = true;
+        }
     }
     if !mode.active {
         return;
@@ -469,62 +494,91 @@ fn edit(
     put(Part::FootL, p(rig.leg_l[2]));
     put(Part::FootR, p(rig.leg_r[2]));
 
+    // The 3D view is drawn to an image the size the quality level asks and stretched over the
+    // window (crate::quality): the camera's viewport is that image's, the pointer the window's.
+    let scale = view_scale.map_or(1.0, |s| s.0).max(1e-3);
     let cursor = window.single().ok().and_then(|w| w.cursor_position());
-    if mode.held.is_none() {
-        mode.hover = cursor.and_then(|c| {
-            handles
-                .iter()
-                .filter_map(|(part, at)| camera.world_to_viewport(cam_g, *at).ok().map(|s| (*part, s.distance(c))))
-                .filter(|(_, d)| *d < PICK)
-                .min_by(|a, b| a.1.total_cmp(&b.1))
-                .map(|(part, _)| part)
-        });
+    let nearest = cursor.and_then(|c| {
+        handles
+            .iter()
+            .filter_map(|(part, at)| camera.world_to_viewport(cam_g, *at).ok().map(|s| (*part, *at, (s * scale).distance(c))))
+            .min_by(|a, b| a.2.total_cmp(&b.2))
+    });
+    mode.probe = match (cursor, nearest) {
+        (Some(c), Some((part, _, d))) => format!("pointer {:.0},{:.0}   nearest dot: {} at {d:.0} px", c.x, c.y, part.label()),
+        (Some(c), None) => format!("pointer {:.0},{:.0}   no dot on screen", c.x, c.y),
+        _ => "pointer outside the window".into(),
+    };
+    if !mode.dragging {
+        mode.hover = nearest.filter(|n| n.2 < PICK).map(|n| n.0);
         if mouse.just_pressed(MouseButton::Left) {
-            if let Some((part, at)) = mode.hover.and_then(|h| handles.iter().find(|(part, _)| *part == h).copied()) {
-                mode.held = Some(part);
+            if let Some((part, at, _)) = nearest.filter(|n| n.2 < PICK) {
+                mode.picked = Some(part);
+                mode.dragging = true;
                 mode.grab_at = at;
             }
         }
     } else if !mouse.pressed(MouseButton::Left) {
-        mode.held = None;
-        if mode.dirty {
-            mode.dirty = false;
-            mode.note = fixes.save();
-        }
+        mode.dragging = false;
     }
-    if let (Some(part), Some(c)) = (mode.held, cursor) {
-        if let Ok(ray) = camera.viewport_to_world(cam_g, c) {
+    const DIGITS: [KeyCode; 8] =
+        [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4, KeyCode::Digit5, KeyCode::Digit6, KeyCode::Digit7, KeyCode::Digit8];
+    if let Some(i) = DIGITS.iter().position(|k| keys.just_pressed(*k)) {
+        mode.picked = Some(Part::ORDER[i]);
+    }
+
+    // How far the picked part moves this frame, in the model's space.
+    let mut by = Vec3::ZERO;
+    if let (true, Some(c)) = (mode.dragging, cursor) {
+        if let Ok(ray) = camera.viewport_to_world(cam_g, c / scale) {
             let n = *cam_g.forward();
             let along = ray.direction.dot(n);
             if along.abs() > 1e-4 {
                 let hit = ray.origin + *ray.direction * ((mode.grab_at - ray.origin).dot(n) / along);
-                let d = model.affine().inverse().transform_vector3(hit - mode.grab_at);
+                by = model.affine().inverse().transform_vector3(hit - mode.grab_at);
                 mode.grab_at = hit;
-                if d != Vec3::ZERO {
-                    let (clip, action) = mode.scope.key((anim.showing.0, anim.showing.1));
-                    let v = fixes.entry(&clip, &action).parts.entry(part).or_insert((0.0, 0.0, 0.0));
-                    *v = (v.0 + d.x, v.1 + d.y, v.2 + d.z);
-                    mode.dirty = true;
-                }
             }
         }
     }
+    let axis = |plus: KeyCode, minus: KeyCode| (keys.pressed(plus) as i32 - keys.pressed(minus) as i32) as f32;
+    // +X is the character's left, +Y up, +Z the way it faces.
+    let push = Vec3::new(axis(KeyCode::KeyA, KeyCode::KeyD), axis(KeyCode::KeyQ, KeyCode::KeyZ), axis(KeyCode::KeyW, KeyCode::KeyS));
+    if !mode.dragging {
+        let speed = if keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) { 0.5 } else { 0.12 };
+        by += push * speed * real.delta_secs();
+    }
+    if let (Some(part), true) = (mode.picked, by != Vec3::ZERO) {
+        let (clip, action) = mode.scope.key((anim.showing.0, anim.showing.1));
+        let v = fixes.entry(&clip, &action).parts.entry(part).or_insert((0.0, 0.0, 0.0));
+        *v = (v.0 + by.x, v.1 + by.y, v.2 + by.z);
+        mode.dirty = true;
+    }
+    if mode.dirty && !mode.dragging && push == Vec3::ZERO {
+        mode.dirty = false;
+        mode.note = fixes.save();
+    }
+
     // The same size on screen at any distance.
     let eye = cam_g.translation();
     for (part, at) in handles {
-        let (r, colour) = if mode.held == Some(part) {
-            (0.022, Color::srgb(1.0, 0.55, 0.15))
+        let (r, colour) = if mode.picked == Some(part) {
+            (0.03, Color::srgb(1.0, 0.5, 0.1))
         } else if mode.hover == Some(part) {
-            (0.022, Color::srgb(1.0, 0.92, 0.3))
+            (0.026, Color::srgb(1.0, 0.92, 0.3))
         } else {
-            (0.016, Color::srgb(0.95, 0.97, 1.0))
+            (0.02, Color::srgb(0.95, 0.97, 1.0))
         };
-        dots.sphere(Isometry3d::from_translation(at), r * eye.distance(at), colour);
+        let size = r * eye.distance(at);
+        dots.sphere(Isometry3d::from_translation(at), size, colour);
+        if mode.picked == Some(part) {
+            dots.sphere(Isometry3d::from_translation(at), size * 0.55, colour);
+        }
     }
 }
 
-/// F8 in and out of fixing, F7 slow motion, and while fixing: Tab what a fix is saved for, `.` a
-/// frame on, Backspace the fix for this scope gone.
+/// Backquote (or F8) in and out of fixing; `[` arms a stop at the next change of clip; `]` (or F7)
+/// slow motion. While fixing: `.` held lets time run, Tab changes what a fix is saved for,
+/// Backspace takes the fix for this scope away.
 fn keys(
     keys: Res<ButtonInput<KeyCode>>,
     mut mode: ResMut<FixMode>,
@@ -535,39 +589,56 @@ fn keys(
     if !mode.enabled {
         return;
     }
-    if mode.step > 0 {
-        mode.step -= 1;
-        if mode.step == 0 && mode.active {
-            virt.pause();
+    let toggle = keys.just_pressed(KeyCode::Backquote) || keys.just_pressed(KeyCode::F8);
+    if keys.just_pressed(KeyCode::BracketRight) || keys.just_pressed(KeyCode::F7) {
+        mode.slow = !mode.slow;
+        if !mode.active {
+            virt.set_relative_speed(if mode.slow { SLOW } else { 1.0 });
         }
     }
-    if keys.just_pressed(KeyCode::F7) {
-        mode.slow = !mode.slow;
-        virt.set_relative_speed(if mode.slow { SLOW } else { 1.0 });
+    if !mode.active && keys.just_pressed(KeyCode::BracketLeft) {
+        mode.armed = !mode.armed;
     }
-    if keys.just_pressed(KeyCode::F8) {
-        mode.active = !mode.active;
-        mode.held = None;
+    let stop = std::mem::take(&mut mode.stop);
+    if !mode.active && (toggle || stop) {
+        mode.active = true;
+        mode.armed = false;
+        mode.dragging = false;
+        mode.running = false;
         mode.hover = None;
-        mode.step = 0;
-        if mode.active {
-            virt.pause();
-            mode.view = None;
-            mode.note.clear();
-            if let Ok(mut c) = cursor.single_mut() {
-                c.grab_mode = CursorGrabMode::None;
-                c.visible = true;
-            }
-        } else {
-            virt.unpause();
-            if mode.dirty {
-                mode.dirty = false;
-                mode.note = fixes.save();
-            }
+        mode.view = None;
+        mode.note.clear();
+        virt.pause();
+        if let Ok(mut c) = cursor.single_mut() {
+            c.grab_mode = CursorGrabMode::None;
+            c.visible = true;
+        }
+    } else if mode.active && toggle {
+        mode.active = false;
+        mode.dragging = false;
+        mode.running = false;
+        virt.set_relative_speed(if mode.slow { SLOW } else { 1.0 });
+        virt.unpause();
+        if mode.dirty {
+            mode.dirty = false;
+            mode.note = fixes.save();
         }
     }
     if !mode.active {
         return;
+    }
+    // Time runs while `.` is held: slowly, or with Shift at its own speed.
+    let run = keys.pressed(KeyCode::Period);
+    if run {
+        virt.set_relative_speed(if keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) { 1.0 } else { SLOW });
+    }
+    if run != mode.running {
+        mode.running = run;
+        if run {
+            virt.unpause();
+        } else {
+            virt.pause();
+        }
     }
     if keys.just_pressed(KeyCode::Tab) {
         mode.scope = match mode.scope {
@@ -575,11 +646,6 @@ fn keys(
             Scope::Clip => Scope::Action,
             Scope::Action => Scope::Pair,
         };
-    }
-    if keys.just_pressed(KeyCode::Period) {
-        // One rendered frame of time, then stopped again.
-        virt.unpause();
-        mode.step = 1;
     }
     if keys.just_pressed(KeyCode::Backspace) {
         let (clip, action) = mode.scope.key((&mode.showing.0, &mode.showing.1));
@@ -614,7 +680,11 @@ fn panel(mut commands: Commands, mode: Res<FixMode>, fixes: Res<PoseFixes>, mut 
     let name = |s: &str| if s.is_empty() { "none".to_string() } else { s.to_string() };
     let showing = (mode.showing.0.as_str(), mode.showing.1.as_str());
     let words = if !mode.active {
-        format!("F8 fix pose   F7 slow motion{}", if mode.slow { " (on)" } else { "" })
+        format!(
+            "`  fix pose      [  stop at the next move{}      ]  slow motion{}",
+            if mode.armed { " (WAITING: now jump, slide, shoot...)" } else { "" },
+            if mode.slow { " (on)" } else { "" }
+        )
     } else {
         let (clip, action) = mode.scope.key(showing);
         let saved = fixes
@@ -625,22 +695,34 @@ fn panel(mut commands: Commands, mode: Res<FixMode>, fixes: Res<PoseFixes>, mut 
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "nothing yet".into());
         let others = fixes.fixes.iter().filter(|f| f.fits(showing) && !(f.clip == clip && f.action == action) && !f.parts.is_empty()).count();
+        let parts = Part::ORDER
+            .iter()
+            .enumerate()
+            .map(|(i, p)| if mode.picked == Some(*p) { format!("[{} {}]", i + 1, p.label()) } else { format!("{} {}", i + 1, p.label()) })
+            .collect::<Vec<_>>()
+            .join("   ");
         format!(
-            "FIXING POSE (time stopped)\n\
+            "FIXING POSE ({})\n\
              showing: clip {}, arms {}\n\
-             saving for: clip {}, arms {}   [Tab changes]\n\
+             saving for: clip {}, arms {}   (Tab changes)\n\
              moved here: {}{}\n\
+             \n\
+             pick: click a dot, or  {}\n\
+             move: drag the dot, or W/S forward/back, A/D left/right, Q/Z up/down (Shift faster)\n\
+             time: hold . to run on slowly (Shift+. full speed)\n\
+             look: right-drag or arrows, wheel closer      Backspace clears this      ` done\n\
+             \n\
              {}\n\
-             drag a dot to move that part   right-drag or arrows: look round   wheel: closer\n\
-             . one frame on   Backspace: clear this   F7 slow motion   F8 done\n\
              {}",
+            if mode.running { "time running" } else { "time stopped" },
             name(showing.0),
             name(showing.1),
             name(&clip),
             name(&action),
             saved,
             if others > 0 { format!("   (+{others} other fix{} also applying)", if others == 1 { "" } else { "es" }) } else { String::new() },
-            mode.held.or(mode.hover).map(|p| format!("> {}", p.label())).unwrap_or_default(),
+            parts,
+            mode.probe,
             mode.note,
         )
     };

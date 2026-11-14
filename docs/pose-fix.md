@@ -10,20 +10,26 @@ in the running game, and keeps the move as data that is laid over that movement 
 just posefix
 ```
 
-1. Play until something looks wrong. **F7** is slow motion, to see it coming.
-2. **F8** stops time and frees the pointer. A dot sits on the hips, chest, head, each hand, each
-   foot, and one between the hands (both hands together, with what they hold).
-3. Look round: right-drag or the arrow keys, the wheel to come closer. **.** steps one frame on.
-4. Drag a dot. The part follows the pointer in the plane facing the camera: the elbow or knee
-   bends to reach, lowered hips bend the knees and leave the feet, and "both hands" keeps the left
-   hand in its place on the right.
-5. Let go: `assets/data/pose_fixes.ron` is written. **F8** again carries on playing, and the
-   fix is there every time that movement plays.
+Start a match. A line at the top left lists the keys; none of them needs Fn.
+
+1. **Stop time on the moment that looks wrong.** Either press **`** (backquote) when you see it,
+   or, for something too quick to catch (a jump, a slide): press **[**, then do the move. Time
+   stops by itself as that move's clip takes over. **]** is slow motion while playing.
+2. **Find the exact frame.** Hold **.** to let time run on slowly (Shift+. at full speed) and let
+   go where it looks worst. Look round with right-drag or the arrow keys; the wheel comes closer.
+3. **Pick a part**: click its dot, or press its number (1 hips, 2 chest, 3 head, 4 both hands,
+   5 left hand, 6 right hand, 7 left foot, 8 right foot). The picked dot turns orange.
+4. **Move it**: drag the dot, or **W/S** forward and back, **A/D** left and right, **Q/Z** up and
+   down (Shift moves faster). The elbow or knee bends to reach, lowered hips bend the knees and
+   leave the feet, and "both hands" keeps the left hand in its place on the right.
+5. Let go: `assets/data/pose_fixes.ron` is written. **`** again carries on playing, and the fix
+   is there every time that movement plays.
 
 The panel says what is showing (the legs' or whole-body clip, and the arms' action over it) and
 what the fix is being saved for. **Tab** changes that: this clip under this action, this clip
 whatever the arms do, or this action whatever the legs do. **Backspace** clears the fix for the
-scope shown.
+scope shown. The panel's last lines say where the pointer is and how far the nearest dot is,
+which is what to look at if a click seems to miss.
 
 ## What a fix is
 
@@ -49,6 +55,7 @@ It runs last: after the clips, the torso's aim, and the weapon and left-hand pla
 - Moves, no twists: a hand or foot keeps the way it faces.
 - A limb stops at full stretch, so a long drag may move the part less than the pointer.
 - Solo only: stopping time stops this machine's sim, not a hosted match.
+- Time only runs forward: there is no stepping back to an earlier frame.
 - A fix for a clip is the same for every body (male, female, anime).
 
 `cargo test -p game posefix` checks the moves on a stick figure (a hand lands where it is
